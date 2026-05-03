@@ -745,6 +745,32 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "update_baseline",
+    {
+      title: "Update a logged baseline result",
+      description:
+        "Fix a baseline value/units/date/notes after the fact. Common when the user logs a misinterpreted score (e.g. total weight instead of per-DB).",
+      inputSchema: {
+        id: z.string(),
+        value: z.number().optional(),
+        units: z.string().optional(),
+        date: z.string().optional().describe("ISO datetime"),
+        notes: z.string().nullable().optional(),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Record<string, unknown> = {};
+        if (input.value !== undefined) data.value = input.value;
+        if (input.units !== undefined) data.units = input.units;
+        if (input.date !== undefined) data.date = new Date(input.date);
+        if (input.notes !== undefined) data.notes = input.notes;
+        const updated = await prisma.baseline.update({ where: { id: input.id }, data });
+        return { id: updated.id, message: "Baseline updated" };
+      }),
+  );
+
+  server.registerTool(
     "delete_note",
     {
       title: "Delete a note",

@@ -71,6 +71,40 @@ export async function logBaseline(form: FormData) {
   redirect(`/baselines/test/${encodeURIComponent(testName)}`);
 }
 
+export async function updateBaseline(id: string, form: FormData) {
+  const value = Number(form.get("value"));
+  const units = String(form.get("units") ?? "").trim();
+  const dateStr = (form.get("date") as string | null)?.trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+
+  if (!Number.isFinite(value)) throw new Error("Value must be a number");
+  if (!units) throw new Error("Units are required");
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  const updated = await prisma.baseline.update({
+    where: { id },
+    data: { value, units, date, notes },
+  });
+
+  revalidatePath("/baselines");
+  revalidatePath(`/baselines/test/${encodeURIComponent(updated.testName)}`);
+  revalidatePath("/stats");
+  revalidatePath("/");
+  redirect(`/baselines/test/${encodeURIComponent(updated.testName)}`);
+}
+
+export async function deleteBaselineRow(id: string) {
+  const row = await prisma.baseline.findUniqueOrThrow({ where: { id } });
+  await prisma.baseline.delete({ where: { id } });
+  revalidatePath("/baselines");
+  revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
+  revalidatePath("/stats");
+  revalidatePath("/");
+  redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);
+}
+
 export async function importStrongWorkout(form: FormData) {
   const raw = (form.get("raw") as string | null) ?? "";
   if (!raw.trim()) throw new Error("Paste a workout to import");

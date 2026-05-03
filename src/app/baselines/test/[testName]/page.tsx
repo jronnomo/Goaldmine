@@ -67,9 +67,17 @@ export default async function BaselineTestDetail({
                   </p>
                   {h.notes && <p className="text-xs text-[var(--muted)] mt-0.5">{h.notes}</p>}
                 </div>
-                <p className="text-xs text-[var(--muted)] shrink-0">
-                  {new Date(h.date).toLocaleDateString()}
-                </p>
+                <div className="flex items-baseline gap-2 shrink-0">
+                  <p className="text-xs text-[var(--muted)]">
+                    {new Date(h.date).toLocaleDateString()}
+                  </p>
+                  <Link
+                    href={`/baselines/results/${h.id}/edit`}
+                    className="text-xs text-[var(--accent)]"
+                  >
+                    Edit
+                  </Link>
+                </div>
               </li>
             ))}
           </ul>
