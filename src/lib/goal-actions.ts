@@ -4,10 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import {
-  MT_ELBERT_DEFAULT_TARGETS,
-  type GoalTarget,
-} from "@/lib/goal-targets";
+import type { GoalTarget } from "@/lib/goal-targets";
 
 export type GoalReference = {
   id: string;
@@ -35,14 +32,20 @@ export async function createGoal(form: FormData) {
   const objective = String(form.get("objective") ?? "").trim();
   const targetDateStr = String(form.get("targetDate") ?? "").trim();
   const notes = (form.get("notes") as string | null)?.trim() || null;
-  const useDefaults = form.get("useDefaults") === "on";
+  const copyFromGoalId = (form.get("copyFromGoalId") as string | null)?.trim() || null;
 
   if (!objective) throw new Error("Objective is required");
   if (!targetDateStr) throw new Error("Target date is required");
   const targetDate = new Date(targetDateStr);
   if (Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
 
-  const targets = useDefaults ? MT_ELBERT_DEFAULT_TARGETS : parseTargetsField(form.get("targets"));
+  let targets: GoalTarget[] | null = parseTargetsField(form.get("targets"));
+  if (!targets && copyFromGoalId) {
+    const source = await prisma.goal.findUnique({ where: { id: copyFromGoalId } });
+    if (source && source.targets) {
+      targets = source.targets as unknown as GoalTarget[];
+    }
+  }
 
   const goal = await prisma.goal.create({
     data: {
@@ -56,6 +59,17 @@ export async function createGoal(form: FormData) {
   revalidatePath("/goals");
   revalidatePath("/stats");
   redirect(`/goals/${goal.id}`);
+}
+
+export async function copyTargetsFromGoal(toId: string, fromId: string) {
+  if (toId === fromId) throw new Error("Cannot copy a goal's targets onto itself");
+  const source = await prisma.goal.findUniqueOrThrow({ where: { id: fromId } });
+  await prisma.goal.update({
+    where: { id: toId },
+    data: { targets: source.targets ?? undefined },
+  });
+  revalidatePath(`/goals/${toId}`);
+  revalidatePath("/stats");
 }
 
 export async function updateGoal(id: string, form: FormData) {
@@ -92,14 +106,6 @@ export async function deleteGoal(id: string) {
   redirect("/goals");
 }
 
-export async function resetGoalToMtElbertDefaults(id: string) {
-  await prisma.goal.update({
-    where: { id },
-    data: { targets: MT_ELBERT_DEFAULT_TARGETS },
-  });
-  revalidatePath(`/goals/${id}`);
-  revalidatePath("/stats");
-}
 
 export async function addGoalReference(id: string, form: FormData) {
   const kind = (form.get("kind") as string | null) === "doc" ? "doc" : "url";

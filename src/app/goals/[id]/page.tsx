@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
-import { GoalEditForm } from "@/components/GoalEditForm";
+import { GoalEditForm, type CopySource } from "@/components/GoalEditForm";
 import { GoalReferences } from "@/components/GoalReferences";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { prisma } from "@/lib/db";
@@ -23,6 +23,19 @@ export default async function GoalDetail({
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
   const readiness = targets.length > 0 ? await computeReadiness(targets) : null;
+
+  const otherGoals = await prisma.goal.findMany({
+    where: { id: { not: id } },
+    orderBy: { updatedAt: "desc" },
+  });
+  const copySources: CopySource[] = otherGoals
+    .filter((g) => Array.isArray(g.targets) && (g.targets as unknown[]).length > 0)
+    .map((g) => ({
+      id: g.id,
+      objective: g.objective,
+      targetDate: g.targetDate.toISOString(),
+      targetCount: (g.targets as unknown[]).length,
+    }));
 
   const days = Math.ceil(
     (new Date(goal.targetDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
@@ -68,6 +81,7 @@ export default async function GoalDetail({
       <Card title="Edit">
         <GoalEditForm
           id={goal.id}
+          copySources={copySources}
           defaultValues={{
             objective: goal.objective,
             targetDate: new Date(goal.targetDate).toISOString().slice(0, 10),

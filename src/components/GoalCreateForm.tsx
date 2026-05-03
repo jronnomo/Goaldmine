@@ -2,12 +2,20 @@
 
 import { useState, useTransition } from "react";
 import { createGoal } from "@/lib/goal-actions";
-import { MT_ELBERT_DEFAULT_TARGETS } from "@/lib/goal-targets";
 
-export function GoalCreateForm() {
+export type CopySource = {
+  id: string;
+  objective: string;
+  targetDate: string;
+  targetCount: number;
+};
+
+export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [useDefaults, setUseDefaults] = useState(true);
+  const [copyFromGoalId, setCopyFromGoalId] = useState<string>(
+    copySources[0]?.id ?? "",
+  );
 
   return (
     <form
@@ -17,7 +25,6 @@ export function GoalCreateForm() {
           try {
             await createGoal(fd);
           } catch (e) {
-            // redirect() throws NEXT_REDIRECT — let it propagate.
             if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
             setError(e instanceof Error ? e.message : String(e));
           }
@@ -31,7 +38,7 @@ export function GoalCreateForm() {
           name="objective"
           required
           maxLength={200}
-          placeholder="Summit Mt. Elbert via Black Cloud Trail"
+          placeholder="Summit Quandary Peak"
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
       </label>
@@ -56,22 +63,32 @@ export function GoalCreateForm() {
         />
       </label>
 
-      <label className="flex items-start gap-2 text-sm cursor-pointer">
-        <input
-          type="checkbox"
-          name="useDefaults"
-          checked={useDefaults}
-          onChange={(e) => setUseDefaults(e.target.checked)}
-          className="mt-0.5"
-        />
-        <span>
-          Use Mt. Elbert default readiness targets
-          <span className="block text-xs text-[var(--muted)]">
-            {MT_ELBERT_DEFAULT_TARGETS.length} weighted targets covering aerobic base, leg endurance,
-            mobility, leg strength, hike volume, and body weight. You can edit these on the goal detail page later.
+      {copySources.length > 0 ? (
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Use previous readiness targets</span>
+          <select
+            name="copyFromGoalId"
+            value={copyFromGoalId}
+            onChange={(e) => setCopyFromGoalId(e.target.value)}
+            className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
+          >
+            <option value="">— Start with no targets —</option>
+            {copySources.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.objective} ({g.targetCount} target{g.targetCount === 1 ? "" : "s"}, due{" "}
+                {new Date(g.targetDate).toLocaleDateString()})
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-[var(--muted)]">
+            Copies the targets array verbatim. You can edit weights, swap metrics, and adjust rationale on the new goal&apos;s detail page.
           </span>
-        </span>
-      </label>
+        </label>
+      ) : (
+        <p className="text-xs text-[var(--muted)] border border-dashed border-[var(--border)] rounded-lg px-3 py-2">
+          No previous goals yet — this one will start with no targets. Add metrics on the detail page after creating it, or attach references and let Claude propose targets via the MCP tools.
+        </p>
+      )}
 
       {error && (
         <p className="text-sm text-red-500 border border-red-500/30 bg-red-500/10 rounded-lg px-3 py-2">

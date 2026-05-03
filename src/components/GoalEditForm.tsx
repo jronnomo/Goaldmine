@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteGoal, resetGoalToMtElbertDefaults, updateGoal } from "@/lib/goal-actions";
+import { copyTargetsFromGoal, deleteGoal, updateGoal } from "@/lib/goal-actions";
 
 type Defaults = {
   objective: string;
@@ -11,9 +11,25 @@ type Defaults = {
   targets: string;
 };
 
-export function GoalEditForm({ id, defaultValues }: { id: string; defaultValues: Defaults }) {
+export type CopySource = {
+  id: string;
+  objective: string;
+  targetDate: string;
+  targetCount: number;
+};
+
+export function GoalEditForm({
+  id,
+  defaultValues,
+  copySources,
+}: {
+  id: string;
+  defaultValues: Defaults;
+  copySources: CopySource[];
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [copyFromGoalId, setCopyFromGoalId] = useState<string>("");
 
   return (
     <form
@@ -74,35 +90,55 @@ export function GoalEditForm({ id, defaultValues }: { id: string; defaultValues:
         />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium flex items-center justify-between">
-          Targets (JSON)
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (
-                !confirm(
-                  "Replace the current targets with the research-grounded Mt. Elbert defaults? Any custom edits will be lost.",
-                )
-              ) {
-                return;
-              }
-              startTransition(async () => {
-                try {
-                  await resetGoalToMtElbertDefaults(id);
-                  // The page will revalidate; refresh to pull updated defaults into the textarea.
-                  window.location.reload();
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
+      {copySources.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] p-3 space-y-2">
+          <p className="text-sm font-medium">Use previous readiness targets</p>
+          <p className="text-xs text-[var(--muted)]">
+            Copy targets from another goal. Replaces this goal&apos;s targets — your unsaved JSON edits below will be lost. You can adjust afterward.
+          </p>
+          <div className="flex gap-2">
+            <select
+              value={copyFromGoalId}
+              onChange={(e) => setCopyFromGoalId(e.target.value)}
+              className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-1.5 text-sm"
+            >
+              <option value="">— Pick a goal —</option>
+              {copySources.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.objective} ({g.targetCount} target{g.targetCount === 1 ? "" : "s"})
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={pending || !copyFromGoalId}
+              onClick={() => {
+                if (
+                  !confirm(
+                    "Replace this goal's targets with the selected goal's targets? Unsaved edits below will be lost.",
+                  )
+                ) {
+                  return;
                 }
-              });
-            }}
-            className="text-xs text-[var(--accent)] font-normal underline-offset-2 hover:underline"
-          >
-            Apply Mt. Elbert defaults
-          </button>
-        </span>
+                startTransition(async () => {
+                  try {
+                    await copyTargetsFromGoal(id, copyFromGoalId);
+                    window.location.reload();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  }
+                });
+              }}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition disabled:opacity-50"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Targets (JSON)</span>
         <textarea
           name="targets"
           rows={10}

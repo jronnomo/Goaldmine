@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
-import { GoalCreateForm } from "@/components/GoalCreateForm";
+import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -9,6 +9,15 @@ export default async function GoalsPage() {
   const goals = await prisma.goal.findMany({
     orderBy: [{ active: "desc" }, { targetDate: "asc" }],
   });
+
+  const copySources: CopySource[] = goals
+    .filter((g) => Array.isArray(g.targets) && (g.targets as unknown[]).length > 0)
+    .map((g) => ({
+      id: g.id,
+      objective: g.objective,
+      targetDate: g.targetDate.toISOString(),
+      targetCount: (g.targets as unknown[]).length,
+    }));
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -20,7 +29,7 @@ export default async function GoalsPage() {
       </header>
 
       <Card title="New goal">
-        <GoalCreateForm />
+        <GoalCreateForm copySources={copySources} />
       </Card>
 
       <Card title="All goals">
