@@ -18,6 +18,20 @@ export type TodayContext = {
 };
 
 export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
+  // Prefer the most recently updated active Plan (goal-scoped, includes
+  // any revisions). Fall back to the global seeded Program for new users.
+  const plan = await prisma.plan.findFirst({
+    where: { active: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (plan) {
+    return {
+      id: plan.id,
+      name: plan.name,
+      startedOn: plan.startedOn,
+      template: plan.planJson as unknown as ProgramTemplate,
+    };
+  }
   const program = await prisma.program.findFirst({
     where: { active: true },
     orderBy: { createdAt: "desc" },

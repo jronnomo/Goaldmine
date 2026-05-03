@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { GoalEditForm, type CopySource } from "@/components/GoalEditForm";
 import { GoalReferences } from "@/components/GoalReferences";
+import { PendingNotes, type PendingNote } from "@/components/PendingNotes";
+import { PlanChangelog, type ChangelogEntry } from "@/components/PlanChangelog";
 import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { prisma } from "@/lib/db";
@@ -21,10 +23,58 @@ export default async function GoalDetail({
   const { id } = await params;
   const goal = await prisma.goal.findUnique({
     where: { id },
-    include: { plans: { where: { active: true }, orderBy: { createdAt: "desc" }, take: 1 } },
+    include: {
+      plans: {
+        where: { active: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        include: {
+          revisions: {
+            orderBy: { createdAt: "desc" },
+            include: { triggerNote: true },
+          },
+        },
+      },
+    },
   });
   if (!goal) notFound();
   const activePlan = goal.plans[0];
+
+  // Pending notes = notes since the last revision (or since plan start if no revisions).
+  let pendingNotes: PendingNote[] = [];
+  if (activePlan) {
+    const lastRevisionAt =
+      activePlan.revisions[0]?.createdAt ?? activePlan.startedOn;
+    const notes = await prisma.note.findMany({
+      where: { date: { gt: lastRevisionAt } },
+      orderBy: { date: "desc" },
+      take: 25,
+    });
+    pendingNotes = notes.map((n) => ({
+      id: n.id,
+      date: n.date,
+      body: n.body,
+      type: n.type,
+    }));
+  }
+
+  const changelog: ChangelogEntry[] = activePlan
+    ? activePlan.revisions.map((r) => ({
+        id: r.id,
+        createdAt: r.createdAt,
+        triggerSource: r.triggerSource,
+        summary: r.summary,
+        reasoning: r.reasoning,
+        triggerNote: r.triggerNote
+          ? {
+              id: r.triggerNote.id,
+              body: r.triggerNote.body,
+              type: r.triggerNote.type,
+              date: r.triggerNote.date,
+            }
+          : null,
+      }))
+    : [];
 
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
@@ -75,7 +125,14 @@ export default async function GoalDetail({
       )}
 
       {activePlan && (
-        <Card title="Plan">
+        <Card
+          title="Plan"
+          action={
+            <Link href={`/goals/${goal.id}/revise`} className="text-sm text-[var(--accent)]">
+              Revise →
+            </Link>
+          }
+        >
           <PlanOverview
             plan={{
               id: activePlan.id,
@@ -86,6 +143,20 @@ export default async function GoalDetail({
               template: activePlan.planJson as unknown as ProgramTemplate,
             }}
           />
+        </Card>
+      )}
+
+      {activePlan && (
+        <Card
+          title={`Pending notes${pendingNotes.length > 0 ? ` (${pendingNotes.length})` : ""}`}
+        >
+          <PendingNotes notes={pendingNotes} goalId={goal.id} />
+        </Card>
+      )}
+
+      {activePlan && (
+        <Card title={`Changelog${changelog.length > 0 ? ` (${changelog.length})` : ""}`}>
+          <PlanChangelog entries={changelog} goalId={goal.id} />
         </Card>
       )}
 

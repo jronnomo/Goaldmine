@@ -89,6 +89,8 @@ model Note {
   type      String   @default("journal") // audible | journal | feedback
   createdAt DateTime @default(now())
 
+  triggeredRevisions PlanRevision[]
+
   @@index([date])
   @@index([type])
 }
@@ -152,13 +154,36 @@ model Plan {
   weeks     Int
   active    Boolean  @default(true)
   // Full plan template: phases, weeklySplit, nutrition, mobility, baselineWeek.
-  // Initially scaffolded from program-template; refined later via UI or MCP.
+  // Always reflects the latest applied PlanRevision.
   planJson  Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  revisions PlanRevision[]
+
   @@index([goalId])
   @@index([active])
+}
+
+// Captures every change to a Plan's structure with its trigger and reasoning.
+// snapshotJson is the *full* plan state after this revision — viewing an old
+// version is just reading that field directly. Cascading edits (e.g. shifting
+// subsequent weeks after inserting a deload) live inside snapshotJson; the app
+// does not compute cascades itself.
+model PlanRevision {
+  id            String   @id @default(cuid())
+  planId        String
+  plan          Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  triggerNoteId String?
+  triggerNote   Note?    @relation(fields: [triggerNoteId], references: [id], onDelete: SetNull)
+  triggerSource String   @default("manual") // note | claude | manual
+  summary       String
+  reasoning     String?
+  snapshotJson  Json
+  createdAt     DateTime @default(now())
+
+  @@index([planId, createdAt])
+  @@index([triggerNoteId])
 }
 
 model Program {
