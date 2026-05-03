@@ -308,6 +308,22 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
   return r.baselinesDue;
 }
 
+/** Pending notes since the last revision on the active goal's plan, plus a link target. */
+export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null; since: Date | null }> {
+  const plan = await prisma.plan.findFirst({
+    where: { active: true },
+    orderBy: { updatedAt: "desc" },
+    include: {
+      goal: { select: { id: true } },
+      revisions: { orderBy: { createdAt: "desc" }, take: 1 },
+    },
+  });
+  if (!plan) return { count: 0, goalId: null, planId: null, since: null };
+  const since = plan.revisions[0]?.createdAt ?? plan.startedOn;
+  const count = await prisma.note.count({ where: { date: { gt: since } } });
+  return { count, goalId: plan.goal.id, planId: plan.id, since };
+}
+
 // --- Date utilities ---
 
 export function dateKey(d: Date): string {

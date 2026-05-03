@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/Card";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
-import { getBaselinesDueToday } from "@/lib/calendar";
+import { getBaselinesDueToday, getPendingNotesCount } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -25,7 +25,7 @@ export default async function HomePage() {
 
   const ctx = getTodayContext(program);
 
-  const [latestMeasurement, latestNotes, recentWorkouts, baselinesDue] = await Promise.all([
+  const [latestMeasurement, latestNotes, recentWorkouts, baselinesDue, pending] = await Promise.all([
     prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
     prisma.note.findMany({ orderBy: { date: "desc" }, take: 3 }),
     prisma.workout.findMany({
@@ -34,6 +34,7 @@ export default async function HomePage() {
       include: { exercises: { include: { sets: true } } },
     }),
     getBaselinesDueToday(),
+    getPendingNotesCount(),
   ]);
 
   const dayLabel = new Intl.DateTimeFormat("en-US", {
@@ -61,6 +62,28 @@ export default async function HomePage() {
           {dayLabel} · {ctx.day.summary}
         </p>
       </header>
+
+      {pending.count > 0 && pending.goalId && (
+        <Card title={`${pending.count} pending note${pending.count === 1 ? "" : "s"} since last revision`}>
+          <p className="text-sm text-[var(--muted)] mb-2">
+            Ask Claude to review them and propose plan updates.
+          </p>
+          <div className="flex gap-2 flex-wrap">
+            <Link
+              href={`/goals/${pending.goalId}`}
+              className="text-xs rounded-full border border-[var(--border)] px-3 py-1"
+            >
+              View on goal →
+            </Link>
+            <Link
+              href="/coach"
+              className="text-xs rounded-full border border-[var(--accent)] text-[var(--accent)] px-3 py-1"
+            >
+              Coach prompts →
+            </Link>
+          </div>
+        </Card>
+      )}
 
       {baselinesDue.length > 0 && (
         <Card title={`Baseline tests due today (${baselinesDue.length})`}>

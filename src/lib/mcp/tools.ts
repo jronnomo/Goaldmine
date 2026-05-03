@@ -196,6 +196,37 @@ function registerReadTools(server: McpServer) {
   );
 
   server.registerTool(
+    "get_pending_notes",
+    {
+      title: "Notes since the last plan revision",
+      description:
+        "Notes (audibles/journals/feedback) the user has logged since the most recent revision was applied to their active plan. The natural input set for a 'review my notes' coaching turn.",
+    },
+    async () =>
+      safe(async () => {
+        const plan = await prisma.plan.findFirst({
+          where: { active: true },
+          orderBy: { updatedAt: "desc" },
+          include: {
+            revisions: { orderBy: { createdAt: "desc" }, take: 1 },
+          },
+        });
+        if (!plan) return { plan: null, since: null, notes: [] };
+        const since = plan.revisions[0]?.createdAt ?? plan.startedOn;
+        const notes = await prisma.note.findMany({
+          where: { date: { gt: since } },
+          orderBy: { date: "desc" },
+        });
+        return {
+          planId: plan.id,
+          since,
+          notes,
+          count: notes.length,
+        };
+      }),
+  );
+
+  server.registerTool(
     "weekly_summary_data",
     {
       title: "Weekly summary data",
