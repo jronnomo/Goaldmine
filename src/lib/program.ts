@@ -12,9 +12,9 @@ export type TodayContext = {
   program: ActiveProgramSnapshot;
   daysSinceStart: number;
   weekIndex: number; // 1-based, capped at totalWeeks
-  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7; // 1 = Monday
-  phase: Phase;
-  day: DayTemplate;
+  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  phase: Phase | null;
+  day: DayTemplate | null;
 };
 
 export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
@@ -66,13 +66,20 @@ export function getTodayContext(
   // (1..7), NOT a calendar weekday.
   const dayOfWeek = ((daysSinceStart % 7) + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-  const phase =
-    program.template.phases.find((p) => p.weeks.includes(weekIndex)) ??
-    program.template.phases[0]!;
+  // Defensive: a malformed snapshot (e.g., a stringified template that
+  // accidentally got persisted as a character-indexed object) shouldn't take
+  // the page down. Treat phases / weeklySplit as optional.
+  const phasesArr = Array.isArray(program.template?.phases) ? program.template.phases : [];
+  const weeklySplitArr = Array.isArray(program.template?.weeklySplit)
+    ? program.template.weeklySplit
+    : [];
 
-  const day =
-    program.template.weeklySplit.find((d) => d.dayOfWeek === dayOfWeek) ??
-    program.template.weeklySplit[0]!;
+  const phase =
+    phasesArr.find((p) => Array.isArray(p?.weeks) && p.weeks.includes(weekIndex)) ??
+    phasesArr[0] ??
+    null;
+
+  const day = weeklySplitArr.find((d) => d?.dayOfWeek === dayOfWeek) ?? weeklySplitArr[0] ?? null;
 
   return { program, daysSinceStart, weekIndex, dayOfWeek, phase, day };
 }

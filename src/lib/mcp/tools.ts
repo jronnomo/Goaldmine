@@ -13,6 +13,7 @@ import {
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { getActiveProgram } from "@/lib/program";
+import { assertValidProgramTemplate } from "@/lib/program-validation";
 import {
   getBaselineHistory,
   getBaselineSchedule,
@@ -593,6 +594,20 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
+        // Auto-recover then validate structural shape.
+        let snapshot: unknown = input.snapshotJson;
+        if (typeof snapshot === "string") {
+          try {
+            snapshot = JSON.parse(snapshot);
+          } catch {
+            throw new Error(
+              "snapshotJson was passed as a string but isn't valid JSON. Pass the ProgramTemplate as a plain object.",
+            );
+          }
+        }
+        assertValidProgramTemplate(snapshot);
+
         const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
         const rev = await prisma.$transaction(async (tx) => {
           const r = await tx.planRevision.create({
@@ -602,12 +617,12 @@ function registerWriteTools(server: McpServer) {
               triggerSource: input.triggerSource,
               summary: input.summary,
               reasoning: input.reasoning,
-              snapshotJson: input.snapshotJson as Prisma.InputJsonValue,
+              snapshotJson: snapshot as Prisma.InputJsonValue,
             },
           });
           await tx.plan.update({
             where: { id: plan.id },
-            data: { planJson: input.snapshotJson as Prisma.InputJsonValue },
+            data: { planJson: snapshot as Prisma.InputJsonValue },
           });
           return r;
         });

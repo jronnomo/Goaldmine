@@ -48,7 +48,8 @@ export default async function HomePage() {
       <header className="space-y-1 pt-2">
         <div className="flex items-start justify-between gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Week {ctx.weekIndex} · Phase {ctx.phase.index} · {ctx.phase.name}
+            Week {ctx.weekIndex}
+            {ctx.phase ? ` · Phase ${ctx.phase.index} · ${ctx.phase.name}` : ""}
           </p>
           <Link
             href="/import"
@@ -57,9 +58,12 @@ export default async function HomePage() {
             + Import
           </Link>
         </div>
-        <h1 className="text-2xl font-semibold tracking-tight">{ctx.day.title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {ctx.day?.title ?? "No workout for today"}
+        </h1>
         <p className="text-sm text-[var(--muted)]">
-          {dayLabel} · {ctx.day.summary}
+          {dayLabel}
+          {ctx.day?.summary ? ` · ${ctx.day.summary}` : " · plan snapshot is malformed; restore from /goals/<id>/revisions or contact your coach"}
         </p>
       </header>
 
@@ -112,7 +116,7 @@ export default async function HomePage() {
         </Card>
       )}
 
-      {ctx.day.blocks.map((block, i) => (
+      {ctx.day?.blocks?.map((block, i) => (
         <BlockCard key={i} block={block} index={i} />
       ))}
 
