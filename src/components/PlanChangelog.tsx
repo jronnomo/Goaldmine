@@ -30,7 +30,9 @@ export function PlanChangelog({ entries, goalId }: { entries: ChangelogEntry[]; 
           className="rounded-lg border border-[var(--border)] p-3 text-sm space-y-1"
         >
           <div className="flex items-baseline justify-between gap-2">
-            <p className="font-medium">{e.summary}</p>
+            <Link href={`/goals/${goalId}/revisions/${e.id}`} className="font-medium hover:text-[var(--accent)]">
+              {e.summary}
+            </Link>
             <span
               className={`shrink-0 text-xs rounded-full px-2 py-0.5 border ${badgeClass(e.triggerSource)}`}
             >
@@ -56,6 +58,12 @@ export function PlanChangelog({ entries, goalId }: { entries: ChangelogEntry[]; 
               </p>
             </details>
           )}
+          <Link
+            href={`/goals/${goalId}/revisions/${e.id}`}
+            className="text-xs text-[var(--accent)] inline-block mt-1"
+          >
+            View before / after →
+          </Link>
         </li>
       ))}
     </ul>

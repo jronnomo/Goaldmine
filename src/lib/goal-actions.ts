@@ -66,6 +66,16 @@ export async function createGoal(form: FormData) {
           weeks,
           active: true,
           planJson: planTemplate as unknown as object,
+          // Seed an initial revision so future revisions have a clean
+          // predecessor to compare against.
+          revisions: {
+            create: {
+              triggerSource: "manual",
+              summary: "Initial plan from program template",
+              reasoning: `Scaffolded from the program template, scaled to ${weeks} weeks across ${planTemplate.phases.length} phases.`,
+              snapshotJson: planTemplate as unknown as object,
+            },
+          },
         },
       },
     },
