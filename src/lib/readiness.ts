@@ -29,14 +29,22 @@ export type ReadinessSeriesPoint = {
 
 export function progressFor(target: GoalTarget, current: number | null, start: number | null): number | null {
   if (current === null) return null;
+
   // Build-from-zero metrics: progress = current / target, no start needed.
   if (target.metric.startsWith("hike:") || target.metric === "workout:count") {
     if (target.target === 0) return null;
     return clamp01(current / target.target);
   }
-  // Comparative metrics: need a start to measure motion.
+
+  // Already met? Doesn't matter where we started — if the absolute value is
+  // past the target, full progress. Handles the degenerate case where the
+  // target is set below the user's day-1 baseline.
+  if (target.direction === "increase" && current >= target.target) return 1;
+  if (target.direction === "decrease" && current <= target.target) return 1;
+
+  // Comparative metrics: need a start to measure partial motion.
   if (start === null) return null;
-  if (start === target.target) return current === target.target ? 1 : 0;
+  if (start === target.target) return 0;
   if (target.direction === "decrease") {
     return clamp01((start - current) / (start - target.target));
   }
