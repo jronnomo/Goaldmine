@@ -90,13 +90,26 @@ export default async function HomePage() {
         </Card>
       )}
 
-      {baselinesDue.length > 0 && (
-        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+      {baselinesDue.length > 0 ? (
+        <>
+          <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+          <Card title="2. Test day — keep it light">
+            <p className="text-sm text-[var(--muted)]">
+              The regular {ctx.day?.title ? <em>{ctx.day.title}</em> : "workout"} blocks are
+              <strong className="text-foreground"> deferred</strong> on baseline days. Heavy
+              strength right after max-effort tests confounds the data and stacks too much
+              same-pattern volume.
+            </p>
+            <ul className="mt-2 text-sm text-[var(--muted)] list-disc list-inside space-y-1">
+              <li>Optional 20–30 min easy Zone 2 (bike or jog) for circulation</li>
+              <li>Daily mobility routine — 10–15 min</li>
+              <li>Eat well, hydrate, sleep early</li>
+            </ul>
+          </Card>
+        </>
+      ) : (
+        ctx.day?.blocks?.map((block, i) => <BlockCard key={i} block={block} index={i} />)
       )}
-
-      {ctx.day?.blocks?.map((block, i) => (
-        <BlockCard key={i} block={block} index={baselinesDue.length > 0 ? i + 1 : i} />
-      ))}
 
       <Card title="Log weight">
         <p className="text-xs text-[var(--muted)] mb-2">
