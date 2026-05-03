@@ -2,15 +2,16 @@ import type { TargetProgress } from "@/lib/readiness";
 
 export function ReadinessBreakdown({ breakdown }: { breakdown: TargetProgress[] }) {
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-3">
       {breakdown.map((b) => {
         const pct = b.progress === null ? null : Math.round(b.progress * 100);
         return (
           <li key={b.target.metric}>
-            <div className="flex justify-between text-sm mb-1">
+            <div className="flex justify-between text-sm mb-1 gap-2">
               <span className="font-medium truncate pr-2">{b.target.label}</span>
               <span className="text-[var(--muted)] tabular-nums shrink-0">
-                {pct === null ? "—" : `${pct}%`}
+                {pct === null ? "—" : `${pct}%`}{" "}
+                <span className="text-xs">· w{Math.round(b.target.weight * 100)}</span>
               </span>
             </div>
             <div className="h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
@@ -26,8 +27,12 @@ export function ReadinessBreakdown({ breakdown }: { breakdown: TargetProgress[] 
               {b.start !== null && b.start !== undefined && b.start !== b.target.target && (
                 <span> · started {formatVal(b.start)}</span>
               )}
-              <span className="ml-1">· weight {Math.round(b.target.weight * 100)}%</span>
             </p>
+            {b.target.rationale && (
+              <p className="text-xs text-[var(--muted)] mt-1 italic border-l-2 border-[var(--border)] pl-2">
+                {b.target.rationale}
+              </p>
+            )}
           </li>
         );
       })}

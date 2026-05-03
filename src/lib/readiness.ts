@@ -29,7 +29,7 @@ export type ReadinessSeriesPoint = {
 
 export function progressFor(target: GoalTarget, current: number | null, start: number | null): number | null {
   if (current === null) return null;
-  // Cumulative metrics: progress = current / target, no start needed.
+  // Build-from-zero metrics: progress = current / target, no start needed.
   if (target.metric.startsWith("hike:") || target.metric === "workout:count") {
     if (target.target === 0) return null;
     return clamp01(current / target.target);

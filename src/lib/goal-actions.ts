@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
@@ -7,6 +8,15 @@ import {
   MT_ELBERT_DEFAULT_TARGETS,
   type GoalTarget,
 } from "@/lib/goal-targets";
+
+export type GoalReference = {
+  id: string;
+  kind: "url" | "doc";
+  value: string;
+  label?: string;
+  addedAt: string;
+  claudeSummary?: string;
+};
 
 function parseTargetsField(raw: FormDataEntryValue | null): GoalTarget[] | null {
   if (!raw) return null;
@@ -80,4 +90,48 @@ export async function deleteGoal(id: string) {
   revalidatePath("/goals");
   revalidatePath("/stats");
   redirect("/goals");
+}
+
+export async function resetGoalToMtElbertDefaults(id: string) {
+  await prisma.goal.update({
+    where: { id },
+    data: { targets: MT_ELBERT_DEFAULT_TARGETS },
+  });
+  revalidatePath(`/goals/${id}`);
+  revalidatePath("/stats");
+}
+
+export async function addGoalReference(id: string, form: FormData) {
+  const kind = (form.get("kind") as string | null) === "doc" ? "doc" : "url";
+  const value = String(form.get("value") ?? "").trim();
+  const label = (form.get("label") as string | null)?.trim() || undefined;
+
+  if (!value) throw new Error("Reference value is required");
+  if (kind === "url" && !/^https?:\/\//i.test(value)) {
+    throw new Error("URLs must start with http:// or https://");
+  }
+
+  const goal = await prisma.goal.findUniqueOrThrow({ where: { id } });
+  const refs = (goal.references as unknown as GoalReference[] | null) ?? [];
+  const next: GoalReference[] = [
+    ...refs,
+    {
+      id: randomUUID(),
+      kind,
+      value,
+      label,
+      addedAt: new Date().toISOString(),
+    },
+  ];
+
+  await prisma.goal.update({ where: { id }, data: { references: next } });
+  revalidatePath(`/goals/${id}`);
+}
+
+export async function removeGoalReference(id: string, refId: string) {
+  const goal = await prisma.goal.findUniqueOrThrow({ where: { id } });
+  const refs = (goal.references as unknown as GoalReference[] | null) ?? [];
+  const next = refs.filter((r) => r.id !== refId);
+  await prisma.goal.update({ where: { id }, data: { references: next } });
+  revalidatePath(`/goals/${id}`);
 }

@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { GoalEditForm } from "@/components/GoalEditForm";
+import { GoalReferences } from "@/components/GoalReferences";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { prisma } from "@/lib/db";
+import type { GoalReference } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeReadiness } from "@/lib/readiness";
 
@@ -19,6 +21,7 @@ export default async function GoalDetail({
   if (!goal) notFound();
 
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
+  const references = (goal.references as unknown as GoalReference[] | null) ?? [];
   const readiness = targets.length > 0 ? await computeReadiness(targets) : null;
 
   const days = Math.ceil(
@@ -51,6 +54,10 @@ export default async function GoalDetail({
           <ReadinessBreakdown breakdown={readiness.breakdown} />
         </Card>
       )}
+
+      <Card title="References">
+        <GoalReferences goalId={goal.id} references={references} />
+      </Card>
 
       {goal.notes && (
         <Card title="Notes">

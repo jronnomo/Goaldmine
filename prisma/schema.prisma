@@ -101,10 +101,13 @@ model Hike {
   elevationFt  Int
   packWeightLb Float?
   durationMin  Int
+  status       String   @default("completed") // planned | completed | skipped
+  rpe          Float?   // 1-10 perceived exertion (post-hike)
   notes        String?
   createdAt    DateTime @default(now())
 
   @@index([date])
+  @@index([status])
 }
 
 model MobilityCheckin {
@@ -127,6 +130,9 @@ model Goal {
   active     Boolean  @default(true)
   // Optional readiness targets — array of { metric, label, target, start?, weight, units, direction }
   targets    Json?
+  // Optional references — array of { id, kind: 'url' | 'doc', value, label?, addedAt, claudeSummary? }
+  // The app stores these; Claude reads them via MCP and uses them to refine targets.
+  references Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

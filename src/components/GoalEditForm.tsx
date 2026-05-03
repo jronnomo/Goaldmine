@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteGoal, updateGoal } from "@/lib/goal-actions";
+import { deleteGoal, resetGoalToMtElbertDefaults, updateGoal } from "@/lib/goal-actions";
 
 type Defaults = {
   objective: string;
@@ -75,7 +75,34 @@ export function GoalEditForm({ id, defaultValues }: { id: string; defaultValues:
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Targets (JSON)</span>
+        <span className="text-sm font-medium flex items-center justify-between">
+          Targets (JSON)
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (
+                !confirm(
+                  "Replace the current targets with the research-grounded Mt. Elbert defaults? Any custom edits will be lost.",
+                )
+              ) {
+                return;
+              }
+              startTransition(async () => {
+                try {
+                  await resetGoalToMtElbertDefaults(id);
+                  // The page will revalidate; refresh to pull updated defaults into the textarea.
+                  window.location.reload();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                }
+              });
+            }}
+            className="text-xs text-[var(--accent)] font-normal underline-offset-2 hover:underline"
+          >
+            Apply Mt. Elbert defaults
+          </button>
+        </span>
         <textarea
           name="targets"
           rows={10}
@@ -83,7 +110,7 @@ export function GoalEditForm({ id, defaultValues }: { id: string; defaultValues:
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-xs font-mono resize-y"
         />
         <span className="text-xs text-[var(--muted)]">
-          Array of <code>{`{ metric, label, target, weight, units, direction }`}</code>. Weights should sum to ~1.
+          Array of <code>{`{ metric, label, target, weight, units, direction, rationale? }`}</code>. Weights should sum to ~1.
         </span>
       </label>
 
