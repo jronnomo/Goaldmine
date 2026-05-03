@@ -5,6 +5,8 @@ import { logBaseline } from "@/lib/workout-actions";
 
 type KnownTest = { name: string; units: string; protocol: string; dayOfWeek: number };
 
+const OTHER_LITERAL = "__other__";
+
 const OTHER = "__other__";
 
 export function LogBaselineForm({
@@ -62,6 +64,9 @@ export function LogBaselineForm({
           ))}
           <option value={OTHER}>Other (custom)…</option>
         </select>
+        {selectedTest && selected !== OTHER_LITERAL && (
+          <p className="text-xs text-[var(--muted)] italic mt-1">{selectedTest.protocol}</p>
+        )}
       </label>
 
       {selected === OTHER && (

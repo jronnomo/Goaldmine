@@ -177,7 +177,12 @@ export type ResolvedDay = {
   mobilityText: string | null;
   notes: string | null;
   workouts: { id: string; startedAt: Date; title: string | null; exerciseCount: number; status: string }[];
-  baselinesDue: { test: BaselineTest; baselineDay: BaselineDay; checkpoint: "initial" | "retest" }[];
+  baselinesDue: {
+    test: BaselineTest;
+    baselineDay: BaselineDay;
+    checkpoint: "initial" | "retest";
+    loggedOnDate: { id: string; value: number; units: string; date: Date } | null;
+  }[];
   notesAboutDate: { id: string; body: string; type: string; date: Date; targetDate: Date | null }[];
   goalObjective: string | null;
   override?: {
@@ -248,11 +253,32 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
       // Baselines due: any tests on this rotation day whose checkpoint week matches.
       const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
       if (baselineDay) {
+        // Pre-load any baselines logged on this date (single query) so each
+        // due-test row can show its checkmark + recorded value.
+        const testNames = baselineDay.tests.map((t) => t.testName);
+        const logged = testNames.length
+          ? await prisma.baseline.findMany({
+              where: {
+                testName: { in: testNames },
+                date: { gte: dayStart, lte: dayEnd },
+              },
+              orderBy: { date: "desc" },
+            })
+          : [];
+        const loggedByName = new Map<string, (typeof logged)[number]>();
+        for (const b of logged) {
+          if (!loggedByName.has(b.testName)) loggedByName.set(b.testName, b);
+        }
+
         for (const t of baselineDay.tests) {
+          const result = loggedByName.get(t.testName);
+          const loggedOnDate = result
+            ? { id: result.id, value: result.value, units: result.units, date: result.date }
+            : null;
           if (weekIndex === 1) {
-            baselinesDue.push({ test: t, baselineDay, checkpoint: "initial" });
+            baselinesDue.push({ test: t, baselineDay, checkpoint: "initial", loggedOnDate });
           } else if (t.retestWeeks?.includes(weekIndex)) {
-            baselinesDue.push({ test: t, baselineDay, checkpoint: "retest" });
+            baselinesDue.push({ test: t, baselineDay, checkpoint: "retest", loggedOnDate });
           }
         }
       }
