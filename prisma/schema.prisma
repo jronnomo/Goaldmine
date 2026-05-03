@@ -1,0 +1,133 @@
+// Workout Planner schema — see /Users/ggronnii/.claude/plans/research-and-vet-out-cached-sloth.md
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Workout {
+  id        String   @id @default(cuid())
+  title     String?
+  startedAt DateTime
+  phase     Int?
+  week      Int?
+  dayIndex  Int?
+  status    String   @default("completed") // planned | completed | skipped
+  source    String?  // manual | strong.app | claude | imported
+  sourceUrl String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  exercises WorkoutExercise[]
+
+  @@index([startedAt])
+}
+
+model WorkoutExercise {
+  id         String   @id @default(cuid())
+  workoutId  String
+  workout    Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  name       String
+  equipment  String?
+  orderIndex Int
+  notes      String?
+
+  sets Set[]
+
+  @@index([workoutId])
+}
+
+model Set {
+  id                String          @id @default(cuid())
+  workoutExerciseId String
+  workoutExercise   WorkoutExercise @relation(fields: [workoutExerciseId], references: [id], onDelete: Cascade)
+  setIndex          Int
+  reps              Int?
+  weightLb          Float?
+  durationSec       Int?
+  distanceMi        Float?
+  rpe               Float?
+  notes             String?
+
+  @@index([workoutExerciseId])
+}
+
+model Measurement {
+  id         String   @id @default(cuid())
+  date       DateTime
+  weightLb   Float?
+  restingHr  Int?
+  bodyFatPct Float?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  @@index([date])
+}
+
+model Baseline {
+  id               String    @id @default(cuid())
+  date             DateTime
+  testName         String
+  value            Float
+  units            String
+  notes            String?
+  retestTargetDate DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([testName, date])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  date      DateTime @default(now())
+  body      String
+  type      String   @default("journal") // audible | journal | feedback
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@index([type])
+}
+
+model Hike {
+  id           String   @id @default(cuid())
+  date         DateTime
+  route        String
+  distanceMi   Float
+  elevationFt  Int
+  packWeightLb Float?
+  durationMin  Int
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  @@index([date])
+}
+
+model MobilityCheckin {
+  id               String   @id @default(cuid())
+  date             DateTime
+  areasWorked      String   // comma-separated tags: ankles,hips,thoracic,etc.
+  deepSquatHoldSec Int?
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  @@index([date])
+}
+
+model Program {
+  id        String   @id @default(cuid())
+  name      String
+  startedOn DateTime
+  phase     Int      @default(1)
+  week      Int      @default(1)
+  day       Int      @default(1)
+  version   Int      @default(1)
+  active    Boolean  @default(true)
+  planJson  Json     // 12-week template: phases -> days -> exercises
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
