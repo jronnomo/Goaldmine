@@ -60,9 +60,11 @@ export function getTodayContext(
   );
   const weekIndex = Math.min(program.template.totalWeeks, Math.floor(daysSinceStart / 7) + 1);
 
-  // JS getDay(): Sunday=0..Saturday=6. Convert to Monday=1..Sunday=7.
-  const jsDay = today.getDay();
-  const dayOfWeek = (jsDay === 0 ? 7 : jsDay) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  // Plan-relative rotation. Day 1 of the program lands on plan.startedOn,
+  // regardless of which calendar weekday that is. After 7 days the rotation
+  // cycles. The template's `weeklySplit[].dayOfWeek` is the rotation index
+  // (1..7), NOT a calendar weekday.
+  const dayOfWeek = ((daysSinceStart % 7) + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
   const phase =
     program.template.phases.find((p) => p.weeks.includes(weekIndex)) ??

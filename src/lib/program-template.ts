@@ -20,7 +20,9 @@ export type Block = {
 };
 
 export type DayTemplate = {
-  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7; // 1 = Monday
+  // Day in the 7-day rotation. Day 1 lands on plan.startedOn — NOT a calendar
+  // weekday. The user might start on a Saturday; that Saturday is Day 1.
+  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   title: string;
   category:
     | "upper"

@@ -7,7 +7,9 @@ import type { Block, DayTemplate, ExercisePrescription, Phase, ProgramTemplate }
 
 export const dynamic = "force-dynamic";
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// Plan rotation is plan-relative — Day 1 lands on plan.startedOn regardless of
+// which calendar weekday that is. So labels are "Day N", not Mon/Tue/etc.
+const DAY_LABEL = (n: number) => `Day ${n}`;
 
 export default async function FullPlanPage({
   params,
@@ -173,7 +175,7 @@ export default async function FullPlanPage({
 function DayCard({ day }: { day: DayTemplate }) {
   return (
     <Card
-      title={`${DAY_NAMES[day.dayOfWeek - 1]} · ${day.title}`}
+      title={`${DAY_LABEL(day.dayOfWeek)} · ${day.title}`}
       action={
         <span className="text-xs text-[var(--muted)] uppercase tracking-wide">
           {day.category.replace("-", " ")}
