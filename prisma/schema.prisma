@@ -118,6 +118,22 @@ model MobilityCheckin {
   @@index([date])
 }
 
+model Goal {
+  id         String   @id @default(cuid())
+  objective  String
+  targetDate DateTime
+  notes      String?
+  status     String   @default("active") // active | achieved | abandoned
+  active     Boolean  @default(true)
+  // Optional readiness targets — array of { metric, label, target, start?, weight, units, direction }
+  targets    Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([active])
+  @@index([targetDate])
+}
+
 model Program {
   id        String   @id @default(cuid())
   name      String

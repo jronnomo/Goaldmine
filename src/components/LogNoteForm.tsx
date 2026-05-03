@@ -1,11 +1,37 @@
 "use client";
 
-import { useRef, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { logNote } from "@/lib/workout-actions";
+
+const NOTE_TYPES = [
+  {
+    value: "journal",
+    label: "Journal",
+    description:
+      "Default daily entry. How you felt, energy, sleep, stray thoughts. Stored in the Note table with type=journal — Claude reads recent journals when coaching.",
+  },
+  {
+    value: "audible",
+    label: "Audible",
+    description:
+      "A change to the plan. Swapped exercises, took an extra rest day, modified due to soreness/injury. Type=audible. Claude uses these to understand why the program may have drifted.",
+  },
+  {
+    value: "feedback",
+    label: "Feedback",
+    description:
+      "Coaching feedback — usually written by Claude after weekly reviews, or by you reflecting on a phase. Type=feedback. Surfaces in /history and weekly summaries.",
+  },
+] as const;
+
+type NoteType = (typeof NOTE_TYPES)[number]["value"];
 
 export function LogNoteForm() {
   const [pending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
+  const [type, setType] = useState<NoteType>("journal");
+
+  const active = NOTE_TYPES.find((t) => t.value === type)!;
 
   return (
     <form
@@ -14,6 +40,7 @@ export function LogNoteForm() {
         startTransition(async () => {
           await logNote(fd);
           formRef.current?.reset();
+          setType("journal");
         })
       }
       className="flex flex-col gap-2"
@@ -28,12 +55,15 @@ export function LogNoteForm() {
       <div className="flex gap-2 items-center">
         <select
           name="type"
-          defaultValue="journal"
+          value={type}
+          onChange={(e) => setType(e.target.value as NoteType)}
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
         >
-          <option value="journal">Journal</option>
-          <option value="audible">Audible</option>
-          <option value="feedback">Feedback</option>
+          {NOTE_TYPES.map((t) => (
+            <option key={t.value} value={t.value} title={t.description}>
+              {t.label}
+            </option>
+          ))}
         </select>
         <button
           type="submit"
@@ -43,6 +73,9 @@ export function LogNoteForm() {
           {pending ? "Saving…" : "Save note"}
         </button>
       </div>
+      <p className="text-xs text-[var(--muted)]">
+        <span className="font-medium text-foreground">{active.label}:</span> {active.description}
+      </p>
     </form>
   );
 }

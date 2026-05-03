@@ -33,7 +33,8 @@ export function LogMeasurementForm({ latestWeight }: { latestWeight: number | nu
       <input
         type="text"
         name="notes"
-        placeholder="optional note"
+        placeholder="context on this weigh-in (optional)"
+        title="Attached to this measurement only — e.g. 'morning, post-coffee, after a long hike'. Use “Log a note” below for free-form thoughts not tied to a weigh-in."
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
       />
       <button

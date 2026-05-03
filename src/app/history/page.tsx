@@ -20,8 +20,14 @@ export default async function HistoryPage() {
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
-      <header className="pt-2">
+      <header className="pt-2 flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">History</h1>
+        <Link
+          href="/import"
+          className="text-xs rounded-full border border-[var(--border)] px-2.5 py-1 text-[var(--muted)] hover:text-foreground"
+        >
+          + Import
+        </Link>
       </header>
 
       <Card title="Weight trend">

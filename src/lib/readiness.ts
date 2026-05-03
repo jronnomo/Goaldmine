@@ -1,0 +1,113 @@
+import { prisma } from "@/lib/db";
+import {
+  type GoalTarget,
+  resolveMetricStart,
+  resolveMetricValue,
+} from "@/lib/goal-targets";
+
+export type TargetProgress = {
+  target: GoalTarget;
+  current: number | null;
+  start: number | null;
+  /** 0..1 progress toward target. Null if no data. */
+  progress: number | null;
+};
+
+export type ReadinessSnapshot = {
+  /** 0..100 overall readiness. */
+  score: number;
+  /** Per-target breakdown. */
+  breakdown: TargetProgress[];
+  /** Targets with no data yet (excluded from overall score). */
+  missing: GoalTarget[];
+};
+
+export type ReadinessSeriesPoint = {
+  weekEnd: Date;
+  score: number;
+};
+
+export function progressFor(target: GoalTarget, current: number | null, start: number | null): number | null {
+  if (current === null) return null;
+  // Cumulative metrics: progress = current / target, no start needed.
+  if (target.metric.startsWith("hike:") || target.metric === "workout:count") {
+    if (target.target === 0) return null;
+    return clamp01(current / target.target);
+  }
+  // Comparative metrics: need a start to measure motion.
+  if (start === null) return null;
+  if (start === target.target) return current === target.target ? 1 : 0;
+  if (target.direction === "decrease") {
+    return clamp01((start - current) / (start - target.target));
+  }
+  return clamp01((current - start) / (target.target - start));
+}
+
+export async function computeReadiness(
+  targets: GoalTarget[],
+  asOf: Date = new Date(),
+): Promise<ReadinessSnapshot> {
+  const breakdown: TargetProgress[] = [];
+  const missing: GoalTarget[] = [];
+
+  for (const t of targets) {
+    const current = await resolveMetricValue(prisma, t.metric, asOf);
+    const start = t.start !== undefined && t.start !== null
+      ? t.start
+      : await resolveMetricStart(prisma, t.metric);
+    const progress = progressFor(t, current, start);
+
+    if (progress === null) {
+      missing.push(t);
+    }
+    breakdown.push({ target: t, current, start, progress });
+  }
+
+  const usable = breakdown.filter((b) => b.progress !== null);
+  if (usable.length === 0) return { score: 0, breakdown, missing };
+
+  const totalWeight = usable.reduce((acc, b) => acc + (b.target.weight ?? 0), 0);
+  if (totalWeight === 0) return { score: 0, breakdown, missing };
+
+  const weighted = usable.reduce((acc, b) => acc + (b.target.weight ?? 0) * (b.progress ?? 0), 0);
+  return { score: Math.round((weighted / totalWeight) * 100), breakdown, missing };
+}
+
+export async function computeReadinessSeries(
+  goalCreatedAt: Date,
+  targets: GoalTarget[],
+  now: Date = new Date(),
+): Promise<ReadinessSeriesPoint[]> {
+  const points: ReadinessSeriesPoint[] = [];
+  const start = startOfWeek(goalCreatedAt);
+  const cursor = new Date(start);
+  cursor.setDate(cursor.getDate() + 6); // first week-end (Sunday)
+  while (cursor <= now) {
+    const snap = await computeReadiness(targets, cursor);
+    points.push({ weekEnd: new Date(cursor), score: snap.score });
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  // Always include "today" as the latest point.
+  if (points.length === 0 || points.at(-1)!.weekEnd.getTime() < now.getTime() - 24 * 3600 * 1000) {
+    const snap = await computeReadiness(targets, now);
+    points.push({ weekEnd: new Date(now), score: snap.score });
+  }
+  return points;
+}
+
+function clamp01(n: number): number {
+  if (Number.isNaN(n)) return 0;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function startOfWeek(d: Date): Date {
+  const out = new Date(d);
+  const day = out.getDay(); // 0 Sun..6 Sat
+  // Treat Monday as start (1). If today is Sunday (0), step back 6.
+  const diff = day === 0 ? -6 : 1 - day;
+  out.setDate(out.getDate() + diff);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}

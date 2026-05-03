@@ -43,9 +43,17 @@ export default async function HomePage() {
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="space-y-1 pt-2">
-        <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-          Week {ctx.weekIndex} · Phase {ctx.phase.index} · {ctx.phase.name}
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+            Week {ctx.weekIndex} · Phase {ctx.phase.index} · {ctx.phase.name}
+          </p>
+          <Link
+            href="/import"
+            className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-foreground"
+          >
+            + Import
+          </Link>
+        </div>
         <h1 className="text-2xl font-semibold tracking-tight">{ctx.day.title}</h1>
         <p className="text-sm text-[var(--muted)]">
           {dayLabel} · {ctx.day.summary}
@@ -57,10 +65,16 @@ export default async function HomePage() {
       ))}
 
       <Card title="Log weight">
+        <p className="text-xs text-[var(--muted)] mb-2">
+          Body weight (and optional resting heart rate). The text field is for context attached to <em>this</em> weigh-in — e.g. &ldquo;post-hike,&rdquo; &ldquo;morning fasted.&rdquo;
+        </p>
         <LogMeasurementForm latestWeight={latestMeasurement?.weightLb ?? null} />
       </Card>
 
       <Card title="Log a note">
+        <p className="text-xs text-[var(--muted)] mb-2">
+          Free-form, not tied to a weigh-in. Type tags it for Claude (Journal / Audible / Feedback). All saved in the Note table.
+        </p>
         <LogNoteForm />
       </Card>
 
