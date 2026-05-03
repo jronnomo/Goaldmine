@@ -5,7 +5,16 @@ import { usePathname } from "next/navigation";
 
 const tabs = [
   { href: "/", label: "Today", match: (p: string) => p === "/" },
-  { href: "/history", label: "History", match: (p: string) => p.startsWith("/history") || p.startsWith("/workouts") || p.startsWith("/import") },
+  {
+    href: "/calendar",
+    label: "Calendar",
+    match: (p: string) =>
+      p.startsWith("/calendar") ||
+      p.startsWith("/days") ||
+      p.startsWith("/history") ||
+      p.startsWith("/workouts") ||
+      p.startsWith("/import"),
+  },
   { href: "/baselines", label: "Records", match: (p: string) => p.startsWith("/baselines") },
   { href: "/goals", label: "Goals", match: (p: string) => p.startsWith("/goals") },
   { href: "/stats", label: "Stats", match: (p: string) => p.startsWith("/stats") },
