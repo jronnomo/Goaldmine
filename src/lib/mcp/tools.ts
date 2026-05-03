@@ -714,6 +714,109 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "update_note",
+    {
+      title: "Update or resolve a note",
+      description:
+        "Edit a note's body / type / targetDate. Useful for marking a pending audible 'resolved' (rewrite the body) or fixing a typo without losing the note id.",
+      inputSchema: {
+        id: z.string(),
+        body: z.string().optional(),
+        type: NoteTypeShape.optional(),
+        targetDate: DateKeyShape.nullable().optional().describe(
+          "Pass an ISO date to retarget; pass null to clear; omit to leave unchanged",
+        ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Record<string, unknown> = {};
+        if (input.body !== undefined) data.body = input.body;
+        if (input.type !== undefined) data.type = input.type;
+        if (input.targetDate !== undefined) {
+          data.targetDate = input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null;
+        }
+        const updated = await prisma.note.update({
+          where: { id: input.id },
+          data,
+        });
+        return { id: updated.id, message: "Note updated" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_note",
+    {
+      title: "Delete a note",
+      description:
+        "Remove a Note row by id. PlanRevision.triggerNoteId references are set to null (the audit entry stays but loses the link).",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.note.delete({ where: { id } });
+        return { id, message: "Note deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_measurement",
+    {
+      title: "Delete a measurement",
+      description: "Remove a body weight / HR / body-fat row by id.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.measurement.delete({ where: { id } });
+        return { id, message: "Measurement deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_baseline",
+    {
+      title: "Delete a baseline result",
+      description: "Remove a baseline test result by id.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.baseline.delete({ where: { id } });
+        return { id, message: "Baseline deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_hike",
+    {
+      title: "Delete a hike",
+      description: "Remove a hike row by id.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.hike.delete({ where: { id } });
+        return { id, message: "Hike deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_workout",
+    {
+      title: "Delete a workout",
+      description:
+        "Remove a Workout row by id. Cascade-deletes its exercises and sets. Use carefully.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.workout.delete({ where: { id } });
+        return { id, message: "Workout deleted" };
+      }),
+  );
+
+  server.registerTool(
     "add_goal_reference",
     {
       title: "Attach a reference to a goal",
