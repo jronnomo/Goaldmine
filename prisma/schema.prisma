@@ -136,8 +136,29 @@ model Goal {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  plans Plan[]
+
   @@index([active])
   @@index([targetDate])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  name      String
+  startedOn DateTime
+  endsOn    DateTime
+  weeks     Int
+  active    Boolean  @default(true)
+  // Full plan template: phases, weeklySplit, nutrition, mobility, baselineWeek.
+  // Initially scaffolded from program-template; refined later via UI or MCP.
+  planJson  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([goalId])
+  @@index([active])
 }
 
 model Program {

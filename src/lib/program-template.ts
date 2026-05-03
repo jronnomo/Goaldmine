@@ -34,12 +34,28 @@ export type DayTemplate = {
   blocks: Block[];
 };
 
+export type NutritionGuidance = {
+  calorieGuidance: string;
+  proteinTargetG: { low: number; high: number };
+  hydration: string;
+  habits: string[];
+  notes?: string;
+};
+
+export type MobilityFocus = {
+  emphasis: string[];
+  dailyMin: number;
+  notes?: string;
+};
+
 export type Phase = {
   index: 1 | 2 | 3;
   name: string;
   weeks: number[]; // 1-12
   goal: string;
   emphasis: string;
+  nutrition: NutritionGuidance;
+  mobility: MobilityFocus;
 };
 
 export type BaselineTest = {
@@ -55,6 +71,12 @@ export type BaselineDay = {
   tests: BaselineTest[];
 };
 
+export type DailyMobilityRoutine = {
+  durationMin: number;
+  exercises: ExercisePrescription[];
+  notes?: string;
+};
+
 export type ProgramTemplate = {
   name: string;
   totalWeeks: number;
@@ -62,6 +84,7 @@ export type ProgramTemplate = {
   weeklySplit: DayTemplate[];
   baselineWeek: BaselineDay[];
   hikingSuperset: Block; // injected into Day 2 main + Day 5 light
+  dailyMobility: DailyMobilityRoutine;
   goals: string[];
 };
 
@@ -103,6 +126,23 @@ export const PROGRAM_TEMPLATE: ProgramTemplate = {
       weeks: [1, 2, 3, 4],
       goal: "Build consistency, joint strength, aerobic base",
       emphasis: "Bodyweight or light DBs. Conversational cardio. Daily mobility.",
+      nutrition: {
+        calorieGuidance: "Maintenance to slight deficit (~200 kcal/day). Don't over-restrict early — recovery matters more than fat loss this phase.",
+        proteinTargetG: { low: 140, high: 160 },
+        hydration: "0.5–1 oz / lb body weight; more on long-effort days. Electrolytes on Day 6.",
+        habits: [
+          "Whole foods. Eat protein at every meal.",
+          "Pre-workout: small carb + protein 30–60 min out (banana + Greek yogurt).",
+          "Post-workout (within 60 min): 30–40 g protein + carbs.",
+          "Track for one week to calibrate intuition; then ease off the spreadsheet.",
+        ],
+      },
+      mobility: {
+        emphasis: ["ankles", "hips", "thoracic spine", "shoulders"],
+        dailyMin: 10,
+        notes:
+          "Goal: groove the routine. Quality over depth. If you skip a day, do 5 min of deep squat hold the next.",
+      },
     },
     {
       index: 2,
@@ -110,6 +150,23 @@ export const PROGRAM_TEMPLATE: ProgramTemplate = {
       weeks: [5, 6, 7, 8],
       goal: "Improve strength, increase intensity, burn fat",
       emphasis: "Add load. Add rounds. Re-test at end of week 6.",
+      nutrition: {
+        calorieGuidance: "Slight deficit (~300–500 kcal/day) on most days. Eat at maintenance on long-hike Saturdays — those are fueling days, not deficit days.",
+        proteinTargetG: { low: 150, high: 170 },
+        hydration: "Same baseline; add 16–24 oz/hr on hikes >2 hours. Salt before long efforts.",
+        habits: [
+          "Stop drinking calories (no juice, no sweetened drinks).",
+          "Carb-time around your hardest sessions (Day 2, Day 5, Day 6).",
+          "If hunger crashes performance, take a refeed day at maintenance — not a binge.",
+          "Sleep 7+ hours: under-sleep nukes both fat loss and lifts.",
+        ],
+      },
+      mobility: {
+        emphasis: ["hips", "thoracic spine", "ankle dorsiflexion", "lat length"],
+        dailyMin: 12,
+        notes:
+          "Add controlled-articular-rotations (CARs) for hips and shoulders 2x/week. Increase deep squat hold to 90s.",
+      },
     },
     {
       index: 3,
@@ -117,6 +174,23 @@ export const PROGRAM_TEMPLATE: ProgramTemplate = {
       weeks: [9, 10, 11, 12],
       goal: "Peak conditioning, definition, athletic performance",
       emphasis: "Push intensity. Pack-weighted hikes. Re-test at day 90.",
+      nutrition: {
+        calorieGuidance: "Aggressive deficit only on rest days; maintenance on training days; slight surplus the day before a big hike. Carb-cycle.",
+        proteinTargetG: { low: 160, high: 180 },
+        hydration: "Pre-hydrate the day before long efforts. On hike day: 20–30 oz/hr + 200–400 mg sodium/hr.",
+        habits: [
+          "Practice your hike-day nutrition strategy on training hikes — don't try anything new on Elbert.",
+          "Caffeine timed for the climb (1–2 hr before pre-dawn start) if you use it.",
+          "Last 7 days: drop alcohol, hit protein, prioritize sleep.",
+          "Don't lose weight in the final 2 weeks — peak performance > peak leanness for the summit.",
+        ],
+      },
+      mobility: {
+        emphasis: ["ankles (descent)", "calves", "hip flexors", "thoracic"],
+        dailyMin: 15,
+        notes:
+          "Calf and ankle work is non-negotiable — descents wreck the underprepared. Add eccentric calf raises 3x/week.",
+      },
     },
   ],
   weeklySplit: [
@@ -352,6 +426,21 @@ export const PROGRAM_TEMPLATE: ProgramTemplate = {
     },
   ],
   hikingSuperset: HIKING_SUPERSET,
+  dailyMobility: {
+    durationMin: 12,
+    notes:
+      "Run this every day, even rest day. Skipping is the #1 cause of plateaus and injury in this program.",
+    exercises: [
+      { name: "Deep Squat Hold", durationSec: 90, notes: "Heels down, chest up. Breathe." },
+      { name: "Couch Stretch (Hip Flexor)", durationSec: 60, notes: "Each side." },
+      { name: "90/90 Hip Switches", reps: 8, notes: "Each side." },
+      { name: "Hamstring Stretch", durationSec: 60, notes: "Each side." },
+      { name: "Thoracic Rotation", reps: 10, notes: "Each side, slow." },
+      { name: "Shoulder Dislocates", equipment: "Band", reps: 15 },
+      { name: "Ankle Dorsiflexion Drill", reps: 10, notes: "Each side, knee over toes." },
+      { name: "Calf Stretch (Wall)", durationSec: 45, notes: "Each side." },
+    ],
+  },
   baselineWeek: [
     {
       dayOfWeek: 1,

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
+import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
 
 export type GoalReference = {
   id: string;
@@ -47,12 +48,26 @@ export async function createGoal(form: FormData) {
     }
   }
 
+  const now = new Date();
+  const weeks = weeksBetween(now, targetDate);
+  const planTemplate = scaffoldPlanFromTemplate(weeks);
+
   const goal = await prisma.goal.create({
     data: {
       objective,
       targetDate,
       notes,
       targets: targets ?? undefined,
+      plans: {
+        create: {
+          name: `${objective} — ${weeks}-week plan`,
+          startedOn: now,
+          endsOn: targetDate,
+          weeks,
+          active: true,
+          planJson: planTemplate as unknown as object,
+        },
+      },
     },
   });
 

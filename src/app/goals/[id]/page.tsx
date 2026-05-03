@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { GoalEditForm, type CopySource } from "@/components/GoalEditForm";
 import { GoalReferences } from "@/components/GoalReferences";
+import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { prisma } from "@/lib/db";
 import type { GoalReference } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
+import type { ProgramTemplate } from "@/lib/program-template";
 import { computeReadiness } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +19,12 @@ export default async function GoalDetail({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const goal = await prisma.goal.findUnique({ where: { id } });
+  const goal = await prisma.goal.findUnique({
+    where: { id },
+    include: { plans: { where: { active: true }, orderBy: { createdAt: "desc" }, take: 1 } },
+  });
   if (!goal) notFound();
+  const activePlan = goal.plans[0];
 
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
@@ -65,6 +71,21 @@ export default async function GoalDetail({
             )}
           </div>
           <ReadinessBreakdown breakdown={readiness.breakdown} />
+        </Card>
+      )}
+
+      {activePlan && (
+        <Card title="Plan">
+          <PlanOverview
+            plan={{
+              id: activePlan.id,
+              name: activePlan.name,
+              startedOn: activePlan.startedOn,
+              endsOn: activePlan.endsOn,
+              weeks: activePlan.weeks,
+              template: activePlan.planJson as unknown as ProgramTemplate,
+            }}
+          />
         </Card>
       )}
 
