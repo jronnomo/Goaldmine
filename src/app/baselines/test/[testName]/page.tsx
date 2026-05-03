@@ -20,7 +20,15 @@ export default async function BaselineTestDetail({
         <Link href="/baselines" className="text-sm text-[var(--accent)]">
           ← Records
         </Link>
-        <h1 className="text-2xl font-semibold tracking-tight mt-1">{testName}</h1>
+        <div className="flex items-start justify-between gap-2 mt-1">
+          <h1 className="text-2xl font-semibold tracking-tight">{testName}</h1>
+          <Link
+            href={`/baselines/new?testName=${encodeURIComponent(testName)}`}
+            className="shrink-0 text-xs rounded-full border border-[var(--border)] px-3 py-1 hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)]"
+          >
+            + Log result
+          </Link>
+        </div>
         <p className="text-sm text-[var(--muted)]">
           {history.length} result{history.length === 1 ? "" : "s"}
           {history.length > 0 && ` · units: ${history[0]!.units}`}

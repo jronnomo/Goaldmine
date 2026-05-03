@@ -2,6 +2,29 @@
 // "PR" here is the best single-set effort across all completed workouts.
 
 import { prisma } from "@/lib/db";
+import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
+
+export type CheckpointStatus = "upcoming" | "due" | "overdue" | "done";
+
+export type ScheduledCheckpoint = {
+  week: number;
+  targetDate: Date;
+  label: "initial" | "retest";
+  status: CheckpointStatus;
+  completedOn?: Date;
+  completedValue?: number;
+};
+
+export type ScheduledBaseline = {
+  testName: string;
+  units: string;
+  protocol: string;
+  dayOfWeek: number;
+  retestWeeks: number[];
+  checkpoints: ScheduledCheckpoint[];
+  latestResult: { date: Date; value: number; units: string } | null;
+  resultCount: number;
+};
 
 export type BaselineSummary = {
   testName: string;
@@ -70,6 +93,144 @@ export async function getBaselineHistory(testName: string) {
     where: { testName },
     orderBy: { date: "asc" },
   });
+}
+
+/**
+ * Resolve scheduled baselines from the active Plan's template, fold in DB
+ * results, and compute status (initial + each retest checkpoint).
+ *
+ * Initial test is week 1; retests are at template-defined retestWeeks. A
+ * checkpoint is "done" if a Baseline row exists on or after its target
+ * date for the same testName.
+ */
+export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
+  startedOn: Date | null;
+  totalWeeks: number | null;
+  scheduled: ScheduledBaseline[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+}> {
+  const now = opts?.now ?? new Date();
+  const plan = await prisma.plan.findFirst({
+    where: { active: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (!plan) {
+    return { startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] };
+  }
+
+  const template = plan.planJson as unknown as ProgramTemplate;
+  const startedOn = plan.startedOn;
+
+  // Flatten template baseline tests preserving their day-of-week.
+  const flat: { day: BaselineDay; test: BaselineTest }[] = [];
+  for (const day of template.baselineWeek ?? []) {
+    for (const test of day.tests) flat.push({ day, test });
+  }
+
+  // Pull all baselines once and bucket by testName for efficiency.
+  const allBaselines = await prisma.baseline.findMany({ orderBy: { date: "asc" } });
+  const byName = new Map<string, typeof allBaselines>();
+  for (const b of allBaselines) {
+    const arr = byName.get(b.testName) ?? [];
+    arr.push(b);
+    byName.set(b.testName, arr);
+  }
+
+  const scheduled: ScheduledBaseline[] = flat.map(({ day, test }) => {
+    const rows = byName.get(test.testName) ?? [];
+
+    // Initial checkpoint = end of week 1 (day 7 of program).
+    const checkpoints: ScheduledCheckpoint[] = [];
+    const initialDate = addDays(startedOn, 7);
+    checkpoints.push({
+      week: 1,
+      targetDate: initialDate,
+      label: "initial",
+      ...statusFor(initialDate, rows, now),
+    });
+
+    for (const w of test.retestWeeks) {
+      const target = addDays(startedOn, w * 7);
+      checkpoints.push({
+        week: w,
+        targetDate: target,
+        label: "retest",
+        ...statusFor(target, rows, now),
+      });
+    }
+
+    const latest = rows.at(-1);
+    return {
+      testName: test.testName,
+      units: test.units,
+      protocol: test.protocol,
+      dayOfWeek: day.dayOfWeek,
+      retestWeeks: test.retestWeeks,
+      checkpoints,
+      latestResult: latest
+        ? { date: latest.date, value: latest.value, units: latest.units }
+        : null,
+      resultCount: rows.length,
+    };
+  });
+
+  // Tests logged but not in the template — surface them so they're not lost.
+  const scheduledNames = new Set(flat.map((f) => f.test.testName));
+  const unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[] = [];
+  for (const [testName, rows] of byName) {
+    if (scheduledNames.has(testName)) continue;
+    const latest = rows.at(-1)!;
+    unscheduledExtras.push({
+      testName,
+      units: latest.units,
+      resultCount: rows.length,
+      latest: { date: latest.date, value: latest.value },
+    });
+  }
+  unscheduledExtras.sort((a, b) => a.testName.localeCompare(b.testName));
+
+  return {
+    startedOn,
+    totalWeeks: plan.weeks,
+    scheduled,
+    unscheduledExtras,
+  };
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  out.setHours(23, 59, 59, 999);
+  return out;
+}
+
+function statusFor(
+  target: Date,
+  rows: { date: Date; value: number }[],
+  now: Date,
+): { status: CheckpointStatus; completedOn?: Date; completedValue?: number } {
+  // A checkpoint is "done" if a result exists on or after its target.
+  // We approximate "the result for this checkpoint" as the earliest row on/after target.
+  const match = rows.find((r) => r.date >= startOfDay(target) && r.date <= endOfWindow(target));
+  if (match) return { status: "done", completedOn: match.date, completedValue: match.value };
+
+  const dueWindowStart = addDays(target, -7); // window opens 1 week before target
+  if (now >= dueWindowStart && now <= addDays(target, 7)) return { status: "due" };
+  if (now > addDays(target, 7)) return { status: "overdue" };
+  return { status: "upcoming" };
+}
+
+function startOfDay(d: Date): Date {
+  const out = new Date(d);
+  out.setHours(0, 0, 0, 0);
+  return out;
+}
+
+function endOfWindow(d: Date): Date {
+  // For initial: any post-target result counts.
+  // For retests: extend window to the next checkpoint or +28 days, whichever is shorter.
+  return addDays(d, 28);
 }
 
 export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {

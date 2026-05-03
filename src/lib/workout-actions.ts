@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 
@@ -43,6 +44,31 @@ export async function logNote(form: FormData) {
 
   revalidatePath("/");
   revalidatePath("/history");
+}
+
+export async function logBaseline(form: FormData) {
+  const testName = String(form.get("testName") ?? "").trim();
+  const value = Number(form.get("value"));
+  const units = String(form.get("units") ?? "").trim();
+  const dateStr = (form.get("date") as string | null)?.trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+
+  if (!testName) throw new Error("Test name is required");
+  if (!Number.isFinite(value)) throw new Error("Value must be a number");
+  if (!units) throw new Error("Units are required");
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  await prisma.baseline.create({
+    data: { testName, value, units, date, notes },
+  });
+
+  revalidatePath("/baselines");
+  revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
+  revalidatePath("/stats");
+  revalidatePath("/");
+  redirect(`/baselines/test/${encodeURIComponent(testName)}`);
 }
 
 export async function importStrongWorkout(form: FormData) {
