@@ -44,7 +44,7 @@ async function main() {
     });
     await tx.plan.update({
       where: { id: plan.id },
-      data: { planJson: plan.planJson },
+      data: { planJson: plan.planJson as unknown as object },
     });
     return r;
   });

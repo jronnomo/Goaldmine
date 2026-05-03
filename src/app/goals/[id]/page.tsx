@@ -128,9 +128,14 @@ export default async function GoalDetail({
         <Card
           title="Plan"
           action={
-            <Link href={`/goals/${goal.id}/revise`} className="text-sm text-[var(--accent)]">
-              Revise →
-            </Link>
+            <div className="flex gap-3 text-sm">
+              <Link href={`/goals/${goal.id}/plan`} className="text-[var(--accent)]">
+                Full plan →
+              </Link>
+              <Link href={`/goals/${goal.id}/revise`} className="text-[var(--accent)]">
+                Revise
+              </Link>
+            </div>
           }
         >
           <PlanOverview
