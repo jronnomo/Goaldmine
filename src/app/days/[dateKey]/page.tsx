@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { DayOverrideForm } from "@/components/DayOverrideForm";
 import { DayNoteForm } from "@/components/DayNoteForm";
@@ -45,28 +46,8 @@ export default async function DayDetail({
         </p>
       </header>
 
-      {r.baselinesDue.length > 0 && (
-        <Card title={`Baseline tests due (${r.baselinesDue.length})`}>
-          <ul className="space-y-2">
-            {r.baselinesDue.map(({ test, checkpoint }) => (
-              <li key={test.testName} className="rounded-lg border border-[var(--border)] p-2">
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="font-medium">{test.testName}</p>
-                  <span className="text-xs uppercase tracking-wide text-[var(--accent)] shrink-0">
-                    {checkpoint}
-                  </span>
-                </div>
-                <p className="text-xs text-[var(--muted)] italic mt-0.5">{test.protocol}</p>
-                <Link
-                  href={`/baselines/new?testName=${encodeURIComponent(test.testName)}`}
-                  className="text-xs text-[var(--accent)] inline-block mt-1"
-                >
-                  Log result →
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
+      {r.baselinesDue.length > 0 && (isToday || isFuture) && (
+        <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
       {isPast && r.workouts.length > 0 && (
@@ -110,7 +91,7 @@ export default async function DayDetail({
           <ol className="space-y-3">
             {r.workoutTemplate.blocks.map((block, i) => (
               <li key={i}>
-                <BlockView block={block} index={i} />
+                <BlockView block={block} index={r.baselinesDue.length > 0 ? i + 1 : i} />
               </li>
             ))}
           </ol>
