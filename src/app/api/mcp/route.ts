@@ -1,0 +1,55 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { registerAll } from "@/lib/mcp/tools";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+async function handler(req: Request): Promise<Response> {
+  const expected = process.env.MCP_AUTH_TOKEN;
+  if (!expected) {
+    return new Response("Server misconfigured: MCP_AUTH_TOKEN not set", { status: 500 });
+  }
+
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+  if (!token || token !== expected) {
+    return new Response("Unauthorized", {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Bearer realm="workout-planner-mcp"' },
+    });
+  }
+
+  const server = new McpServer(
+    { name: "workout-planner", version: "1.0.0" },
+    {
+      capabilities: { tools: {} },
+      instructions:
+        "Workout coaching MCP for one user. Use read tools to gather context (today/recent_history/get_goal) before proposing plan changes. apply_plan_revision writes a full snapshot — include cascading edits in the snapshot, capture reasoning. apply_day_override is for single-day swaps without revising the full plan.",
+    },
+  );
+  registerAll(server);
+
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined, // stateless: each request stands alone
+    enableJsonResponse: true,
+  });
+
+  await server.connect(transport);
+  return transport.handleRequest(req);
+}
+
+export const GET = handler;
+export const POST = handler;
+export const DELETE = handler;
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id",
+    },
+  });
+}

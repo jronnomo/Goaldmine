@@ -40,11 +40,35 @@ claude.ai (web + mobile)  ──MCP/HTTP──>  Next.js /api/mcp  ──>  Post
 - `src/app/api/mcp/route.ts` — MCP HTTP endpoint (Phase 3, not yet built).
 - `src/lib/mcp/tools/*.ts` — one file per MCP tool (Phase 3).
 
-## MCP tools (planned)
+## MCP server (Phase 3, shipped)
 
-`get_today_plan`, `log_workout`, `log_measurement`, `log_baseline`, `log_hike`, `log_note`, `recent_history`, `propose_audible`, `apply_program_change`, `weekly_summary_data`, `export_workout`, `export_workouts`.
+Endpoint: `POST /api/mcp` (also GET, DELETE for the streamable HTTP protocol). Stateless transport (`enableJsonResponse: true`, no session id). Bearer-token auth — `Authorization: Bearer $MCP_AUTH_TOKEN`.
 
-`log_workout` accepts the structured shape produced by `parseStrongWorkout()` — Claude parses pasted txt in the chat and calls this tool.
+All tools are registered in `src/lib/mcp/tools.ts` via `McpServer.registerTool()`. The route handler in `src/app/api/mcp/route.ts` creates a fresh server per request, registers tools, and pipes the request through `WebStandardStreamableHTTPServerTransport.handleRequest`.
+
+### Read tools
+`get_today_plan`, `get_day`, `recent_history`, `list_goals`, `get_goal`, `weekly_summary_data`, `get_baseline_schedule`, `get_baseline_history`, `get_records_summary`, `get_exercise_history`, `export_workout`.
+
+### Write tools
+`log_workout`, `log_measurement`, `log_baseline`, `log_hike`, `log_note`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`.
+
+`log_workout` accepts the structured shape produced by `parseStrongWorkout()` — paste a Strong-app txt in claude.ai, Claude parses, then calls this tool.
+
+### Connecting from claude.ai
+
+After deploying (Phase 4), the user adds a custom MCP connector in claude.ai's settings:
+- URL: `https://<vercel-deployment>/api/mcp`
+- Auth: Bearer token (paste `MCP_AUTH_TOKEN`)
+- Transport: Streamable HTTP
+
+Locally testable with curl — see `scripts/test-mcp.sh` (if present) or:
+```
+curl -s -X POST http://localhost:3000/api/mcp \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
 
 ## Scripts
 
