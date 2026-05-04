@@ -105,6 +105,84 @@ export async function deleteBaselineRow(id: string) {
   redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);
 }
 
+const MEAL_TYPES = new Set([
+  "preworkout",
+  "postworkout",
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snack",
+]);
+
+type NutritionItem = { name: string; qty?: string; notes?: string };
+
+// Each line is "name | qty | notes" (qty/notes optional). Blank lines skipped.
+function parseItemsTextarea(raw: string): NutritionItem[] {
+  const out: NutritionItem[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const [namePart, qtyPart, notesPart] = trimmed.split("|").map((p) => p.trim());
+    if (!namePart) continue;
+    out.push({
+      name: namePart,
+      ...(qtyPart ? { qty: qtyPart } : {}),
+      ...(notesPart ? { notes: notesPart } : {}),
+    });
+  }
+  return out;
+}
+
+export async function logNutrition(form: FormData) {
+  const mealType = String(form.get("mealType") ?? "").trim();
+  const itemsRaw = String(form.get("items") ?? "");
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+  const dateStr = (form.get("date") as string | null)?.trim();
+
+  if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
+  const items = parseItemsTextarea(itemsRaw);
+  if (items.length === 0) throw new Error("List at least one food item");
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  await prisma.nutritionLog.create({
+    data: { date, mealType, items, notes },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+}
+
+export async function updateNutrition(id: string, form: FormData) {
+  const mealType = String(form.get("mealType") ?? "").trim();
+  const itemsRaw = String(form.get("items") ?? "");
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+  const dateStr = (form.get("date") as string | null)?.trim();
+
+  if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
+  const items = parseItemsTextarea(itemsRaw);
+  if (items.length === 0) throw new Error("List at least one food item");
+
+  const date = dateStr ? new Date(dateStr) : new Date();
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  await prisma.nutritionLog.update({
+    where: { id },
+    data: { mealType, items, notes, date },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+  redirect("/nutrition");
+}
+
+export async function deleteNutrition(id: string) {
+  await prisma.nutritionLog.delete({ where: { id } });
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+}
+
 export async function importStrongWorkout(form: FormData) {
   const raw = (form.get("raw") as string | null) ?? "";
   if (!raw.trim()) throw new Error("Paste a workout to import");

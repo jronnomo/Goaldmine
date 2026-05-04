@@ -29,6 +29,21 @@ const DateKeyShape = z
 
 const NoteTypeShape = z.enum(["journal", "audible", "feedback"]);
 
+const MealTypeShape = z.enum([
+  "preworkout",
+  "postworkout",
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snack",
+]);
+
+const NutritionItemShape = z.object({
+  name: z.string().min(1).describe("Food group / brand item, e.g. '97% beef', 'Kroger hamburger buns'"),
+  qty: z.string().optional().describe("Free-form quantity, e.g. '8 oz', '1 cup', '2 slices'"),
+  notes: z.string().optional(),
+});
+
 function jsonResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -111,7 +126,7 @@ function registerReadTools(server: McpServer) {
         since.setDate(since.getDate() - days);
         since.setHours(0, 0, 0, 0);
 
-        const [workouts, measurements, notes, baselines, hikes] = await Promise.all([
+        const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
           prisma.workout.findMany({
             where: { startedAt: { gte: since } },
             include: { exercises: { include: { sets: true } } },
@@ -133,9 +148,13 @@ function registerReadTools(server: McpServer) {
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
+          prisma.nutritionLog.findMany({
+            where: { date: { gte: since } },
+            orderBy: { date: "desc" },
+          }),
         ]);
 
-        return { since, days, workouts, measurements, notes, baselines, hikes };
+        return { since, days, workouts, measurements, notes, baselines, hikes, nutrition };
       }),
   );
 
@@ -255,7 +274,7 @@ function registerReadTools(server: McpServer) {
         sunday.setDate(sunday.getDate() + 6);
         sunday.setHours(23, 59, 59, 999);
 
-        const [workouts, measurements, notes, baselines, hikes] = await Promise.all([
+        const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
           prisma.workout.findMany({
             where: { startedAt: { gte: monday, lte: sunday } },
             include: { exercises: { include: { sets: true } } },
@@ -277,9 +296,13 @@ function registerReadTools(server: McpServer) {
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
+          prisma.nutritionLog.findMany({
+            where: { date: { gte: monday, lte: sunday } },
+            orderBy: { date: "asc" },
+          }),
         ]);
 
-        return { monday, sunday, weekOffset, workouts, measurements, notes, baselines, hikes };
+        return { monday, sunday, weekOffset, workouts, measurements, notes, baselines, hikes, nutrition };
       }),
   );
 
@@ -574,6 +597,72 @@ function registerWriteTools(server: McpServer) {
           },
         });
         return { id: n.id, message: "Note logged" };
+      }),
+  );
+
+  server.registerTool(
+    "log_nutrition",
+    {
+      title: "Log a meal",
+      description:
+        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Estimate macros from item names + qty when reasoning — there are no macro fields. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes.",
+      inputSchema: {
+        mealType: MealTypeShape,
+        items: z.array(NutritionItemShape).min(1),
+        notes: z.string().optional(),
+        date: z.string().optional().describe("ISO datetime; default = now"),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const n = await prisma.nutritionLog.create({
+          data: {
+            date: input.date ? new Date(input.date) : new Date(),
+            mealType: input.mealType,
+            items: input.items as Prisma.InputJsonValue,
+            notes: input.notes ?? null,
+          },
+        });
+        return { id: n.id, message: "Nutrition logged" };
+      }),
+  );
+
+  server.registerTool(
+    "update_nutrition",
+    {
+      title: "Update a nutrition log",
+      description: "Edit a logged meal's mealType / items / notes / date. Pass only the fields to change.",
+      inputSchema: {
+        id: z.string(),
+        mealType: MealTypeShape.optional(),
+        items: z.array(NutritionItemShape).min(1).optional(),
+        notes: z.string().nullable().optional(),
+        date: z.string().optional().describe("ISO datetime"),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Record<string, unknown> = {};
+        if (input.mealType !== undefined) data.mealType = input.mealType;
+        if (input.items !== undefined) data.items = input.items as Prisma.InputJsonValue;
+        if (input.notes !== undefined) data.notes = input.notes;
+        if (input.date !== undefined) data.date = new Date(input.date);
+        const updated = await prisma.nutritionLog.update({ where: { id: input.id }, data });
+        return { id: updated.id, message: "Nutrition updated" };
+      }),
+  );
+
+  server.registerTool(
+    "delete_nutrition",
+    {
+      title: "Delete a nutrition log",
+      description: "Remove a logged meal by id.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.nutritionLog.delete({ where: { id } });
+        return { id, message: "Nutrition deleted" };
       }),
   );
 

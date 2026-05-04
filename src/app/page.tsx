@@ -3,7 +3,8 @@ import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
-import { getBaselinesDueToday, getPendingNotesCount } from "@/lib/calendar";
+import { NutritionToday } from "@/components/NutritionToday";
+import { startOfDay, endOfDay, getBaselinesDueToday, getPendingNotesCount } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -26,17 +27,24 @@ export default async function HomePage() {
 
   const ctx = getTodayContext(program);
 
-  const [latestMeasurement, latestNotes, recentWorkouts, baselinesDue, pending] = await Promise.all([
-    prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
-    prisma.note.findMany({ orderBy: { date: "desc" }, take: 3 }),
-    prisma.workout.findMany({
-      orderBy: { startedAt: "desc" },
-      take: 3,
-      include: { exercises: { include: { sets: true } } },
-    }),
-    getBaselinesDueToday(),
-    getPendingNotesCount(),
-  ]);
+  const todayStart = startOfDay(new Date());
+  const todayEnd = endOfDay(new Date());
+
+  const [latestMeasurement, recentWorkouts, baselinesDue, pending, todayNutrition] =
+    await Promise.all([
+      prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
+      prisma.workout.findMany({
+        orderBy: { startedAt: "desc" },
+        take: 3,
+        include: { exercises: { include: { sets: true } } },
+      }),
+      getBaselinesDueToday(),
+      getPendingNotesCount(),
+      prisma.nutritionLog.findMany({
+        where: { date: { gte: todayStart, lte: todayEnd } },
+        orderBy: { date: "asc" },
+      }),
+    ]);
 
   const dayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -118,27 +126,30 @@ export default async function HomePage() {
         <LogMeasurementForm latestWeight={latestMeasurement?.weightLb ?? null} />
       </Card>
 
-      <Card title="Log a note">
+      <Card
+        title="Nutrition"
+        action={
+          <Link href="/nutrition" className="text-sm text-[var(--accent)]">
+            All →
+          </Link>
+        }
+      >
+        <NutritionToday logs={todayNutrition} />
+      </Card>
+
+      <Card
+        title="Log a note"
+        action={
+          <Link href="/journal" className="text-sm text-[var(--accent)]">
+            Journal →
+          </Link>
+        }
+      >
         <p className="text-xs text-[var(--muted)] mb-2">
-          Free-form, not tied to a weigh-in. Type tags it for Claude (Journal / Audible / Feedback). All saved in the Note table.
+          Free-form, not tied to a weigh-in. Type tags it for Claude (Journal / Audible / Feedback).
         </p>
         <LogNoteForm />
       </Card>
-
-      {latestNotes.length > 0 && (
-        <Card title="Recent notes">
-          <ul className="space-y-2 text-sm">
-            {latestNotes.map((n) => (
-              <li key={n.id} className="border-l-2 border-[var(--border)] pl-3">
-                <p className="text-[var(--muted)] text-xs">
-                  {new Date(n.date).toLocaleString()} · {n.type}
-                </p>
-                <p>{n.body}</p>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
 
       {recentWorkouts.length > 0 && (
         <Card

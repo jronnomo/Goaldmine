@@ -17,7 +17,7 @@ const tabs = [
   },
   { href: "/baselines", label: "Records", match: (p: string) => p.startsWith("/baselines") },
   { href: "/goals", label: "Goals", match: (p: string) => p.startsWith("/goals") },
-  { href: "/stats", label: "Stats", match: (p: string) => p.startsWith("/stats") },
+  { href: "/journal", label: "Journal", match: (p: string) => p.startsWith("/journal") },
 ];
 
 export function BottomNav() {

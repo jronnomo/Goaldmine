@@ -177,6 +177,13 @@ export type ResolvedDay = {
   mobilityText: string | null;
   notes: string | null;
   workouts: { id: string; startedAt: Date; title: string | null; exerciseCount: number; status: string }[];
+  loggedNutrition: {
+    id: string;
+    date: Date;
+    mealType: string;
+    items: unknown;
+    notes: string | null;
+  }[];
   baselinesDue: {
     test: BaselineTest;
     baselineDay: BaselineDay;
@@ -199,7 +206,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
 
-  const [workouts, override, notesForDate, goal] = await Promise.all([
+  const [workouts, override, notesForDate, goal, nutrition] = await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: dayStart, lte: dayEnd } },
       include: { exercises: { select: { id: true } } },
@@ -224,6 +231,10 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
       where: { active: true },
       orderBy: { targetDate: "asc" },
       select: { targetDate: true, objective: true },
+    }),
+    prisma.nutritionLog.findMany({
+      where: { date: { gte: dayStart, lte: dayEnd } },
+      orderBy: { date: "asc" },
     }),
   ]);
 
@@ -305,6 +316,13 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
       title: w.title,
       exerciseCount: w.exercises.length,
       status: w.status,
+    })),
+    loggedNutrition: nutrition.map((n) => ({
+      id: n.id,
+      date: n.date,
+      mealType: n.mealType,
+      items: n.items,
+      notes: n.notes,
     })),
     baselinesDue,
     notesAboutDate: notesForDate.map((n) => ({
