@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Bullseye } from "@/components/Bullseye";
 
 const tabs = [
   { href: "/", label: "Today", match: (p: string) => p === "/" },
@@ -31,11 +32,17 @@ export function BottomNav() {
             <li key={t.href} className="flex">
               <Link
                 href={t.href}
-                className={`flex-1 text-center py-3 text-sm font-medium transition-colors ${
+                aria-current={active ? "page" : undefined}
+                className={`flex-1 py-3 text-sm font-medium transition-colors flex flex-col items-center gap-0.5 ${
                   active ? "text-[var(--accent)]" : "text-[var(--muted)] hover:text-foreground"
                 }`}
               >
-                {t.label}
+                {active ? (
+                  <Bullseye filled size={6} aria-hidden />
+                ) : (
+                  <span className="h-[6px] block" aria-hidden />
+                )}
+                <span>{t.label}</span>
               </Link>
             </li>
           );

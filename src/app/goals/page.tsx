@@ -1,9 +1,19 @@
 import Link from "next/link";
+import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
+
+function goalProgress(g: { createdAt: Date; targetDate: Date; status: string }): number {
+  if (g.status === "achieved") return 1;
+  if (g.status === "abandoned") return 0;
+  const total = g.targetDate.getTime() - g.createdAt.getTime();
+  if (total <= 0) return 0;
+  const elapsed = Date.now() - g.createdAt.getTime();
+  return Math.max(0, Math.min(1, elapsed / total));
+}
 
 export default async function GoalsPage() {
   const goals = await prisma.goal.findMany({
@@ -44,25 +54,34 @@ export default async function GoalsPage() {
               const days = Math.ceil(
                 (new Date(g.targetDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
               );
+              const pct = goalProgress(g);
               return (
                 <li key={g.id}>
                   <Link
                     href={`/goals/${g.id}`}
                     className="flex items-start justify-between py-3 gap-3"
                   >
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{g.objective}</p>
-                      <p className="text-xs text-[var(--muted)]">
-                        {new Date(g.targetDate).toLocaleDateString()}
-                        {g.status !== "active" ? ` · ${g.status}` : ""}
-                      </p>
+                    <div className="flex items-start gap-2 min-w-0">
+                      <Bullseye
+                        size={20}
+                        progress={pct}
+                        aria-label={`${g.objective}: ${Math.round(pct * 100)}% progress`}
+                        className="shrink-0 mt-0.5"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{g.objective}</p>
+                        <p className="text-xs text-[var(--muted)]">
+                          {new Date(g.targetDate).toLocaleDateString()}
+                          {g.status !== "active" ? ` · ${g.status}` : ""}
+                        </p>
+                      </div>
                     </div>
                     <span
                       className={`shrink-0 text-xs rounded-full px-2 py-0.5 border ${
                         days < 0
-                          ? "border-red-500/40 text-red-500"
+                          ? "border-[var(--danger)]/40 text-[var(--danger)]"
                           : days <= 14
-                            ? "border-amber-500/40 text-amber-500"
+                            ? "border-[var(--warning)]/40 text-[var(--warning)]"
                             : "border-[var(--border)] text-[var(--muted)]"
                       }`}
                     >
