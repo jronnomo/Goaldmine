@@ -49,6 +49,8 @@ export type LegendEntry = z.infer<typeof LegendEntrySchema>;
 
 export const LegendSchema = z.array(LegendEntrySchema);
 
+export type Legend = z.infer<typeof LegendSchema>;
+
 // Default legend for hike-flavored goals (current Mt. Elbert program).
 export const DEFAULT_LEGEND: readonly LegendEntry[] = [
   { icon: "●", label: "Trained", kind: "trained" },

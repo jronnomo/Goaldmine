@@ -21,6 +21,7 @@ import {
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
+import { createGoalCore } from "@/lib/goal-core";
 import { LegendSchema } from "@/lib/legend";
 import { getActiveProgram } from "@/lib/program";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
@@ -1034,7 +1035,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Set or clear a goal's calendar legend",
       description:
-        "Replace the goal's legend array (drives the calendar legend AND which icons render in cells). Pass an empty array OR omit `legend` to reset to the built-in default. Each entry = { icon, label, kind } where kind ∈ {trained, hike-completed, hike-planned, override, goal-date}. Use this when the active goal changes flavor (e.g., pivot from hiking to powerlifting): swap 🥾 entries for goal-appropriate icons. The kind enum is closed; new render conditions require a code change.",
+        "Replace the goal's legend array (drives the calendar legend AND which icons render in cells). Pass empty array OR omit `legend` to reset to the built-in default. Each entry = { icon, label, kind } where kind ∈ {trained, hike-completed, hike-planned, override, goal-date}: trained=days a workout exists, hike-completed=logged outdoor day, hike-planned=upcoming hike, override=custom day-level marker, goal-date=the goal's target date pin. Closed enum; passing a `kind` outside this set fails Zod validation and returns an error envelope — new render conditions need a code change. `icon` is a free-form string (any emoji or character); only `kind` is enumerated.\n\nPreset legends (single-line JSON, pick + adapt to the goal's flavor):\nhike: [{\"icon\":\"●\",\"label\":\"Trained\",\"kind\":\"trained\"},{\"icon\":\"🥾\",\"label\":\"Outdoor day\",\"kind\":\"hike-completed\"},{\"icon\":\"🥾\",\"label\":\"Hike planned\",\"kind\":\"hike-planned\"},{\"icon\":\"★\",\"label\":\"Custom day\",\"kind\":\"override\"},{\"icon\":\"🏔️\",\"label\":\"Goal date\",\"kind\":\"goal-date\"}]\nstrength: [{\"icon\":\"●\",\"label\":\"Trained\",\"kind\":\"trained\"},{\"icon\":\"🏋️\",\"label\":\"Heavy day\",\"kind\":\"override\"},{\"icon\":\"🏆\",\"label\":\"Meet day\",\"kind\":\"goal-date\"}]\nrunning: [{\"icon\":\"●\",\"label\":\"Trained\",\"kind\":\"trained\"},{\"icon\":\"🏃\",\"label\":\"Long run\",\"kind\":\"override\"},{\"icon\":\"🥇\",\"label\":\"Race day\",\"kind\":\"goal-date\"}]\nsnowboard: [{\"icon\":\"●\",\"label\":\"Trained\",\"kind\":\"trained\"},{\"icon\":\"🏂\",\"label\":\"Ride day\",\"kind\":\"override\"},{\"icon\":\"🎿\",\"label\":\"Season opener\",\"kind\":\"goal-date\"}]\n\nWhen you create or activate a non-hike goal, propose a goal-appropriate legend immediately. Follow 'Propose before applying' — show the proposed legend, get approval, then call this tool (or pass `legend` directly to create_goal). If the user names a flavor ('use the strength legend'), apply the matching preset without further prompting.",
       inputSchema: {
         goalId: z.string(),
         legend: LegendSchema.optional().describe(
@@ -1057,6 +1058,43 @@ function registerWriteTools(server: McpServer) {
             legend && legend.length > 0
               ? `Legend updated (${legend.length} entries)`
               : "Legend reset to default",
+        };
+      }),
+  );
+
+  server.registerTool(
+    "create_goal",
+    {
+      title: "Create a new goal (with optional legend)",
+      description:
+        "Create a new Goal and scaffold its Plan + initial PlanRevision in one nested write. Use when the user names a new training goal that should drive coaching going forward. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` must be a yyyy-mm-dd string (USER_TZ midnight); resolve relative dates ('tomorrow', 'next Friday') yourself before calling. `copyFromGoalId` copies the targets array from any existing goal regardless of status. If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+      inputSchema: {
+        objective: z.string().min(1).max(200),
+        targetDate: DateKeyShape,
+        notes: z.string().optional(),
+        copyFromGoalId: z
+          .string()
+          .optional()
+          .describe("Copy targets array from this existing goal (any status)"),
+        legend: LegendSchema.optional().describe(
+          "Calendar legend; see update_goal_legend description for preset examples by goal flavor",
+        ),
+      },
+    },
+    async ({ objective, targetDate, notes, copyFromGoalId, legend }) =>
+      safe(async () => {
+        const parsedDate = parseDateInput(targetDate);
+        const { goal, planId } = await createGoalCore({
+          objective,
+          targetDate: parsedDate,
+          notes,
+          copyFromGoalId,
+          legend,
+        });
+        return {
+          goalId: goal.id,
+          planId,
+          message: `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`,
         };
       }),
   );
