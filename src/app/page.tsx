@@ -4,7 +4,7 @@ import { Card } from "@/components/Card";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { NutritionToday } from "@/components/NutritionToday";
-import { startOfDay, endOfDay, getBaselinesDueToday, getPendingNotesCount } from "@/lib/calendar";
+import { startOfDay, endOfDay, getPendingNotesCount, resolveDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -26,11 +26,11 @@ export default async function HomePage() {
   }
 
   const ctx = getTodayContext(program);
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
 
-  const todayStart = startOfDay(new Date());
-  const todayEnd = endOfDay(new Date());
-
-  const [latestMeasurement, recentWorkouts, baselinesDue, pending, todayNutrition] =
+  const [latestMeasurement, recentWorkouts, resolved, pending, todayNutrition] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -38,13 +38,27 @@ export default async function HomePage() {
         take: 3,
         include: { exercises: { include: { sets: true } } },
       }),
-      getBaselinesDueToday(),
+      resolveDay(now),
       getPendingNotesCount(),
       prisma.nutritionLog.findMany({
         where: { date: { gte: todayStart, lte: todayEnd } },
         orderBy: { date: "asc" },
       }),
     ]);
+
+  const baselinesDue = resolved.baselinesDue;
+  // The day's workout. resolved.workoutTemplate is override-aware: when an
+  // apply_day_override has set workoutJson it returns that; otherwise the
+  // rotation default. ctx.day stays around for week / phase metadata only.
+  const dayTemplate = resolved.workoutTemplate;
+  // When the override carries baselineTestNames, the workout often duplicates
+  // those tests as exercise blocks (Claude packages "the workout IS the
+  // baselines" that way). Treat BaselineBlockCard as canonical for tests and
+  // hide blocks whose label is explicitly tagged "(... baseline)".
+  const baselineBlockSuffix = /\bbaseline\)\s*$/i;
+  const dayBlocks = (dayTemplate?.blocks ?? []).filter(
+    (b) => !(b.label && baselineBlockSuffix.test(b.label)),
+  );
 
   const dayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -68,11 +82,16 @@ export default async function HomePage() {
           </Link>
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">
-          {ctx.day?.title ?? "No workout for today"}
+          {dayTemplate?.title ?? ctx.day?.title ?? "No workout for today"}
         </h1>
         <p className="text-sm text-[var(--muted)]">
           {dayLabel}
-          {ctx.day?.summary ? ` · ${ctx.day.summary}` : " · plan snapshot is malformed; restore from /goals/<id>/revisions or contact your coach"}
+          {dayTemplate?.summary
+            ? ` · ${dayTemplate.summary}`
+            : ctx.day?.summary
+              ? ` · ${ctx.day.summary}`
+              : " · plan snapshot is malformed; restore from /goals/<id>/revisions or contact your coach"}
+          {resolved.isOverride ? " · day overridden" : ""}
         </p>
       </header>
 
@@ -102,7 +121,7 @@ export default async function HomePage() {
         <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
       )}
 
-      {ctx.day?.blocks?.map((block, i) => (
+      {dayBlocks.map((block, i) => (
         <BlockCard key={i} block={block} index={i + (baselinesDue.length > 0 ? 1 : 0)} />
       ))}
 
