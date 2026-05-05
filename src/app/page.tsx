@@ -98,25 +98,24 @@ export default async function HomePage() {
         </Card>
       )}
 
-      {baselinesDue.length > 0 ? (
-        <>
-          <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
-          <Card title="2. Test day — keep it light">
-            <p className="text-sm text-[var(--muted)]">
-              The regular {ctx.day?.title ? <em>{ctx.day.title}</em> : "workout"} blocks are
-              <strong className="text-foreground"> deferred</strong> on baseline days. Heavy
-              strength right after max-effort tests confounds the data and stacks too much
-              same-pattern volume.
-            </p>
-            <ul className="mt-2 text-sm text-[var(--muted)] list-disc list-inside space-y-1">
-              <li>Optional 20–30 min easy Zone 2 (bike or jog) for circulation</li>
-              <li>Daily mobility routine — 10–15 min</li>
-              <li>Eat well, hydrate, sleep early</li>
-            </ul>
-          </Card>
-        </>
-      ) : (
-        ctx.day?.blocks?.map((block, i) => <BlockCard key={i} block={block} index={i} />)
+      {baselinesDue.length > 0 && (
+        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+      )}
+
+      {ctx.day?.blocks?.map((block, i) => (
+        <BlockCard key={i} block={block} index={i + (baselinesDue.length > 0 ? 1 : 0)} />
+      ))}
+
+      {baselinesDue.length > 0 && (
+        <Card>
+          <p className="text-xs text-[var(--muted)]">
+            <strong className="text-foreground">Test + workout pairing.</strong> Run the tests
+            above fresh, then the workout — short power/skill tests pair fine. On days where the
+            tests are long endurance or max-effort lifts, ask Claude whether to defer the regular
+            blocks; stacking max-effort lifts on top of the same-pattern strength work confounds
+            the data.
+          </p>
+        </Card>
       )}
 
       <Card title="Log weight">
