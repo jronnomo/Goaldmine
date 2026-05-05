@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
@@ -71,14 +72,22 @@ export default async function CalendarPage({
       )}
 
       <Card title="Legend">
-        <ul className="space-y-1 text-xs text-[var(--muted)]">
-          <li><span className="text-[var(--target)]">◉</span> training day logged</li>
-          <li>🥾 out-of-gym session logged (hike, trail run, backpack)</li>
-          <li><span className="opacity-40">🥾</span> hike planned (not yet logged)</li>
-          <li><span className="text-[var(--warning)]">★</span> custom override applied</li>
-          <li><span className="text-[var(--muted)]">◎N</span> N baseline test(s) due that day</li>
-          <li>🏔️ goal target date</li>
-          <li><span className="text-[var(--accent)]">accent ring</span> goal target highlighted</li>
+        <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <LegendRow label="Trained">
+            <Bullseye filled size={14} aria-hidden />
+          </LegendRow>
+          <LegendRow label="Outdoor day">
+            <span aria-hidden>🥾</span>
+          </LegendRow>
+          <LegendRow label="Custom day">
+            <span aria-hidden className="text-[var(--warning)] text-base leading-none">★</span>
+          </LegendRow>
+          <LegendRow label="Hike planned">
+            <span aria-hidden className="opacity-40">🥾</span>
+          </LegendRow>
+          <LegendRow label="Goal date">
+            <span aria-hidden>🏔️</span>
+          </LegendRow>
         </ul>
       </Card>
 
@@ -110,6 +119,17 @@ function Stat({ label, value }: { label: string; value: string | number }) {
     <li className="rounded-lg border border-[var(--border)] py-2 list-none">
       <p className="text-lg font-semibold">{value}</p>
       <p className="text-xs text-[var(--muted)]">{label}</p>
+    </li>
+  );
+}
+
+function LegendRow({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <li className="flex items-center gap-2 list-none">
+      <span className="inline-flex items-center justify-center w-5 h-5 shrink-0">
+        {children}
+      </span>
+      <span className="text-[var(--foreground)]">{label}</span>
     </li>
   );
 }

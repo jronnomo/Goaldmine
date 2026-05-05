@@ -12,7 +12,7 @@
   --target: #A82A1F;
   --target-fg: #FFFBF0;
   --success: #4E6B36;
-  --warning: #9C5F14;
+  --warning: #A8511A;
   --danger: #A82A1F;
 }
 
@@ -42,7 +42,7 @@
     --target: #C0392B;
     --target-fg: #FFFFFF;
     --success: #7FA45C;
-    --warning: #E0A95C;
+    --warning: #E0915C;
     --danger: #C0392B;
   }
 }
@@ -62,7 +62,7 @@
   --target: #A82A1F;
   --target-fg: #FFFBF0;
   --success: #4E6B36;
-  --warning: #9C5F14;
+  --warning: #A8511A;
   --danger: #A82A1F;
 }
 
@@ -78,7 +78,7 @@
   --target: #C0392B;
   --target-fg: #FFFFFF;
   --success: #7FA45C;
-  --warning: #E0A95C;
+  --warning: #E0915C;
   --danger: #C0392B;
 }
 
