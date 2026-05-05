@@ -34,7 +34,10 @@ export default async function GoalsPage() {
 
       <Card title="All goals">
         {goals.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No goals yet. Add one above.</p>
+          <p className="text-sm text-[var(--muted)]">
+            <strong className="font-semibold text-[var(--foreground)]">Nothing to aim at yet.</strong>{" "}
+            Add a goal — a date, a metric, or both.
+          </p>
         ) : (
           <ul className="divide-y divide-[var(--border)]">
             {goals.map((g) => {

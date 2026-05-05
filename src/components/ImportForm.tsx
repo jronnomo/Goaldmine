@@ -32,7 +32,7 @@ export function ImportForm() {
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm font-mono resize-y min-h-[260px]"
       />
       {error && (
-        <p className="text-sm text-red-500 border border-red-500/30 bg-red-500/10 rounded-lg px-3 py-2">
+        <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
           {error}
         </p>
       )}

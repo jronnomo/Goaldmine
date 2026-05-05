@@ -64,7 +64,7 @@ export function GoalReferences({
                     if (!confirm("Remove this reference?")) return;
                     startTransition(() => removeGoalReference(goalId, r.id));
                   }}
-                  className="text-xs text-[var(--muted)] hover:text-red-500 px-2"
+                  className="text-xs text-[var(--muted)] hover:text-[var(--danger)] px-2"
                   aria-label="Remove reference"
                 >
                   ✕
@@ -125,7 +125,7 @@ export function GoalReferences({
           />
         )}
         {error && (
-          <p className="text-xs text-red-500 border border-red-500/30 bg-red-500/10 rounded-lg px-3 py-2">
+          <p className="text-xs text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
             {error}
           </p>
         )}

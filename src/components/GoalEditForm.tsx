@@ -151,7 +151,7 @@ export function GoalEditForm({
       </label>
 
       {error && (
-        <p className="text-sm text-red-500 border border-red-500/30 bg-red-500/10 rounded-lg px-3 py-2">
+        <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
@@ -179,7 +179,7 @@ export function GoalEditForm({
               });
             }
           }}
-          className="rounded-lg border border-red-500/40 text-red-500 px-3 py-2 text-sm"
+          className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2 text-sm"
         >
           Delete
         </button>

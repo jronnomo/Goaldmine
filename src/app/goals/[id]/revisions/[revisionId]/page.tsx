@@ -122,7 +122,7 @@ function DiffRow({ label, status }: { label: string; status: SectionDiff }) {
       <span>{label}</span>
       <span
         className={`text-xs uppercase tracking-wide shrink-0 ${
-          status === "changed" ? "text-amber-500" : "text-[var(--muted)]"
+          status === "changed" ? "text-[var(--warning)]" : "text-[var(--muted)]"
         }`}
       >
         {status}

@@ -75,7 +75,7 @@ function badgeClass(source: string): string {
     case "claude":
       return "border-[var(--accent)]/40 text-[var(--accent)]";
     case "note":
-      return "border-amber-500/40 text-amber-500";
+      return "border-[var(--warning)]/40 text-[var(--warning)]";
     default:
       return "border-[var(--border)] text-[var(--muted)]";
   }

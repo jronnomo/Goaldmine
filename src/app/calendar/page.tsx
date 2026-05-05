@@ -60,10 +60,17 @@ export default async function CalendarPage({
         <CalendarMonth cells={cells} monthStart={monthStart} />
       </Card>
 
+      {cells.every((c) => c.workoutCount === 0 && !c.hasOverride) && (
+        <p className="text-xs text-[var(--muted)] text-center mt-2">
+          <strong className="font-semibold text-[var(--foreground)]">No completed days this month.</strong>{" "}
+          Logged workouts and overrides will land here as filled targets.
+        </p>
+      )}
+
       <Card title="Legend">
         <ul className="space-y-1 text-xs text-[var(--muted)]">
-          <li><span className="text-emerald-500">✓</span> workout logged that day</li>
-          <li><span className="text-amber-500">★</span> custom override applied</li>
+          <li><span className="text-[var(--success)]">✓</span> workout logged that day</li>
+          <li><span className="text-[var(--warning)]">★</span> custom override applied</li>
           <li><span className="text-[var(--accent)]">◎N</span> N baseline test(s) due that day</li>
           <li>🏔️ goal target date</li>
           <li><span className="text-[var(--accent)]">accent ring</span> goal target highlighted</li>

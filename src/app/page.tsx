@@ -18,7 +18,8 @@ export default async function HomePage() {
       <div className="max-w-md mx-auto p-4">
         <Card title="No active program">
           <p className="text-sm text-[var(--muted)]">
-            Run <code className="font-mono">npx prisma db seed</code> to create the 90-day program.
+            <strong className="font-semibold text-[var(--foreground)]">No active program yet.</strong>{" "}
+            Run <code className="text-xs bg-[var(--card)] px-1 rounded">npx prisma db seed</code> to create the 90-day plan.
           </p>
         </Card>
       </div>

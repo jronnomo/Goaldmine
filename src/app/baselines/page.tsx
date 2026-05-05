@@ -41,7 +41,8 @@ export default async function BaselinesPage() {
       <Card title={`Scheduled tests (${schedule.scheduled.length})`}>
         {schedule.scheduled.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
-            No active plan. Create a goal to get a scheduled test list.
+            <strong className="font-semibold text-[var(--foreground)]">No active plan.</strong>{" "}
+            Add a goal to schedule your baseline tests.
           </p>
         ) : (
           <ul className="divide-y divide-[var(--border)]">
@@ -175,11 +176,11 @@ function StatusPill({
 }) {
   const cls =
     tone === "emerald"
-      ? "border-emerald-500/40 text-emerald-500"
+      ? "border-[var(--success)]/40 text-[var(--success)]"
       : tone === "amber"
-        ? "border-amber-500/40 text-amber-500"
+        ? "border-[var(--warning)]/40 text-[var(--warning)]"
         : tone === "red"
-          ? "border-red-500/40 text-red-500"
+          ? "border-[var(--danger)]/40 text-[var(--danger)]"
           : "border-[var(--border)] text-[var(--muted)]";
   return (
     <div className={`rounded-lg border ${cls} py-2`}>
@@ -192,11 +193,11 @@ function StatusPill({
 function statusClass(s: CheckpointStatus): string {
   switch (s) {
     case "done":
-      return "text-emerald-500";
+      return "text-[var(--success)]";
     case "due":
-      return "text-amber-500";
+      return "text-[var(--warning)]";
     case "overdue":
-      return "text-red-500";
+      return "text-[var(--danger)]";
     default:
       return "text-[var(--muted)]";
   }

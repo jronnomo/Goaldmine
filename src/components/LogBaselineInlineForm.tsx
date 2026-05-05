@@ -48,7 +48,7 @@ export function LogBaselineInlineForm({
       >
         {pending ? "…" : "Log"}
       </button>
-      {error && <span className="text-xs text-red-500">{error}</span>}
+      {error && <span className="text-xs text-[var(--danger)]">{error}</span>}
     </form>
   );
 }

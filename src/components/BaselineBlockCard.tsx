@@ -43,7 +43,7 @@ export function BaselineBlockCard({
                 <p className="text-xs text-[var(--muted)] italic mt-0.5">{test.protocol}</p>
               </div>
               {loggedOnDate && (
-                <span className="shrink-0 text-xs font-mono tabular-nums text-emerald-500">
+                <span className="shrink-0 text-xs font-mono tabular-nums text-[var(--success)]">
                   {loggedOnDate.value} {loggedOnDate.units}
                 </span>
               )}
