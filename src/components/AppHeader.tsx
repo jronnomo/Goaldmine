@@ -1,12 +1,13 @@
 import { Logo } from "@/components/Logo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /**
  * Sticky brand strip rendered at the top of every page by `app/layout.tsx`.
- * No actions, no max-width: spans the full viewport (intentional per
- * architecture-blueprint-v2 §C.2.3, fix H4) so the brand reads on wide
- * screens. Height is 48 px; the wordmark uses both the Tailwind
- * `font-display` utility AND inline `style.fontFamily` for safety —
- * redundancy is intentional (v2 §C.2.3).
+ * Spans the full viewport (intentional per architecture-blueprint-v2 §C.2.3,
+ * fix H4) so the brand reads on wide screens. Height is 48 px; the wordmark
+ * uses both the Tailwind `font-display` utility AND inline `style.fontFamily`
+ * for safety — redundancy is intentional (v2 §C.2.3). Right-aligned slot
+ * holds the ThemeToggle (system / light / dark cycle).
  */
 export function AppHeader(): React.JSX.Element {
   return (
@@ -19,6 +20,7 @@ export function AppHeader(): React.JSX.Element {
         >
           Goaldmine
         </span>
+        <ThemeToggle />
       </div>
     </header>
   );

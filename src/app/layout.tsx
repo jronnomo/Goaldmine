@@ -51,6 +51,16 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${dmSerifDisplay.variable} h-full antialiased`}
     >
+      <head>
+        {/* Pre-paint theme application — avoids a flash when the user has
+            chosen a non-system theme. Mirrors STORAGE_KEY in ThemeToggle. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('goaldmine.theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(_){}",
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AppHeader />
         <main className="flex-1 pb-20">{children}</main>

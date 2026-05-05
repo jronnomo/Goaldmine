@@ -47,6 +47,41 @@
   }
 }
 
+/* Explicit user override via ThemeToggle. data-theme on <html> beats the
+   prefers-color-scheme media query. Mirrors the values above so the
+   palettes are byte-identical between system and explicit modes. */
+:root[data-theme="light"] {
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #A82A1F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #9C5F14;
+  --danger: #A82A1F;
+}
+
+:root[data-theme="dark"] {
+  --background: #0F0B07;
+  --foreground: #F4E9D4;
+  --muted: #9C8866;
+  --card: #1A130C;
+  --border: #3A2E1F;
+  --accent: #D4A437;
+  --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12);
+  --target: #C0392B;
+  --target-fg: #FFFFFF;
+  --success: #7FA45C;
+  --warning: #E0A95C;
+  --danger: #C0392B;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
