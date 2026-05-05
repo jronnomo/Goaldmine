@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { LogBaselineInlineForm } from "@/components/LogBaselineInlineForm";
 import type { BaselineTest } from "@/lib/program-template";
 
 export type BaselineBlockTest = {
@@ -48,12 +49,7 @@ export function BaselineBlockCard({
               )}
             </div>
             {!loggedOnDate ? (
-              <Link
-                href={`/baselines/new?testName=${encodeURIComponent(test.testName)}`}
-                className="text-xs text-[var(--accent)] inline-block mt-1"
-              >
-                Log result →
-              </Link>
+              <LogBaselineInlineForm testName={test.testName} units={test.units} />
             ) : (
               <Link
                 href={`/baselines/test/${encodeURIComponent(test.testName)}`}

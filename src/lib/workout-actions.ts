@@ -51,6 +51,30 @@ export async function logNote(form: FormData) {
   revalidatePath("/history");
 }
 
+// Inline-row variant of logBaseline used by Today's BaselineBlockCard. Same
+// underlying writes as logBaseline — just no redirect, so the user stays on
+// the page they were on (typically Today) and the checkmark renders in place.
+export async function logBaselineInline(form: FormData) {
+  const testName = String(form.get("testName") ?? "").trim();
+  const value = Number(form.get("value"));
+  const units = String(form.get("units") ?? "").trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+
+  if (!testName) throw new Error("Test name is required");
+  if (!Number.isFinite(value)) throw new Error("Value must be a number");
+  if (!units) throw new Error("Units are required");
+
+  const date = new Date();
+  await prisma.baseline.create({ data: { testName, value, units, date, notes } });
+  await appendBaselineToDayWorkout({ testName, value, units, date, notes });
+
+  revalidatePath("/");
+  revalidatePath("/baselines");
+  revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
+  revalidatePath("/stats");
+  revalidatePath("/history");
+}
+
 export async function logBaseline(form: FormData) {
   const testName = String(form.get("testName") ?? "").trim();
   const value = Number(form.get("value"));
