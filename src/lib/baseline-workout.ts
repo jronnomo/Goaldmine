@@ -125,3 +125,116 @@ export async function appendBaselineToDayWorkout(args: {
   });
   return existing;
 }
+
+// Find the WorkoutExercise mirroring a baseline (same testName, same day,
+// inside a source="baseline" Workout). Match key is testName because that's
+// the only stable identifier the baseline carries.
+async function findBaselineExercise(testName: string, date: Date) {
+  const dayStart = startOfDay(date);
+  const dayEnd = endOfDay(date);
+  const workout = await prisma.workout.findFirst({
+    where: {
+      startedAt: { gte: dayStart, lte: dayEnd },
+      source: "baseline",
+    },
+    include: {
+      exercises: {
+        where: { name: testName },
+        include: { sets: { orderBy: { setIndex: "asc" } } },
+      },
+    },
+  });
+  if (!workout) return null;
+  const exercise = workout.exercises[0];
+  if (!exercise) return { workout, exercise: null as null };
+  return { workout, exercise };
+}
+
+// Remove the mirrored exercise. If that leaves the baseline workout empty,
+// delete the workout too — empty placeholder workouts aren't useful.
+export async function removeBaselineFromDayWorkout(args: {
+  testName: string;
+  date: Date;
+}) {
+  const found = await findBaselineExercise(args.testName, args.date);
+  if (!found?.exercise) return;
+  await prisma.workoutExercise.delete({ where: { id: found.exercise.id } });
+  const remaining = await prisma.workoutExercise.count({
+    where: { workoutId: found.workout.id },
+  });
+  if (remaining === 0) {
+    await prisma.workout.delete({ where: { id: found.workout.id } });
+  }
+}
+
+export async function syncBaselineUpdateToWorkout(args: {
+  testName: string;
+  oldDate: Date;
+  oldValue: number;
+  newDate: Date;
+  newValue: number;
+  newUnits: string;
+  newNotes?: string | null;
+}) {
+  const sameDay =
+    startOfDay(args.oldDate).getTime() === startOfDay(args.newDate).getTime();
+
+  // Date moved → remove from old day, append on new day (handled by append helper,
+  // which itself skips value=0 placeholders).
+  if (!sameDay) {
+    await removeBaselineFromDayWorkout({ testName: args.testName, date: args.oldDate });
+    if (args.newValue !== 0) {
+      await appendBaselineToDayWorkout({
+        testName: args.testName,
+        value: args.newValue,
+        units: args.newUnits,
+        date: args.newDate,
+        notes: args.newNotes ?? null,
+      });
+    }
+    return;
+  }
+
+  // Same day: edit in place.
+  const found = await findBaselineExercise(args.testName, args.newDate);
+
+  // value 0 = placeholder → ensure no mirror exists.
+  if (args.newValue === 0) {
+    if (found?.exercise) await removeBaselineFromDayWorkout({ testName: args.testName, date: args.newDate });
+    return;
+  }
+
+  // No mirror yet (e.g. previously logged as placeholder, now has a real value)
+  // → just append.
+  if (!found?.exercise) {
+    await appendBaselineToDayWorkout({
+      testName: args.testName,
+      value: args.newValue,
+      units: args.newUnits,
+      date: args.newDate,
+      notes: args.newNotes ?? null,
+    });
+    return;
+  }
+
+  // Update the existing set + exercise notes in place.
+  const setData = mapBaselineToSet(args.testName, args.newValue, args.newUnits);
+  const firstSet = found.exercise.sets[0];
+  if (firstSet) {
+    await prisma.set.update({
+      where: { id: firstSet.id },
+      data: {
+        reps: setData.reps ?? null,
+        weightLb: setData.weightLb ?? null,
+        durationSec: setData.durationSec ?? null,
+        distanceMi: setData.distanceMi ?? null,
+      },
+    });
+  }
+  if (args.newNotes !== undefined) {
+    await prisma.workoutExercise.update({
+      where: { id: found.exercise.id },
+      data: { notes: args.newNotes ?? null },
+    });
+  }
+}

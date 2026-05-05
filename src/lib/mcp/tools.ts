@@ -4,7 +4,11 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
-import { appendBaselineToDayWorkout } from "@/lib/baseline-workout";
+import {
+  appendBaselineToDayWorkout,
+  removeBaselineFromDayWorkout,
+  syncBaselineUpdateToWorkout,
+} from "@/lib/baseline-workout";
 import {
   dateKey as toDateKey,
   parseDateKey,
@@ -863,8 +867,18 @@ function registerWriteTools(server: McpServer) {
         if (input.units !== undefined) data.units = input.units;
         if (input.date !== undefined) data.date = new Date(input.date);
         if (input.notes !== undefined) data.notes = input.notes;
+        const before = await prisma.baseline.findUniqueOrThrow({ where: { id: input.id } });
         const updated = await prisma.baseline.update({ where: { id: input.id }, data });
-        return { id: updated.id, message: "Baseline updated" };
+        await syncBaselineUpdateToWorkout({
+          testName: updated.testName,
+          oldDate: before.date,
+          oldValue: before.value,
+          newDate: updated.date,
+          newValue: updated.value,
+          newUnits: updated.units,
+          newNotes: updated.notes,
+        });
+        return { id: updated.id, message: "Baseline updated (workout synced)" };
       }),
   );
 
@@ -901,13 +915,15 @@ function registerWriteTools(server: McpServer) {
     "delete_baseline",
     {
       title: "Delete a baseline result",
-      description: "Remove a baseline test result by id.",
+      description: "Remove a baseline test result by id. Also removes the mirrored exercise from that day's baseline workout (and deletes the workout if it has no exercises left).",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
       safe(async () => {
+        const row = await prisma.baseline.findUniqueOrThrow({ where: { id } });
         await prisma.baseline.delete({ where: { id } });
-        return { id, message: "Baseline deleted" };
+        await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
+        return { id, message: "Baseline deleted (workout synced)" };
       }),
   );
 

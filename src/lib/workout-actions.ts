@@ -2,7 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { appendBaselineToDayWorkout } from "@/lib/baseline-workout";
+import {
+  appendBaselineToDayWorkout,
+  removeBaselineFromDayWorkout,
+  syncBaselineUpdateToWorkout,
+} from "@/lib/baseline-workout";
 import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 
@@ -86,14 +90,25 @@ export async function updateBaseline(id: string, form: FormData) {
   const date = dateStr ? new Date(dateStr) : new Date();
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
+  const before = await prisma.baseline.findUniqueOrThrow({ where: { id } });
   const updated = await prisma.baseline.update({
     where: { id },
     data: { value, units, date, notes },
+  });
+  await syncBaselineUpdateToWorkout({
+    testName: updated.testName,
+    oldDate: before.date,
+    oldValue: before.value,
+    newDate: updated.date,
+    newValue: updated.value,
+    newUnits: updated.units,
+    newNotes: updated.notes,
   });
 
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(updated.testName)}`);
   revalidatePath("/stats");
+  revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(updated.testName)}`);
 }
@@ -101,9 +116,11 @@ export async function updateBaseline(id: string, form: FormData) {
 export async function deleteBaselineRow(id: string) {
   const row = await prisma.baseline.findUniqueOrThrow({ where: { id } });
   await prisma.baseline.delete({ where: { id } });
+  await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
   revalidatePath("/stats");
+  revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);
 }
