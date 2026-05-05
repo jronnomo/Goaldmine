@@ -38,6 +38,11 @@ function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean })
   // layered on top to mark it as out-of-gym.
   const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
   const isOutdoor = cell.hikeCount > 0;
+  // A planned hike with no completion logged shows a faded boot — only on
+  // today + future cells. Past planned-but-not-done is a lifecycle concern
+  // out of scope for the calendar surface.
+  const isPlannedOutdoor =
+    !isOutdoor && cell.plannedHikeCount > 0 && !cell.isPast;
 
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
   if (!inMonth) toneClass = "border-transparent bg-transparent text-[var(--muted)]/60";
@@ -68,6 +73,19 @@ function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean })
             <span
               title={cell.hikeCount > 1 ? `${cell.hikeCount} hikes logged` : "Hike logged"}
               aria-label="hike"
+            >
+              🥾
+            </span>
+          )}
+          {isPlannedOutdoor && (
+            <span
+              title={
+                cell.plannedHikeCount > 1
+                  ? `${cell.plannedHikeCount} hikes planned`
+                  : "Hike planned"
+              }
+              aria-label="hike planned"
+              className="opacity-40"
             >
               🥾
             </span>

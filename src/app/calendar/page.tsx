@@ -73,7 +73,8 @@ export default async function CalendarPage({
       <Card title="Legend">
         <ul className="space-y-1 text-xs text-[var(--muted)]">
           <li><span className="text-[var(--target)]">◉</span> training day logged</li>
-          <li>🥾 out-of-gym session (hike, trail run, backpack)</li>
+          <li>🥾 out-of-gym session logged (hike, trail run, backpack)</li>
+          <li><span className="opacity-40">🥾</span> hike planned (not yet logged)</li>
           <li><span className="text-[var(--warning)]">★</span> custom override applied</li>
           <li><span className="text-[var(--muted)]">◎N</span> N baseline test(s) due that day</li>
           <li>🏔️ goal target date</li>
