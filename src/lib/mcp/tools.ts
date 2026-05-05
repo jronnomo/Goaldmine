@@ -74,6 +74,13 @@ async function safe<T>(fn: () => Promise<T>) {
   }
 }
 
+// Bare yyyy-mm-dd is otherwise parsed as UTC midnight, which lands in
+// yesterday's MT day. Treat date-only as USER_TZ midnight; full ISO strings
+// are returned verbatim.
+function parseDateInput(s: string): Date {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDateKey(s) : new Date(s);
+}
+
 export function registerAll(server: McpServer) {
   registerReadTools(server);
   registerWriteTools(server);
@@ -501,7 +508,7 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         const m = await prisma.measurement.create({
           data: {
-            date: input.date ? new Date(input.date) : new Date(),
+            date: input.date ? parseDateInput(input.date) : new Date(),
             weightLb: input.weightLb ?? null,
             restingHr: input.restingHr ?? null,
             bodyFatPct: input.bodyFatPct ?? null,
@@ -528,7 +535,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const date = input.date ? new Date(input.date) : new Date();
+        const date = input.date ? parseDateInput(input.date) : new Date();
         const b = await prisma.baseline.create({
           data: {
             testName: input.testName,
@@ -570,7 +577,7 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         const h = await prisma.hike.create({
           data: {
-            date: new Date(input.date),
+            date: parseDateInput(input.date),
             route: input.route,
             distanceMi: input.distanceMi,
             elevationFt: input.elevationFt,
@@ -627,7 +634,7 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         const n = await prisma.nutritionLog.create({
           data: {
-            date: input.date ? new Date(input.date) : new Date(),
+            date: input.date ? parseDateInput(input.date) : new Date(),
             mealType: input.mealType,
             items: input.items as Prisma.InputJsonValue,
             notes: input.notes ?? null,
@@ -656,7 +663,7 @@ function registerWriteTools(server: McpServer) {
         if (input.mealType !== undefined) data.mealType = input.mealType;
         if (input.items !== undefined) data.items = input.items as Prisma.InputJsonValue;
         if (input.notes !== undefined) data.notes = input.notes;
-        if (input.date !== undefined) data.date = new Date(input.date);
+        if (input.date !== undefined) data.date = parseDateInput(input.date);
         const updated = await prisma.nutritionLog.update({ where: { id: input.id }, data });
         return { id: updated.id, message: "Nutrition updated" };
       }),
@@ -893,7 +900,7 @@ function registerWriteTools(server: McpServer) {
         const data: Record<string, unknown> = {};
         if (input.value !== undefined) data.value = input.value;
         if (input.units !== undefined) data.units = input.units;
-        if (input.date !== undefined) data.date = new Date(input.date);
+        if (input.date !== undefined) data.date = parseDateInput(input.date);
         if (input.notes !== undefined) data.notes = input.notes;
         const before = await prisma.baseline.findUniqueOrThrow({ where: { id: input.id } });
         const updated = await prisma.baseline.update({ where: { id: input.id }, data });
