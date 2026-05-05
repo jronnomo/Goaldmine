@@ -356,11 +356,11 @@ function BaselineRow({ s }: { s: ScheduledBaseline }) {
 function baselineStatusClass(s: CheckpointStatus): string {
   switch (s) {
     case "done":
-      return "text-emerald-500";
+      return "text-[var(--success)]";
     case "due":
-      return "text-amber-500";
+      return "text-[var(--warning)]";
     case "overdue":
-      return "text-red-500";
+      return "text-[var(--danger)]";
     default:
       return "text-[var(--muted)]";
   }

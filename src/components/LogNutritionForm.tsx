@@ -70,7 +70,7 @@ export function LogNutritionForm() {
         placeholder="meal notes (optional)"
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
       <button
         type="submit"
         disabled={pending}

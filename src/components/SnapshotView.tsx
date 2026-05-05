@@ -52,7 +52,7 @@ export function SnapshotView({
               key={d.dayOfWeek}
               className={`rounded-lg border p-2 ${
                 highlight?.has(d.dayOfWeek)
-                  ? "border-amber-500/50 bg-amber-500/5"
+                  ? "border-[var(--warning)]/50 bg-[var(--warning)]/5"
                   : "border-[var(--border)]"
               }`}
             >

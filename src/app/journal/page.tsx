@@ -33,6 +33,12 @@ export default async function JournalPage() {
         <p className="text-xs text-[var(--muted)] mb-2">
           Free-form. Type tags it for Claude (Journal / Audible / Feedback).
         </p>
+        {allNotes.length === 0 && pending.count === 0 && (
+          <p className="text-sm text-[var(--muted)] mb-2">
+            <strong className="font-semibold text-[var(--foreground)]">The journal&apos;s clean.</strong>{" "}
+            Drop a note here for instructions, feelings, or tomorrow&apos;s reminder.
+          </p>
+        )}
         <LogNoteForm />
       </Card>
 
