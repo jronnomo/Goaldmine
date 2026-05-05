@@ -66,9 +66,11 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const todayKey = dateKey(now);
   const goalKey = goal ? dateKey(goal.targetDate) : null;
 
-  for (let d = new Date(gridStart); d <= gridEnd; d.setDate(d.getDate() + 1)) {
+  // Walk the grid by adding days in USER_TZ so DST transitions don't shear
+  // the column alignment.
+  for (let cursor = gridStart; cursor.getTime() <= gridEnd.getTime(); cursor = addDays(cursor, 1)) {
     const cell = buildCell({
-      date: new Date(d),
+      date: cursor,
       todayKey,
       goalKey,
       program,
@@ -397,44 +399,134 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
   return { count, goalId: plan.goal.id, planId: plan.id, since };
 }
 
-// --- Date utilities ---
+// --- Date utilities (USER_TZ-aware) ---
+//
+// The Vercel runtime is UTC, but the user's day rolls over at their local
+// midnight. All date-bucketing logic — "today", week ranges, dateKey strings,
+// the strict-equality lookup for PlanDayOverride.date — must be computed in
+// the user's TZ, not the server's. Override via USER_TZ env (defaults to
+// America/Denver for this single-user app).
+
+export const USER_TZ = process.env.USER_TZ ?? "America/Denver";
+
+const userPartsFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: USER_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+const userWeekdayFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: USER_TZ,
+  weekday: "short",
+});
+
+function userParts(d: Date) {
+  const map: Record<string, string> = {};
+  for (const p of userPartsFmt.formatToParts(d)) map[p.type] = p.value;
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    // Some runtimes return "24" for midnight; fold to 0.
+    hour: Number(map.hour) % 24,
+    minute: Number(map.minute),
+    second: Number(map.second),
+  };
+}
+
+// Convert a user-TZ wall-clock (year, month1=1..12, day, hms) to the UTC
+// instant that represents that wall clock. Handles DST by computing the
+// effective offset for our naive UTC guess, then correcting once.
+function userTzWallClockToUTC(
+  year: number,
+  month1: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+  ms = 0,
+): Date {
+  const naive = new Date(Date.UTC(year, month1 - 1, day, hour, minute, second, ms));
+  const np = userParts(naive);
+  const naiveAsWall = Date.UTC(
+    np.year,
+    np.month - 1,
+    np.day,
+    np.hour,
+    np.minute,
+    np.second,
+  );
+  const desiredAsWall = Date.UTC(year, month1 - 1, day, hour, minute, second);
+  return new Date(naive.getTime() + (desiredAsWall - naiveAsWall));
+}
+
+// Calendar weekday in USER_TZ. 1=Monday … 7=Sunday.
+export function userWeekdayMon1(d: Date): 1 | 2 | 3 | 4 | 5 | 6 | 7 {
+  const wd = userWeekdayFmt.format(d);
+  const map: Record<string, 1 | 2 | 3 | 4 | 5 | 6 | 7> = {
+    Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7,
+  };
+  return map[wd] ?? 1;
+}
 
 export function dateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  const { year, month, day } = userParts(d);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export function parseDateKey(k: string): Date {
   const [y, m, d] = k.split("-").map(Number);
-  return new Date(y!, m! - 1, d!);
+  return userTzWallClockToUTC(y!, m!, d!);
 }
 
 export function startOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
+  const { year, month, day } = userParts(d);
+  return userTzWallClockToUTC(year, month, day);
 }
 
 export function endOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(23, 59, 59, 999);
-  return out;
+  const { year, month, day } = userParts(d);
+  return userTzWallClockToUTC(year, month, day, 23, 59, 59, 999);
 }
 
 export function startOfWeekMonday(d: Date): Date {
-  const out = startOfDay(d);
-  const js = out.getDay();
-  const diff = js === 0 ? -6 : 1 - js; // shift to Monday
-  out.setDate(out.getDate() + diff);
-  return out;
+  const { year, month, day } = userParts(d);
+  const wd = userWeekdayMon1(d);
+  // Date.UTC normalizes negative days into the previous month.
+  const monday = new Date(Date.UTC(year, month - 1, day - (wd - 1)));
+  return userTzWallClockToUTC(
+    monday.getUTCFullYear(),
+    monday.getUTCMonth() + 1,
+    monday.getUTCDate(),
+  );
 }
 
 export function endOfWeekSunday(d: Date): Date {
-  const start = startOfWeekMonday(d);
-  const out = new Date(start);
-  out.setDate(out.getDate() + 6);
-  out.setHours(23, 59, 59, 999);
-  return out;
+  const { year, month, day } = userParts(d);
+  const wd = userWeekdayMon1(d);
+  const sunday = new Date(Date.UTC(year, month - 1, day - (wd - 1) + 6));
+  return userTzWallClockToUTC(
+    sunday.getUTCFullYear(),
+    sunday.getUTCMonth() + 1,
+    sunday.getUTCDate(),
+    23,
+    59,
+    59,
+    999,
+  );
+}
+
+export function addDays(d: Date, days: number): Date {
+  const { year, month, day } = userParts(d);
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
+  return userTzWallClockToUTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth() + 1,
+    shifted.getUTCDate(),
+  );
 }

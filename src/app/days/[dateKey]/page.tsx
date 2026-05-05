@@ -3,7 +3,7 @@ import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { DayOverrideForm } from "@/components/DayOverrideForm";
 import { DayNoteForm } from "@/components/DayNoteForm";
-import { parseDateKey, resolveDay } from "@/lib/calendar";
+import { parseDateKey, resolveDay, startOfDay } from "@/lib/calendar";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +17,7 @@ export default async function DayDetail({
   const date = parseDateKey(dateKey);
   const r = await resolveDay(date);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = startOfDay(new Date());
   const isPast = r.date < today;
   const isToday = r.date.getTime() === today.getTime();
   const isFuture = r.date > today;

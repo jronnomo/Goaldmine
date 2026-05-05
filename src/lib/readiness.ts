@@ -1,3 +1,4 @@
+import { addDays, startOfWeekMonday } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import {
   type GoalTarget,
@@ -88,12 +89,11 @@ export async function computeReadinessSeries(
 ): Promise<ReadinessSeriesPoint[]> {
   const points: ReadinessSeriesPoint[] = [];
   const start = startOfWeek(goalCreatedAt);
-  const cursor = new Date(start);
-  cursor.setDate(cursor.getDate() + 6); // first week-end (Sunday)
+  let cursor = addDays(start, 6); // first week-end (Sunday)
   while (cursor <= now) {
     const snap = await computeReadiness(targets, cursor);
     points.push({ weekEnd: new Date(cursor), score: snap.score });
-    cursor.setDate(cursor.getDate() + 7);
+    cursor = addDays(cursor, 7);
   }
   // Always include "today" as the latest point.
   if (points.length === 0 || points.at(-1)!.weekEnd.getTime() < now.getTime() - 24 * 3600 * 1000) {
@@ -111,11 +111,5 @@ function clamp01(n: number): number {
 }
 
 function startOfWeek(d: Date): Date {
-  const out = new Date(d);
-  const day = out.getDay(); // 0 Sun..6 Sat
-  // Treat Monday as start (1). If today is Sunday (0), step back 6.
-  const diff = day === 0 ? -6 : 1 - day;
-  out.setDate(out.getDate() + diff);
-  out.setHours(0, 0, 0, 0);
-  return out;
+  return startOfWeekMonday(d);
 }

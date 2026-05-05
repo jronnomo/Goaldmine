@@ -1,6 +1,7 @@
 // Aggregations for baseline tests + per-exercise PRs.
 // "PR" here is the best single-set effort across all completed workouts.
 
+import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
 
@@ -198,11 +199,9 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   };
 }
 
+// USER_TZ-aware end-of-day shifted by n days.
 function addDays(d: Date, n: number): Date {
-  const out = new Date(d);
-  out.setDate(out.getDate() + n);
-  out.setHours(23, 59, 59, 999);
-  return out;
+  return endOfDay(addDaysCal(d, n));
 }
 
 function statusFor(
@@ -221,11 +220,7 @@ function statusFor(
   return { status: "upcoming" };
 }
 
-function startOfDay(d: Date): Date {
-  const out = new Date(d);
-  out.setHours(0, 0, 0, 0);
-  return out;
-}
+// startOfDay imported from @/lib/calendar (USER_TZ-aware).
 
 function endOfWindow(d: Date): Date {
   // For initial: any post-target result counts.

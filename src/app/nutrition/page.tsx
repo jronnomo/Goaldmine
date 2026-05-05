@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
-import { dateKey } from "@/lib/calendar";
+import { addDays, dateKey, startOfDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +30,7 @@ function asItems(raw: unknown): Item[] {
 }
 
 export default async function NutritionPage() {
-  const since = new Date();
-  since.setDate(since.getDate() - 30);
-  since.setHours(0, 0, 0, 0);
+  const since = startOfDay(addDays(new Date(), -30));
 
   const logs = await prisma.nutritionLog.findMany({
     where: { date: { gte: since } },

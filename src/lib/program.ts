@@ -1,4 +1,5 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
+import { startOfDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 
 export type ActiveProgramSnapshot = {
@@ -49,14 +50,16 @@ export function getTodayContext(
   program: ActiveProgramSnapshot,
   now: Date = new Date(),
 ): TodayContext {
-  const startMidnight = new Date(program.startedOn);
-  startMidnight.setHours(0, 0, 0, 0);
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
+  // Day boundaries in USER_TZ — the user's phone clock owns "today", not the
+  // server's UTC. dayMs uses 86400 because daysSinceStart is the wall-clock
+  // day count; DST transitions are absorbed by startOfDay's TZ correction.
+  const startMidnight = startOfDay(program.startedOn);
+  const today = startOfDay(now);
 
+  const dayMs = 1000 * 60 * 60 * 24;
   const daysSinceStart = Math.max(
     0,
-    Math.floor((today.getTime() - startMidnight.getTime()) / (1000 * 60 * 60 * 24)),
+    Math.round((today.getTime() - startMidnight.getTime()) / dayMs),
   );
   const weekIndex = Math.min(program.template.totalWeeks, Math.floor(daysSinceStart / 7) + 1);
 

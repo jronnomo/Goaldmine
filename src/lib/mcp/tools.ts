@@ -10,10 +10,14 @@ import {
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
 import {
+  addDays,
   dateKey as toDateKey,
+  endOfDay,
+  endOfWeekSunday,
   parseDateKey,
   resolveDay,
   startOfDay,
+  startOfWeekMonday,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
@@ -127,9 +131,7 @@ function registerReadTools(server: McpServer) {
     },
     async ({ days }) =>
       safe(async () => {
-        const since = new Date();
-        since.setDate(since.getDate() - days);
-        since.setHours(0, 0, 0, 0);
+        const since = startOfDay(addDays(new Date(), -days));
 
         const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
           prisma.workout.findMany({
@@ -270,14 +272,9 @@ function registerReadTools(server: McpServer) {
     async ({ weekOffset }) =>
       safe(async () => {
         const now = new Date();
-        const monday = new Date(now);
-        const js = monday.getDay();
-        const diff = js === 0 ? -6 : 1 - js;
-        monday.setDate(monday.getDate() + diff + weekOffset * 7);
-        monday.setHours(0, 0, 0, 0);
-        const sunday = new Date(monday);
-        sunday.setDate(sunday.getDate() + 6);
-        sunday.setHours(23, 59, 59, 999);
+        const thisMonday = startOfWeekMonday(now);
+        const monday = addDays(thisMonday, weekOffset * 7);
+        const sunday = endOfWeekSunday(monday);
 
         const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
           prisma.workout.findMany({
