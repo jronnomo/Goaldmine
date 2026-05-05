@@ -33,7 +33,11 @@ export function CalendarMonth({
 
 function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean }) {
   const baseClass = "aspect-square rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
-  const isCompleted = cell.workoutCount > 0;
+  // A logged hike counts as a completed training day too — outdoor sessions
+  // satisfy "you trained today" in the bullseye sense, with the boot icon
+  // layered on top to mark it as out-of-gym.
+  const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
+  const isOutdoor = cell.hikeCount > 0;
 
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
   if (!inMonth) toneClass = "border-transparent bg-transparent text-[var(--muted)]/60";
@@ -60,6 +64,14 @@ function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean })
         <div className="flex flex-col items-end gap-0.5">
           {cell.isGoalDate && <span title="Goal date">🏔️</span>}
           {cell.hasOverride && <span title="Custom day" className="text-[var(--warning)]">★</span>}
+          {isOutdoor && (
+            <span
+              title={cell.hikeCount > 1 ? `${cell.hikeCount} hikes logged` : "Hike logged"}
+              aria-label="hike"
+            >
+              🥾
+            </span>
+          )}
           {isCompleted && <Bullseye filled size={10} aria-hidden />}
           {cell.baselinesDue > 0 && (
             <span title={`${cell.baselinesDue} baseline test(s)`} className="text-[var(--muted)] text-[10px]">

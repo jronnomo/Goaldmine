@@ -24,7 +24,10 @@ export default async function CalendarPage({
 
   const monthLabel = monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
-  const completedCount = cells.filter((c) => c.workoutCount > 0 && c.isPast).length;
+  const completedCount = cells.filter(
+    (c) => (c.workoutCount > 0 || c.hikeCount > 0) && c.isPast,
+  ).length;
+  const hikeCount = cells.filter((c) => c.hikeCount > 0 && c.isPast).length;
   const overrideCount = cells.filter((c) => c.hasOverride).length;
   const baselinesDueCount = cells.reduce((acc, c) => acc + c.baselinesDue, 0);
 
@@ -60,7 +63,7 @@ export default async function CalendarPage({
         <CalendarMonth cells={cells} monthStart={monthStart} />
       </Card>
 
-      {cells.every((c) => c.workoutCount === 0 && !c.hasOverride) && (
+      {cells.every((c) => c.workoutCount === 0 && c.hikeCount === 0 && !c.hasOverride) && (
         <p className="text-xs text-[var(--muted)] text-center mt-2">
           <strong className="font-semibold text-[var(--foreground)]">No completed days this month.</strong>{" "}
           Logged workouts and overrides will land here as filled targets.
@@ -69,17 +72,19 @@ export default async function CalendarPage({
 
       <Card title="Legend">
         <ul className="space-y-1 text-xs text-[var(--muted)]">
-          <li><span className="text-[var(--success)]">✓</span> workout logged that day</li>
+          <li><span className="text-[var(--target)]">◉</span> training day logged</li>
+          <li>🥾 out-of-gym session (hike, trail run, backpack)</li>
           <li><span className="text-[var(--warning)]">★</span> custom override applied</li>
-          <li><span className="text-[var(--accent)]">◎N</span> N baseline test(s) due that day</li>
+          <li><span className="text-[var(--muted)]">◎N</span> N baseline test(s) due that day</li>
           <li>🏔️ goal target date</li>
           <li><span className="text-[var(--accent)]">accent ring</span> goal target highlighted</li>
         </ul>
       </Card>
 
       <Card title="This month">
-        <ul className="grid grid-cols-3 gap-2 text-center">
+        <ul className="grid grid-cols-4 gap-2 text-center">
           <Stat label="Completed" value={completedCount} />
+          <Stat label="Hikes" value={hikeCount} />
           <Stat label="Overrides" value={overrideCount} />
           <Stat label="Tests due" value={baselinesDueCount} />
         </ul>
