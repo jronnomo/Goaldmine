@@ -4,6 +4,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
+import { appendBaselineToDayWorkout } from "@/lib/baseline-workout";
 import {
   dateKey as toDateKey,
   parseDateKey,
@@ -526,16 +527,24 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const date = input.date ? new Date(input.date) : new Date();
         const b = await prisma.baseline.create({
           data: {
             testName: input.testName,
             value: input.value,
             units: input.units,
-            date: input.date ? new Date(input.date) : new Date(),
+            date,
             notes: input.notes ?? null,
           },
         });
-        return { id: b.id, message: "Baseline logged" };
+        await appendBaselineToDayWorkout({
+          testName: input.testName,
+          value: input.value,
+          units: input.units,
+          date,
+          notes: input.notes ?? null,
+        });
+        return { id: b.id, message: "Baseline logged (and appended to day's baseline workout)" };
       }),
   );
 

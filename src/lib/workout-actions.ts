@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { appendBaselineToDayWorkout } from "@/lib/baseline-workout";
 import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 
@@ -63,10 +64,12 @@ export async function logBaseline(form: FormData) {
   await prisma.baseline.create({
     data: { testName, value, units, date, notes },
   });
+  await appendBaselineToDayWorkout({ testName, value, units, date, notes });
 
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
   revalidatePath("/stats");
+  revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(testName)}`);
 }
