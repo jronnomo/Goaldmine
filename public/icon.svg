@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Goaldmine PWA icon — static hex (dark palette).
+    Geometry mirrors src/components/Logo.tsx; if you change one, change both
+    and re-run `npx tsx scripts/render-icons.ts`.
+
+    10% safe-area background fills the whole 64x64 viewBox so OS maskable
+    crops always show the brand coal as the cropped background. Brand
+    geometry is inset by ~10% on each side (≈ 6.4 units margin).
+  -->
+
+  <!-- Safe-area background (Concern A4 fix). -->
+  <rect x="0" y="0" width="64" height="64" fill="#0F0B07" />
+
+  <!--
+    Brand group inset 10% from each side: scale 0.8 around (32, 32) which
+    gives an effective 64x64 -> 51.2x51.2 brand canvas centered in the
+    coal field.
+  -->
+  <g transform="matrix(0.8 0 0 0.8 6.4 6.4)">
+    <!-- Layer 1 — Chest body. -->
+    <path d="M8 32 L56 32 L52 56 Q52 58 50 58 L14 58 Q12 58 12 56 Z" fill="#D4A437" />
+
+    <!-- Layer 2 — Chest dark band. -->
+    <rect x="12" y="42" width="40" height="4" fill="#0F0B07" />
+
+    <!-- Layer 3 — Keyhole. -->
+    <circle cx="32" cy="50" r="1.25" fill="#0F0B07" />
+    <rect x="31.5" y="50" width="1" height="3" fill="#0F0B07" />
+
+    <!-- Layer 4 — Chest lid (darker gold, rotated -8°). -->
+    <rect x="8" y="18" width="48" height="12" rx="2" fill="#8A6212" transform="rotate(-8 32 30)" />
+
+    <!-- Layer 5 — Lid interior shadow. -->
+    <path d="M14 22 L50 22 L48 30 L16 30 Z" fill="#0F0B07" opacity="0.8" />
+
+    <!-- Layer 6 — Flanking hollow targets. -->
+    <circle cx="18" cy="22" r="5" fill="none" stroke="#C0392B" stroke-width="1.25" />
+    <circle cx="46" cy="22" r="5" fill="none" stroke="#C0392B" stroke-width="1.25" />
+
+    <!-- Layer 7 — Hero target (4 concentric rings). -->
+    <circle cx="32" cy="18" r="11" fill="#C0392B" />
+    <circle cx="32" cy="18" r="8" fill="#FFFFFF" />
+    <circle cx="32" cy="18" r="5" fill="#C0392B" />
+    <circle cx="32" cy="18" r="2" fill="#FFFFFF" />
+
+    <!-- Layer 8 — Mandatory hero-target outline. -->
+    <circle cx="32" cy="18" r="11.5" fill="none" stroke="#0F0B07" stroke-width="0.5" />
+  </g>
+</svg>

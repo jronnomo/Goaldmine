@@ -1,13 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
-  --foreground: #171717;
-  --muted: #6b7280;
-  --card: #ffffff;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-fg: #ffffff;
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #A82A1F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
 }
 
 @theme inline {
@@ -20,18 +26,60 @@
   --color-accent-fg: var(--accent-fg);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-dm-serif-display);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --muted: #9ca3af;
-    --card: #131313;
-    --border: #1f2937;
-    --accent: #60a5fa;
-    --accent-fg: #0a0a0a;
+    --background: #0F0B07;
+    --foreground: #F4E9D4;
+    --muted: #9C8866;
+    --card: #1A130C;
+    --border: #3A2E1F;
+    --accent: #D4A437;
+    --accent-fg: #0F0B07;
+    --accent-soft: rgba(212, 164, 55, 0.12);
+    --target: #C0392B;
+    --target-fg: #FFFFFF;
+    --success: #7FA45C;
+    --warning: #E0915C;
+    --danger: #C0392B;
   }
+}
+
+/* Explicit user override via ThemeToggle. data-theme on <html> beats the
+   prefers-color-scheme media query. Mirrors the values above so the
+   palettes are byte-identical between system and explicit modes. */
+:root[data-theme="light"] {
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #A82A1F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
+}
+
+:root[data-theme="dark"] {
+  --background: #0F0B07;
+  --foreground: #F4E9D4;
+  --muted: #9C8866;
+  --card: #1A130C;
+  --border: #3A2E1F;
+  --accent: #D4A437;
+  --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12);
+  --target: #C0392B;
+  --target-fg: #FFFFFF;
+  --success: #7FA45C;
+  --warning: #E0915C;
+  --danger: #C0392B;
 }
 
 body {
@@ -41,9 +89,26 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-input,
-textarea,
-select,
-button {
+input, textarea, select, button {
   font-family: inherit;
+}
+
+/* Bullseye-pop: one-shot scale + opacity animation triggered by adding
+   the `bullseye-pop` class to a freshly-logged Bullseye. Reduced-motion
+   users see no animation. React plumbing for `justLogged` is intentionally
+   deferred — the keyframe ships now so future iterations can wire it up. */
+@keyframes bullseye-pop {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1.0); opacity: 1; }
+}
+
+.bullseye-pop {
+  animation: bullseye-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bullseye-pop {
+    animation: none;
+  }
 }

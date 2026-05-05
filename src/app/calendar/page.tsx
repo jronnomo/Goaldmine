@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
@@ -24,7 +25,10 @@ export default async function CalendarPage({
 
   const monthLabel = monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
-  const completedCount = cells.filter((c) => c.workoutCount > 0 && c.isPast).length;
+  const completedCount = cells.filter(
+    (c) => (c.workoutCount > 0 || c.hikeCount > 0) && c.isPast,
+  ).length;
+  const hikeCount = cells.filter((c) => c.hikeCount > 0 && c.isPast).length;
   const overrideCount = cells.filter((c) => c.hasOverride).length;
   const baselinesDueCount = cells.reduce((acc, c) => acc + c.baselinesDue, 0);
 
@@ -60,19 +64,37 @@ export default async function CalendarPage({
         <CalendarMonth cells={cells} monthStart={monthStart} />
       </Card>
 
+      {cells.every((c) => c.workoutCount === 0 && c.hikeCount === 0 && !c.hasOverride) && (
+        <p className="text-xs text-[var(--muted)] text-center mt-2">
+          <strong className="font-semibold text-[var(--foreground)]">No completed days this month.</strong>{" "}
+          Logged workouts and overrides will land here as filled targets.
+        </p>
+      )}
+
       <Card title="Legend">
-        <ul className="space-y-1 text-xs text-[var(--muted)]">
-          <li><span className="text-emerald-500">✓</span> workout logged that day</li>
-          <li><span className="text-amber-500">★</span> custom override applied</li>
-          <li><span className="text-[var(--accent)]">◎N</span> N baseline test(s) due that day</li>
-          <li>🏔️ goal target date</li>
-          <li><span className="text-[var(--accent)]">accent ring</span> goal target highlighted</li>
+        <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <LegendRow label="Trained">
+            <Bullseye filled size={14} aria-hidden />
+          </LegendRow>
+          <LegendRow label="Outdoor day">
+            <span aria-hidden>🥾</span>
+          </LegendRow>
+          <LegendRow label="Custom day">
+            <span aria-hidden className="text-[var(--warning)] text-base leading-none">★</span>
+          </LegendRow>
+          <LegendRow label="Hike planned">
+            <span aria-hidden className="opacity-40">🥾</span>
+          </LegendRow>
+          <LegendRow label="Goal date">
+            <span aria-hidden>🏔️</span>
+          </LegendRow>
         </ul>
       </Card>
 
       <Card title="This month">
-        <ul className="grid grid-cols-3 gap-2 text-center">
+        <ul className="grid grid-cols-4 gap-2 text-center">
           <Stat label="Completed" value={completedCount} />
+          <Stat label="Hikes" value={hikeCount} />
           <Stat label="Overrides" value={overrideCount} />
           <Stat label="Tests due" value={baselinesDueCount} />
         </ul>
@@ -97,6 +119,17 @@ function Stat({ label, value }: { label: string; value: string | number }) {
     <li className="rounded-lg border border-[var(--border)] py-2 list-none">
       <p className="text-lg font-semibold">{value}</p>
       <p className="text-xs text-[var(--muted)]">{label}</p>
+    </li>
+  );
+}
+
+function LegendRow({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <li className="flex items-center gap-2 list-none">
+      <span className="inline-flex items-center justify-center w-5 h-5 shrink-0">
+        {children}
+      </span>
+      <span className="text-[var(--foreground)]">{label}</span>
     </li>
   );
 }

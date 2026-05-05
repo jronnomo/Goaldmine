@@ -16,7 +16,9 @@ export type CalendarDayCell = {
   rotationDay: number | null; // 1..7 if isInPlan
   weekIndex: number | null; // 1..plan.weeks if isInPlan
   dayTitle: string | null; // from override or template
-  workoutCount: number; // logged workouts on this date
+  workoutCount: number; // logged gym workouts on this date
+  hikeCount: number; // completed hikes on this date — out-of-gym training days
+  plannedHikeCount: number; // hikes scheduled but not yet completed (status: "planned")
   hasOverride: boolean;
   baselinesDue: number; // count of due/overdue tests scheduled on this rotation day for this week
 };
@@ -31,11 +33,16 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  const [workouts, overrides, goal] = await Promise.all([
+  const [workouts, hikes, overrides, goal] = await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
       select: { id: true, startedAt: true, status: true, title: true },
       orderBy: { startedAt: "asc" },
+    }),
+    prisma.hike.findMany({
+      where: { date: { gte: gridStart, lte: gridEnd }, status: { in: ["completed", "planned"] } },
+      select: { id: true, date: true, status: true },
+      orderBy: { date: "asc" },
     }),
     program?.id
       ? prisma.planDayOverride.findMany({
@@ -58,6 +65,18 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     workoutsByKey.set(k, arr);
   }
 
+  // Bucket hikes by date key, partitioned by status. Out-of-gym training days
+  // surface as 🥾 in CalendarMonth — solid for completed, faded for planned.
+  const hikesByKey = new Map<string, typeof hikes>();
+  const plannedHikesByKey = new Map<string, typeof hikes>();
+  for (const h of hikes) {
+    const k = dateKey(h.date);
+    const target = h.status === "planned" ? plannedHikesByKey : hikesByKey;
+    const arr = target.get(k) ?? [];
+    arr.push(h);
+    target.set(k, arr);
+  }
+
   const overridesByKey = new Map<string, (typeof overrides)[number]>();
   for (const o of overrides) overridesByKey.set(dateKey(o.date), o);
 
@@ -75,6 +94,8 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       goalKey,
       program,
       workoutsByKey,
+      hikesByKey,
+      plannedHikesByKey,
       overridesByKey,
     });
     cells.push(cell);
@@ -95,6 +116,8 @@ function buildCell(args: {
   goalKey: string | null;
   program: ActiveProgramSnapshot | null;
   workoutsByKey: Map<string, { id: string; startedAt: Date; status: string; title: string | null }[]>;
+  hikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
+  plannedHikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
   overridesByKey: Map<string, { workoutJson: unknown; nutritionText: string | null; mobilityText: string | null }>;
 }): CalendarDayCell {
   const k = dateKey(args.date);
@@ -128,6 +151,8 @@ function buildCell(args: {
   }
 
   const workoutCount = args.workoutsByKey.get(k)?.length ?? 0;
+  const hikeCount = args.hikesByKey.get(k)?.length ?? 0;
+  const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
   const hasOverride = args.overridesByKey.has(k);
   const baselinesDue = isInPlan
     ? countBaselinesDueForCell(args.program!, weekIndex!, rotationDay!)
@@ -145,6 +170,8 @@ function buildCell(args: {
     weekIndex,
     dayTitle,
     workoutCount,
+    hikeCount,
+    plannedHikeCount,
     hasOverride,
     baselinesDue,
   };

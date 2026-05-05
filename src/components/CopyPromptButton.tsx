@@ -14,7 +14,7 @@ export function CopyPromptButton({ text }: { text: string }) {
       }}
       className={`text-xs rounded-full px-3 py-1 border transition ${
         copied
-          ? "border-emerald-500/40 text-emerald-500"
+          ? "border-[var(--success)]/40 text-[var(--success)]"
           : "border-[var(--border)] text-[var(--muted)] hover:text-foreground hover:border-[var(--accent)]"
       }`}
     >

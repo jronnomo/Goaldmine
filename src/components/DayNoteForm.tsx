@@ -51,7 +51,7 @@ export function DayNoteForm({ dateKey }: { dateKey: string }) {
         </button>
       </div>
       {error && (
-        <p className="text-sm text-red-500 border border-red-500/30 bg-red-500/10 rounded-lg px-3 py-2">
+        <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
           {error}
         </p>
       )}

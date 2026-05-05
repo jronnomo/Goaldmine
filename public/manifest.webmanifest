@@ -1,23 +1,14 @@
 {
-  "name": "Workout Planner",
-  "short_name": "Workout",
-  "description": "90-day Mt. Elbert + shred + longevity tracker",
+  "name": "Goaldmine",
+  "short_name": "Goaldmine",
+  "description": "Mining for goals — 90-day Mt. Elbert prep, shred, and longevity tracker.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0a0a",
-  "theme_color": "#0a0a0a",
+  "theme_color": "#0F0B07",
+  "background_color": "#0F0B07",
   "icons": [
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

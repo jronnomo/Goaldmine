@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bullseye } from "@/components/Bullseye";
 import type { CalendarDayCell } from "@/lib/calendar";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -32,14 +33,23 @@ export function CalendarMonth({
 
 function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean }) {
   const baseClass = "aspect-square rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
-  const isCompleted = cell.workoutCount > 0;
+  // A logged hike counts as a completed training day too — outdoor sessions
+  // satisfy "you trained today" in the bullseye sense, with the boot icon
+  // layered on top to mark it as out-of-gym.
+  const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
+  const isOutdoor = cell.hikeCount > 0;
+  // A planned hike with no completion logged shows a faded boot — only on
+  // today + future cells. Past planned-but-not-done is a lifecycle concern
+  // out of scope for the calendar surface.
+  const isPlannedOutdoor =
+    !isOutdoor && cell.plannedHikeCount > 0 && !cell.isPast;
 
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
   if (!inMonth) toneClass = "border-transparent bg-transparent text-[var(--muted)]/60";
-  else if (cell.isToday) toneClass = "border-[var(--accent)] bg-[var(--accent)]/10";
-  else if (isCompleted && cell.isPast) toneClass = "border-emerald-500/40 bg-emerald-500/5";
-  else if (cell.isPast && cell.isInPlan) toneClass = "border-[var(--border)] bg-[var(--background)] text-[var(--muted)]";
-  else if (cell.hasOverride) toneClass = "border-amber-500/50 bg-amber-500/5";
+  else if (cell.isToday && isCompleted) toneClass = "border-[var(--accent)] bg-[var(--card)]";
+  else if (cell.isToday) toneClass = "border-[var(--accent)] bg-[var(--accent-soft)]";
+  else if (cell.isPast && cell.isInPlan && !isCompleted) toneClass = "border-[var(--border)] bg-[var(--background)] text-[var(--muted)]";
+  else if (cell.hasOverride) toneClass = "border-[var(--warning)]/50 bg-[var(--warning)]/5";
 
   const goalClass = cell.isGoalDate ? "ring-2 ring-[var(--accent)]" : "";
 
@@ -58,10 +68,31 @@ function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean })
         <span className={`${cell.isToday ? "font-semibold" : ""}`}>{day}</span>
         <div className="flex flex-col items-end gap-0.5">
           {cell.isGoalDate && <span title="Goal date">🏔️</span>}
-          {isCompleted && <span className="text-emerald-500">✓</span>}
-          {cell.hasOverride && <span title="Custom day" className="text-amber-500">★</span>}
+          {cell.hasOverride && <span title="Custom day" className="text-[var(--warning)]">★</span>}
+          {isOutdoor && (
+            <span
+              title={cell.hikeCount > 1 ? `${cell.hikeCount} hikes logged` : "Hike logged"}
+              aria-label="hike"
+            >
+              🥾
+            </span>
+          )}
+          {isPlannedOutdoor && (
+            <span
+              title={
+                cell.plannedHikeCount > 1
+                  ? `${cell.plannedHikeCount} hikes planned`
+                  : "Hike planned"
+              }
+              aria-label="hike planned"
+              className="opacity-40"
+            >
+              🥾
+            </span>
+          )}
+          {isCompleted && <Bullseye filled size={10} aria-hidden />}
           {cell.baselinesDue > 0 && (
-            <span title={`${cell.baselinesDue} baseline test(s)`} className="text-[var(--accent)] text-[10px]">
+            <span title={`${cell.baselinesDue} baseline test(s)`} className="text-[var(--muted)] text-[10px]">
               ◎{cell.baselinesDue}
             </span>
           )}

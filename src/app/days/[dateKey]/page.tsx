@@ -41,7 +41,7 @@ export default async function DayDetail({
           {r.isInPlan && r.rotationDay
             ? `Week ${r.weekIndex} · Day ${r.rotationDay}${r.workoutTemplate ? ` · ${r.workoutTemplate.title}` : ""}`
             : "Outside the active plan window"}
-          {r.isOverride && <span className="text-amber-500"> · custom override</span>}
+          {r.isOverride && <span className="text-[var(--warning)]"> · custom override</span>}
         </p>
       </header>
 
