@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "icons": "tsx scripts/render-icons.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "zod": "^4.4.2"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
