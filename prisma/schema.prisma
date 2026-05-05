@@ -196,6 +196,11 @@ model PlanDayOverride {
   plan          Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
   date          DateTime // midnight in user's local TZ
   workoutJson   Json?    // override DayTemplate
+  // Optional: replace which baseline tests appear on this date with this exact
+  // list. Each entry is a testName from the program's baselineWeek (any day).
+  // When set, overrides the rotation-derived baselinesDue for this date.
+  // Null/absent = use the rotation default. Empty array = explicitly no tests.
+  baselineTestNames Json?
   nutritionText String?
   mobilityText  String?
   notes         String?

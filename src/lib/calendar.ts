@@ -261,35 +261,64 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
           program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
       }
 
-      // Baselines due: any tests on this rotation day whose checkpoint week matches.
-      const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-      if (baselineDay) {
-        // Pre-load any baselines logged on this date (single query) so each
-        // due-test row can show its checkmark + recorded value.
-        const testNames = baselineDay.tests.map((t) => t.testName);
-        const logged = testNames.length
-          ? await prisma.baseline.findMany({
-              where: {
-                testName: { in: testNames },
-                date: { gte: dayStart, lte: dayEnd },
-              },
-              orderBy: { date: "desc" },
-            })
-          : [];
+      // Baselines due. Two paths:
+      // 1. The override has a baselineTestNames array → use that exact list,
+      //    looking up each test by name across the entire baselineWeek.
+      //    Empty array = explicitly no tests today (override "skip").
+      // 2. Otherwise → derive from the rotation day, same as before.
+      const overrideNames = Array.isArray(override?.baselineTestNames)
+        ? (override!.baselineTestNames as unknown as string[])
+        : null;
+
+      let testsForDay: { test: BaselineTest; baselineDay: BaselineDay }[] = [];
+      if (overrideNames !== null) {
+        for (const name of overrideNames) {
+          for (const day of program.template.baselineWeek ?? []) {
+            const test = day.tests.find((t) => t.testName === name);
+            if (test) {
+              testsForDay.push({ test, baselineDay: day });
+              break;
+            }
+          }
+        }
+      } else {
+        const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
+        if (baselineDay) {
+          testsForDay = baselineDay.tests.map((test) => ({ test, baselineDay }));
+        }
+      }
+
+      if (testsForDay.length > 0) {
+        const testNames = testsForDay.map((x) => x.test.testName);
+        const logged = await prisma.baseline.findMany({
+          where: {
+            testName: { in: testNames },
+            date: { gte: dayStart, lte: dayEnd },
+          },
+          orderBy: { date: "desc" },
+        });
         const loggedByName = new Map<string, (typeof logged)[number]>();
         for (const b of logged) {
           if (!loggedByName.has(b.testName)) loggedByName.set(b.testName, b);
         }
 
-        for (const t of baselineDay.tests) {
-          const result = loggedByName.get(t.testName);
+        for (const { test, baselineDay } of testsForDay) {
+          const result = loggedByName.get(test.testName);
           const loggedOnDate = result
             ? { id: result.id, value: result.value, units: result.units, date: result.date }
             : null;
-          if (weekIndex === 1) {
-            baselinesDue.push({ test: t, baselineDay, checkpoint: "initial", loggedOnDate });
-          } else if (t.retestWeeks?.includes(weekIndex)) {
-            baselinesDue.push({ test: t, baselineDay, checkpoint: "retest", loggedOnDate });
+          // Rotation default: week 1 surfaces initials, retestWeeks trigger
+          // retests, all else is silent. With an override, the user has
+          // explicitly placed these tests on this date — bypass the week
+          // filter entirely (a deferred "initial" can land outside week 1).
+          const checkpoint: "initial" | "retest" =
+            test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+          if (overrideNames !== null) {
+            baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
+          } else if (weekIndex === 1) {
+            baselinesDue.push({ test, baselineDay, checkpoint: "initial", loggedOnDate });
+          } else if (test.retestWeeks?.includes(weekIndex)) {
+            baselinesDue.push({ test, baselineDay, checkpoint: "retest", loggedOnDate });
           }
         }
       }

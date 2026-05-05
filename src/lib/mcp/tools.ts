@@ -737,10 +737,19 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Override a single day",
       description:
-        "Replace one date's workout/nutrition/mobility for the active plan. Pass workoutJson as a full DayTemplate, or omit to leave the rotation default.",
+        "Replace one date's workout / baseline tests / nutrition / mobility for the active plan. " +
+        "Pass workoutJson as a full DayTemplate (object, not stringified) to swap the regular blocks. " +
+        "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) " +
+        "to override which baseline tests appear today — empty array = no tests; omit to keep rotation default.",
       inputSchema: {
         date: DateKeyShape,
         workoutJson: z.unknown().optional(),
+        baselineTestNames: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Override which baseline tests show today. Empty array suppresses tests entirely; omit to keep rotation default.",
+          ),
         nutritionText: z.string().optional(),
         mobilityText: z.string().optional(),
         notes: z.string().optional(),
@@ -752,21 +761,43 @@ function registerWriteTools(server: McpServer) {
         if (!program) throw new Error("No active plan");
         const date = startOfDay(parseDateKey(input.date));
 
+        // Auto-recover: Claude sometimes passes workoutJson as a JSON-encoded
+        // string. Parse it back to an object before storing so resolveDay can
+        // read it as a DayTemplate.
+        let workoutValue: unknown = input.workoutJson;
+        if (typeof workoutValue === "string") {
+          try {
+            workoutValue = JSON.parse(workoutValue);
+          } catch {
+            throw new Error(
+              "workoutJson was passed as a string but isn't valid JSON. Pass the DayTemplate as a plain object.",
+            );
+          }
+        }
+
+        const workoutWrite =
+          workoutValue === undefined
+            ? Prisma.JsonNull
+            : (workoutValue as Prisma.InputJsonValue);
+        const baselinesWrite =
+          input.baselineTestNames === undefined
+            ? Prisma.JsonNull
+            : (input.baselineTestNames as Prisma.InputJsonValue);
+
         const created = await prisma.planDayOverride.upsert({
           where: { planId_date: { planId: program.id, date } },
           create: {
             planId: program.id,
             date,
-            workoutJson: (input.workoutJson as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            workoutJson: workoutWrite,
+            baselineTestNames: baselinesWrite,
             nutritionText: input.nutritionText ?? null,
             mobilityText: input.mobilityText ?? null,
             notes: input.notes ?? null,
           },
           update: {
-            workoutJson:
-              input.workoutJson === undefined
-                ? Prisma.JsonNull
-                : (input.workoutJson as Prisma.InputJsonValue),
+            workoutJson: workoutWrite,
+            baselineTestNames: baselinesWrite,
             nutritionText: input.nutritionText ?? null,
             mobilityText: input.mobilityText ?? null,
             notes: input.notes ?? null,
