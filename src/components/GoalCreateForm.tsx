@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { createGoal } from "@/lib/goal-actions";
+import { FLAVOR_GROUPS, FLAVOR_PRESETS, type GoalFlavorKey } from "@/lib/goal-flavors";
 
 export type CopySource = {
   id: string;
@@ -16,6 +17,8 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
   const [copyFromGoalId, setCopyFromGoalId] = useState<string>(
     copySources[0]?.id ?? "",
   );
+  const [flavor, setFlavor] = useState<GoalFlavorKey>("hike");
+  const flavorPreset = FLAVOR_PRESETS[flavor];
 
   return (
     <form
@@ -51,6 +54,39 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
           required
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-sm font-medium">Goal flavor</span>
+        <select
+          name="flavor"
+          value={flavor}
+          onChange={(e) => setFlavor(e.target.value as GoalFlavorKey)}
+          className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+        >
+          {FLAVOR_GROUPS.map((g) => (
+            <optgroup key={g.heading} label={g.heading}>
+              {g.keys.map((k) => (
+                <option key={k} value={k}>
+                  {FLAVOR_PRESETS[k].label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {flavorPreset.legend ? (
+          <span className="text-xs text-[var(--muted)]">
+            Calendar legend:{" "}
+            {flavorPreset.legend
+              .filter((e) => e.kind !== "trained")
+              .map((e) => `${e.icon} ${e.label}`)
+              .join("  ·  ")}
+          </span>
+        ) : (
+          <span className="text-xs text-[var(--muted)]">
+            No icons set — Claude will propose a legend in claude.ai.
+          </span>
+        )}
       </label>
 
       <label className="flex flex-col gap-1">
