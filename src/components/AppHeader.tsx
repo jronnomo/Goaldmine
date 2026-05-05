@@ -1,6 +1,25 @@
-// Stub — replaced by Agent 2 in Wave 2.
-// Exists so that Wave 1's layout.tsx import resolves and Agent 3's
-// typecheck passes while running in parallel with Agent 2.
-export function AppHeader() {
-  return null;
+import { Logo } from "@/components/Logo";
+
+/**
+ * Sticky brand strip rendered at the top of every page by `app/layout.tsx`.
+ * No actions, no max-width: spans the full viewport (intentional per
+ * architecture-blueprint-v2 §C.2.3, fix H4) so the brand reads on wide
+ * screens. Height is 48 px; the wordmark uses both the Tailwind
+ * `font-display` utility AND inline `style.fontFamily` for safety —
+ * redundancy is intentional (v2 §C.2.3).
+ */
+export function AppHeader(): React.JSX.Element {
+  return (
+    <header className="sticky top-0 z-30 bg-[var(--background)]/95 backdrop-blur border-b border-[var(--border)]">
+      <div className="h-12 flex items-center px-4 gap-2">
+        <Logo size={28} />
+        <span
+          className="font-display text-xl tracking-tight"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          Goaldmine
+        </span>
+      </div>
+    </header>
+  );
 }
