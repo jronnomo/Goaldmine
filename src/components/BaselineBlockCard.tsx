@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { LogBaselineInlineForm } from "@/components/LogBaselineInlineForm";
 import type { BaselineTest } from "@/lib/program-template";
@@ -36,7 +37,11 @@ export function BaselineBlockCard({
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="font-medium">
-                  {loggedOnDate && <span className="text-emerald-500 mr-1">✓</span>}
+                  {loggedOnDate ? (
+                    <Bullseye filled size={14} aria-hidden className="mr-1 inline-block align-[-2px]" />
+                  ) : (
+                    <Bullseye size={14} aria-hidden className="mr-1 inline-block align-[-2px]" />
+                  )}
                   {test.testName}{" "}
                   <span className="text-[var(--muted)] font-normal text-xs">· {test.units}</span>
                 </p>
