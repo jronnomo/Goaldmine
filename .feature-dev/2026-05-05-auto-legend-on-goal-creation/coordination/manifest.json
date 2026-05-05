@@ -1,0 +1,19 @@
+{
+  "feature": "auto-legend-on-goal-creation",
+  "branch": "feature/auto-legend-on-goal-creation",
+  "prd_path": "docs/prds/PRD-auto-legend-on-goal-creation.md",
+  "prd_issue": null,
+  "ux_research_path": null,
+  "ux_research_status": "skipped",
+  "requirements": ["REQ-A1", "REQ-B1", "REQ-B2", "REQ-D1"],
+  "agents": [],
+  "iteration": 1,
+  "status": "phase_4_pending",
+  "phase": "phase-3-setup-complete",
+  "notes": [
+    "PR #2 (goal-driven legend) merged before this branch was cut.",
+    "Branch off main; build feature for Goal.legend + LegendSchema already shipped.",
+    "Phase 1+2 complete; UX research skipped (no UI surface).",
+    "Phase 3 complete — coordination scaffold in place."
+  ]
+}

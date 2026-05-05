@@ -3,9 +3,10 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { parseDateKey } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
+import { createGoalCore } from "@/lib/goal-core";
 import type { GoalTarget } from "@/lib/goal-targets";
-import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
 
 export type GoalReference = {
   id: string;
@@ -35,50 +36,27 @@ export async function createGoal(form: FormData) {
   const notes = (form.get("notes") as string | null)?.trim() || null;
   const copyFromGoalId = (form.get("copyFromGoalId") as string | null)?.trim() || null;
 
+  // UI-friendly guards (kept). Core re-checks defensively.
   if (!objective) throw new Error("Objective is required");
   if (!targetDateStr) throw new Error("Target date is required");
-  const targetDate = new Date(targetDateStr);
+
+  // v2 — Concern D: align with MCP path; both routes store USER_TZ midnight
+  // via the calendar helper instead of `new Date(yyyy-mm-dd)` (which yields
+  // UTC midnight, rendering one calendar cell early in MT). HTML
+  // <input type="date"> returns yyyy-mm-dd; parseDateKey accepts that.
+  // parseDateKey itself does NOT validate the format (it Number-coerces the
+  // split parts), so the NaN guard below is retained to catch malformed input.
+  const targetDate = parseDateKey(targetDateStr);
   if (Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
 
-  let targets: GoalTarget[] | null = parseTargetsField(form.get("targets"));
-  if (!targets && copyFromGoalId) {
-    const source = await prisma.goal.findUnique({ where: { id: copyFromGoalId } });
-    if (source && source.targets) {
-      targets = source.targets as unknown as GoalTarget[];
-    }
-  }
+  const targets = parseTargetsField(form.get("targets"));
 
-  const now = new Date();
-  const weeks = weeksBetween(now, targetDate);
-  const planTemplate = scaffoldPlanFromTemplate(weeks);
-
-  const goal = await prisma.goal.create({
-    data: {
-      objective,
-      targetDate,
-      notes,
-      targets: targets ?? undefined,
-      plans: {
-        create: {
-          name: `${objective} — ${weeks}-week plan`,
-          startedOn: now,
-          endsOn: targetDate,
-          weeks,
-          active: true,
-          planJson: planTemplate as unknown as object,
-          // Seed an initial revision so future revisions have a clean
-          // predecessor to compare against.
-          revisions: {
-            create: {
-              triggerSource: "manual",
-              summary: "Initial plan from program template",
-              reasoning: `Scaffolded from the program template, scaled to ${weeks} weeks across ${planTemplate.phases.length} phases.`,
-              snapshotJson: planTemplate as unknown as object,
-            },
-          },
-        },
-      },
-    },
+  const { goal } = await createGoalCore({
+    objective,
+    targetDate,
+    notes,
+    copyFromGoalId,
+    targets,
   });
 
   revalidatePath("/goals");
