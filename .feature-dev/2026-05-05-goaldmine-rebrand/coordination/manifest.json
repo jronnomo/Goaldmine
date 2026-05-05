@@ -1,0 +1,25 @@
+{
+  "feature": "goaldmine-rebrand",
+  "branch": "feature/goaldmine-rebrand",
+  "prd_path": "docs/prds/PRD-goaldmine-rebrand.md",
+  "prd_issue": null,
+  "ux_research_path": "docs/ux-research/goaldmine-rebrand.md",
+  "ux_research_status": "complete",
+  "requirements": [
+    "REQ-A1", "REQ-A2", "REQ-A3",
+    "REQ-B1", "REQ-B2", "REQ-B3",
+    "REQ-C1", "REQ-C2", "REQ-C3",
+    "REQ-D1", "REQ-D2", "REQ-D3", "REQ-D4", "REQ-D5",
+    "REQ-E1", "REQ-E2", "REQ-E3"
+  ],
+  "agents": [],
+  "iteration": 1,
+  "status": "phase_4_in_progress",
+  "phase": "phase-4-research-architect-devils-advocate",
+  "notes": [
+    "Phase 1 (discovery + clarifications) complete.",
+    "Phase 2 (PRD) complete; UX research running in background.",
+    "Phase 3 (workspace + requirements) complete.",
+    "Phase 4 blocked on UX research findings."
+  ]
+}
