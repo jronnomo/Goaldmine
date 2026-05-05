@@ -52,7 +52,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     prisma.goal.findFirst({
       where: { active: true },
       orderBy: { targetDate: "asc" },
-      select: { id: true, targetDate: true, objective: true },
+      select: { id: true, targetDate: true, objective: true, legend: true },
     }),
   ]);
 

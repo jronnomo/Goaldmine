@@ -3,6 +3,7 @@ import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
+import { resolveLegend, type LegendEntry } from "@/lib/legend";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function CalendarPage({
   const month = m ? Number(m) : now.getMonth();
 
   const { cells, monthStart, goal, program } = await getCalendarMonth({ year, month });
+  const legend = resolveLegend(goal);
 
   const prevYear = month === 0 ? year - 1 : year;
   const prevMonth = month === 0 ? 11 : month - 1;
@@ -61,7 +63,7 @@ export default async function CalendarPage({
       </div>
 
       <Card>
-        <CalendarMonth cells={cells} monthStart={monthStart} />
+        <CalendarMonth cells={cells} monthStart={monthStart} legend={legend} />
       </Card>
 
       {cells.every((c) => c.workoutCount === 0 && c.hikeCount === 0 && !c.hasOverride) && (
@@ -73,21 +75,11 @@ export default async function CalendarPage({
 
       <Card title="Legend">
         <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <LegendRow label="Trained">
-            <Bullseye filled size={14} aria-hidden />
-          </LegendRow>
-          <LegendRow label="Outdoor day">
-            <span aria-hidden>🥾</span>
-          </LegendRow>
-          <LegendRow label="Custom day">
-            <span aria-hidden className="text-[var(--warning)] text-base leading-none">★</span>
-          </LegendRow>
-          <LegendRow label="Hike planned">
-            <span aria-hidden className="opacity-40">🥾</span>
-          </LegendRow>
-          <LegendRow label="Goal date">
-            <span aria-hidden>🏔️</span>
-          </LegendRow>
+          {legend.map((entry) => (
+            <LegendRow key={entry.kind} label={entry.label}>
+              {renderLegendIcon(entry)}
+            </LegendRow>
+          ))}
         </ul>
       </Card>
 
@@ -132,4 +124,27 @@ function LegendRow({ children, label }: { children: React.ReactNode; label: stri
       <span className="text-[var(--foreground)]">{label}</span>
     </li>
   );
+}
+
+function renderLegendIcon(entry: LegendEntry): React.ReactNode {
+  switch (entry.kind) {
+    case "trained":
+      // Always render the Bullseye SVG — entry.icon is decorative-only here.
+      return <Bullseye filled size={14} aria-hidden />;
+    case "hike-planned":
+      return (
+        <span aria-hidden className="opacity-40">
+          {entry.icon}
+        </span>
+      );
+    case "override":
+      return (
+        <span aria-hidden className="text-[var(--warning)] text-base leading-none">
+          {entry.icon}
+        </span>
+      );
+    case "hike-completed":
+    case "goal-date":
+      return <span aria-hidden>{entry.icon}</span>;
+  }
 }

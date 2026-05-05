@@ -21,6 +21,7 @@ import {
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
+import { LegendSchema } from "@/lib/legend";
 import { getActiveProgram } from "@/lib/program";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
 import {
@@ -1025,6 +1026,38 @@ function registerWriteTools(server: McpServer) {
           data: { references: next as unknown as Prisma.InputJsonValue },
         });
         return { count: next.length, message: "Reference added" };
+      }),
+  );
+
+  server.registerTool(
+    "update_goal_legend",
+    {
+      title: "Set or clear a goal's calendar legend",
+      description:
+        "Replace the goal's legend array (drives the calendar legend AND which icons render in cells). Pass an empty array OR omit `legend` to reset to the built-in default. Each entry = { icon, label, kind } where kind ∈ {trained, hike-completed, hike-planned, override, goal-date}. Use this when the active goal changes flavor (e.g., pivot from hiking to powerlifting): swap 🥾 entries for goal-appropriate icons. The kind enum is closed; new render conditions require a code change.",
+      inputSchema: {
+        goalId: z.string(),
+        legend: LegendSchema.optional().describe(
+          "Full legend array. Pass empty array or omit to reset to the default legend.",
+        ),
+      },
+    },
+    async ({ goalId, legend }) =>
+      safe(async () => {
+        const next =
+          legend && legend.length > 0
+            ? (legend as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull;
+        await prisma.goal.update({
+          where: { id: goalId },
+          data: { legend: next },
+        });
+        return {
+          message:
+            legend && legend.length > 0
+              ? `Legend updated (${legend.length} entries)`
+              : "Legend reset to default",
+        };
       }),
   );
 }
