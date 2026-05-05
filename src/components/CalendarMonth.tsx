@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { Bullseye } from "@/components/Bullseye";
 import type { CalendarDayCell } from "@/lib/calendar";
+import { findLegendEntry, type LegendEntry } from "@/lib/legend";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function CalendarMonth({
   cells,
   monthStart,
+  legend,
 }: {
   cells: CalendarDayCell[];
   monthStart: Date;
+  legend: readonly LegendEntry[];
 }) {
   const monthIdx = monthStart.getMonth();
 
@@ -24,14 +27,36 @@ export function CalendarMonth({
       </div>
       <div className="grid grid-cols-7 gap-1">
         {cells.map((c) => (
-          <DayCell key={c.dateKey} cell={c} inMonth={c.date.getMonth() === monthIdx} />
+          <DayCell
+            key={c.dateKey}
+            cell={c}
+            inMonth={c.date.getMonth() === monthIdx}
+            legend={legend}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean }) {
+function DayCell({
+  cell,
+  inMonth,
+  legend,
+}: {
+  cell: CalendarDayCell;
+  inMonth: boolean;
+  legend: readonly LegendEntry[];
+}) {
+  // Resolve which kinds the active goal cares about. If a kind isn't in the
+  // legend, the corresponding cell icon is suppressed (consistent with the
+  // legend list — what you see in the cell matches what's labeled below).
+  const trainedEntry = findLegendEntry(legend, "trained");
+  const hikeEntry = findLegendEntry(legend, "hike-completed");
+  const plannedHikeEntry = findLegendEntry(legend, "hike-planned");
+  const overrideEntry = findLegendEntry(legend, "override");
+  const goalEntry = findLegendEntry(legend, "goal-date");
+
   const baseClass = "aspect-square rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
   // A logged hike counts as a completed training day too — outdoor sessions
   // satisfy "you trained today" in the bullseye sense, with the boot icon
@@ -67,30 +92,40 @@ function DayCell({ cell, inMonth }: { cell: CalendarDayCell; inMonth: boolean })
       <div className="flex items-start justify-between gap-1">
         <span className={`${cell.isToday ? "font-semibold" : ""}`}>{day}</span>
         <div className="flex flex-col items-end gap-0.5">
-          {cell.isGoalDate && <span title="Goal date">🏔️</span>}
-          {cell.hasOverride && <span title="Custom day" className="text-[var(--warning)]">★</span>}
-          {isOutdoor && (
-            <span
-              title={cell.hikeCount > 1 ? `${cell.hikeCount} hikes logged` : "Hike logged"}
-              aria-label="hike"
-            >
-              🥾
+          {cell.isGoalDate && goalEntry && (
+            <span title={goalEntry.label}>{goalEntry.icon}</span>
+          )}
+          {cell.hasOverride && overrideEntry && (
+            <span title={overrideEntry.label} className="text-[var(--warning)]">
+              {overrideEntry.icon}
             </span>
           )}
-          {isPlannedOutdoor && (
+          {isOutdoor && hikeEntry && (
+            <span
+              title={
+                cell.hikeCount > 1
+                  ? `${cell.hikeCount} ${hikeEntry.label.toLowerCase()}s`
+                  : hikeEntry.label
+              }
+              aria-label={hikeEntry.label}
+            >
+              {hikeEntry.icon}
+            </span>
+          )}
+          {isPlannedOutdoor && plannedHikeEntry && (
             <span
               title={
                 cell.plannedHikeCount > 1
-                  ? `${cell.plannedHikeCount} hikes planned`
-                  : "Hike planned"
+                  ? `${cell.plannedHikeCount} ${plannedHikeEntry.label.toLowerCase()}s`
+                  : plannedHikeEntry.label
               }
-              aria-label="hike planned"
+              aria-label={plannedHikeEntry.label}
               className="opacity-40"
             >
-              🥾
+              {plannedHikeEntry.icon}
             </span>
           )}
-          {isCompleted && <Bullseye filled size={10} aria-hidden />}
+          {isCompleted && trainedEntry && <Bullseye filled size={10} aria-hidden />}
           {cell.baselinesDue > 0 && (
             <span title={`${cell.baselinesDue} baseline test(s)`} className="text-[var(--muted)] text-[10px]">
               ◎{cell.baselinesDue}

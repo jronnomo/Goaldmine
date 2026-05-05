@@ -154,6 +154,11 @@ model Goal {
   // Optional references — array of { id, kind: 'url' | 'doc', value, label?, addedAt, claudeSummary? }
   // The app stores these; Claude reads them via MCP and uses them to refine targets.
   references Json?
+  // Optional calendar legend — array of { icon, label, kind } where kind ∈
+  // {"trained", "hike-completed", "hike-planned", "override", "goal-date"}.
+  // Drives both the calendar legend AND which icons render in cells. Null
+  // = use the default Mt. Elbert-flavored legend in src/lib/legend.ts.
+  legend     Json?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
