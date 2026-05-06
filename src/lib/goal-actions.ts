@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { createGoalCore } from "@/lib/goal-core";
+import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
 
 export type GoalReference = {
@@ -51,12 +52,19 @@ export async function createGoal(form: FormData) {
 
   const targets = parseTargetsField(form.get("targets"));
 
+  // Flavor picker → preset legend lookup. "custom" + unknown values pass null
+  // (goal saves with legend: null; Claude proposes one in claude.ai per
+  // server-instructions rule 11).
+  const flavorRaw = (form.get("flavor") as string | null)?.trim() ?? "";
+  const legend = isFlavorKey(flavorRaw) ? legendForFlavor(flavorRaw) : null;
+
   const { goal } = await createGoalCore({
     objective,
     targetDate,
     notes,
     copyFromGoalId,
     targets,
+    legend: legend ?? undefined,
   });
 
   revalidatePath("/goals");
