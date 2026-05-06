@@ -141,25 +141,27 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   const scheduled: ScheduledBaseline[] = flat.map(({ day, test }) => {
     const rows = byName.get(test.testName) ?? [];
 
-    // Initial checkpoint = end of week 1 (day 7 of program).
-    const checkpoints: ScheduledCheckpoint[] = [];
-    const initialDate = addDays(startedOn, 7);
-    checkpoints.push({
-      week: 1,
-      targetDate: initialDate,
-      label: "initial",
-      ...statusFor(initialDate, rows, now),
-    });
-
-    for (const w of test.retestWeeks) {
-      const target = addDays(startedOn, w * 7);
-      checkpoints.push({
+    // Initial checkpoint = end of week 1 (day 7 of program); retests follow.
+    const targets: { week: number; targetDate: Date; label: "initial" | "retest" }[] = [
+      { week: 1, targetDate: addDays(startedOn, 7), label: "initial" },
+      ...test.retestWeeks.map((w) => ({
         week: w,
-        targetDate: target,
-        label: "retest",
-        ...statusFor(target, rows, now),
-      });
-    }
+        targetDate: addDays(startedOn, w * 7),
+        label: "retest" as const,
+      })),
+    ];
+
+    // Each checkpoint owns the window [prev target or program start, next target or +28d).
+    // Results logged anywhere in the window — including before the target — count it as done.
+    const checkpoints: ScheduledCheckpoint[] = targets.map((t, i) => {
+      const windowStart = i === 0 ? startedOn : targets[i - 1].targetDate;
+      const windowEnd =
+        i < targets.length - 1 ? targets[i + 1].targetDate : addDays(t.targetDate, 28);
+      return {
+        ...t,
+        ...statusFor(t.targetDate, rows, now, windowStart, windowEnd),
+      };
+    });
 
     const latest = rows.at(-1);
     return {
@@ -208,24 +210,18 @@ function statusFor(
   target: Date,
   rows: { date: Date; value: number }[],
   now: Date,
+  windowStart: Date,
+  windowEnd: Date,
 ): { status: CheckpointStatus; completedOn?: Date; completedValue?: number } {
-  // A checkpoint is "done" if a result exists on or after its target.
-  // We approximate "the result for this checkpoint" as the earliest row on/after target.
-  const match = rows.find((r) => r.date >= startOfDay(target) && r.date <= endOfWindow(target));
+  const match = rows.find(
+    (r) => r.date >= startOfDay(windowStart) && r.date < windowEnd,
+  );
   if (match) return { status: "done", completedOn: match.date, completedValue: match.value };
 
   const dueWindowStart = addDays(target, -7); // window opens 1 week before target
   if (now >= dueWindowStart && now <= addDays(target, 7)) return { status: "due" };
   if (now > addDays(target, 7)) return { status: "overdue" };
   return { status: "upcoming" };
-}
-
-// startOfDay imported from @/lib/calendar (USER_TZ-aware).
-
-function endOfWindow(d: Date): Date {
-  // For initial: any post-target result counts.
-  // For retests: extend window to the next checkpoint or +28 days, whichever is shorter.
-  return addDays(d, 28);
 }
 
 export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
