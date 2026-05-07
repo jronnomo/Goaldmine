@@ -16,6 +16,7 @@ import {
   endOfWeekSunday,
   parseDateKey,
   resolveDay,
+  rotationBaselineNamesForDate,
   startOfDay,
   startOfWeekMonday,
 } from "@/lib/calendar";
@@ -793,7 +794,10 @@ function registerWriteTools(server: McpServer) {
         "Replace one date's workout / baseline tests / nutrition / mobility for the active plan. " +
         "Pass workoutJson as a full DayTemplate (object, not stringified) to swap the regular blocks. " +
         "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) " +
-        "to override which baseline tests appear today — empty array = no tests; omit to keep rotation default.",
+        "to override which baseline tests appear today — empty array = no tests; omit to keep rotation default. " +
+        "When you pass workoutJson on a date that has rotation-default baselines, you MUST also pass " +
+        "baselineTestNames explicitly (re-list to keep, [] to suppress, swap to replace). Don't tell the user " +
+        "to ignore the baseline form — own the decision.",
       inputSchema: {
         date: DateKeyShape,
         workoutJson: z.unknown().optional(),
@@ -801,7 +805,7 @@ function registerWriteTools(server: McpServer) {
           .array(z.string())
           .optional()
           .describe(
-            "Override which baseline tests show today. Empty array suppresses tests entirely; omit to keep rotation default.",
+            "Override which baseline tests show today. Empty array suppresses tests entirely; omit to keep rotation default. Required when workoutJson is set on a date with rotation-default baselines.",
           ),
         nutritionText: z.string().optional(),
         mobilityText: z.string().optional(),
@@ -813,6 +817,22 @@ function registerWriteTools(server: McpServer) {
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan");
         const date = startOfDay(parseDateKey(input.date));
+
+        // Audible-with-baselines guard: if Claude is swapping the workout on a
+        // date where baselines would normally appear by rotation, force an
+        // explicit baselineTestNames decision. Three valid choices: keep
+        // (re-list the same names), suppress ([]), or swap (different names).
+        if (input.workoutJson !== undefined && input.baselineTestNames === undefined) {
+          const rotationDefaults = rotationBaselineNamesForDate(program, date);
+          if (rotationDefaults.length > 0) {
+            throw new Error(
+              `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
+                `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
+                `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
+                `Don't punt this to the UI — own the call.`,
+            );
+          }
+        }
 
         // Auto-recover: Claude sometimes passes workoutJson as a JSON-encoded
         // string. Parse it back to an object before storing so resolveDay can

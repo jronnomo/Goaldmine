@@ -410,6 +410,28 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
   return r.baselinesDue;
 }
 
+/**
+ * Baseline test names that would normally appear on `date` by rotation default
+ * (week 1 initials + retest weeks). Ignores any per-day override — answers the
+ * question "what would a fresh day with no override show?".
+ */
+export function rotationBaselineNamesForDate(
+  program: ActiveProgramSnapshot,
+  date: Date,
+): string[] {
+  const startMid = startOfDay(program.startedOn);
+  const dayStart = startOfDay(date);
+  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
+  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return [];
+  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
+  const weekIndex = Math.floor(daysDelta / 7) + 1;
+  const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
+  if (!baselineDay) return [];
+  return baselineDay.tests
+    .filter((t) => weekIndex === 1 || t.retestWeeks?.includes(weekIndex))
+    .map((t) => t.testName);
+}
+
 /** Unresolved notes + a link target into the active plan's goal. */
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
   const [plan, count] = await Promise.all([
