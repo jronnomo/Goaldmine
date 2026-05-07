@@ -234,31 +234,51 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_pending_notes",
     {
-      title: "Notes since the last plan revision",
+      title: "Unresolved notes",
       description:
-        "Notes (audibles/journals/feedback) the user has logged since the most recent revision was applied to their active plan. The natural input set for a 'review my notes' coaching turn.",
+        "Notes (audibles/journals/feedback) that haven't been resolved yet — i.e. resolvedAt IS NULL. The natural input set for a 'review my notes' coaching turn. Resolve a note either by including its id in apply_plan_revision.resolvedNoteIds when the revision addresses it, or by calling acknowledge_notes when no plan change is warranted.",
     },
     async () =>
       safe(async () => {
         const plan = await prisma.plan.findFirst({
           where: { active: true },
           orderBy: { updatedAt: "desc" },
-          include: {
-            revisions: { orderBy: { createdAt: "desc" }, take: 1 },
-          },
         });
-        if (!plan) return { plan: null, since: null, notes: [] };
-        const since = plan.revisions[0]?.createdAt ?? plan.startedOn;
         const notes = await prisma.note.findMany({
-          where: { date: { gt: since } },
+          where: { resolvedAt: null },
           orderBy: { date: "desc" },
         });
         return {
-          planId: plan.id,
-          since,
+          planId: plan?.id ?? null,
           notes,
           count: notes.length,
         };
+      }),
+  );
+
+  server.registerTool(
+    "acknowledge_notes",
+    {
+      title: "Acknowledge notes without revising the plan",
+      description:
+        "Mark notes resolved when they don't warrant a plan change (pure journals, observations already addressed, etc.). Sets resolvedAt = now and stores the reason. Always propose to the user before calling — same propose-before-apply rule as apply_plan_revision.",
+      inputSchema: {
+        noteIds: z.array(z.string()).min(1),
+        reason: z
+          .string()
+          .min(1)
+          .describe(
+            "Why these notes don't need a plan change. Stored on each note as resolvedReason.",
+          ),
+      },
+    },
+    async ({ noteIds, reason }) =>
+      safe(async () => {
+        const result = await prisma.note.updateMany({
+          where: { id: { in: noteIds }, resolvedAt: null },
+          data: { resolvedAt: new Date(), resolvedReason: reason },
+        });
+        return { resolved: result.count, message: `Resolved ${result.count} note(s)` };
       }),
   );
 
@@ -690,7 +710,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Apply a plan revision",
       description:
-        "Atomically write a PlanRevision and update Plan.planJson to the new full snapshot. Use after reasoning over a note + recent state. snapshotJson is the *complete* plan template after the change (cascades included).",
+        "Atomically write a PlanRevision and update Plan.planJson to the new full snapshot. Use after reasoning over a note + recent state. snapshotJson is the *complete* plan template after the change (cascades included). Pass resolvedNoteIds for every note this revision folds in — they'll be marked resolved in the same transaction so they drop from pending.",
       inputSchema: {
         planId: z.string(),
         summary: z.string().min(1).max(200),
@@ -698,6 +718,12 @@ function registerWriteTools(server: McpServer) {
         snapshotJson: z.unknown().describe("Full ProgramTemplate after the revision"),
         triggerNoteId: z.string().optional(),
         triggerSource: z.enum(["note", "claude", "manual"]).default("claude"),
+        resolvedNoteIds: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Notes addressed by this revision. They'll be marked resolved with a reference to the new revision id.",
+          ),
       },
     },
     async (input) =>
@@ -717,7 +743,13 @@ function registerWriteTools(server: McpServer) {
         assertValidProgramTemplate(snapshot);
 
         const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
-        const rev = await prisma.$transaction(async (tx) => {
+        const resolveIds = [
+          ...new Set([
+            ...(input.resolvedNoteIds ?? []),
+            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+          ]),
+        ];
+        const { rev, resolvedCount } = await prisma.$transaction(async (tx) => {
           const r = await tx.planRevision.create({
             data: {
               planId: plan.id,
@@ -732,9 +764,24 @@ function registerWriteTools(server: McpServer) {
             where: { id: plan.id },
             data: { planJson: snapshot as Prisma.InputJsonValue },
           });
-          return r;
+          let resolvedCount = 0;
+          if (resolveIds.length > 0) {
+            const update = await tx.note.updateMany({
+              where: { id: { in: resolveIds }, resolvedAt: null },
+              data: {
+                resolvedAt: r.createdAt,
+                resolvedReason: `applied via revision ${r.id}`,
+              },
+            });
+            resolvedCount = update.count;
+          }
+          return { rev: r, resolvedCount };
         });
-        return { revisionId: rev.id, message: "Plan revision applied" };
+        return {
+          revisionId: rev.id,
+          resolvedNoteCount: resolvedCount,
+          message: `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}`,
+        };
       }),
   );
 

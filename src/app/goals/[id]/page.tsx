@@ -40,13 +40,12 @@ export default async function GoalDetail({
   if (!goal) notFound();
   const activePlan = goal.plans[0];
 
-  // Pending notes = notes since the last revision (or since plan start if no revisions).
+  // Pending notes = unresolved notes (no resolvedAt). Cleared either by an
+  // apply_plan_revision that includes their id, or by an explicit resolve.
   let pendingNotes: PendingNote[] = [];
   if (activePlan) {
-    const lastRevisionAt =
-      activePlan.revisions[0]?.createdAt ?? activePlan.startedOn;
     const notes = await prisma.note.findMany({
-      where: { date: { gt: lastRevisionAt } },
+      where: { resolvedAt: null },
       orderBy: { date: "desc" },
       take: 25,
     });

@@ -90,13 +90,19 @@ model Note {
   // Optional: which future date this note is *about* (vs. when it was written).
   // Lets Claude know "the user wants the May 8 plan adjusted because of this."
   targetDate DateTime?
-  createdAt  DateTime  @default(now())
+  // When set, the note has been folded in (via plan revision) or
+  // explicitly acknowledged as not requiring a plan change. Pending notes
+  // are those with resolvedAt IS NULL.
+  resolvedAt     DateTime?
+  resolvedReason String?
+  createdAt      DateTime  @default(now())
 
   triggeredRevisions PlanRevision[]
 
   @@index([date])
   @@index([type])
   @@index([targetDate])
+  @@index([resolvedAt])
 }
 
 model Hike {

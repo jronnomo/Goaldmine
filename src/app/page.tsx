@@ -97,9 +97,9 @@ export default async function HomePage() {
       </header>
 
       {pending.count > 0 && pending.goalId && (
-        <Card title={`${pending.count} pending note${pending.count === 1 ? "" : "s"} since last revision`}>
+        <Card title={`${pending.count} pending note${pending.count === 1 ? "" : "s"}`}>
           <p className="text-sm text-[var(--muted)] mb-2">
-            Ask Claude to review them and propose plan updates.
+            Ask Claude to review them and propose plan updates, or mark them resolved if no change is needed.
           </p>
           <div className="flex gap-2 flex-wrap">
             <Link

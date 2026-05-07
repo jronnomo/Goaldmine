@@ -53,9 +53,9 @@ const PROMPTS = [
   },
   {
     title: "Review pending notes",
-    when: "Notes have piled up; want to fold them into the plan",
+    when: "Notes have piled up; want to clear them",
     prompt:
-      "Pull my pending notes and propose plan updates. Walk me through each before applying.",
+      "Pull my pending notes. For each, decide: fold into a plan revision, or acknowledge as no-change-needed. Walk me through each before applying.",
   },
 ];
 

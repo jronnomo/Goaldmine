@@ -13,12 +13,8 @@ export default async function JournalPage() {
     prisma.note.findMany({ orderBy: { date: "desc" }, take: 50 }),
   ]);
 
-  const pendingNotes = pending.since
-    ? allNotes.filter((n) => n.date > pending.since!)
-    : [];
-  const olderNotes = pending.since
-    ? allNotes.filter((n) => n.date <= pending.since!)
-    : allNotes;
+  const pendingNotes = allNotes.filter((n) => n.resolvedAt === null);
+  const olderNotes = allNotes.filter((n) => n.resolvedAt !== null);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -46,7 +42,7 @@ export default async function JournalPage() {
         <Card
           title={
             pending.count > 0
-              ? `${pending.count} pending note${pending.count === 1 ? "" : "s"} since last revision`
+              ? `${pending.count} pending note${pending.count === 1 ? "" : "s"}`
               : "Pending notes"
           }
           action={
@@ -60,12 +56,13 @@ export default async function JournalPage() {
       )}
 
       {olderNotes.length > 0 && (
-        <Card title="Earlier notes">
+        <Card title="Resolved notes">
           <ul className="space-y-2 text-sm">
             {olderNotes.map((n) => (
-              <li key={n.id} className="border-l-2 border-[var(--border)] pl-3">
+              <li key={n.id} className="border-l-2 border-[var(--border)] pl-3 opacity-60">
                 <p className="text-[var(--muted)] text-xs">
                   {new Date(n.date).toLocaleString()} · {n.type}
+                  {n.resolvedReason ? ` · ${n.resolvedReason}` : ""}
                 </p>
                 <p className="whitespace-pre-wrap">{n.body}</p>
               </li>
