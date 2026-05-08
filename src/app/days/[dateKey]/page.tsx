@@ -29,6 +29,15 @@ export default async function DayDetail({
     year: "numeric",
   });
 
+  // Hide workout blocks whose label is explicitly tagged "(...baseline)" —
+  // the BaselineBlockCard is canonical for those tests. Same pattern as
+  // the Today page. Future audibles shouldn't bake baselines into
+  // workoutJson at all; this filter is defensive for legacy overrides.
+  const baselineBlockSuffix = /\bbaseline\)\s*$/i;
+  const dayBlocks = (r.workoutTemplate?.blocks ?? []).filter(
+    (b) => !(b.label && baselineBlockSuffix.test(b.label)),
+  );
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2">
@@ -46,20 +55,7 @@ export default async function DayDetail({
       </header>
 
       {r.baselinesDue.length > 0 && (isToday || isFuture) && (
-        <>
-          <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
-          <Card title="2. Test day — keep it light">
-            <p className="text-sm text-[var(--muted)]">
-              Regular {r.workoutTemplate?.title ? <em>{r.workoutTemplate.title}</em> : "workout"}{" "}
-              blocks are <strong className="text-foreground">deferred</strong> on baseline days
-              to keep the tests honest.
-            </p>
-            <ul className="mt-2 text-sm text-[var(--muted)] list-disc list-inside space-y-1">
-              <li>Optional 20–30 min easy Zone 2 for circulation</li>
-              <li>Daily mobility routine — 10–15 min</li>
-            </ul>
-          </Card>
-        </>
+        <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
       {isPast && r.workouts.length > 0 && (
@@ -97,13 +93,13 @@ export default async function DayDetail({
         </Card>
       )}
 
-      {(isToday || isFuture) && r.workoutTemplate && r.baselinesDue.length === 0 && (
+      {(isToday || isFuture) && r.workoutTemplate && dayBlocks.length > 0 && (
         <Card title={`Planned workout: ${r.workoutTemplate.title}`}>
           <p className="text-xs text-[var(--muted)] italic mb-2">{r.workoutTemplate.summary}</p>
           <ol className="space-y-3">
-            {r.workoutTemplate.blocks.map((block, i) => (
+            {dayBlocks.map((block, i) => (
               <li key={i}>
-                <BlockView block={block} index={i} />
+                <BlockView block={block} index={i + (r.baselinesDue.length > 0 ? 1 : 0)} />
               </li>
             ))}
           </ol>
