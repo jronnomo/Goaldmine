@@ -29,13 +29,16 @@ export default async function DayDetail({
     year: "numeric",
   });
 
-  // Hide workout blocks whose label is explicitly tagged "(...baseline)" —
-  // the BaselineBlockCard is canonical for those tests. Same pattern as
-  // the Today page. Future audibles shouldn't bake baselines into
-  // workoutJson at all; this filter is defensive for legacy overrides.
-  const baselineBlockSuffix = /\bbaseline\)\s*$/i;
+  // Hide workout blocks whose exercises are all baseline tests already
+  // rendered in the BaselineBlockCard. Defensive for legacy overrides
+  // that bake baselines into workoutJson; future audibles shouldn't.
+  const baselineNames = new Set(r.baselinesDue.map((b) => b.test.testName));
   const dayBlocks = (r.workoutTemplate?.blocks ?? []).filter(
-    (b) => !(b.label && baselineBlockSuffix.test(b.label)),
+    (b) =>
+      !(
+        b.exercises.length > 0 &&
+        b.exercises.every((ex) => baselineNames.has(ex.name))
+      ),
   );
 
   return (

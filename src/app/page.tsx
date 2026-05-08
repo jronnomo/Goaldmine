@@ -52,13 +52,17 @@ export default async function HomePage() {
   // apply_day_override has set workoutJson it returns that; otherwise the
   // rotation default. ctx.day stays around for week / phase metadata only.
   const dayTemplate = resolved.workoutTemplate;
-  // When the override carries baselineTestNames, the workout often duplicates
-  // those tests as exercise blocks (Claude packages "the workout IS the
-  // baselines" that way). Treat BaselineBlockCard as canonical for tests and
-  // hide blocks whose label is explicitly tagged "(... baseline)".
-  const baselineBlockSuffix = /\bbaseline\)\s*$/i;
+  // When the override duplicates baselines as exercise blocks, treat the
+  // BaselineBlockCard as canonical and hide any block whose exercises are
+  // all baseline tests for the day. Defensive for legacy overrides;
+  // future audibles shouldn't bake baselines into workoutJson at all.
+  const baselineNames = new Set(baselinesDue.map((b) => b.test.testName));
   const dayBlocks = (dayTemplate?.blocks ?? []).filter(
-    (b) => !(b.label && baselineBlockSuffix.test(b.label)),
+    (b) =>
+      !(
+        b.exercises.length > 0 &&
+        b.exercises.every((ex) => baselineNames.has(ex.name))
+      ),
   );
 
   const dayLabel = new Intl.DateTimeFormat("en-US", {
