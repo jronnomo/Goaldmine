@@ -72,35 +72,40 @@ export async function createGoalCore(
         ? Prisma.JsonNull
         : (input.legend as unknown as Prisma.InputJsonValue);
 
-  const created = await prisma.goal.create({
-    data: {
-      objective,
-      targetDate,
-      notes: normalizedNotes,
-      targets: targets ?? undefined,
-      ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
-      plans: {
-        create: {
-          name: `${objective} — ${weeks}-week plan`,
-          startedOn: now,
-          endsOn: targetDate,
-          weeks,
-          active: true,
-          planJson: planTemplate as unknown as object,
-          // Seed an initial revision so future revisions have a clean
-          // predecessor to compare against.
-          revisions: {
-            create: {
-              triggerSource: "manual",
-              summary: "Initial plan from program template",
-              reasoning: `Scaffolded from the program template, scaled to ${weeks} weeks across ${planTemplate.phases.length} phases.`,
-              snapshotJson: planTemplate as unknown as object,
+  // A new goal takes over focus: prior goals and their plans are deactivated
+  // in the same transaction so Today/Calendar (which read active=true) start
+  // reflecting the new goal immediately. Use setActiveGoal to switch back.
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.goal.updateMany({ data: { active: false } });
+    await tx.plan.updateMany({ data: { active: false } });
+    return tx.goal.create({
+      data: {
+        objective,
+        targetDate,
+        notes: normalizedNotes,
+        targets: targets ?? undefined,
+        ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
+        plans: {
+          create: {
+            name: `${objective} — ${weeks}-week plan`,
+            startedOn: now,
+            endsOn: targetDate,
+            weeks,
+            active: true,
+            planJson: planTemplate as unknown as object,
+            revisions: {
+              create: {
+                triggerSource: "manual",
+                summary: "Initial plan from program template",
+                reasoning: `Scaffolded from the program template, scaled to ${weeks} weeks across ${planTemplate.phases.length} phases.`,
+                snapshotJson: planTemplate as unknown as object,
+              },
             },
           },
         },
       },
-    },
-    include: { plans: { select: { id: true } } },
+      include: { plans: { select: { id: true } } },
+    });
   });
 
   const planId = created.plans[0]?.id ?? "";

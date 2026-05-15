@@ -93,6 +93,9 @@ export async function updateGoal(id: string, form: FormData) {
   if (!objective) throw new Error("Objective is required");
   if (!targetDateStr) throw new Error("Target date is required");
 
+  // status (active/achieved/abandoned) is lifecycle metadata. Goal.active is
+  // the focus flag (which goal drives Today/Calendar). They are independent —
+  // use setActiveGoal to change focus.
   await prisma.goal.update({
     where: { id },
     data: {
@@ -100,7 +103,6 @@ export async function updateGoal(id: string, form: FormData) {
       targetDate: new Date(targetDateStr),
       notes,
       status,
-      active: status === "active",
       targets: targets ?? undefined,
     },
   });
@@ -108,6 +110,43 @@ export async function updateGoal(id: string, form: FormData) {
   revalidatePath("/goals");
   revalidatePath(`/goals/${id}`);
   revalidatePath("/stats");
+}
+
+export async function setActiveGoal(id: string) {
+  await prisma.$transaction(async (tx) => {
+    const target = await tx.goal.findUnique({ where: { id }, select: { id: true } });
+    if (!target) throw new Error("Goal not found");
+
+    await tx.goal.updateMany({ where: { id: { not: id } }, data: { active: false } });
+    await tx.goal.update({ where: { id }, data: { active: true } });
+
+    // Plans: deactivate every plan that doesn't belong to the chosen goal, and
+    // activate the chosen goal's most-recent plan (older plans on the same
+    // goal stay inactive — only one is "live").
+    await tx.plan.updateMany({ where: { goalId: { not: id } }, data: { active: false } });
+    const latest = await tx.plan.findFirst({
+      where: { goalId: id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (latest) {
+      await tx.plan.updateMany({
+        where: { goalId: id, id: { not: latest.id } },
+        data: { active: false },
+      });
+      await tx.plan.update({ where: { id: latest.id }, data: { active: true } });
+    }
+  });
+
+  revalidatePath("/");
+  revalidatePath("/calendar");
+  revalidatePath("/goals");
+  revalidatePath(`/goals/${id}`);
+  revalidatePath("/stats");
+
+  // Land the user on the calendar so the focus switch is visible immediately
+  // (this matches the workflow of "select a goal, see its calendar").
+  redirect("/calendar");
 }
 
 export async function deleteGoal(id: string) {

@@ -51,7 +51,10 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       : Promise.resolve([] as never[]),
     prisma.goal.findFirst({
       where: { active: true },
-      orderBy: { targetDate: "asc" },
+      // Matches Plan resolution in src/lib/program.ts — most-recently-updated
+      // active goal wins. If multiple goals are stuck at active=true (legacy
+      // state pre-setActiveGoal), this picks one deterministically.
+      orderBy: { updatedAt: "desc" },
       select: { id: true, targetDate: true, objective: true, legend: true },
     }),
   ]);
@@ -258,7 +261,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     }),
     prisma.goal.findFirst({
       where: { active: true },
-      orderBy: { targetDate: "asc" },
+      orderBy: { updatedAt: "desc" },
       select: { targetDate: true, objective: true },
     }),
     prisma.nutritionLog.findMany({
