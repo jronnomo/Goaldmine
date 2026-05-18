@@ -711,7 +711,8 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Apply a plan revision",
       description:
-        "Atomically write a PlanRevision and update Plan.planJson to the new full snapshot. Use after reasoning over a note + recent state. snapshotJson is the *complete* plan template after the change (cascades included). Pass resolvedNoteIds for every note this revision folds in — they'll be marked resolved in the same transaction so they drop from pending.",
+        "Atomically write a PlanRevision and update Plan.planJson to the new full snapshot. Use after reasoning over a note + recent state. snapshotJson is the *complete* plan template after the change (cascades included). Pass resolvedNoteIds for every note this revision folds in — they'll be marked resolved in the same transaction so they drop from pending. " +
+        "IMPORTANT: this tool only rewrites the template snapshot. It does NOT update Plan.endsOn / Plan.weeks / Plan.name or Goal.targetDate — PlanOverview, the calendar's plan range, and the goal-date pin read those columns directly, so they will drift unless you follow up with update_plan_metadata. It also does NOT anchor anything to a specific calendar date — events (races, inserted hikes, vacation days, sick swaps) need apply_day_override on each date. If the user asked to shift, extend, insert, or skip days, your proposal must list those follow-up calls explicitly.",
       inputSchema: {
         planId: z.string(),
         summary: z.string().min(1).max(200),
