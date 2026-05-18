@@ -787,6 +787,70 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "update_plan_metadata",
+    {
+      title: "Update plan dates / name and the parent goal's target date",
+      description:
+        "Patch the active Plan's metadata fields (name, endsOn, weeks) and optionally the parent Goal's targetDate atomically. " +
+        "Use this when a plan revision shifted the schedule — apply_plan_revision only rewrites planJson, not the Plan/Goal columns " +
+        "that PlanOverview, the calendar's isInPlan range, baseline retest scheduling, and the goal-date pin all read. " +
+        "All four fields are optional but at least one must be set. Dates are yyyy-mm-dd in USER_TZ. Keep planJson.totalWeeks in sync " +
+        "with `weeks` yourself — this tool does not touch the snapshot.",
+      inputSchema: {
+        planId: z.string(),
+        name: z.string().min(1).max(200).optional(),
+        endsOn: DateKeyShape.optional(),
+        weeks: z.number().int().min(1).max(104).optional(),
+        goalTargetDate: DateKeyShape.optional().describe(
+          "If set, also updates the parent Goal.targetDate in the same transaction.",
+        ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        if (
+          input.name === undefined &&
+          input.endsOn === undefined &&
+          input.weeks === undefined &&
+          input.goalTargetDate === undefined
+        ) {
+          throw new Error(
+            "Nothing to update — pass at least one of name, endsOn, weeks, or goalTargetDate.",
+          );
+        }
+        const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        const planData: Record<string, unknown> = {};
+        if (input.name !== undefined) planData.name = input.name;
+        if (input.endsOn !== undefined) planData.endsOn = startOfDay(parseDateKey(input.endsOn));
+        if (input.weeks !== undefined) planData.weeks = input.weeks;
+
+        await prisma.$transaction(async (tx) => {
+          if (Object.keys(planData).length > 0) {
+            await tx.plan.update({ where: { id: plan.id }, data: planData });
+          }
+          if (input.goalTargetDate !== undefined) {
+            await tx.goal.update({
+              where: { id: plan.goalId },
+              data: { targetDate: startOfDay(parseDateKey(input.goalTargetDate)) },
+            });
+          }
+        });
+
+        const changed: string[] = [];
+        if (input.name !== undefined) changed.push("name");
+        if (input.endsOn !== undefined) changed.push("endsOn");
+        if (input.weeks !== undefined) changed.push("weeks");
+        if (input.goalTargetDate !== undefined) changed.push("goalTargetDate");
+        return {
+          planId: plan.id,
+          goalId: plan.goalId,
+          updated: changed,
+          message: `Plan metadata updated (${changed.join(", ")})`,
+        };
+      }),
+  );
+
+  server.registerTool(
     "apply_day_override",
     {
       title: "Override a single day",
