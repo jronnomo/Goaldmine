@@ -1,21 +1,22 @@
 "use client";
 
-// Month calendar — a glanceable dot grid plus a detail panel.
+// Month calendar — a glanceable icon grid plus a detail panel.
 //
-// The grid stays compact (square cells, day number + a row of small status
-// dots). It is NOT where you read workout detail — tapping a day SELECTS it
-// and the panel below shows the full, readable detail (workout name, marker
-// labels, link to the day page). Today is selected by default. This split
-// keeps the grid uncluttered on narrow phones where a cell is only ~48px.
+// The grid stays compact (square cells, day number + a row of the goal's
+// legend icons). It is NOT where you read workout detail — tapping a day
+// SELECTS it and the panel below shows the full, readable detail (workout
+// name, marker labels, link to the day page). Today is selected by default.
+// This split keeps the grid uncluttered on narrow phones (~48px cells) while
+// the cells still carry the goal's own custom legend icons, not generic dots.
 import { useState } from "react";
 import Link from "next/link";
-import { MarkerDot } from "@/components/MarkerDot";
+import { MarkerIcon } from "@/components/MarkerIcon";
 import type { CalendarDayCell } from "@/lib/calendar";
 import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-type Marker = { kind: LegendKind; label: string; count: number };
+type Marker = { entry: LegendEntry; count: number };
 
 // Resolve which markers a day shows. A kind absent from the goal's legend is
 // suppressed — a cell only ever shows what the legend can explain.
@@ -32,7 +33,7 @@ function markersFor(
 
   const push = (kind: LegendKind, count: number) => {
     const entry = findLegendEntry(legend, kind);
-    if (entry) out.push({ kind, label: entry.label, count });
+    if (entry) out.push({ entry, count });
   };
 
   if (isCompleted) push("trained", 1);
@@ -135,12 +136,12 @@ function DayCell({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
-      className={`aspect-square rounded-lg border flex flex-col items-center justify-center gap-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
+      className={`aspect-square overflow-hidden rounded-lg border flex flex-col items-center justify-center gap-0.5 p-0.5 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
-      <span className="flex h-2.5 items-center justify-center gap-0.5">
+      <span className="flex flex-wrap items-center justify-center gap-0.5">
         {markers.map((m) => (
-          <MarkerDot key={m.kind} kind={m.kind} size={7} />
+          <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
         ))}
       </span>
     </button>
@@ -191,13 +192,13 @@ function DayDetail({
         <ul className="flex flex-wrap gap-1.5">
           {markers.map((m) => (
             <li
-              key={m.kind}
+              key={m.entry.kind}
               className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-xs"
             >
-              <MarkerDot kind={m.kind} size={9} />
+              <MarkerIcon entry={m.entry} size={14} />
               <span>
                 {m.count > 1 ? `${m.count} ` : ""}
-                {m.label}
+                {m.entry.label}
               </span>
             </li>
           ))}
