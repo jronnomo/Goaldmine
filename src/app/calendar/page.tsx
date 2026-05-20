@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MarkerDot } from "@/components/MarkerDot";
+import { MarkerIcon } from "@/components/MarkerIcon";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
@@ -82,7 +82,7 @@ export default async function CalendarPage({
         <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {legend.map((entry) => (
             <LegendRow key={entry.kind} label={entry.label}>
-              <MarkerDot kind={entry.kind} size={10} />
+              <MarkerIcon entry={entry} size={15} />
             </LegendRow>
           ))}
         </ul>
