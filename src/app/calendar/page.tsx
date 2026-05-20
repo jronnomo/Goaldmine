@@ -62,7 +62,7 @@ export default async function CalendarPage({
         </Link>
       </div>
 
-      <Card>
+      <Card className="!px-2">
         <CalendarMonth
           key={`${year}-${month}`}
           cells={cells}
