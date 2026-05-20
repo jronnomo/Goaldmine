@@ -66,7 +66,7 @@ export default async function CalendarPage({
         <CalendarMonth
           key={`${year}-${month}`}
           cells={cells}
-          monthStart={monthStart}
+          monthKey={`${year}-${String(month + 1).padStart(2, "0")}`}
           legend={legend}
         />
       </Card>
