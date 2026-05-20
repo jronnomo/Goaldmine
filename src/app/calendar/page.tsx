@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { Bullseye } from "@/components/Bullseye";
+import { MarkerDot } from "@/components/MarkerDot";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
-import { resolveLegend, type LegendEntry } from "@/lib/legend";
+import { resolveLegend } from "@/lib/legend";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +63,12 @@ export default async function CalendarPage({
       </div>
 
       <Card>
-        <CalendarMonth cells={cells} monthStart={monthStart} legend={legend} />
+        <CalendarMonth
+          key={`${year}-${month}`}
+          cells={cells}
+          monthStart={monthStart}
+          legend={legend}
+        />
       </Card>
 
       {cells.every((c) => c.workoutCount === 0 && c.hikeCount === 0 && !c.hasOverride) && (
@@ -77,7 +82,7 @@ export default async function CalendarPage({
         <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {legend.map((entry) => (
             <LegendRow key={entry.kind} label={entry.label}>
-              {renderLegendIcon(entry)}
+              <MarkerDot kind={entry.kind} size={10} />
             </LegendRow>
           ))}
         </ul>
@@ -126,31 +131,3 @@ function LegendRow({ children, label }: { children: React.ReactNode; label: stri
   );
 }
 
-function renderLegendIcon(entry: LegendEntry): React.ReactNode {
-  switch (entry.kind) {
-    case "trained":
-      // Always render the Bullseye SVG — entry.icon is decorative-only here.
-      return <Bullseye filled size={14} aria-hidden />;
-    case "hike-planned":
-      return (
-        <span aria-hidden className="opacity-40">
-          {entry.icon}
-        </span>
-      );
-    case "override":
-      return (
-        <span aria-hidden className="text-[var(--warning)] text-base leading-none">
-          {entry.icon}
-        </span>
-      );
-    case "baseline":
-      return (
-        <span aria-hidden className="text-[var(--muted)]">
-          {entry.icon}
-        </span>
-      );
-    case "hike-completed":
-    case "goal-date":
-      return <span aria-hidden>{entry.icon}</span>;
-  }
-}

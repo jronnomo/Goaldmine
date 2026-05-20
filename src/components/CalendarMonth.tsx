@@ -1,9 +1,48 @@
+"use client";
+
+// Month calendar — a glanceable dot grid plus a detail panel.
+//
+// The grid stays compact (square cells, day number + a row of small status
+// dots). It is NOT where you read workout detail — tapping a day SELECTS it
+// and the panel below shows the full, readable detail (workout name, marker
+// labels, link to the day page). Today is selected by default. This split
+// keeps the grid uncluttered on narrow phones where a cell is only ~48px.
+import { useState } from "react";
 import Link from "next/link";
-import { Bullseye } from "@/components/Bullseye";
+import { MarkerDot } from "@/components/MarkerDot";
 import type { CalendarDayCell } from "@/lib/calendar";
-import { findLegendEntry, type LegendEntry } from "@/lib/legend";
+import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+type Marker = { kind: LegendKind; label: string; count: number };
+
+// Resolve which markers a day shows. A kind absent from the goal's legend is
+// suppressed — a cell only ever shows what the legend can explain.
+function markersFor(
+  cell: CalendarDayCell,
+  legend: readonly LegendEntry[],
+): Marker[] {
+  const out: Marker[] = [];
+  const isOutdoor = cell.hikeCount > 0;
+  const isPlannedOutdoor =
+    !isOutdoor && cell.plannedHikeCount > 0 && !cell.isPast;
+  // A logged hike counts as a completed training day too.
+  const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
+
+  const push = (kind: LegendKind, count: number) => {
+    const entry = findLegendEntry(legend, kind);
+    if (entry) out.push({ kind, label: entry.label, count });
+  };
+
+  if (isCompleted) push("trained", 1);
+  if (isOutdoor) push("hike-completed", cell.hikeCount);
+  if (isPlannedOutdoor) push("hike-planned", cell.plannedHikeCount);
+  if (cell.hasOverride) push("override", 1);
+  if (cell.baselinesDue > 0) push("baseline", cell.baselinesDue);
+  if (cell.isGoalDate) push("goal-date", 1);
+  return out;
+}
 
 export function CalendarMonth({
   cells,
@@ -15,26 +54,42 @@ export function CalendarMonth({
   legend: readonly LegendEntry[];
 }) {
   const monthIdx = monthStart.getMonth();
+  const inMonth = (c: CalendarDayCell) => c.date.getMonth() === monthIdx;
+
+  // Default selection: today if it's in this month, else the first day of it.
+  const defaultCell =
+    cells.find((c) => c.isToday && inMonth(c)) ?? cells.find(inMonth) ?? cells[0];
+  const [selectedKey, setSelectedKey] = useState(defaultCell?.dateKey ?? "");
+
+  const selected = cells.find((c) => c.dateKey === selectedKey) ?? null;
 
   return (
-    <div>
-      <div className="grid grid-cols-7 mb-1">
-        {DAY_HEADERS.map((d) => (
-          <div key={d} className="text-xs text-[var(--muted)] text-center font-medium">
-            {d}
-          </div>
-        ))}
+    <div className="space-y-3">
+      <div>
+        <div className="grid grid-cols-7 mb-1">
+          {DAY_HEADERS.map((d) => (
+            <div
+              key={d}
+              className="text-xs text-[var(--muted)] text-center font-medium"
+            >
+              {d}
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((c) => (
+            <DayCell
+              key={c.dateKey}
+              cell={c}
+              inMonth={inMonth(c)}
+              legend={legend}
+              selected={c.dateKey === selectedKey}
+              onSelect={() => setSelectedKey(c.dateKey)}
+            />
+          ))}
+        </div>
       </div>
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((c) => (
-          <DayCell
-            key={c.dateKey}
-            cell={c}
-            inMonth={c.date.getMonth() === monthIdx}
-            legend={legend}
-          />
-        ))}
-      </div>
+      {selected && <DayDetail cell={selected} legend={legend} />}
     </div>
   );
 }
@@ -43,116 +98,118 @@ function DayCell({
   cell,
   inMonth,
   legend,
+  selected,
+  onSelect,
 }: {
   cell: CalendarDayCell;
   inMonth: boolean;
   legend: readonly LegendEntry[];
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  // Resolve which kinds the active goal cares about. If a kind isn't in the
-  // legend, the corresponding cell icon is suppressed (consistent with the
-  // legend list — what you see in the cell matches what's labeled below).
-  const trainedEntry = findLegendEntry(legend, "trained");
-  const hikeEntry = findLegendEntry(legend, "hike-completed");
-  const plannedHikeEntry = findLegendEntry(legend, "hike-planned");
-  const overrideEntry = findLegendEntry(legend, "override");
-  const goalEntry = findLegendEntry(legend, "goal-date");
-  const baselineEntry = findLegendEntry(legend, "baseline");
-
-  // Cells expand vertically (no fixed square ratio) so a day with several
-  // markers has room to breathe on a narrow mobile grid. Three stacked
-  // bands: day number, a centered wrapping icon band, then the workout name.
-  const baseClass =
-    "min-h-[7rem] rounded-lg border p-1.5 flex flex-col gap-1 text-xs leading-tight transition-colors";
-  // A logged hike counts as a completed training day too — outdoor sessions
-  // satisfy "you trained today" in the bullseye sense, with the boot icon
-  // layered on top to mark it as out-of-gym.
-  const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
-  const isOutdoor = cell.hikeCount > 0;
-  // A planned hike with no completion logged shows a faded boot — only on
-  // today + future cells. Past planned-but-not-done is a lifecycle concern
-  // out of scope for the calendar surface.
-  const isPlannedOutdoor =
-    !isOutdoor && cell.plannedHikeCount > 0 && !cell.isPast;
+  const markers = markersFor(cell, legend);
+  const isQuietPast = cell.isPast && cell.isInPlan && markers.length === 0;
 
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
-  if (!inMonth) toneClass = "border-transparent bg-transparent text-[var(--muted)]/60";
-  else if (cell.isToday && isCompleted) toneClass = "border-[var(--accent)] bg-[var(--card)]";
-  else if (cell.isToday) toneClass = "border-[var(--accent)] bg-[var(--accent-soft)]";
-  else if (cell.isPast && cell.isInPlan && !isCompleted) toneClass = "border-[var(--border)] bg-[var(--background)] text-[var(--muted)]";
+  if (!inMonth) toneClass = "border-transparent bg-transparent";
+  else if (isQuietPast) toneClass = "border-[var(--border)] bg-[var(--background)]";
 
-  const goalClass = cell.isGoalDate ? "ring-2 ring-[var(--accent)]" : "";
+  // Selection wins the ring; today gets a subtler ring when not selected.
+  const ringClass = selected
+    ? "ring-2 ring-[var(--accent)]"
+    : cell.isToday
+      ? "ring-1 ring-[var(--accent)]"
+      : "";
 
-  const day = cell.date.getDate();
-  const href = cell.workoutCount === 1 && cell.isPast
-    ? `/days/${cell.dateKey}` // (we still go to day detail; user can click through)
-    : `/days/${cell.dateKey}`;
+  const numClass = !inMonth
+    ? "text-[var(--muted)]/40"
+    : cell.isToday
+      ? "font-semibold"
+      : isQuietPast
+        ? "text-[var(--muted)]"
+        : "";
 
   return (
-    <Link
-      href={href}
-      className={`${baseClass} ${toneClass} ${goalClass} hover:border-[var(--accent)]`}
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
+      className={`aspect-square rounded-lg border flex flex-col items-center justify-center gap-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
     >
-      <span
-        className={`text-center text-[13px] ${cell.isToday ? "font-semibold" : "font-medium"}`}
-      >
-        {day}
+      <span className={numClass}>{cell.date.getDate()}</span>
+      <span className="flex h-2.5 items-center justify-center gap-0.5">
+        {markers.map((m) => (
+          <MarkerDot key={m.kind} kind={m.kind} size={7} />
+        ))}
       </span>
-      <div className="flex-1 flex flex-wrap items-center content-center justify-center gap-1 text-sm">
-        {cell.isGoalDate && goalEntry && (
-          <span title={goalEntry.label}>{goalEntry.icon}</span>
-        )}
-        {cell.hasOverride && overrideEntry && (
-          <span title={overrideEntry.label} className="text-[var(--warning)]">
-            {overrideEntry.icon}
-          </span>
-        )}
-        {isOutdoor && hikeEntry && (
-          <span
-            title={
-              cell.hikeCount > 1
-                ? `${cell.hikeCount} ${hikeEntry.label.toLowerCase()}s`
-                : hikeEntry.label
-            }
-            aria-label={hikeEntry.label}
-          >
-            {hikeEntry.icon}
-          </span>
-        )}
-        {isPlannedOutdoor && plannedHikeEntry && (
-          <span
-            title={
-              cell.plannedHikeCount > 1
-                ? `${cell.plannedHikeCount} ${plannedHikeEntry.label.toLowerCase()}s`
-                : plannedHikeEntry.label
-            }
-            aria-label={plannedHikeEntry.label}
-            className="opacity-40"
-          >
-            {plannedHikeEntry.icon}
-          </span>
-        )}
-        {isCompleted && trainedEntry && <Bullseye filled size={14} aria-hidden />}
-        {cell.baselinesDue > 0 && baselineEntry && (
-          <span
-            title={`${cell.baselinesDue} ${baselineEntry.label.toLowerCase()}`}
-            aria-label={baselineEntry.label}
-            className="text-[var(--muted)] text-[11px]"
-          >
-            {baselineEntry.icon}
-            {cell.baselinesDue}
+    </button>
+  );
+}
+
+function DayDetail({
+  cell,
+  legend,
+}: {
+  cell: CalendarDayCell;
+  legend: readonly LegendEntry[];
+}) {
+  const markers = markersFor(cell, legend);
+  const dateLabel = cell.date.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 space-y-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-sm font-medium">
+          {dateLabel}
+          {cell.isToday && (
+            <span className="ml-2 rounded-full bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+              Today
+            </span>
+          )}
+        </p>
+        {cell.weekIndex != null && (
+          <span className="shrink-0 text-xs text-[var(--muted)]">
+            Week {cell.weekIndex}
           </span>
         )}
       </div>
-      {cell.isInPlan && cell.dayTitle && (
-        <span
-          className={`text-center line-clamp-2 ${cell.isToday ? "" : "text-[var(--muted)]"}`}
-          title={cell.dayTitle}
-        >
-          {cell.rotationDay ? `D${cell.rotationDay} ` : ""}
-          {cell.dayTitle}
-        </span>
+
+      <p className="text-sm text-[var(--muted)]">
+        {cell.dayTitle
+          ? `${cell.rotationDay ? `D${cell.rotationDay} · ` : ""}${cell.dayTitle}`
+          : cell.isInPlan
+            ? "Rest / unscheduled day."
+            : "Outside the current plan."}
+      </p>
+
+      {markers.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {markers.map((m) => (
+            <li
+              key={m.kind}
+              className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-1 text-xs"
+            >
+              <MarkerDot kind={m.kind} size={9} />
+              <span>
+                {m.count > 1 ? `${m.count} ` : ""}
+                {m.label}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
-    </Link>
+
+      <Link
+        href={`/days/${cell.dateKey}`}
+        className="inline-block text-xs font-medium text-[var(--accent)]"
+      >
+        Open day →
+      </Link>
+    </div>
   );
 }
