@@ -59,6 +59,9 @@ export type GoalFlavorPreset = {
 };
 
 const TRAINED: LegendEntry = { icon: "●", label: "Trained", kind: "trained" };
+// Baseline tests come from the program template and apply to every goal, so
+// every preset surfaces the marker (appended below after FLAVOR_PRESETS).
+const BASELINE: LegendEntry = { icon: "◎", label: "Baseline due", kind: "baseline" };
 
 // All concrete presets. Each flavor includes `trained` plus 1-2 flavor-specific
 // entries (override = the special intensity / event-prep day; goal-date = the
@@ -345,6 +348,12 @@ export const FLAVOR_PRESETS: Record<GoalFlavorKey, GoalFlavorPreset> = {
     legend: null,
   },
 };
+
+// Every concrete preset gets the baseline marker so the calendar's ◎N cell
+// markers always have a matching legend row, regardless of goal flavor.
+for (const preset of Object.values(FLAVOR_PRESETS)) {
+  if (preset.legend) preset.legend.push(BASELINE);
+}
 
 // Optgroup buckets for the GoalCreateForm picker. Keep slugs grouped by
 // activity character so the dropdown is scannable.

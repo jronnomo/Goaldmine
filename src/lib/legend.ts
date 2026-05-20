@@ -25,6 +25,7 @@ export const LegendKindSchema = z.enum([
   "hike-planned",
   "override",
   "goal-date",
+  "baseline",
 ]);
 
 export type LegendKind = z.infer<typeof LegendKindSchema>;
@@ -58,6 +59,7 @@ export const DEFAULT_LEGEND: readonly LegendEntry[] = [
   { icon: "🥾", label: "Hike planned", kind: "hike-planned" },
   { icon: "⛏️", label: "Custom day", kind: "override" },
   { icon: "🏔️", label: "Goal date", kind: "goal-date" },
+  { icon: "◎", label: "Baseline due", kind: "baseline" },
 ];
 
 /**
