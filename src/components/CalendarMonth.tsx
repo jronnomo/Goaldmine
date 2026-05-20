@@ -58,7 +58,11 @@ function DayCell({
   const goalEntry = findLegendEntry(legend, "goal-date");
   const baselineEntry = findLegendEntry(legend, "baseline");
 
-  const baseClass = "aspect-square overflow-hidden rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
+  // Cells expand vertically (no fixed square ratio) so a day with several
+  // markers has room to breathe on a narrow mobile grid. Three stacked
+  // bands: day number, a centered wrapping icon band, then the workout name.
+  const baseClass =
+    "min-h-[7rem] rounded-lg border p-1.5 flex flex-col gap-1 text-xs leading-tight transition-colors";
   // A logged hike counts as a completed training day too — outdoor sessions
   // satisfy "you trained today" in the bullseye sense, with the boot icon
   // layered on top to mark it as out-of-gym.
@@ -89,58 +93,60 @@ function DayCell({
       className={`${baseClass} ${toneClass} ${goalClass} hover:border-[var(--accent)]`}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
     >
-      <div className="flex items-start justify-between gap-1">
-        <span className={`${cell.isToday ? "font-semibold" : ""}`}>{day}</span>
-        <div className="flex flex-row items-center justify-end gap-0.5 shrink-0">
-          {cell.isGoalDate && goalEntry && (
-            <span title={goalEntry.label}>{goalEntry.icon}</span>
-          )}
-          {cell.hasOverride && overrideEntry && (
-            <span title={overrideEntry.label} className="text-[var(--warning)]">
-              {overrideEntry.icon}
-            </span>
-          )}
-          {isOutdoor && hikeEntry && (
-            <span
-              title={
-                cell.hikeCount > 1
-                  ? `${cell.hikeCount} ${hikeEntry.label.toLowerCase()}s`
-                  : hikeEntry.label
-              }
-              aria-label={hikeEntry.label}
-            >
-              {hikeEntry.icon}
-            </span>
-          )}
-          {isPlannedOutdoor && plannedHikeEntry && (
-            <span
-              title={
-                cell.plannedHikeCount > 1
-                  ? `${cell.plannedHikeCount} ${plannedHikeEntry.label.toLowerCase()}s`
-                  : plannedHikeEntry.label
-              }
-              aria-label={plannedHikeEntry.label}
-              className="opacity-40"
-            >
-              {plannedHikeEntry.icon}
-            </span>
-          )}
-          {isCompleted && trainedEntry && <Bullseye filled size={14} aria-hidden />}
-          {cell.baselinesDue > 0 && baselineEntry && (
-            <span
-              title={`${cell.baselinesDue} ${baselineEntry.label.toLowerCase()}`}
-              aria-label={baselineEntry.label}
-              className="text-[var(--muted)] text-[10px]"
-            >
-              {baselineEntry.icon}
-              {cell.baselinesDue}
-            </span>
-          )}
-        </div>
+      <span
+        className={`text-center text-[13px] ${cell.isToday ? "font-semibold" : "font-medium"}`}
+      >
+        {day}
+      </span>
+      <div className="flex-1 flex flex-wrap items-center content-center justify-center gap-1 text-sm">
+        {cell.isGoalDate && goalEntry && (
+          <span title={goalEntry.label}>{goalEntry.icon}</span>
+        )}
+        {cell.hasOverride && overrideEntry && (
+          <span title={overrideEntry.label} className="text-[var(--warning)]">
+            {overrideEntry.icon}
+          </span>
+        )}
+        {isOutdoor && hikeEntry && (
+          <span
+            title={
+              cell.hikeCount > 1
+                ? `${cell.hikeCount} ${hikeEntry.label.toLowerCase()}s`
+                : hikeEntry.label
+            }
+            aria-label={hikeEntry.label}
+          >
+            {hikeEntry.icon}
+          </span>
+        )}
+        {isPlannedOutdoor && plannedHikeEntry && (
+          <span
+            title={
+              cell.plannedHikeCount > 1
+                ? `${cell.plannedHikeCount} ${plannedHikeEntry.label.toLowerCase()}s`
+                : plannedHikeEntry.label
+            }
+            aria-label={plannedHikeEntry.label}
+            className="opacity-40"
+          >
+            {plannedHikeEntry.icon}
+          </span>
+        )}
+        {isCompleted && trainedEntry && <Bullseye filled size={14} aria-hidden />}
+        {cell.baselinesDue > 0 && baselineEntry && (
+          <span
+            title={`${cell.baselinesDue} ${baselineEntry.label.toLowerCase()}`}
+            aria-label={baselineEntry.label}
+            className="text-[var(--muted)] text-[11px]"
+          >
+            {baselineEntry.icon}
+            {cell.baselinesDue}
+          </span>
+        )}
       </div>
       {cell.isInPlan && cell.dayTitle && (
         <span
-          className={`mt-auto truncate ${cell.isToday ? "" : "text-[var(--muted)]"}`}
+          className={`text-center line-clamp-2 ${cell.isToday ? "" : "text-[var(--muted)]"}`}
           title={cell.dayTitle}
         >
           {cell.rotationDay ? `D${cell.rotationDay} ` : ""}
