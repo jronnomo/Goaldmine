@@ -56,7 +56,7 @@ export const DEFAULT_LEGEND: readonly LegendEntry[] = [
   { icon: "●", label: "Trained", kind: "trained" },
   { icon: "🥾", label: "Outdoor day", kind: "hike-completed" },
   { icon: "🥾", label: "Hike planned", kind: "hike-planned" },
-  { icon: "★", label: "Custom day", kind: "override" },
+  { icon: "⛏️", label: "Custom day", kind: "override" },
   { icon: "🏔️", label: "Goal date", kind: "goal-date" },
 ];
 

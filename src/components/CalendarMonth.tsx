@@ -57,7 +57,7 @@ function DayCell({
   const overrideEntry = findLegendEntry(legend, "override");
   const goalEntry = findLegendEntry(legend, "goal-date");
 
-  const baseClass = "aspect-square rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
+  const baseClass = "aspect-square overflow-hidden rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
   // A logged hike counts as a completed training day too — outdoor sessions
   // satisfy "you trained today" in the bullseye sense, with the boot icon
   // layered on top to mark it as out-of-gym.
@@ -74,7 +74,6 @@ function DayCell({
   else if (cell.isToday && isCompleted) toneClass = "border-[var(--accent)] bg-[var(--card)]";
   else if (cell.isToday) toneClass = "border-[var(--accent)] bg-[var(--accent-soft)]";
   else if (cell.isPast && cell.isInPlan && !isCompleted) toneClass = "border-[var(--border)] bg-[var(--background)] text-[var(--muted)]";
-  else if (cell.hasOverride) toneClass = "border-[var(--warning)]/50 bg-[var(--warning)]/5";
 
   const goalClass = cell.isGoalDate ? "ring-2 ring-[var(--accent)]" : "";
 
@@ -91,7 +90,7 @@ function DayCell({
     >
       <div className="flex items-start justify-between gap-1">
         <span className={`${cell.isToday ? "font-semibold" : ""}`}>{day}</span>
-        <div className="flex flex-col items-end gap-0.5">
+        <div className="flex flex-row items-center justify-end gap-0.5 shrink-0">
           {cell.isGoalDate && goalEntry && (
             <span title={goalEntry.label}>{goalEntry.icon}</span>
           )}
