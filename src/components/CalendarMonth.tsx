@@ -138,7 +138,7 @@ function DayCell({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
-      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-center gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
+      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
       <span className="flex flex-wrap items-center justify-center gap-0.5">
