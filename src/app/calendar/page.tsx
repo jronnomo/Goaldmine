@@ -143,6 +143,12 @@ function renderLegendIcon(entry: LegendEntry): React.ReactNode {
           {entry.icon}
         </span>
       );
+    case "baseline":
+      return (
+        <span aria-hidden className="text-[var(--muted)]">
+          {entry.icon}
+        </span>
+      );
     case "hike-completed":
     case "goal-date":
       return <span aria-hidden>{entry.icon}</span>;

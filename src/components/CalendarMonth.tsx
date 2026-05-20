@@ -56,6 +56,7 @@ function DayCell({
   const plannedHikeEntry = findLegendEntry(legend, "hike-planned");
   const overrideEntry = findLegendEntry(legend, "override");
   const goalEntry = findLegendEntry(legend, "goal-date");
+  const baselineEntry = findLegendEntry(legend, "baseline");
 
   const baseClass = "aspect-square overflow-hidden rounded-md border p-1 flex flex-col text-xs leading-tight transition-colors";
   // A logged hike counts as a completed training day too — outdoor sessions
@@ -124,10 +125,15 @@ function DayCell({
               {plannedHikeEntry.icon}
             </span>
           )}
-          {isCompleted && trainedEntry && <Bullseye filled size={10} aria-hidden />}
-          {cell.baselinesDue > 0 && (
-            <span title={`${cell.baselinesDue} baseline test(s)`} className="text-[var(--muted)] text-[10px]">
-              ◎{cell.baselinesDue}
+          {isCompleted && trainedEntry && <Bullseye filled size={14} aria-hidden />}
+          {cell.baselinesDue > 0 && baselineEntry && (
+            <span
+              title={`${cell.baselinesDue} ${baselineEntry.label.toLowerCase()}`}
+              aria-label={baselineEntry.label}
+              className="text-[var(--muted)] text-[10px]"
+            >
+              {baselineEntry.icon}
+              {cell.baselinesDue}
             </span>
           )}
         </div>
