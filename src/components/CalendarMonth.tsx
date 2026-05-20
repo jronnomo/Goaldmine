@@ -47,15 +47,17 @@ function markersFor(
 
 export function CalendarMonth({
   cells,
-  monthStart,
+  monthKey,
   legend,
 }: {
   cells: CalendarDayCell[];
-  monthStart: Date;
+  monthKey: string; // "yyyy-mm" of the displayed month
   legend: readonly LegendEntry[];
 }) {
-  const monthIdx = monthStart.getMonth();
-  const inMonth = (c: CalendarDayCell) => c.date.getMonth() === monthIdx;
+  // Compare via the tz-stable dateKey string, not Date.getMonth() — the latter
+  // is shifted by the client's timezone and can misclassify boundary days
+  // (which made the default selection fall through to the first grid cell).
+  const inMonth = (c: CalendarDayCell) => c.dateKey.startsWith(monthKey);
 
   // Default selection: today if it's in this month, else the first day of it.
   const defaultCell =
@@ -109,6 +111,7 @@ function DayCell({
   onSelect: () => void;
 }) {
   const markers = markersFor(cell, legend);
+  const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
   const isQuietPast = cell.isPast && cell.isInPlan && markers.length === 0;
 
   // Every day carries a slim border for separation; out-of-month days get a
@@ -116,6 +119,11 @@ function DayCell({
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
   if (!inMonth) toneClass = "border-[var(--border)]/50 bg-transparent";
   else if (isQuietPast) toneClass = "border-[var(--border)] bg-[var(--background)]";
+
+  // Completed in-month days get a soft gold halo — a blurred box-shadow, not
+  // a crisp ring, so it reads as a glow distinct from the today/selected ring.
+  const glowClass =
+    inMonth && isCompleted ? "shadow-[0_0_11px_-3px_var(--accent)]" : "";
 
   // Selection wins the ring; today gets a subtler ring when not selected.
   const ringClass = selected
@@ -138,7 +146,7 @@ function DayCell({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
-      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
+      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
       <span className="flex flex-wrap items-center justify-center gap-0.5">
