@@ -111,8 +111,10 @@ function DayCell({
   const markers = markersFor(cell, legend);
   const isQuietPast = cell.isPast && cell.isInPlan && markers.length === 0;
 
+  // Every day carries a slim border for separation; out-of-month days get a
+  // fainter one so the current month still reads as the focus.
   let toneClass = "border-[var(--border)] bg-[var(--card)]";
-  if (!inMonth) toneClass = "border-transparent bg-transparent";
+  if (!inMonth) toneClass = "border-[var(--border)]/50 bg-transparent";
   else if (isQuietPast) toneClass = "border-[var(--border)] bg-[var(--background)]";
 
   // Selection wins the ring; today gets a subtler ring when not selected.
@@ -136,7 +138,7 @@ function DayCell({
       onClick={onSelect}
       aria-pressed={selected}
       aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
-      className={`aspect-square overflow-hidden rounded-lg border flex flex-col items-center justify-center gap-0.5 p-0.5 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
+      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-center gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
       <span className="flex flex-wrap items-center justify-center gap-0.5">
