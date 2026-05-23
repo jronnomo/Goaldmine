@@ -9,6 +9,8 @@ Entries live in one of four sections:
 - **Deferred decisions** — scope deliberately not shipped during a fix, with the reasoning preserved so the next reporter knows what evidence would warrant revisiting.
 - **Open** — reported but not yet addressed.
 
+A separate **Production verification** section logs dated end-to-end checks against the deployed MCP endpoint to confirm the documented behaviors still work in the surface claude.ai actually sees.
+
 When new friction shows up, append a new entry in **Open** with the reporter's exact words — that's the most useful artifact when designing the fix.
 
 ---
@@ -153,6 +155,33 @@ Choices made during a friction fix to *not* ship a piece of scope, with the reas
 
 ---
 
+## Production verification
+
+Periodic end-to-end checks against the deployed MCP endpoint (the one claude.ai actually hits) to confirm the documented behaviors still work. New entry appended each time someone re-verifies after a noteworthy batch of changes.
+
+### 2026-05-23 — initial post-shipping verification
+**Endpoint:** `https://workout-planner-gold-three.vercel.app/api/mcp/<token>` (commit `c480000`, Vercel deployment success at 03:43 UTC).
+**Method:** curl against the prod MCP route with the user's bearer token, mirroring claude.ai's transport.
+
+| Item | Probe | Result |
+| --- | --- | --- |
+| Tool surface | `tools/list` count + all 7 new tools present | 43 tools; `batch_apply_day_overrides`, `batch_log_nutrition`, `batch_log_note`, `find_exercise_in_plan`, `promote_note`, `acknowledge_standing_rule`, `list_promotable_notes` all returned |
+| #1 PATCH semantics | partial nutrition-only update on an existing override | `updatedFields: [nutritionText]`, `preservedFields: [workoutJson, baselineTestNames, mobilityText, notes]` |
+| #3 workoutJsonOps | `addExercise` op against the override just set | "Override updated (changed: workoutJson). Other fields preserved. workoutJson edited via 1 op." |
+| #4 upcomingOverrides | `get_goal` on the active Mt. Elbert goal | 14 upcoming override entries surfaced |
+| #4 find_exercise_in_plan | `exerciseName: "hollow"`, `windowDays: 21` | 3 occurrences, all `durationSec: 55` (the synced progressed value) |
+| #6 replacesPlannedHikeId | plan a hike on 2026-09-01, finalize-in-place on 2026-09-02 | `finalized: true`, `previousStatus: "planned"`, id preserved, `dateMoved: 2026-09-01 → 2026-09-02` |
+| #7 override null-omission | covered by the PATCH probe response (preservedFields list is the structural signal) | ✓ |
+| #8 batch atomic rollback | 3-op batch with op `[1]` containing a malformed `workoutJson` | error names index + failing field; all 3 dates show `isOverride: false` afterward — full rollback confirmed |
+| #9 validation envelope | `workoutJson` without `title` | "Invalid workoutJson (DayTemplate). Fix these fields, then retry: workoutJson.title must be a non-empty string" with reference shape |
+| #10 standingRules surface | `get_today_plan` top-level keys | `standingRules` field present (count 0; no rules populated yet) |
+
+All test rows cleaned up post-verification (`clear_day_override`, `delete_hike`).
+
+**Gotcha to remember for next verification run:** picking a future date outside the plan's calendar window (e.g. 2026-08-15 when the plan ends in summer 2026) means `get_day.workoutTemplate` comes back `null` even after an override is set — `resolveDay` only returns a workoutTemplate when `isInPlan: true`. The override row exists and is queryable, but if the verification script reads `workoutTemplate.title` directly it'll trip. For probes that need to read the resolved workout, pick a date inside the plan window.
+
+---
+
 ## How to add a new entry
 
 1. Copy the user's exact words into a `> blockquote` under "Reported." Don't paraphrase — the literal language is the design signal.
@@ -167,3 +196,4 @@ Choices made during a friction fix to *not* ship a piece of scope, with the reas
    - Can't fix in this codebase → **Out of scope** with the reasoning + any partial mitigation.
    - Shipped a fix but skipped a piece of scope → keep the main entry in **Resolved**, add a corresponding entry in **Deferred decisions** describing what was skipped and what evidence would warrant revisiting.
    Keep the original Reported blockquote intact in all cases.
+6. After a noteworthy batch of fixes, drive the prod MCP endpoint with curl (mirroring claude.ai's transport) and append a dated entry to **Production verification** — a table of probes + results, plus any "gotcha to remember" notes from the verification run. The point is to confirm the deployed surface matches the documented behavior, not to re-run unit tests.
