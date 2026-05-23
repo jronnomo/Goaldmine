@@ -1,6 +1,13 @@
 # MCP Tool Friction Log
 
-Coaching-surface frustrations that turn into MCP tool changes. Each entry preserves the original report (the evidence) and notes what shipped to resolve it, with a PR link.
+Coaching-surface frustrations that turn into MCP tool changes. Each entry preserves the original report (the evidence) and notes what happened next.
+
+Entries live in one of four sections:
+
+- **Resolved** — shipped a fix; PR + merge SHA captured.
+- **Out of scope** — real friction we can't fix in this codebase (e.g. claude.ai client behavior).
+- **Deferred decisions** — scope deliberately not shipped during a fix, with the reasoning preserved so the next reporter knows what evidence would warrant revisiting.
+- **Open** — reported but not yet addressed.
 
 When new friction shows up, append a new entry in **Open** with the reporter's exact words — that's the most useful artifact when designing the fix.
 
@@ -14,15 +21,6 @@ When new friction shows up, append a new entry in **Open** with the reporter's e
 > Calling `apply_day_override` with only one field (e.g., `nutritionText`) wipes out all other fields on that day (`workoutJson`, `mobilityText`, `notes`). On 5/22, I logged today's dinner plan as a `nutritionText` override after earlier applying a `workoutJson` override with the full 32-min mobility flow. The second call silently deleted the mobility flow. User had to ask "where are my stretches?" to surface the bug.
 
 **Shipped:** PR #5 (`b092c4e`). `apply_day_override` is now PATCH-style: `undefined` = leave alone, `null` = clear, value = set. Response reports `updatedFields` and `preservedFields` explicitly. The audible-with-baselines guard was also relaxed so partial follow-up calls don't re-prompt for a baseline decision once one is on file.
-
----
-
-### #2 — Deferred tools not discoverable without `tool_search`
-**Reported:** 2026-05-22. Severity: Medium.
-
-> Many tools (`log_note`, `get_day`, `apply_day_override`, `log_nutrition`, etc.) aren't loaded by default. Each must be discovered via `tool_search` before first use. Tool descriptions also aren't visible until searched. Repeated `tool_search` calls throughout every session. Wasted turns. Even tools I just used 5 minutes ago in the same conversation sometimes drop out.
-
-**Shipped:** Out of scope at the server. This is claude.ai's harness behavior — the MCP server exposes everything via `tools/list`; the client decides what to load eagerly. The closest server-side mitigation is PR #9's tool-description pass: better keyword coverage means `tool_search` matches first try more often, so the round-trip cost goes down even when it still has to happen.
 
 ---
 
@@ -107,7 +105,9 @@ Max 50 ops per call. Operations run sequentially within the transaction (an earl
 
 > Standing rules logged as `feedback` notes (like "prescribe = log") don't automatically appear in my context on new conversations. I have to either remember them or search for them. The "prescribe = log" rule was established on 5/22 — if I start a new conversation tomorrow and the user asks for a mobility flow, I won't see that rule unless I think to search for it.
 
-**Shipped:** PR #7 (`29e7494`). New `standing_rule` Note type with `lastAcknowledgedAt` freshness signal:
+**Shipped:** PR #7 (`29e7494`). PR #6 was the original open PR but was auto-closed by GitHub when its base branch (`fix/mcp-override-patch-semantics`, which #5 was on) was deleted on #5's merge; the same commits were rebased onto `main` and re-opened as PR #7. So in the GitHub PR list, #6 shows "closed, not merged" alongside #7 "merged" with effectively the same content — that's the rebase, not lost work.
+
+New `standing_rule` Note type with `lastAcknowledgedAt` freshness signal:
 - Schema migration adds `Note.lastAcknowledgedAt` and high-confidence backfills feedback notes whose body starts with `RULE:` / `STANDING:` (case-insensitive POSIX) to `standing_rule` with the timestamp stamped.
 - `get_today_plan` returns active standing rules under `standingRules`, ordered freshest-acknowledged-first (nulls last).
 - Three new tools: `list_promotable_notes` (find candidates), `promote_note` (flip type, stamps timestamp), `acknowledge_standing_rule` (bump timestamp when referencing a rule in a turn).
@@ -115,6 +115,35 @@ Max 50 ops per call. Operations run sequentially within the transaction (an earl
 - Coach instructions rule 13 added: read `standingRules` at session start; acknowledge when referencing; propose `standing_rule` when the user states a persistent rule.
 
 Verification afterward surfaced two follow-up nits (ordering put nulls first, `log_note(type=standing_rule)` didn't stamp) — both fixed in `4079693` on the same branch.
+
+---
+
+## Out of scope
+
+Friction that's real but can't be fixed inside this codebase. Recorded so the next reporter doesn't repeat the investigation and so the closest available mitigation is documented.
+
+### #2 — Deferred tools not discoverable without `tool_search`
+**Reported:** 2026-05-22. Severity: Medium.
+
+> Many tools (`log_note`, `get_day`, `apply_day_override`, `log_nutrition`, etc.) aren't loaded by default. Each must be discovered via `tool_search` before first use. Tool descriptions also aren't visible until searched. Repeated `tool_search` calls throughout every session. Wasted turns. Even tools I just used 5 minutes ago in the same conversation sometimes drop out.
+
+**Status:** Out of scope at the server. This is claude.ai's harness behavior — the MCP server exposes everything via `tools/list`; the client decides what to load eagerly and what to defer behind `tool_search`. Server-side mitigation: PR #9 (`360b4db`) rewrote 21 tool descriptions with better keyword coverage so `tool_search` is more likely to hit first try, but the round-trip itself can't be removed from this side. If the harness behavior changes upstream (claude.ai eagerly loads more tools, or surfaces descriptions without a search), this entry can be retired.
+
+---
+
+## Deferred decisions
+
+Choices made during a friction fix to *not* ship a piece of scope, with the reasoning preserved so the next reporter can either provide the missing evidence or read why it wasn't worth the cost.
+
+### Workout-side `log_workout + apply_day_override` combo (deferred from #6)
+**Context:** Friction #6 originally proposed an atomic `log_workout + apply_day_override` combo so the displayed plan would auto-update to match what was actually done. The shipped fix (PR #13) handled only the hike side via `log_hike.replacesPlannedHikeId`.
+
+**Why deferred:**
+1. **Lossy mapping.** `Workout` (actual sets with weights/reps/duration values) → `DayTemplate` (prescriptions with ranges like "8-12") isn't 1:1. Auto-deriving one from the other loses prescription intent vs. captured execution.
+2. **Thin evidence.** Only the Flatirons case (a hike, not a workout) was on the table. One report isn't enough signal to commit to a fixed mapping.
+3. **The "two sources of truth" framing might be a feature.** The override is the plan; the workout log is the execution. Their divergence is information — the user did X when X was planned.
+
+**Revisit if:** Multiple reports establish a recurring pattern where the coach has to manually re-emit a `workoutJson` to match a logged workout, the lossy mapping is acceptable, or the user explicitly says they want post-hoc display to track actual performance.
 
 ---
 
@@ -127,7 +156,14 @@ Verification afterward surfaced two follow-up nits (ordering put nulls first, `l
 ## How to add a new entry
 
 1. Copy the user's exact words into a `> blockquote` under "Reported." Don't paraphrase — the literal language is the design signal.
-2. Note severity from the reporter's perspective: High (data loss / wrong values shown to the user), Medium (slow workflow or accuracy reliance on coach discipline), Low (ergonomic).
+2. Note severity from the reporter's perspective:
+   - **High** — data loss, wrong values shown to the user, or anything silently corrupting state.
+   - **Medium** — slow workflow, accuracy that relies on coach discipline, or a workaround that's easy to forget.
+   - **Low** — ergonomic friction; works correctly but takes too many steps.
 3. If the fix needs design discussion before code, capture the alternatives considered and which one shipped + why. Loss of options is information.
-4. After shipping, fill in **Shipped:** with the PR number, the merge SHA, and a short paragraph naming the concrete tool / column / behavior changes. Cross-link other PRs that relate (e.g. paired changes, design references).
-5. Move the entry from **Open** to **Resolved**, keeping the original Reported block intact.
+4. After landing the fix, fill in **Shipped:** with the PR number, the merge SHA, and a short paragraph naming the concrete tool / column / behavior changes. Cross-link other PRs that relate (e.g. paired changes, design references).
+5. Move the entry to the right destination:
+   - Shipped a fix → **Resolved**.
+   - Can't fix in this codebase → **Out of scope** with the reasoning + any partial mitigation.
+   - Shipped a fix but skipped a piece of scope → keep the main entry in **Resolved**, add a corresponding entry in **Deferred decisions** describing what was skipped and what evidence would warrant revisiting.
+   Keep the original Reported blockquote intact in all cases.
