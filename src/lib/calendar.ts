@@ -430,6 +430,27 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
  * (week 1 initials + retest weeks). Ignores any per-day override — answers the
  * question "what would a fresh day with no override show?".
  */
+/**
+ * Resolve the rotation-day template that would render on `date` if no override
+ * existed. Returns null when `date` is outside the plan's calendar window
+ * (before startedOn or past totalWeeks*7). Override-unaware by design — this
+ * is the "base" view that PlanDayOverride.workoutJson layers on top of.
+ *
+ * Use case: workoutJsonOps in apply_day_override needs a base DayTemplate to
+ * apply edits against when no override exists yet for the date.
+ */
+export function templateForRotationDay(
+  program: ActiveProgramSnapshot,
+  date: Date,
+): DayTemplate | null {
+  const startMid = startOfDay(program.startedOn);
+  const dayStart = startOfDay(date);
+  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
+  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return null;
+  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
+  return program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
+}
+
 export function rotationBaselineNamesForDate(
   program: ActiveProgramSnapshot,
   date: Date,

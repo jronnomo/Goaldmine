@@ -19,6 +19,7 @@ import {
   rotationBaselineNamesForDate,
   startOfDay,
   startOfWeekMonday,
+  templateForRotationDay,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
@@ -30,6 +31,8 @@ import {
   assertDayTemplateWithinSize,
   assertValidDayTemplate,
 } from "@/lib/day-template-validation";
+import { WorkoutJsonOpSchema, applyWorkoutJsonOps } from "@/lib/day-template-ops";
+import type { DayTemplate } from "@/lib/program-template";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
 import {
   getBaselineHistory,
@@ -71,7 +74,14 @@ const ApplyDayOverrideShape = {
     .unknown()
     .nullish()
     .describe(
-      "Full DayTemplate to swap the day's blocks. null clears a prior workout swap; omit to leave unchanged.",
+      "Full DayTemplate to swap the day's blocks. null clears a prior workout swap; omit to leave unchanged. Mutually exclusive with workoutJsonOps.",
+    ),
+  workoutJsonOps: z
+    .array(WorkoutJsonOpSchema)
+    .min(1)
+    .optional()
+    .describe(
+      "Surgical edits to the day's workout — addExercise / updateExercise / removeExercise. Applied against the existing override (if any) or the rotation-day template (if no override yet), so you can edit one exercise without re-emitting the full DayTemplate. Mutually exclusive with workoutJson.",
     ),
   baselineTestNames: z
     .array(z.string())
@@ -175,6 +185,15 @@ async function applyDayOverrideCore(
     where: { planId_date: { planId: program.id, date } },
   });
 
+  // Mutex: workoutJson (full replace) and workoutJsonOps (surgical edit)
+  // describe two different write modes for the same field. Allowing both at
+  // once would silently make one win, so we reject up front.
+  if (input.workoutJson !== undefined && input.workoutJsonOps !== undefined) {
+    throw new Error(
+      "workoutJson and workoutJsonOps are mutually exclusive — pass workoutJson for a full replace, workoutJsonOps for surgical edits to the existing workout.",
+    );
+  }
+
   // Auto-recover: occasionally workoutJson comes in stringified. Parse it
   // back to an object so resolveDay can read it as a DayTemplate.
   let workoutValue: unknown = input.workoutJson;
@@ -189,8 +208,35 @@ async function applyDayOverrideCore(
     }
   }
 
+  // workoutJsonOps path: resolve a base DayTemplate (existing override's
+  // workoutJson if present, else the rotation-day template) and apply ops.
+  // The resulting object replaces workoutValue from here on, so the rest of
+  // the pipeline (size guard, structural validation, baseline guard, write)
+  // treats it identically to a full workoutJson replace.
+  if (input.workoutJsonOps !== undefined) {
+    let base: DayTemplate | null = null;
+    if (existing?.workoutJson != null && typeof existing.workoutJson === "object" && !Array.isArray(existing.workoutJson)) {
+      base = existing.workoutJson as unknown as DayTemplate;
+    } else {
+      base = templateForRotationDay(program, date);
+    }
+    if (!base) {
+      throw new Error(
+        `workoutJsonOps needs a base workout to edit, but ${input.date} has no override and no rotation-day template (out of plan range). Use workoutJson to seed an override from scratch first.`,
+      );
+    }
+    try {
+      workoutValue = applyWorkoutJsonOps(base, input.workoutJsonOps);
+    } catch (e) {
+      throw new Error(
+        `workoutJsonOps failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
   // Structural + size validation. Field-level error messages instead of a
-  // generic downstream Prisma error.
+  // generic downstream Prisma error. Runs on whatever produced workoutValue —
+  // either a direct workoutJson replace or the result of workoutJsonOps.
   if (workoutValue !== undefined && workoutValue !== null) {
     assertDayTemplateWithinSize(workoutValue);
     assertValidDayTemplate(workoutValue);
@@ -217,9 +263,17 @@ async function applyDayOverrideCore(
   const updateData: Prisma.PlanDayOverrideUpdateInput = {};
   const updatedFields: string[] = [];
 
-  if (input.workoutJson !== undefined) {
+  // workoutJson was "touched" by this call if EITHER:
+  // - the caller passed workoutJson directly (full replace, including null=clear), or
+  // - the caller passed workoutJsonOps (surgical edit; workoutValue holds the result).
+  // Both modes write to the workoutJson column via the same workoutValue var.
+  const touchedWorkout = input.workoutJson !== undefined || input.workoutJsonOps !== undefined;
+  const touchedViaOps = input.workoutJsonOps !== undefined;
+  if (touchedWorkout) {
     updateData.workoutJson =
-      workoutValue === null ? Prisma.JsonNull : (workoutValue as Prisma.InputJsonValue);
+      workoutValue === null || workoutValue === undefined
+        ? Prisma.JsonNull
+        : (workoutValue as Prisma.InputJsonValue);
     updatedFields.push("workoutJson");
   }
   if (input.baselineTestNames !== undefined) {
@@ -257,7 +311,7 @@ async function applyDayOverrideCore(
       planId: program.id,
       date,
       workoutJson:
-        input.workoutJson === undefined || input.workoutJson === null
+        workoutValue === undefined || workoutValue === null
           ? Prisma.JsonNull
           : (workoutValue as Prisma.InputJsonValue),
       baselineTestNames:
@@ -278,6 +332,7 @@ async function applyDayOverrideCore(
         )
       : [];
 
+  const opsSuffix = touchedViaOps ? ` workoutJson edited via ${input.workoutJsonOps!.length} op${input.workoutJsonOps!.length === 1 ? "" : "s"}.` : "";
   return {
     overrideId: written.id,
     dateKey: toDateKey(date),
@@ -285,8 +340,8 @@ async function applyDayOverrideCore(
     preservedFields: preserved,
     message:
       existing == null
-        ? `Override created (set: ${updatedFields.join(", ")}).`
-        : `Override updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+        ? `Override created (set: ${updatedFields.join(", ")}).${opsSuffix}`
+        : `Override updated (changed: ${updatedFields.join(", ")}). Other fields preserved.${opsSuffix}`,
   };
 }
 
@@ -1272,6 +1327,11 @@ function registerWriteTools(server: McpServer) {
         `dayOfWeek (1..7) and category (upper|lower|zone2-mobility|calisthenics|lower-power|long-endurance|rest) checked when present. ` +
         `Stringified payload must be ≤ ${MAX_DAY_TEMPLATE_BYTES.toLocaleString()} bytes (real DayTemplates are 2–8KB; oversized usually means a full plan snapshot was pasted by mistake). ` +
         "Validation errors name the specific field — read them and fix the named field, don't guess. " +
+        "Alternative to workoutJson: pass workoutJsonOps for surgical edits — an array of {op: addExercise|updateExercise|removeExercise, …}. Ops apply to the existing override's workoutJson if one exists, else to the rotation-day template, so you can add/edit/remove one exercise without re-emitting the whole DayTemplate. Mutually exclusive with workoutJson. Examples: " +
+        "[{op:'addExercise', block:'Mobility', exercise:{name:'Calf Stretch', durationSec:30}}] adds to the end of the Mobility block. " +
+        "[{op:'updateExercise', exerciseName:'Hollow Body Hold', patch:{durationSec:60}}] bumps the duration. " +
+        "[{op:'removeExercise', exerciseName:'Bird-Dog'}] drops it. " +
+        "If an exerciseName matches in multiple blocks, pass `block` (substring or index) to disambiguate. After ops apply, the result is validated like a full workoutJson — same field-level errors. " +
         "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) to override which baseline tests appear today — " +
         "empty array = no tests; null = revert to rotation default; omit to leave unchanged. " +
         "When you pass workoutJson on a date that has rotation-default baselines AND no prior baseline decision exists on this override, " +
