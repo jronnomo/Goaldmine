@@ -107,7 +107,10 @@ function registerReadTools(server: McpServer) {
           resolveDay(new Date()),
           prisma.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
-            orderBy: [{ lastAcknowledgedAt: "desc" }, { date: "desc" }],
+            // nulls: "last" so freshly-acknowledged rules bubble up first
+            // and never-acknowledged rules (lastAcknowledgedAt IS NULL) don't
+            // outrank them by Postgres's default null-greater-than treatment.
+            orderBy: [{ lastAcknowledgedAt: { sort: "desc", nulls: "last" } }, { date: "desc" }],
             select: {
               id: true,
               body: true,
@@ -677,7 +680,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a note",
       description:
-        "Audible / journal / feedback. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day.",
+        "Audible / journal / feedback / standing_rule. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering.",
       inputSchema: {
         body: z.string(),
         type: NoteTypeShape.default("journal"),
@@ -691,6 +694,7 @@ function registerWriteTools(server: McpServer) {
             body: input.body,
             type: input.type,
             targetDate: input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null,
+            lastAcknowledgedAt: input.type === "standing_rule" ? new Date() : null,
           },
         });
         return { id: n.id, message: "Note logged" };
