@@ -146,9 +146,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "recent_history",
     {
-      title: "Recent activity history",
+      title: "Recent activity / lookback window — workouts, measurements, notes, baselines, hikes",
       description:
-        "Pull recent workouts, measurements, notes, baselines, and hikes. Use before proposing a plan revision so the audible reflects the user's actual recent state.",
+        "Pull the last N days of activity across every log type — workouts, body measurements, notes, baseline test results, hikes, nutrition. " +
+        "Use to answer 'what happened recently', 'what did I do last week', or before proposing a plan revision so the audible reflects actual recent state. " +
+        "Default lookback is 14 days; max 180.",
       inputSchema: {
         days: z
           .number()
@@ -198,8 +200,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "list_goals",
     {
-      title: "List goals",
-      description: "Every goal with active flag, target date, status, and target count.",
+      title: "List all training goals",
+      description:
+        "Show every training goal — active and inactive — with active flag, target date / race day / event date, status, and target count. " +
+        "Use to find the active goal id, see past or paused goals, or surface what the user is training toward. " +
+        "Pair with get_goal for full detail on one goal.",
     },
     async () =>
       safe(async () => {
@@ -351,9 +356,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "weekly_summary_data",
     {
-      title: "Weekly summary data",
+      title: "Weekly recap / Sunday review data bundle",
       description:
-        "Bundle one week's data (workouts, measurements, notes, baselines, hikes) for a coaching review. weekOffset=0 is the current week, -1 is last week.",
+        "Bundle one week's data (workouts, measurements, notes, baselines, hikes, nutrition) for a coaching review or Sunday weekly recap. " +
+        "Use when the user asks 'how did this week go', 'summarize last week', or for the standing Sunday review cadence. " +
+        "weekOffset=0 is the current week, -1 is last week, -2 the week before, etc.",
       inputSchema: {
         weekOffset: z
           .number()
@@ -406,9 +413,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_baseline_schedule",
     {
-      title: "Baseline schedule + status",
+      title: "Baseline test schedule — what's due, overdue, upcoming",
       description:
-        "All scheduled baseline tests for the active plan with per-checkpoint status (initial week 1 + each retest week). Includes overdue/due flags.",
+        "Every scheduled baseline test for the active plan with per-checkpoint status: initial collection (week 1) and each retest week. " +
+        "Use to answer 'what fitness tests are due', 'what baselines are overdue', 'when's the next retest', or to plan a baseline-collection day. " +
+        "Includes overdue/due flags so the coach can call out missed tests before they drift.",
     },
     async () => safe(() => getBaselineSchedule()),
   );
@@ -416,8 +425,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_baseline_history",
     {
-      title: "Baseline history for a test",
-      description: "All results for one baseline test, oldest first.",
+      title: "Baseline / fitness test trend over time",
+      description:
+        "Every recorded result for one named baseline test (initial + every retest), oldest first. " +
+        "Use to see the trend / progression / progress on a specific test ('how has my 1.5-mile run improved', 'pull-up max over time'). " +
+        "For PRs on regular exercises (not baseline tests), use get_exercise_history.",
       inputSchema: { testName: z.string() },
     },
     async ({ testName }) => safe(() => getBaselineHistory(testName)),
@@ -426,8 +438,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_records_summary",
     {
-      title: "Records summary (PRs + baselines)",
-      description: "Per-exercise PRs (1RM/reps/duration) plus baseline summaries.",
+      title: "All-time PRs / personal records / max lifts summary",
+      description:
+        "Every exercise's personal record (PR) — best 1RM, max reps, longest duration — plus a summary row for each baseline test. " +
+        "Use to answer 'what are my PRs', 'what's my best ever for X', 'max lift on bench/squat/deadlift', or to anchor a coaching turn in lifetime bests. " +
+        "For the trend of one exercise (not just the peak), use get_exercise_history.",
     },
     async () =>
       safe(async () => {
@@ -442,8 +457,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_exercise_history",
     {
-      title: "History for one exercise",
-      description: "Best-set-per-session over time for a specific exercise.",
+      title: "Exercise progress / trend over time (best set per session)",
+      description:
+        "Best-set-per-session over time for one specific exercise — shows progression / trend / progress on that lift or movement. " +
+        "Use for questions like 'how has my push-up max changed', 'bench press over the last month', 'am I progressing on RDLs'. " +
+        "For all-time peaks (just the PR row), use get_records_summary instead.",
       inputSchema: {
         name: z.string(),
         equipment: z.string().optional(),
@@ -456,9 +474,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "export_workout",
     {
-      title: "Export a workout",
+      title: "Export / share / copy / print a logged workout",
       description:
-        "Format a stored workout as Strong/Markdown/Plain/JSON for sharing. Default 'strong' round-trips the import format.",
+        "Format a stored workout for sharing or copying — Strong-app txt, Markdown, plain text, or JSON. " +
+        "Use when the user asks to share, copy, print, or export a workout, or wants a paste-friendly summary. " +
+        "Default 'strong' format round-trips the import — paste it back into Strong or log_workout and you get the same session.",
       inputSchema: {
         workoutId: z.string(),
         format: z.enum(["strong", "markdown", "plain", "json"]).default("strong"),
@@ -582,8 +602,11 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_measurement",
     {
-      title: "Log a body measurement",
-      description: "Daily weigh-in / resting HR / body fat / etc.",
+      title: "Log body weight, resting heart rate, body fat, or other body metric",
+      description:
+        "Record a daily weigh-in, resting HR (RHR), body fat %, or other body-composition metric. " +
+        "Use for any body-state tracking that isn't a workout, baseline test, or hike. " +
+        "Pass only the fields measured; omit the rest. Drives the weight trend on the dashboard and feeds weekly summaries.",
       inputSchema: {
         weightLb: z.number().min(0).optional(),
         restingHr: z.number().int().min(0).optional(),
@@ -610,9 +633,13 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_baseline",
     {
-      title: "Log a baseline test result",
+      title: "Log a fitness test / benchmark / baseline result",
       description:
-        "Initial collection or retest. Use a testName from the program template's baseline week if applicable, or a custom name.",
+        "Record the result of a fitness test or benchmark — initial collection (week 1) or retest. " +
+        "Examples: 1.5-mile run time, max pull-ups, deep-squat hold seconds, 8-rep DB press max, vertical jump. " +
+        "Use a testName from the program template's baseline week when applicable so the result joins the existing test schedule; " +
+        "use a custom name only for one-off measurements. Each result drives the trend on /baselines/test/[testName] and " +
+        "feeds get_baseline_history / get_baseline_schedule.",
       inputSchema: {
         testName: z.string(),
         value: z.number(),
@@ -647,8 +674,12 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_hike",
     {
-      title: "Log a hike",
-      description: "Use status='completed' (default) or 'planned' for upcoming hikes.",
+      title: "Record a completed hike or schedule a planned hike",
+      description:
+        "Log an out-of-gym training day: completed hike, training hike, scheduled future hike, or backpacking trip. " +
+        "Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. " +
+        "Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar " +
+        "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression.",
       inputSchema: {
         date: z.string(),
         route: z.string(),
@@ -761,8 +792,10 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_nutrition",
     {
-      title: "Delete a nutrition log",
-      description: "Remove a logged meal by id.",
+      title: "Delete / remove a logged meal or nutrition entry",
+      description:
+        "Remove a logged meal (NutritionLog row) by id. Use when a meal was logged in error, duplicated, or needs to be re-entered. " +
+        "To edit instead of delete, use update_nutrition.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -856,9 +889,10 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "update_plan_metadata",
     {
-      title: "Update plan dates / name and the parent goal's target date",
+      title: "Extend / shorten / rename plan; shift goal date",
       description:
-        "Patch the active Plan's metadata fields (name, endsOn, weeks) and optionally the parent Goal's targetDate atomically. " +
+        "Use this to extend or shorten the plan duration, change the plan end date, rename the plan, or shift the goal target date / race day / event day. " +
+        "Patches the active Plan's metadata fields (name, endsOn, weeks) and optionally the parent Goal's targetDate atomically. " +
         "Use this when a plan revision shifted the schedule — apply_plan_revision only rewrites planJson, not the Plan/Goal columns " +
         "that PlanOverview, the calendar's isInPlan range, baseline retest scheduling, and the goal-date pin all read. " +
         "All four fields are optional but at least one must be set. Dates are yyyy-mm-dd in USER_TZ. Keep planJson.totalWeeks in sync " +
@@ -1123,9 +1157,12 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "update_goal_targets",
     {
-      title: "Update a goal's readiness targets",
+      title: "Update a goal's readiness scoring (targets / rubric / weighted metrics)",
       description:
-        "Replace the targets array. Each target = { metric, label, target, weight, units, direction, rationale? }. Weights should sum near 1.",
+        "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 155 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
+        "Use when adjusting the success criteria / rubric / scoring weights for the goal. " +
+        "Each target = { metric, label, target, weight, units, direction, rationale? }. Weights should sum near 1. " +
+        "Read the current targets via get_goal first; this is a full-replace, not a patch.",
       inputSchema: {
         goalId: z.string(),
         targets: z.array(z.unknown()),
@@ -1144,9 +1181,11 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "update_note",
     {
-      title: "Update or resolve a note",
+      title: "Edit a note (body, type, target date, resolve)",
       description:
-        "Edit a note's body / type / targetDate. Useful for marking a pending audible 'resolved' (rewrite the body) or fixing a typo without losing the note id.",
+        "Edit an existing note's body, type, or targetDate without losing the note id. " +
+        "Common uses: fix a typo, retarget a note to a different date, change a journal entry to a feedback note, or mark a pending audible 'resolved' by rewriting the body. " +
+        "Pass only the fields to change; omit the rest. To change type to standing_rule, prefer promote_note (it stamps lastAcknowledgedAt). To delete entirely, use delete_note.",
       inputSchema: {
         id: z.string(),
         body: z.string().optional(),
@@ -1211,9 +1250,11 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_note",
     {
-      title: "Delete a note",
+      title: "Delete / remove a note (journal, audible, feedback, standing rule)",
       description:
-        "Remove a Note row by id. PlanRevision.triggerNoteId references are set to null (the audit entry stays but loses the link).",
+        "Permanently remove a note by id — any type (journal, audible, feedback, standing_rule). " +
+        "PlanRevision.triggerNoteId references are set to null (the audit entry stays but loses the link). " +
+        "To resolve a note without deleting (preserves history), use acknowledge_notes. To edit, use update_note.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -1290,8 +1331,10 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_measurement",
     {
-      title: "Delete a measurement",
-      description: "Remove a body weight / HR / body-fat row by id.",
+      title: "Delete / remove a body weight / HR / body-fat measurement",
+      description:
+        "Remove a body measurement (weight, resting HR, body fat %, etc.) by id. " +
+        "Use when a measurement was logged in error or with the wrong value. To correct rather than delete, log a new measurement with the right value.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -1304,8 +1347,12 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_baseline",
     {
-      title: "Delete a baseline result",
-      description: "Remove a baseline test result by id. Also removes the mirrored exercise from that day's baseline workout (and deletes the workout if it has no exercises left).",
+      title: "Delete / remove a fitness test / baseline result",
+      description:
+        "Remove a baseline test result (1.5-mi run, max pull-ups, etc.) by id. " +
+        "Use when the result was logged with the wrong value or for the wrong test. " +
+        "Also removes the mirrored exercise from that day's baseline workout (and deletes the workout if it has no exercises left). " +
+        "To correct rather than delete, use update_baseline.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -1320,8 +1367,10 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_hike",
     {
-      title: "Delete a hike",
-      description: "Remove a hike row by id.",
+      title: "Delete / remove / cancel a hike (completed or planned)",
+      description:
+        "Remove a hike (completed or planned) by id. Use to delete a hike logged in error, or cancel a planned/scheduled hike that's no longer happening. " +
+        "Planned hikes that drop off the calendar this way leave no marker; if you want to record that it was skipped, log a journal note instead before deleting.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -1334,9 +1383,11 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "delete_workout",
     {
-      title: "Delete a workout",
+      title: "Delete / remove a logged workout / session",
       description:
-        "Remove a Workout row by id. Cascade-deletes its exercises and sets. Use carefully.",
+        "Permanently remove a Workout row by id. Cascade-deletes its exercises and sets — irreversible, use carefully. " +
+        "Common reasons: duplicate import from a Strong paste, accidental log, or a test-data row. " +
+        "Records (PRs) recompute from remaining workouts on next read; the deleted session no longer contributes.",
       inputSchema: { id: z.string() },
     },
     async ({ id }) =>
@@ -1349,9 +1400,12 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "add_goal_reference",
     {
-      title: "Attach a reference to a goal",
+      title: "Attach a URL / link / reference document to a goal",
       description:
-        "Append a URL or pasted-doc reference. Optional claudeSummary documents what you took away from it.",
+        "Append a reference (URL, trail report, route guide, article, pasted doc snippet) to a goal so it persists across coaching turns. " +
+        "Use when the user shares a link about their goal — Mt. Elbert trail conditions, a training article, a race course PDF, equipment guides. " +
+        "Optional claudeSummary captures the key takeaway from the reference so future turns don't have to re-fetch. " +
+        "Read existing references via get_goal.",
       inputSchema: {
         goalId: z.string(),
         kind: z.enum(["url", "doc"]),
