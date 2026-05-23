@@ -41,6 +41,7 @@ export function DayNoteForm({ dateKey }: { dateKey: string }) {
           <option value="audible">Audible</option>
           <option value="journal">Journal</option>
           <option value="feedback">Feedback</option>
+          <option value="standing_rule">Standing rule</option>
         </select>
         <button
           type="submit"

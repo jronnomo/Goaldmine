@@ -39,7 +39,7 @@ const DateKeyShape = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
   .describe("ISO date yyyy-mm-dd in the user's local time zone");
 
-const NoteTypeShape = z.enum(["journal", "audible", "feedback"]);
+const NoteTypeShape = z.enum(["journal", "audible", "feedback", "standing_rule"]);
 
 const MealTypeShape = z.enum([
   "preworkout",
@@ -99,12 +99,24 @@ function registerReadTools(server: McpServer) {
     {
       title: "Get today's plan",
       description:
-        "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context.",
+        "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context. Also surfaces all active standing_rule notes (with lastAcknowledgedAt freshness) under `standingRules` so the coach sees persistent guidance at session start. Call acknowledge_standing_rule when you reference one in a turn so the freshness timestamp stays current.",
     },
     async () =>
       safe(async () => {
-        const r = await resolveDay(new Date());
-        return r;
+        const [r, standingRules] = await Promise.all([
+          resolveDay(new Date()),
+          prisma.note.findMany({
+            where: { type: "standing_rule", resolvedAt: null },
+            orderBy: [{ lastAcknowledgedAt: "desc" }, { date: "desc" }],
+            select: {
+              id: true,
+              body: true,
+              date: true,
+              lastAcknowledgedAt: true,
+            },
+          }),
+        ]);
+        return { ...r, standingRules };
       }),
   );
 
@@ -254,6 +266,51 @@ function registerReadTools(server: McpServer) {
           notes,
           count: notes.length,
         };
+      }),
+  );
+
+  server.registerTool(
+    "list_promotable_notes",
+    {
+      title: "Notes that might be standing rules",
+      description:
+        "Lists feedback-type notes (and optionally existing standing_rule notes) so the coach can review them and propose promotions via promote_note. Use on first session after the standing_rule migration — or any time the user mentions a rule that may not yet be promoted. Returns all matching notes sorted newest first; resolvedAt is included so you can tell pending from folded-in. Pure read — no side effects.",
+      inputSchema: {
+        includeStandingRules: z
+          .boolean()
+          .default(false)
+          .describe(
+            "When true, also include notes that are already type='standing_rule' (useful for a freshness audit). Default false — only surfaces unpromoted feedback notes.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .default(50)
+          .describe("Max notes to return. Default 50."),
+      },
+    },
+    async ({ includeStandingRules, limit }) =>
+      safe(async () => {
+        const types = includeStandingRules
+          ? ["feedback", "standing_rule"]
+          : ["feedback"];
+        const notes = await prisma.note.findMany({
+          where: { type: { in: types } },
+          orderBy: { date: "desc" },
+          take: limit,
+          select: {
+            id: true,
+            body: true,
+            type: true,
+            date: true,
+            targetDate: true,
+            resolvedAt: true,
+            lastAcknowledgedAt: true,
+          },
+        });
+        return { count: notes.length, notes };
       }),
   );
 
@@ -1140,6 +1197,70 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         await prisma.note.delete({ where: { id } });
         return { id, message: "Note deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "promote_note",
+    {
+      title: "Change a note's type (e.g. promote feedback → standing_rule)",
+      description:
+        "Change the type of an existing note. The intended use is promoting a feedback-type note that captures a persistent coaching rule into the standing_rule type so it auto-surfaces in get_today_plan. When promoting to 'standing_rule', lastAcknowledgedAt is stamped to now (override with stampAcknowledged=false to preserve any existing timestamp). Propose before applying — show the user the note text and the target type before calling. Use list_promotable_notes to discover candidates.",
+      inputSchema: {
+        id: z.string().describe("Note id (from list_promotable_notes or get_pending_notes)"),
+        type: NoteTypeShape.describe("Target type — usually 'standing_rule'"),
+        stampAcknowledged: z
+          .boolean()
+          .default(true)
+          .describe(
+            "When promoting to standing_rule, stamp lastAcknowledgedAt = NOW (default true). Pass false to keep any existing timestamp untouched.",
+          ),
+      },
+    },
+    async ({ id, type, stampAcknowledged }) =>
+      safe(async () => {
+        const existing = await prisma.note.findUniqueOrThrow({ where: { id } });
+        const updated = await prisma.note.update({
+          where: { id },
+          data: {
+            type,
+            lastAcknowledgedAt:
+              type === "standing_rule" && stampAcknowledged
+                ? new Date()
+                : existing.lastAcknowledgedAt,
+          },
+        });
+        return {
+          id: updated.id,
+          fromType: existing.type,
+          toType: updated.type,
+          lastAcknowledgedAt: updated.lastAcknowledgedAt,
+          message: `Note promoted: ${existing.type} → ${updated.type}`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "acknowledge_standing_rule",
+    {
+      title: "Refresh a standing rule's lastAcknowledgedAt",
+      description:
+        "Stamp lastAcknowledgedAt = NOW on a standing_rule note. Call when you reference a rule in a coaching turn so its freshness signal reflects continued relevance — stale-looking rules are easier to flag for review. No-op for non-rule notes (returns an error). This is bookkeeping, not a side-effect on the user's plan; no propose-before-apply gate.",
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        const existing = await prisma.note.findUniqueOrThrow({ where: { id } });
+        if (existing.type !== "standing_rule") {
+          throw new Error(
+            `Note ${id} is type='${existing.type}', not 'standing_rule'. Use promote_note first if you want to make it a standing rule.`,
+          );
+        }
+        const updated = await prisma.note.update({
+          where: { id },
+          data: { lastAcknowledgedAt: new Date() },
+        });
+        return { id: updated.id, lastAcknowledgedAt: updated.lastAcknowledgedAt };
       }),
   );
 

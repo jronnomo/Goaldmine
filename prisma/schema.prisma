@@ -86,7 +86,7 @@ model Note {
   id         String    @id @default(cuid())
   date       DateTime  @default(now())
   body       String
-  type       String    @default("journal") // audible | journal | feedback
+  type       String    @default("journal") // audible | journal | feedback | standing_rule
   // Optional: which future date this note is *about* (vs. when it was written).
   // Lets Claude know "the user wants the May 8 plan adjusted because of this."
   targetDate DateTime?
@@ -95,7 +95,11 @@ model Note {
   // are those with resolvedAt IS NULL.
   resolvedAt     DateTime?
   resolvedReason String?
-  createdAt      DateTime  @default(now())
+  // For type="standing_rule" only. Bumped via acknowledge_standing_rule
+  // whenever the coach references the rule in a turn — surfaces freshness so
+  // stale rules are easy to spot. Null for non-rule notes.
+  lastAcknowledgedAt DateTime?
+  createdAt          DateTime  @default(now())
 
   triggeredRevisions PlanRevision[]
 

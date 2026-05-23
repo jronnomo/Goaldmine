@@ -22,6 +22,12 @@ const NOTE_TYPES = [
     description:
       "Coaching feedback — usually written by Claude after weekly reviews, or by you reflecting on a phase. Type=feedback. Surfaces in /history and weekly summaries.",
   },
+  {
+    value: "standing_rule",
+    label: "Standing rule",
+    description:
+      "A persistent coaching rule (e.g. \"prescribe = log\", \"never push deload week\"). Type=standing_rule. Auto-surfaces in every get_today_plan response so Claude can't forget it across sessions. Prefix bodies with \"RULE:\" or \"STANDING:\" to make future automated promotion catches them.",
+  },
 ] as const;
 
 type NoteType = (typeof NOTE_TYPES)[number]["value"];
