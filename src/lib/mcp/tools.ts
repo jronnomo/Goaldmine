@@ -856,25 +856,41 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Override a single day",
       description:
-        "Replace one date's workout / baseline tests / nutrition / mobility for the active plan. " +
-        "Pass workoutJson as a full DayTemplate (object, not stringified) to swap the regular blocks. " +
-        "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) " +
-        "to override which baseline tests appear today — empty array = no tests; omit to keep rotation default. " +
-        "When you pass workoutJson on a date that has rotation-default baselines, you MUST also pass " +
-        "baselineTestNames explicitly (re-list to keep, [] to suppress, swap to replace). Don't tell the user " +
-        "to ignore the baseline form — own the decision.",
+        "PATCH-style partial update for a single date's override on the active plan. " +
+        "Only fields you pass are touched: omit a field to leave its current value alone; pass null to clear a previously-set field. " +
+        "Pass workoutJson as a full DayTemplate (object, not stringified) to swap the regular blocks; null clears the workout swap. " +
+        "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) to override which baseline tests appear today — " +
+        "empty array = no tests; null = revert to rotation default; omit to leave unchanged. " +
+        "When you pass workoutJson on a date that has rotation-default baselines AND no prior baseline decision exists on this override, " +
+        "you MUST also pass baselineTestNames explicitly (re-list to keep, [] to suppress, swap to replace). Once a baseline decision is on file, " +
+        "subsequent calls that only update other fields (e.g. nutritionText) will preserve it. Don't tell the user to ignore the baseline form — own the decision. " +
+        "Returns the list of fields actually changed by this call.",
       inputSchema: {
         date: DateKeyShape,
-        workoutJson: z.unknown().optional(),
+        workoutJson: z
+          .unknown()
+          .nullish()
+          .describe(
+            "Full DayTemplate to swap the day's blocks. null clears a prior workout swap; omit to leave unchanged.",
+          ),
         baselineTestNames: z
           .array(z.string())
-          .optional()
+          .nullish()
           .describe(
-            "Override which baseline tests show today. Empty array suppresses tests entirely; omit to keep rotation default. Required when workoutJson is set on a date with rotation-default baselines.",
+            "Override which baseline tests show today. Empty array suppresses tests; null reverts to rotation default; omit to leave unchanged. Required when workoutJson is being set on a date with rotation-default baselines and no prior baseline decision exists.",
           ),
-        nutritionText: z.string().optional(),
-        mobilityText: z.string().optional(),
-        notes: z.string().optional(),
+        nutritionText: z
+          .string()
+          .nullish()
+          .describe("Per-day nutrition guidance. null clears; omit to leave unchanged."),
+        mobilityText: z
+          .string()
+          .nullish()
+          .describe("Per-day mobility guidance. null clears; omit to leave unchanged."),
+        notes: z
+          .string()
+          .nullish()
+          .describe("Why this date diverges. null clears; omit to leave unchanged."),
       },
     },
     async (input) =>
@@ -883,21 +899,12 @@ function registerWriteTools(server: McpServer) {
         if (!program) throw new Error("No active plan");
         const date = startOfDay(parseDateKey(input.date));
 
-        // Audible-with-baselines guard: if Claude is swapping the workout on a
-        // date where baselines would normally appear by rotation, force an
-        // explicit baselineTestNames decision. Three valid choices: keep
-        // (re-list the same names), suppress ([]), or swap (different names).
-        if (input.workoutJson !== undefined && input.baselineTestNames === undefined) {
-          const rotationDefaults = rotationBaselineNamesForDate(program, date);
-          if (rotationDefaults.length > 0) {
-            throw new Error(
-              `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
-                `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
-                `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
-                `Don't punt this to the UI — own the call.`,
-            );
-          }
-        }
+        // Fetch existing override up-front: PATCH semantics merge against it,
+        // and the baseline-guard relaxation checks whether a prior decision is
+        // already on file.
+        const existing = await prisma.planDayOverride.findUnique({
+          where: { planId_date: { planId: program.id, date } },
+        });
 
         // Auto-recover: Claude sometimes passes workoutJson as a JSON-encoded
         // string. Parse it back to an object before storing so resolveDay can
@@ -913,35 +920,105 @@ function registerWriteTools(server: McpServer) {
           }
         }
 
-        const workoutWrite =
-          workoutValue === undefined
-            ? Prisma.JsonNull
-            : (workoutValue as Prisma.InputJsonValue);
-        const baselinesWrite =
-          input.baselineTestNames === undefined
-            ? Prisma.JsonNull
-            : (input.baselineTestNames as Prisma.InputJsonValue);
+        // Audible-with-baselines guard: fires only when SETTING a new workout
+        // (not clearing or leaving alone), no baselineTestNames is in scope
+        // (input undefined AND no prior decision on file), and the rotation
+        // default has baselines for this date. Once a prior decision exists,
+        // partial updates that touch other fields don't re-prompt.
+        const settingWorkout = workoutValue !== undefined && workoutValue !== null;
+        const baselineInputProvided = input.baselineTestNames !== undefined;
+        const existingBaselineDecision = Array.isArray(existing?.baselineTestNames);
+        if (settingWorkout && !baselineInputProvided && !existingBaselineDecision) {
+          const rotationDefaults = rotationBaselineNamesForDate(program, date);
+          if (rotationDefaults.length > 0) {
+            throw new Error(
+              `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
+                `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
+                `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
+                `Don't punt this to the UI — own the call.`,
+            );
+          }
+        }
 
-        const created = await prisma.planDayOverride.upsert({
+        // PATCH semantics. undefined = leave alone, null = clear, value = set.
+        // For Json columns, "clear" stores Prisma.JsonNull (matches existing
+        // convention in this file and the truthy-checks downstream).
+        const updateData: Prisma.PlanDayOverrideUpdateInput = {};
+        const updatedFields: string[] = [];
+
+        if (input.workoutJson !== undefined) {
+          updateData.workoutJson =
+            workoutValue === null ? Prisma.JsonNull : (workoutValue as Prisma.InputJsonValue);
+          updatedFields.push("workoutJson");
+        }
+        if (input.baselineTestNames !== undefined) {
+          updateData.baselineTestNames =
+            input.baselineTestNames === null
+              ? Prisma.JsonNull
+              : (input.baselineTestNames as Prisma.InputJsonValue);
+          updatedFields.push("baselineTestNames");
+        }
+        if (input.nutritionText !== undefined) {
+          updateData.nutritionText = input.nutritionText;
+          updatedFields.push("nutritionText");
+        }
+        if (input.mobilityText !== undefined) {
+          updateData.mobilityText = input.mobilityText;
+          updatedFields.push("mobilityText");
+        }
+        if (input.notes !== undefined) {
+          updateData.notes = input.notes;
+          updatedFields.push("notes");
+        }
+
+        if (updatedFields.length === 0) {
+          return {
+            overrideId: existing?.id ?? null,
+            dateKey: toDateKey(date),
+            updatedFields,
+            message: "No fields provided — nothing changed.",
+          };
+        }
+
+        const written = await prisma.planDayOverride.upsert({
           where: { planId_date: { planId: program.id, date } },
           create: {
             planId: program.id,
             date,
-            workoutJson: workoutWrite,
-            baselineTestNames: baselinesWrite,
+            // On create, fields the caller didn't pass start as null/JsonNull;
+            // explicit null inputs collapse to the same "not set" state.
+            workoutJson:
+              input.workoutJson === undefined || input.workoutJson === null
+                ? Prisma.JsonNull
+                : (workoutValue as Prisma.InputJsonValue),
+            baselineTestNames:
+              input.baselineTestNames === undefined || input.baselineTestNames === null
+                ? Prisma.JsonNull
+                : (input.baselineTestNames as Prisma.InputJsonValue),
             nutritionText: input.nutritionText ?? null,
             mobilityText: input.mobilityText ?? null,
             notes: input.notes ?? null,
           },
-          update: {
-            workoutJson: workoutWrite,
-            baselineTestNames: baselinesWrite,
-            nutritionText: input.nutritionText ?? null,
-            mobilityText: input.mobilityText ?? null,
-            notes: input.notes ?? null,
-          },
+          update: updateData,
         });
-        return { overrideId: created.id, dateKey: toDateKey(date), message: "Override applied" };
+
+        const preserved =
+          existing != null
+            ? ["workoutJson", "baselineTestNames", "nutritionText", "mobilityText", "notes"].filter(
+                (f) => !updatedFields.includes(f),
+              )
+            : [];
+
+        return {
+          overrideId: written.id,
+          dateKey: toDateKey(date),
+          updatedFields,
+          preservedFields: preserved,
+          message:
+            existing == null
+              ? `Override created (set: ${updatedFields.join(", ")}).`
+              : `Override updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+        };
       }),
   );
 

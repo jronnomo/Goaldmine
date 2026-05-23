@@ -224,12 +224,16 @@ export type ResolvedDay = {
   }[];
   notesAboutDate: { id: string; body: string; type: string; date: Date; targetDate: Date | null }[];
   goalObjective: string | null;
+  // Only fields actively set on the row are included. Absence of a key means
+  // "not overriding this field" (rotation default applies). Presence of a
+  // non-null value means the override is driving that field.
   override?: {
     id: string;
-    workoutJson: unknown;
-    nutritionText: string | null;
-    mobilityText: string | null;
-    notes: string | null;
+    workoutJson?: unknown;
+    baselineTestNames?: unknown;
+    nutritionText?: string;
+    mobilityText?: string;
+    notes?: string;
   } | null;
 };
 
@@ -397,10 +401,18 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     override: override
       ? {
           id: override.id,
-          workoutJson: override.workoutJson,
-          nutritionText: override.nutritionText,
-          mobilityText: override.mobilityText,
-          notes: override.notes,
+          // Omit fields that are null in the DB so the absence of a key is a
+          // clear signal that the override isn't driving that field. Callers
+          // that need the resolved value (with rotation defaults applied)
+          // should read the top-level resolved fields (workoutTemplate,
+          // nutritionText, mobilityText, notes) instead.
+          ...(override.workoutJson != null && { workoutJson: override.workoutJson }),
+          ...(override.baselineTestNames != null && {
+            baselineTestNames: override.baselineTestNames,
+          }),
+          ...(override.nutritionText != null && { nutritionText: override.nutritionText }),
+          ...(override.mobilityText != null && { mobilityText: override.mobilityText }),
+          ...(override.notes != null && { notes: override.notes }),
         }
       : null,
   };
