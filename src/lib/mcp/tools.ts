@@ -24,7 +24,7 @@ import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore } from "@/lib/goal-core";
 import { LegendSchema } from "@/lib/legend";
-import { getActiveProgram } from "@/lib/program";
+import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import {
   MAX_DAY_TEMPLATE_BYTES,
   assertDayTemplateWithinSize,
@@ -61,6 +61,64 @@ const NutritionItemShape = z.object({
   notes: z.string().optional(),
 });
 
+// Shared input shapes for the single-op tools below. Exposed as constants so
+// the batch tools (batch_apply_day_overrides, batch_log_nutrition,
+// batch_log_note) can reuse them inside an `operations` array without
+// drifting from the single-op contract.
+const ApplyDayOverrideShape = {
+  date: DateKeyShape,
+  workoutJson: z
+    .unknown()
+    .nullish()
+    .describe(
+      "Full DayTemplate to swap the day's blocks. null clears a prior workout swap; omit to leave unchanged.",
+    ),
+  baselineTestNames: z
+    .array(z.string())
+    .nullish()
+    .describe(
+      "Override which baseline tests show today. Empty array suppresses tests; null reverts to rotation default; omit to leave unchanged. Required when workoutJson is being set on a date with rotation-default baselines and no prior baseline decision exists.",
+    ),
+  nutritionText: z
+    .string()
+    .nullish()
+    .describe("Per-day nutrition guidance. null clears; omit to leave unchanged."),
+  mobilityText: z
+    .string()
+    .nullish()
+    .describe("Per-day mobility guidance. null clears; omit to leave unchanged."),
+  notes: z
+    .string()
+    .nullish()
+    .describe("Why this date diverges. null clears; omit to leave unchanged."),
+} as const;
+const ApplyDayOverrideSchema = z.object(ApplyDayOverrideShape);
+type ApplyDayOverrideInput = z.infer<typeof ApplyDayOverrideSchema>;
+
+const LogNoteShape = {
+  body: z.string(),
+  type: NoteTypeShape.default("journal"),
+  targetDate: DateKeyShape.optional(),
+} as const;
+const LogNoteSchema = z.object(LogNoteShape);
+type LogNoteInput = z.infer<typeof LogNoteSchema>;
+
+const LogNutritionShape = {
+  mealType: MealTypeShape,
+  items: z.array(NutritionItemShape).min(1),
+  notes: z.string().optional(),
+  date: z.string().optional().describe("ISO datetime; default = now"),
+} as const;
+const LogNutritionSchema = z.object(LogNutritionShape);
+type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
+
+// The functional-overload of $transaction passes a stripped Prisma client (no
+// $transaction/$connect/etc.). Capture that exact type so the *_Core helpers
+// below can accept either the global `prisma` or a transaction client `tx`.
+// Picking the second overload via Parameters<…>[0] resolves to the callback,
+// then [0] grabs its first param.
+type DbClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 function jsonResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -87,6 +145,173 @@ async function safe<T>(fn: () => Promise<T>) {
 // are returned verbatim.
 function parseDateInput(s: string): Date {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDateKey(s) : new Date(s);
+}
+
+// ----------------------------------------------------------------------------
+// Core write helpers. Each takes a DbClient (either the global prisma or a
+// transaction client) so the single-op MCP tools and the batch_* tools can
+// share one source of truth for write semantics. Inputs are the same shape
+// Zod produces from the registered tool's inputSchema.
+// ----------------------------------------------------------------------------
+
+type ApplyDayOverrideResult = {
+  overrideId: string | null;
+  dateKey: string;
+  updatedFields: string[];
+  preservedFields?: string[];
+  message: string;
+};
+
+async function applyDayOverrideCore(
+  db: DbClient,
+  program: ActiveProgramSnapshot,
+  input: ApplyDayOverrideInput,
+): Promise<ApplyDayOverrideResult> {
+  const date = startOfDay(parseDateKey(input.date));
+
+  // PATCH semantics: fetch existing first, merge against it, baseline-guard
+  // relaxation checks whether a prior decision is already on file.
+  const existing = await db.planDayOverride.findUnique({
+    where: { planId_date: { planId: program.id, date } },
+  });
+
+  // Auto-recover: occasionally workoutJson comes in stringified. Parse it
+  // back to an object so resolveDay can read it as a DayTemplate.
+  let workoutValue: unknown = input.workoutJson;
+  if (typeof workoutValue === "string") {
+    try {
+      workoutValue = JSON.parse(workoutValue);
+    } catch (e) {
+      throw new Error(
+        `workoutJson was passed as a string but isn't valid JSON: ${e instanceof Error ? e.message : String(e)}. ` +
+          `Pass the DayTemplate as a plain object.`,
+      );
+    }
+  }
+
+  // Structural + size validation. Field-level error messages instead of a
+  // generic downstream Prisma error.
+  if (workoutValue !== undefined && workoutValue !== null) {
+    assertDayTemplateWithinSize(workoutValue);
+    assertValidDayTemplate(workoutValue);
+  }
+
+  // Audible-with-baselines guard: fires only when SETTING a new workout, no
+  // baselineTestNames is in scope (input undefined AND no prior decision on
+  // file), and the rotation default has baselines for this date.
+  const settingWorkout = workoutValue !== undefined && workoutValue !== null;
+  const baselineInputProvided = input.baselineTestNames !== undefined;
+  const existingBaselineDecision = Array.isArray(existing?.baselineTestNames);
+  if (settingWorkout && !baselineInputProvided && !existingBaselineDecision) {
+    const rotationDefaults = rotationBaselineNamesForDate(program, date);
+    if (rotationDefaults.length > 0) {
+      throw new Error(
+        `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
+          `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
+          `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
+          `Don't punt this to the UI — own the call.`,
+      );
+    }
+  }
+
+  const updateData: Prisma.PlanDayOverrideUpdateInput = {};
+  const updatedFields: string[] = [];
+
+  if (input.workoutJson !== undefined) {
+    updateData.workoutJson =
+      workoutValue === null ? Prisma.JsonNull : (workoutValue as Prisma.InputJsonValue);
+    updatedFields.push("workoutJson");
+  }
+  if (input.baselineTestNames !== undefined) {
+    updateData.baselineTestNames =
+      input.baselineTestNames === null
+        ? Prisma.JsonNull
+        : (input.baselineTestNames as Prisma.InputJsonValue);
+    updatedFields.push("baselineTestNames");
+  }
+  if (input.nutritionText !== undefined) {
+    updateData.nutritionText = input.nutritionText;
+    updatedFields.push("nutritionText");
+  }
+  if (input.mobilityText !== undefined) {
+    updateData.mobilityText = input.mobilityText;
+    updatedFields.push("mobilityText");
+  }
+  if (input.notes !== undefined) {
+    updateData.notes = input.notes;
+    updatedFields.push("notes");
+  }
+
+  if (updatedFields.length === 0) {
+    return {
+      overrideId: existing?.id ?? null,
+      dateKey: toDateKey(date),
+      updatedFields,
+      message: "No fields provided — nothing changed.",
+    };
+  }
+
+  const written = await db.planDayOverride.upsert({
+    where: { planId_date: { planId: program.id, date } },
+    create: {
+      planId: program.id,
+      date,
+      workoutJson:
+        input.workoutJson === undefined || input.workoutJson === null
+          ? Prisma.JsonNull
+          : (workoutValue as Prisma.InputJsonValue),
+      baselineTestNames:
+        input.baselineTestNames === undefined || input.baselineTestNames === null
+          ? Prisma.JsonNull
+          : (input.baselineTestNames as Prisma.InputJsonValue),
+      nutritionText: input.nutritionText ?? null,
+      mobilityText: input.mobilityText ?? null,
+      notes: input.notes ?? null,
+    },
+    update: updateData,
+  });
+
+  const preserved =
+    existing != null
+      ? ["workoutJson", "baselineTestNames", "nutritionText", "mobilityText", "notes"].filter(
+          (f) => !updatedFields.includes(f),
+        )
+      : [];
+
+  return {
+    overrideId: written.id,
+    dateKey: toDateKey(date),
+    updatedFields,
+    preservedFields: preserved,
+    message:
+      existing == null
+        ? `Override created (set: ${updatedFields.join(", ")}).`
+        : `Override updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+  };
+}
+
+async function logNoteCore(db: DbClient, input: LogNoteInput): Promise<{ id: string; message: string }> {
+  const n = await db.note.create({
+    data: {
+      body: input.body,
+      type: input.type,
+      targetDate: input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null,
+      lastAcknowledgedAt: input.type === "standing_rule" ? new Date() : null,
+    },
+  });
+  return { id: n.id, message: "Note logged" };
+}
+
+async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise<{ id: string; message: string }> {
+  const n = await db.nutritionLog.create({
+    data: {
+      date: input.date ? parseDateInput(input.date) : new Date(),
+      mealType: input.mealType,
+      items: input.items as Prisma.InputJsonValue,
+      notes: input.notes ?? null,
+    },
+  });
+  return { id: n.id, message: "Nutrition logged" };
 }
 
 export function registerAll(server: McpServer) {
@@ -831,25 +1056,10 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a note",
       description:
-        "Audible / journal / feedback / standing_rule. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering.",
-      inputSchema: {
-        body: z.string(),
-        type: NoteTypeShape.default("journal"),
-        targetDate: DateKeyShape.optional(),
-      },
+        "Audible / journal / feedback / standing_rule. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note.",
+      inputSchema: LogNoteShape,
     },
-    async (input) =>
-      safe(async () => {
-        const n = await prisma.note.create({
-          data: {
-            body: input.body,
-            type: input.type,
-            targetDate: input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null,
-            lastAcknowledgedAt: input.type === "standing_rule" ? new Date() : null,
-          },
-        });
-        return { id: n.id, message: "Note logged" };
-      }),
+    async (input) => safe(() => logNoteCore(prisma, input)),
   );
 
   server.registerTool(
@@ -857,26 +1067,10 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a meal",
       description:
-        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Estimate macros from item names + qty when reasoning — there are no macro fields. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes.",
-      inputSchema: {
-        mealType: MealTypeShape,
-        items: z.array(NutritionItemShape).min(1),
-        notes: z.string().optional(),
-        date: z.string().optional().describe("ISO datetime; default = now"),
-      },
+        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Estimate macros from item names + qty when reasoning — there are no macro fields. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
+      inputSchema: LogNutritionShape,
     },
-    async (input) =>
-      safe(async () => {
-        const n = await prisma.nutritionLog.create({
-          data: {
-            date: input.date ? parseDateInput(input.date) : new Date(),
-            mealType: input.mealType,
-            items: input.items as Prisma.InputJsonValue,
-            notes: input.notes ?? null,
-          },
-        });
-        return { id: n.id, message: "Nutrition logged" };
-      }),
+    async (input) => safe(() => logNutritionCore(prisma, input)),
   );
 
   server.registerTool(
@@ -1083,171 +1277,15 @@ function registerWriteTools(server: McpServer) {
         "When you pass workoutJson on a date that has rotation-default baselines AND no prior baseline decision exists on this override, " +
         "you MUST also pass baselineTestNames explicitly (re-list to keep, [] to suppress, swap to replace). Once a baseline decision is on file, " +
         "subsequent calls that only update other fields (e.g. nutritionText) will preserve it. Don't tell the user to ignore the baseline form — own the decision. " +
-        "Returns the list of fields actually changed by this call.",
-      inputSchema: {
-        date: DateKeyShape,
-        workoutJson: z
-          .unknown()
-          .nullish()
-          .describe(
-            "Full DayTemplate to swap the day's blocks. null clears a prior workout swap; omit to leave unchanged.",
-          ),
-        baselineTestNames: z
-          .array(z.string())
-          .nullish()
-          .describe(
-            "Override which baseline tests show today. Empty array suppresses tests; null reverts to rotation default; omit to leave unchanged. Required when workoutJson is being set on a date with rotation-default baselines and no prior baseline decision exists.",
-          ),
-        nutritionText: z
-          .string()
-          .nullish()
-          .describe("Per-day nutrition guidance. null clears; omit to leave unchanged."),
-        mobilityText: z
-          .string()
-          .nullish()
-          .describe("Per-day mobility guidance. null clears; omit to leave unchanged."),
-        notes: z
-          .string()
-          .nullish()
-          .describe("Why this date diverges. null clears; omit to leave unchanged."),
-      },
+        "Returns the list of fields actually changed by this call. " +
+        "For applying many overrides atomically (e.g. a 12-day meal-planning batch), use batch_apply_day_overrides — all-or-nothing transaction.",
+      inputSchema: ApplyDayOverrideShape,
     },
     async (input) =>
       safe(async () => {
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan");
-        const date = startOfDay(parseDateKey(input.date));
-
-        // Fetch existing override up-front: PATCH semantics merge against it,
-        // and the baseline-guard relaxation checks whether a prior decision is
-        // already on file.
-        const existing = await prisma.planDayOverride.findUnique({
-          where: { planId_date: { planId: program.id, date } },
-        });
-
-        // Auto-recover: Claude sometimes passes workoutJson as a JSON-encoded
-        // string. Parse it back to an object before storing so resolveDay can
-        // read it as a DayTemplate.
-        let workoutValue: unknown = input.workoutJson;
-        if (typeof workoutValue === "string") {
-          try {
-            workoutValue = JSON.parse(workoutValue);
-          } catch (e) {
-            throw new Error(
-              `workoutJson was passed as a string but isn't valid JSON: ${e instanceof Error ? e.message : String(e)}. ` +
-                `Pass the DayTemplate as a plain object.`,
-            );
-          }
-        }
-
-        // Structural + size validation. Before the PATCH-vs-fresh decision so
-        // a malformed payload fails with a field-level message instead of a
-        // generic Prisma error downstream. Skip for clears (null) and no-ops
-        // (undefined).
-        if (workoutValue !== undefined && workoutValue !== null) {
-          assertDayTemplateWithinSize(workoutValue);
-          assertValidDayTemplate(workoutValue);
-        }
-
-        // Audible-with-baselines guard: fires only when SETTING a new workout
-        // (not clearing or leaving alone), no baselineTestNames is in scope
-        // (input undefined AND no prior decision on file), and the rotation
-        // default has baselines for this date. Once a prior decision exists,
-        // partial updates that touch other fields don't re-prompt.
-        const settingWorkout = workoutValue !== undefined && workoutValue !== null;
-        const baselineInputProvided = input.baselineTestNames !== undefined;
-        const existingBaselineDecision = Array.isArray(existing?.baselineTestNames);
-        if (settingWorkout && !baselineInputProvided && !existingBaselineDecision) {
-          const rotationDefaults = rotationBaselineNamesForDate(program, date);
-          if (rotationDefaults.length > 0) {
-            throw new Error(
-              `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
-                `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
-                `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
-                `Don't punt this to the UI — own the call.`,
-            );
-          }
-        }
-
-        // PATCH semantics. undefined = leave alone, null = clear, value = set.
-        // For Json columns, "clear" stores Prisma.JsonNull (matches existing
-        // convention in this file and the truthy-checks downstream).
-        const updateData: Prisma.PlanDayOverrideUpdateInput = {};
-        const updatedFields: string[] = [];
-
-        if (input.workoutJson !== undefined) {
-          updateData.workoutJson =
-            workoutValue === null ? Prisma.JsonNull : (workoutValue as Prisma.InputJsonValue);
-          updatedFields.push("workoutJson");
-        }
-        if (input.baselineTestNames !== undefined) {
-          updateData.baselineTestNames =
-            input.baselineTestNames === null
-              ? Prisma.JsonNull
-              : (input.baselineTestNames as Prisma.InputJsonValue);
-          updatedFields.push("baselineTestNames");
-        }
-        if (input.nutritionText !== undefined) {
-          updateData.nutritionText = input.nutritionText;
-          updatedFields.push("nutritionText");
-        }
-        if (input.mobilityText !== undefined) {
-          updateData.mobilityText = input.mobilityText;
-          updatedFields.push("mobilityText");
-        }
-        if (input.notes !== undefined) {
-          updateData.notes = input.notes;
-          updatedFields.push("notes");
-        }
-
-        if (updatedFields.length === 0) {
-          return {
-            overrideId: existing?.id ?? null,
-            dateKey: toDateKey(date),
-            updatedFields,
-            message: "No fields provided — nothing changed.",
-          };
-        }
-
-        const written = await prisma.planDayOverride.upsert({
-          where: { planId_date: { planId: program.id, date } },
-          create: {
-            planId: program.id,
-            date,
-            // On create, fields the caller didn't pass start as null/JsonNull;
-            // explicit null inputs collapse to the same "not set" state.
-            workoutJson:
-              input.workoutJson === undefined || input.workoutJson === null
-                ? Prisma.JsonNull
-                : (workoutValue as Prisma.InputJsonValue),
-            baselineTestNames:
-              input.baselineTestNames === undefined || input.baselineTestNames === null
-                ? Prisma.JsonNull
-                : (input.baselineTestNames as Prisma.InputJsonValue),
-            nutritionText: input.nutritionText ?? null,
-            mobilityText: input.mobilityText ?? null,
-            notes: input.notes ?? null,
-          },
-          update: updateData,
-        });
-
-        const preserved =
-          existing != null
-            ? ["workoutJson", "baselineTestNames", "nutritionText", "mobilityText", "notes"].filter(
-                (f) => !updatedFields.includes(f),
-              )
-            : [];
-
-        return {
-          overrideId: written.id,
-          dateKey: toDateKey(date),
-          updatedFields,
-          preservedFields: preserved,
-          message:
-            existing == null
-              ? `Override created (set: ${updatedFields.join(", ")}).`
-              : `Override updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
-        };
+        return applyDayOverrideCore(prisma, program, input);
       }),
   );
 
@@ -1617,6 +1655,146 @@ function registerWriteTools(server: McpServer) {
           goalId: goal.id,
           planId,
           message: `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`,
+        };
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // Batch tools. Each wraps N operations in a single Prisma $transaction so
+  // the whole batch either commits or rolls back together. Operations run
+  // sequentially within the txn, so an op that establishes a precondition
+  // (e.g. a baseline decision via apply_day_override) is visible to later ops
+  // in the same batch — the audible-with-baselines guard won't re-fire.
+  // On any op throwing, the txn rolls back and the response names the index
+  // of the failing op plus the underlying error.
+  // --------------------------------------------------------------------------
+
+  const MAX_BATCH_SIZE = 50;
+
+  server.registerTool(
+    "batch_apply_day_overrides",
+    {
+      title: "Apply many day overrides atomically (batch / bulk / transactional)",
+      description:
+        "Apply multiple apply_day_override operations in one all-or-nothing transaction. " +
+        "Use for multi-day plans (HelloFresh-style 12-day meal layout, vacation cascade, week-long rest block) where partial application would leave the calendar half-updated. " +
+        "Each operation has the same shape as a single apply_day_override call. Operations run sequentially within the transaction: an earlier op's baselineTestNames decision is visible to a later op on the same date, so the audible-with-baselines guard doesn't re-fire mid-batch. " +
+        `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index, the date being processed, and the underlying error so you can fix and retry.`,
+      inputSchema: {
+        operations: z
+          .array(ApplyDayOverrideSchema)
+          .min(1)
+          .max(MAX_BATCH_SIZE)
+          .describe("Array of apply_day_override inputs, applied sequentially in one txn."),
+      },
+    },
+    async ({ operations }) =>
+      safe(async () => {
+        const program = await getActiveProgram();
+        if (!program) throw new Error("No active plan");
+        const results = await prisma.$transaction(async (tx) => {
+          const out: ApplyDayOverrideResult[] = [];
+          for (let i = 0; i < operations.length; i++) {
+            try {
+              out.push(await applyDayOverrideCore(tx, program, operations[i]!));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              throw new Error(
+                `batch_apply_day_overrides failed at operation [${i}] (date=${operations[i]!.date}): ${msg}. ` +
+                  `Transaction rolled back; no operations applied. Fix this op and retry the batch.`,
+              );
+            }
+          }
+          return out;
+        });
+        return {
+          applied: results.length,
+          results,
+          message: `Batch applied ${results.length} override${results.length === 1 ? "" : "s"} atomically.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "batch_log_nutrition",
+    {
+      title: "Log many meals atomically (batch / bulk nutrition entry)",
+      description:
+        "Log multiple meals in one all-or-nothing transaction. " +
+        "Use for bulk meal entry — a full HelloFresh week, prepped meal-prep schedule, or replaying meals from a paper log. " +
+        "Each operation has the same shape as a single log_nutrition call (mealType, items[], notes?, date?). " +
+        `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
+      inputSchema: {
+        operations: z
+          .array(LogNutritionSchema)
+          .min(1)
+          .max(MAX_BATCH_SIZE)
+          .describe("Array of log_nutrition inputs, applied sequentially in one txn."),
+      },
+    },
+    async ({ operations }) =>
+      safe(async () => {
+        const results = await prisma.$transaction(async (tx) => {
+          const out: { id: string; message: string }[] = [];
+          for (let i = 0; i < operations.length; i++) {
+            try {
+              out.push(await logNutritionCore(tx, operations[i]!));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              throw new Error(
+                `batch_log_nutrition failed at operation [${i}]: ${msg}. ` +
+                  `Transaction rolled back; no meals were logged. Fix this op and retry.`,
+              );
+            }
+          }
+          return out;
+        });
+        return {
+          applied: results.length,
+          results,
+          message: `Batch logged ${results.length} meal${results.length === 1 ? "" : "s"} atomically.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "batch_log_note",
+    {
+      title: "Log many notes atomically (batch / bulk note entry)",
+      description:
+        "Log multiple notes in one all-or-nothing transaction. " +
+        "Use for bulk note creation — importing a backlog of standing rules, attaching journal entries across many dates, or seeding feedback for a planning session. " +
+        "Each operation has the same shape as a single log_note call (body, type?, targetDate?). type='standing_rule' stamps lastAcknowledgedAt for each, same as the single-op tool. " +
+        `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
+      inputSchema: {
+        operations: z
+          .array(LogNoteSchema)
+          .min(1)
+          .max(MAX_BATCH_SIZE)
+          .describe("Array of log_note inputs, applied sequentially in one txn."),
+      },
+    },
+    async ({ operations }) =>
+      safe(async () => {
+        const results = await prisma.$transaction(async (tx) => {
+          const out: { id: string; message: string }[] = [];
+          for (let i = 0; i < operations.length; i++) {
+            try {
+              out.push(await logNoteCore(tx, operations[i]!));
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              throw new Error(
+                `batch_log_note failed at operation [${i}]: ${msg}. ` +
+                  `Transaction rolled back; no notes were logged. Fix this op and retry.`,
+              );
+            }
+          }
+          return out;
+        });
+        return {
+          applied: results.length,
+          results,
+          message: `Batch logged ${results.length} note${results.length === 1 ? "" : "s"} atomically.`,
         };
       }),
   );
