@@ -1069,12 +1069,17 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_hike",
     {
-      title: "Record a completed hike or schedule a planned hike",
+      title: "Record a completed hike, schedule a planned hike, or finalize a planned hike",
       description:
         "Log an out-of-gym training day: completed hike, training hike, scheduled future hike, or backpacking trip. " +
         "Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. " +
         "Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar " +
-        "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression.",
+        "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression. " +
+        "To finalize a previously-planned hike (the user did the hike that was on the calendar), pass replacesPlannedHikeId — the existing planned row " +
+        "is updated in place with the actual route/distance/elevation/duration/pack/rpe/notes and status flips to 'completed' (or 'skipped' if you pass that). " +
+        "The original Hike id is preserved, so any downstream references stay intact. Avoids the duplicate-row trap where you'd otherwise have a " +
+        "planned hike AND a completed hike on the calendar for the same trip. If the actual date differs from the planned date (planned for Saturday, " +
+        "happened Sunday), pass the actual date and the row's date is updated too. Errors if the named row isn't found or isn't status='planned'.",
       inputSchema: {
         date: z.string(),
         route: z.string(),
@@ -1085,10 +1090,61 @@ function registerWriteTools(server: McpServer) {
         rpe: z.number().min(0).max(10).optional(),
         status: z.enum(["completed", "planned", "skipped"]).default("completed"),
         notes: z.string().optional(),
+        replacesPlannedHikeId: z
+          .string()
+          .optional()
+          .describe(
+            "Hike id of a previously-planned hike (status='planned') to finalize in place instead of creating a new row. The row's date, route, distance, etc. are all updated to the values passed in this call. Errors if the id doesn't exist or the row isn't status='planned'.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
+        if (input.replacesPlannedHikeId !== undefined) {
+          // Finalize-in-place path. Verify the named row exists and is still
+          // in 'planned' state before updating — protects against accidental
+          // double-finalize and against replacing a completed-but-stale row.
+          const existing = await prisma.hike.findUnique({
+            where: { id: input.replacesPlannedHikeId },
+          });
+          if (!existing) {
+            throw new Error(
+              `replacesPlannedHikeId="${input.replacesPlannedHikeId}" not found. Drop the field to log a new hike, or fix the id.`,
+            );
+          }
+          if (existing.status !== "planned") {
+            throw new Error(
+              `Hike ${input.replacesPlannedHikeId} has status='${existing.status}', not 'planned'. ` +
+                `Finalize-in-place only works on planned rows. To amend a finalized hike, delete_hike + log_hike (a new row).`,
+            );
+          }
+          const updated = await prisma.hike.update({
+            where: { id: input.replacesPlannedHikeId },
+            data: {
+              date: parseDateInput(input.date),
+              route: input.route,
+              distanceMi: input.distanceMi,
+              elevationFt: input.elevationFt,
+              durationMin: input.durationMin,
+              packWeightLb: input.packWeightLb ?? null,
+              rpe: input.rpe ?? null,
+              status: input.status,
+              notes: input.notes ?? null,
+            },
+          });
+          return {
+            id: updated.id,
+            finalized: true,
+            previousStatus: existing.status,
+            dateMoved:
+              existing.date.getTime() !== updated.date.getTime()
+                ? { from: existing.date, to: updated.date }
+                : null,
+            message: `Planned hike finalized in place (status: planned → ${updated.status}).`,
+          };
+        }
+
+        // Default path: create a new hike row.
         const h = await prisma.hike.create({
           data: {
             date: parseDateInput(input.date),
@@ -1102,7 +1158,7 @@ function registerWriteTools(server: McpServer) {
             notes: input.notes ?? null,
           },
         });
-        return { id: h.id, message: "Hike logged" };
+        return { id: h.id, finalized: false, message: "Hike logged" };
       }),
   );
 
