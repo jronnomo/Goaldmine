@@ -227,9 +227,11 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "get_goal",
     {
-      title: "Get goal detail",
+      title: "Get goal detail (with active plan, revisions, upcoming overrides)",
       description:
-        "Full goal with targets, references, the active plan (with planJson), and the most recent plan revisions. Use to gather everything before proposing a revision.",
+        "Full goal with targets, references, the active plan (with planJson — the ROTATION TEMPLATE, not the resolved per-date prescription), the most recent plan revisions, and an upcomingOverrides summary so you can see which dates diverge from the template. " +
+        "Important: planJson tells you 'Mondays do this' — it does NOT include per-date overrides. To answer 'what's actually prescribed on date X', call get_day(X), not get_goal. To answer 'what's exercise Y prescribed at on its next occurrences', call find_exercise_in_plan. " +
+        "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision.",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
       },
@@ -253,7 +255,50 @@ function registerReadTools(server: McpServer) {
             },
           },
         });
-        return goal;
+
+        // Surface upcoming per-date overrides so the coach can't accidentally
+        // read planJson and miss that a date diverges. Window starts today
+        // and extends 60 days — long enough to cover any plan in flight.
+        // Each entry lists *which* fields are actively overriding so the
+        // coach knows whether to call get_day to see the details.
+        const activePlan = goal.plans[0];
+        let upcomingOverrides: Array<{
+          dateKey: string;
+          date: Date;
+          overrides: string[];
+          workoutTitle: string | null;
+        }> = [];
+        if (activePlan) {
+          const today = startOfDay(new Date());
+          const windowEnd = addDays(today, 60);
+          const rows = await prisma.planDayOverride.findMany({
+            where: {
+              planId: activePlan.id,
+              date: { gte: today, lte: windowEnd },
+            },
+            orderBy: { date: "asc" },
+          });
+          upcomingOverrides = rows.map((o) => {
+            const driving: string[] = [];
+            if (o.workoutJson != null) driving.push("workoutJson");
+            if (o.baselineTestNames != null) driving.push("baselineTestNames");
+            if (o.nutritionText != null) driving.push("nutritionText");
+            if (o.mobilityText != null) driving.push("mobilityText");
+            if (o.notes != null) driving.push("notes");
+            const workoutTitle =
+              o.workoutJson != null && typeof o.workoutJson === "object" && !Array.isArray(o.workoutJson)
+                ? ((o.workoutJson as Record<string, unknown>).title as string | undefined) ?? null
+                : null;
+            return {
+              dateKey: toDateKey(o.date),
+              date: o.date,
+              overrides: driving,
+              workoutTitle,
+            };
+          });
+        }
+
+        return { ...goal, upcomingOverrides };
       }),
   );
 
@@ -469,6 +514,76 @@ function registerReadTools(server: McpServer) {
     },
     async ({ name, equipment }) =>
       safe(() => getExerciseHistory(name, equipment ?? null)),
+  );
+
+  server.registerTool(
+    "find_exercise_in_plan",
+    {
+      title: "Where + when is this exercise prescribed? (override-aware lookup)",
+      description:
+        "Walk the next N days (default 14) and return every date where the named exercise is prescribed, with its FULLY RESOLVED prescription — template-or-override. " +
+        "Answers: 'what's Hollow Body Hold prescribed at this week', 'when's the next Push-up day', 'is the bumped RDL weight applied to upcoming sessions'. " +
+        "Use this instead of reading planJson directly — planJson is the rotation template and silently misses per-date overrides. " +
+        "Match is case-insensitive substring on exercise name. Each occurrence includes the source (template vs override), the parent block, and the prescription fields (sets, reps, durationSec, weightHint, notes).",
+      inputSchema: {
+        exerciseName: z
+          .string()
+          .min(1)
+          .describe("Case-insensitive substring; e.g. 'hollow', 'pull-up', 'RDL'"),
+        windowDays: z
+          .number()
+          .int()
+          .min(1)
+          .max(90)
+          .default(14)
+          .describe("How many days forward to scan, starting at fromDate. Default 14, max 90."),
+        fromDate: DateKeyShape.optional().describe(
+          "Start of the window (yyyy-mm-dd). Default = today in the user's local TZ.",
+        ),
+      },
+    },
+    async ({ exerciseName, windowDays, fromDate }) =>
+      safe(async () => {
+        const start = fromDate ? startOfDay(parseDateKey(fromDate)) : startOfDay(new Date());
+        const needle = exerciseName.toLowerCase();
+        const occurrences: Array<{
+          date: Date;
+          dateKey: string;
+          source: "template" | "override";
+          blockTitle: string | null;
+          blockType: string | null;
+          exercise: Record<string, unknown>;
+        }> = [];
+
+        for (let i = 0; i < windowDays; i++) {
+          const day = addDays(start, i);
+          const resolved = await resolveDay(day);
+          const tmpl = resolved.workoutTemplate;
+          if (!tmpl || !Array.isArray(tmpl.blocks)) continue;
+          for (const block of tmpl.blocks) {
+            for (const ex of block.exercises ?? []) {
+              if (typeof ex.name === "string" && ex.name.toLowerCase().includes(needle)) {
+                occurrences.push({
+                  date: resolved.date,
+                  dateKey: resolved.dateKey,
+                  source: resolved.isOverride ? "override" : "template",
+                  blockTitle: (block as { label?: string }).label ?? null,
+                  blockType: (block as { type?: string }).type ?? null,
+                  exercise: ex as unknown as Record<string, unknown>,
+                });
+              }
+            }
+          }
+        }
+
+        return {
+          exerciseName,
+          fromDate: toDateKey(start),
+          windowDays,
+          occurrenceCount: occurrences.length,
+          occurrences,
+        };
+      }),
   );
 
   server.registerTool(
