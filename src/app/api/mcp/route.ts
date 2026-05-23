@@ -36,7 +36,24 @@ async function handler(req: Request): Promise<Response> {
   });
 
   await server.connect(transport);
-  return transport.handleRequest(req);
+  try {
+    return await transport.handleRequest(req);
+  } catch (e) {
+    // Any throw that escapes the MCP transport/tool layer lands here. Without
+    // this catch, Next.js returns a generic 500 with no body, which surfaces
+    // in claude.ai as "Error occurred during tool execution" + a request id —
+    // unactionable. Return a JSON-RPC-shaped error so the caller can read
+    // what went wrong.
+    const message = e instanceof Error ? e.message : String(e);
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32603, message: `MCP transport error: ${message}` },
+        id: null,
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
 }
 
 export const GET = handler;

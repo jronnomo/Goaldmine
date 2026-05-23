@@ -25,6 +25,11 @@ import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore } from "@/lib/goal-core";
 import { LegendSchema } from "@/lib/legend";
 import { getActiveProgram } from "@/lib/program";
+import {
+  MAX_DAY_TEMPLATE_BYTES,
+  assertDayTemplateWithinSize,
+  assertValidDayTemplate,
+} from "@/lib/day-template-validation";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
 import {
   getBaselineHistory,
@@ -920,6 +925,10 @@ function registerWriteTools(server: McpServer) {
         "PATCH-style partial update for a single date's override on the active plan. " +
         "Only fields you pass are touched: omit a field to leave its current value alone; pass null to clear a previously-set field. " +
         "Pass workoutJson as a full DayTemplate (object, not stringified) to swap the regular blocks; null clears the workout swap. " +
+        "workoutJson is validated: must be an object with title (string) and blocks (array of { exercises: [{ name, … }] }); " +
+        `dayOfWeek (1..7) and category (upper|lower|zone2-mobility|calisthenics|lower-power|long-endurance|rest) checked when present. ` +
+        `Stringified payload must be ≤ ${MAX_DAY_TEMPLATE_BYTES.toLocaleString()} bytes (real DayTemplates are 2–8KB; oversized usually means a full plan snapshot was pasted by mistake). ` +
+        "Validation errors name the specific field — read them and fix the named field, don't guess. " +
         "Pass baselineTestNames as an array of testName strings (any test from the program's baselineWeek) to override which baseline tests appear today — " +
         "empty array = no tests; null = revert to rotation default; omit to leave unchanged. " +
         "When you pass workoutJson on a date that has rotation-default baselines AND no prior baseline decision exists on this override, " +
@@ -974,11 +983,21 @@ function registerWriteTools(server: McpServer) {
         if (typeof workoutValue === "string") {
           try {
             workoutValue = JSON.parse(workoutValue);
-          } catch {
+          } catch (e) {
             throw new Error(
-              "workoutJson was passed as a string but isn't valid JSON. Pass the DayTemplate as a plain object.",
+              `workoutJson was passed as a string but isn't valid JSON: ${e instanceof Error ? e.message : String(e)}. ` +
+                `Pass the DayTemplate as a plain object.`,
             );
           }
+        }
+
+        // Structural + size validation. Before the PATCH-vs-fresh decision so
+        // a malformed payload fails with a field-level message instead of a
+        // generic Prisma error downstream. Skip for clears (null) and no-ops
+        // (undefined).
+        if (workoutValue !== undefined && workoutValue !== null) {
+          assertDayTemplateWithinSize(workoutValue);
+          assertValidDayTemplate(workoutValue);
         }
 
         // Audible-with-baselines guard: fires only when SETTING a new workout
