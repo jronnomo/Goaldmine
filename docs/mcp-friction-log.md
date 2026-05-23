@@ -1,0 +1,133 @@
+# MCP Tool Friction Log
+
+Coaching-surface frustrations that turn into MCP tool changes. Each entry preserves the original report (the evidence) and notes what shipped to resolve it, with a PR link.
+
+When new friction shows up, append a new entry in **Open** with the reporter's exact words — that's the most useful artifact when designing the fix.
+
+---
+
+## Resolved
+
+### #1 — `apply_day_override` was destructive
+**Reported:** 2026-05-22. Severity: High (silent data loss).
+
+> Calling `apply_day_override` with only one field (e.g., `nutritionText`) wipes out all other fields on that day (`workoutJson`, `mobilityText`, `notes`). On 5/22, I logged today's dinner plan as a `nutritionText` override after earlier applying a `workoutJson` override with the full 32-min mobility flow. The second call silently deleted the mobility flow. User had to ask "where are my stretches?" to surface the bug.
+
+**Shipped:** PR #5 (`b092c4e`). `apply_day_override` is now PATCH-style: `undefined` = leave alone, `null` = clear, value = set. Response reports `updatedFields` and `preservedFields` explicitly. The audible-with-baselines guard was also relaxed so partial follow-up calls don't re-prompt for a baseline decision once one is on file.
+
+---
+
+### #2 — Deferred tools not discoverable without `tool_search`
+**Reported:** 2026-05-22. Severity: Medium.
+
+> Many tools (`log_note`, `get_day`, `apply_day_override`, `log_nutrition`, etc.) aren't loaded by default. Each must be discovered via `tool_search` before first use. Tool descriptions also aren't visible until searched. Repeated `tool_search` calls throughout every session. Wasted turns. Even tools I just used 5 minutes ago in the same conversation sometimes drop out.
+
+**Shipped:** Out of scope at the server. This is claude.ai's harness behavior — the MCP server exposes everything via `tools/list`; the client decides what to load eagerly. The closest server-side mitigation is PR #9's tool-description pass: better keyword coverage means `tool_search` matches first try more often, so the round-trip cost goes down even when it still has to happen.
+
+---
+
+### #3 — `apply_day_override` required full `workoutJson` snapshot, not diffs
+**Reported:** 2026-05-22. Severity: Medium.
+
+> To make a small change to a workout (e.g., add one exercise, change one duration), I must rewrite the entire `workoutJson` blob. On 5/22 when adding calf/dorsiflexion back to the mobility flow, I had to re-emit the full mobility flow with all 20+ exercises. Risk of typo or omission each time.
+
+**Shipped:** PR #12 (`ca09a4e`). `apply_day_override` accepts a `workoutJsonOps` array — `addExercise` / `updateExercise` / `removeExercise`. Mutually exclusive with `workoutJson`. Ops apply against the existing override (if any) or the rotation-day template, run sequentially against a deep clone, and the result is validated like a full `workoutJson` replace. Ambiguous matches throw with every candidate listed and a hint to pass `block` to disambiguate.
+
+---
+
+### #4 — Progression / per-date prescription drift in `planJson`
+**Reported:** 2026-05-22 (about a 5/19 incident). Severity: Medium.
+
+> The plan snapshot doesn't reflect progressions made by the engine. On 5/19, I claimed Hollow Body Hold was prescribed at 30s based on the snapshot, but the app actually showed 55s after progression. Workaround: I now call `get_day` before stating any per-day prescription details. This is now a standing rule I have to remember.
+
+**Investigation finding:** There is no automatic progression engine in the code. The "progression" is the coach manually bumping prescriptions via `apply_plan_revision` (template-wide) or `apply_day_override` (per-date). The real architectural ambiguity is that `planJson` is the rotation template and per-date overrides layer on top — reading `planJson` alone never tells you what's actually scheduled on a given date.
+
+**Shipped:** PR #10 (`3648bd6`). Three changes:
+1. `get_goal` description explicitly states `planJson` is the rotation template and points at `get_day` / `find_exercise_in_plan` for per-date detail.
+2. `get_goal` response gains `upcomingOverrides` — every `PlanDayOverride` in the next 60 days with which fields are driving and the workout title.
+3. New `find_exercise_in_plan(name, windowDays, fromDate?)` walks N days via `resolveDay` (override-aware) and returns every occurrence with `source: "template" | "override"` plus the resolved prescription. Coach instructions rule 1 was amended to route prescription questions to these tools, citing the 5/19 incident.
+
+---
+
+### #5 — Plan-metadata tool description didn't match search intent
+**Reported:** 2026-05-22. Severity: Low (search issue, not a true gap).
+
+> When I extended the plan from 13 → 14 weeks on 5/18, the snapshot updated cleanly but the surrounding metadata fields lived elsewhere and weren't writable. I flagged it as a tool gap. Created a stale-data window — UI was showing "13-week plan" with old target date for a few hours until I located `update_plan_metadata` (which did exist, I just hadn't found it via tool_search keywords).
+
+**Shipped:** PR #9 (`360b4db`). Tool description pass — rewrote 21 of 39 tool descriptions to lead with verbs callers think in ("Extend / shorten / rename plan; shift goal date" vs the old "Update plan dates / name"), weave search synonyms into the prose, and cross-link related tools by name. Verified the original failing search keyword now hits.
+
+---
+
+### #6 — No way to log a workout AND apply an override in one atomic operation
+**Reported:** 2026-05-22 (about a 5/21 hike incident). Severity: Low-Medium.
+
+> When completing a session that diverges from the plan, I have to call multiple tools: `log_workout` for what they did, then `apply_day_override` to update the displayed plan. These can desync. On 5/21, when user clarified the actual Flatirons route, I had to update `workoutJson` to reflect actual route, plus the user's completed workout was logged elsewhere. Two sources of truth.
+
+**Shipped:** PR #13 (`949d57d`) — narrow, hike-only. `log_hike` gains optional `replacesPlannedHikeId`. When set, finalizes a planned row in place instead of creating a duplicate; id preserved, status flips `planned → completed` (or `skipped`); date updates too if the actual day differed from the planned day, with `dateMoved.{from, to}` surfaced in the response. The workout-side combo was deliberately **left out** — the Workout → DayTemplate mapping is lossy and the workout-side friction wasn't well-evidenced beyond the single Flatirons report. Revisit if a future report establishes the need.
+
+---
+
+### #7 — `get_day` returned override fields as `null` rather than absent
+**Reported:** 2026-05-22. Severity: Low.
+
+> When a day has no override, `get_day` still shows an `override` key with all-null fields. When a day HAS an override but only one field was set, the unset fields also show as `null`. Distinguishing "intentionally cleared" from "never set" is impossible.
+
+**Shipped:** PR #5 (`b092c4e`, paired with #1). The `override` sub-object in `get_day`'s response now omits null fields. Key presence means "this override is driving that field"; absence means "rotation default applies." Top-level resolved fields (`workoutTemplate`, `nutritionText`, etc.) still carry the final rendered values and are unchanged for UI compatibility. `baselineTestNames` was also added to the sub-object (previously omitted entirely).
+
+---
+
+### #8 — No batch / transaction support for multi-day operations
+**Reported:** 2026-05-22. Severity: Low.
+
+> When planning meals across 12 days, I had to make 12 separate `apply_day_override` calls. If any failed mid-sequence, I'd have partial state. The HelloFresh meal-planning session today required 12 sequential calls. One failed, forcing a retry.
+
+**Shipped:** PR #11 (`2c5a831`). Three new batch tools wrapping single Prisma transactions:
+- `batch_apply_day_overrides`
+- `batch_log_nutrition`
+- `batch_log_note`
+
+Max 50 ops per call. Operations run sequentially within the transaction (an earlier op's `baselineTestNames` decision is visible to a later op, so the audible-with-baselines guard doesn't re-fire mid-batch). On any failure: full rollback, error names the failing index and the underlying message. Verified end-to-end with a planted failure at index `[1]` of a 3-op batch — ops `[0]` and `[2]` left no rows behind.
+
+---
+
+### #9 — `apply_day_override` failed with opaque errors on large JSON payloads
+**Reported:** 2026-05-22 (about a 5/21 incident). Severity: Low-Medium.
+
+> On 5/21 my first attempt to write the Flatirons hike workout JSON failed with `"Error occurred during tool execution"` and a request ID. Retrying with the JSON compressed succeeded. Required guessing at the cause. Lost time, lost user trust.
+
+**Shipped:** PR #8 (`a53ee36`). Three layers:
+1. New `src/lib/day-template-validation.ts` validates `workoutJson` field-by-field (title, blocks, exercises, dayOfWeek/category enums). Reports the specific field that failed instead of a generic Prisma error.
+2. Size guard at 64KB after `JSON.stringify` (real DayTemplates are 2–8KB; oversized usually means a full plan snapshot was pasted by mistake). Message names actual byte count, limit, KB calc, and likely causes. Catches `JSON.stringify` throws too (circular references).
+3. Route-level error envelope in both `/api/mcp` and `/api/mcp/[token]`: any uncaught throw above the tool's `safe()` wrapper now returns a JSON-RPC `-32603` with the message instead of a generic 500. The original "Error occurred during tool execution" string was claude.ai's fallback when our 500 had no body — this fixes it.
+
+---
+
+### #10 — Standing rules / persistent guidance didn't auto-surface
+**Reported:** 2026-05-22. Severity: Medium.
+
+> Standing rules logged as `feedback` notes (like "prescribe = log") don't automatically appear in my context on new conversations. I have to either remember them or search for them. The "prescribe = log" rule was established on 5/22 — if I start a new conversation tomorrow and the user asks for a mobility flow, I won't see that rule unless I think to search for it.
+
+**Shipped:** PR #7 (`29e7494`). New `standing_rule` Note type with `lastAcknowledgedAt` freshness signal:
+- Schema migration adds `Note.lastAcknowledgedAt` and high-confidence backfills feedback notes whose body starts with `RULE:` / `STANDING:` (case-insensitive POSIX) to `standing_rule` with the timestamp stamped.
+- `get_today_plan` returns active standing rules under `standingRules`, ordered freshest-acknowledged-first (nulls last).
+- Three new tools: `list_promotable_notes` (find candidates), `promote_note` (flip type, stamps timestamp), `acknowledge_standing_rule` (bump timestamp when referencing a rule in a turn).
+- UI dropdowns in `LogNoteForm` and `DayNoteForm` got the new type.
+- Coach instructions rule 13 added: read `standingRules` at session start; acknowledge when referencing; propose `standing_rule` when the user states a persistent rule.
+
+Verification afterward surfaced two follow-up nits (ordering put nulls first, `log_note(type=standing_rule)` didn't stamp) — both fixed in `4079693` on the same branch.
+
+---
+
+## Open
+
+*(none currently)*
+
+---
+
+## How to add a new entry
+
+1. Copy the user's exact words into a `> blockquote` under "Reported." Don't paraphrase — the literal language is the design signal.
+2. Note severity from the reporter's perspective: High (data loss / wrong values shown to the user), Medium (slow workflow or accuracy reliance on coach discipline), Low (ergonomic).
+3. If the fix needs design discussion before code, capture the alternatives considered and which one shipped + why. Loss of options is information.
+4. After shipping, fill in **Shipped:** with the PR number, the merge SHA, and a short paragraph naming the concrete tool / column / behavior changes. Cross-link other PRs that relate (e.g. paired changes, design references).
+5. Move the entry from **Open** to **Resolved**, keeping the original Reported block intact.
