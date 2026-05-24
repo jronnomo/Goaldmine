@@ -129,6 +129,55 @@ const LogNoteShape = {
 const LogNoteSchema = z.object(LogNoteShape);
 type LogNoteInput = z.infer<typeof LogNoteSchema>;
 
+// Shapes for workout_ops — structural edits to a logged Workout (add/remove
+// exercises and sets). Editing existing rows is covered by update_workout_*.
+const OpSetInputShape = z.object({
+  setIndex: z.number().int().min(1).optional().describe("1-based set number within the exercise. Defaults to max+1."),
+  reps: z.number().int().min(0).optional(),
+  weightLb: z.number().min(0).optional(),
+  durationSec: z.number().min(0).optional(),
+  distanceMi: z.number().min(0).optional(),
+  rpe: z.number().min(0).max(10).optional(),
+  notes: z.string().optional(),
+});
+
+const AddExerciseInputShape = z.object({
+  name: z.string().min(1),
+  equipment: z.string().optional(),
+  notes: z.string().optional(),
+  orderIndex: z.number().int().min(0).optional().describe("Position in the workout's exercise list. Defaults to max+1 (append)."),
+  sets: z.array(OpSetInputShape).optional().describe("Optional initial sets to create alongside the exercise. setIndex auto-numbers 1..N when omitted."),
+});
+
+const AddExerciseOpShape = z.object({
+  op: z.literal("addExercise"),
+  workoutId: z.string(),
+  exercise: AddExerciseInputShape,
+});
+
+const RemoveExerciseOpShape = z.object({
+  op: z.literal("removeExercise"),
+  exerciseId: z.string().describe("WorkoutExercise.id — cascade-deletes the exercise's sets."),
+});
+
+const AddSetOpShape = z.object({
+  op: z.literal("addSet"),
+  workoutExerciseId: z.string(),
+  set: OpSetInputShape,
+});
+
+const RemoveSetOpShape = z.object({
+  op: z.literal("removeSet"),
+  setId: z.string(),
+});
+
+const WorkoutOpSchema = z.discriminatedUnion("op", [
+  AddExerciseOpShape,
+  RemoveExerciseOpShape,
+  AddSetOpShape,
+  RemoveSetOpShape,
+]);
+
 const LogNutritionShape = {
   mealType: MealTypeShape,
   items: z.array(NutritionItemShape).min(1),
@@ -1809,6 +1858,101 @@ function registerWriteTools(server: McpServer) {
           updatedFields,
           message: `Set updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
         };
+      }),
+  );
+
+  server.registerTool(
+    "workout_ops",
+    {
+      title: "Atomic structural edits to a logged workout",
+      description:
+        "Apply a sequence of add/remove operations on a logged Workout in one all-or-nothing transaction. " +
+        "Use when you need to fix a logged session by adding a forgotten exercise/set or removing a wrongly-logged one — covers the structural gap left by update_workout / update_workout_exercise / update_workout_set, which only edit existing rows. " +
+        "Ops are applied sequentially; any failure rolls the whole batch back, so you never end up with an orphaned exercise that has no sets. " +
+        "Op types: " +
+        "{op:'addExercise', workoutId, exercise:{name, equipment?, notes?, orderIndex?, sets?:[{setIndex, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}]}} — appends an exercise (orderIndex defaults to max+1) with optional initial sets. " +
+        "{op:'removeExercise', exerciseId} — drops one WorkoutExercise (cascade-deletes its sets). " +
+        "{op:'addSet', workoutExerciseId, set:{setIndex?, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}} — adds a set (setIndex defaults to max+1). " +
+        "{op:'removeSet', setId} — drops one set. " +
+        "Look up IDs via export_workout. For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
+      inputSchema: {
+        ops: z.array(WorkoutOpSchema).min(1).describe("Operations applied in order, atomically."),
+      },
+    },
+    async ({ ops }) =>
+      safe(async () => {
+        const applied: string[] = [];
+        await prisma.$transaction(async (tx) => {
+          for (let i = 0; i < ops.length; i++) {
+            const op = ops[i]!;
+            try {
+              if (op.op === "addExercise") {
+                const orderIndex =
+                  op.exercise.orderIndex ??
+                  ((await tx.workoutExercise.aggregate({
+                    where: { workoutId: op.workoutId },
+                    _max: { orderIndex: true },
+                  }))._max.orderIndex ?? -1) + 1;
+                const created = await tx.workoutExercise.create({
+                  data: {
+                    workoutId: op.workoutId,
+                    name: op.exercise.name,
+                    equipment: op.exercise.equipment ?? null,
+                    notes: op.exercise.notes ?? null,
+                    orderIndex,
+                    sets: op.exercise.sets
+                      ? {
+                          create: op.exercise.sets.map((s, idx) => ({
+                            setIndex: s.setIndex ?? idx + 1,
+                            reps: s.reps ?? null,
+                            weightLb: s.weightLb ?? null,
+                            durationSec: s.durationSec ?? null,
+                            distanceMi: s.distanceMi ?? null,
+                            rpe: s.rpe ?? null,
+                            notes: s.notes ?? null,
+                          })),
+                        }
+                      : undefined,
+                  },
+                });
+                applied.push(
+                  `addExercise → ${created.id} (${op.exercise.sets?.length ?? 0} set${op.exercise.sets?.length === 1 ? "" : "s"})`,
+                );
+              } else if (op.op === "removeExercise") {
+                await tx.workoutExercise.delete({ where: { id: op.exerciseId } });
+                applied.push(`removeExercise → ${op.exerciseId}`);
+              } else if (op.op === "addSet") {
+                const setIndex =
+                  op.set.setIndex ??
+                  ((await tx.set.aggregate({
+                    where: { workoutExerciseId: op.workoutExerciseId },
+                    _max: { setIndex: true },
+                  }))._max.setIndex ?? 0) + 1;
+                const created = await tx.set.create({
+                  data: {
+                    workoutExerciseId: op.workoutExerciseId,
+                    setIndex,
+                    reps: op.set.reps ?? null,
+                    weightLb: op.set.weightLb ?? null,
+                    durationSec: op.set.durationSec ?? null,
+                    distanceMi: op.set.distanceMi ?? null,
+                    rpe: op.set.rpe ?? null,
+                    notes: op.set.notes ?? null,
+                  },
+                });
+                applied.push(`addSet → ${created.id} (setIndex=${setIndex})`);
+              } else if (op.op === "removeSet") {
+                await tx.set.delete({ where: { id: op.setId } });
+                applied.push(`removeSet → ${op.setId}`);
+              }
+            } catch (e) {
+              throw new Error(
+                `workout_ops failed at ops[${i}] (op=${op.op}): ${e instanceof Error ? e.message : String(e)}. Whole batch rolled back; nothing was written.`,
+              );
+            }
+          }
+        });
+        return { count: applied.length, applied, message: `Applied ${applied.length} op${applied.length === 1 ? "" : "s"} atomically.` };
       }),
   );
 
