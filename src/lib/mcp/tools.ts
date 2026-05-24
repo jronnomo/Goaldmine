@@ -46,6 +46,11 @@ import {
   applyNutritionPlanPatch,
   parseStoredNutritionPlan,
 } from "@/lib/nutrition-plan";
+import {
+  NutritionLogOpSchema,
+  applyNutritionLogOps,
+  parseStoredItems,
+} from "@/lib/nutrition-log-ops";
 
 const DateKeyShape = z
   .string()
@@ -1288,6 +1293,50 @@ function registerWriteTools(server: McpServer) {
         if (input.date !== undefined) data.date = parseDateInput(input.date);
         const updated = await prisma.nutritionLog.update({ where: { id: input.id }, data });
         return { id: updated.id, message: "Nutrition updated" };
+      }),
+  );
+
+  server.registerTool(
+    "nutrition_log_ops",
+    {
+      title: "Surgical edits to a logged meal's items list",
+      description:
+        "Apply a sequence of addItem / updateItem / removeItem operations to a single NutritionLog's items array, without re-emitting the whole list. " +
+        "Mirrors workout_ops on the nutrition side. Use when you want to fix one item on a meal — bump a qty, correct a name, add a forgotten side, drop a wrongly-logged item — without sending the full items array via update_nutrition. " +
+        "Ops are applied sequentially against a working copy; any op that fails (no match, out-of-range index, ambiguous substring) aborts the batch and nothing is written. " +
+        "Op types: " +
+        "{op:'addItem', item:{name, qty?, notes?}, at?:'end'|'start'|number} — defaults to 'end'. " +
+        "{op:'updateItem', match:string|number, patch:{name?, qty?, notes?}} — match is a 0-based index OR a case-insensitive name substring; must match exactly one item. " +
+        "{op:'removeItem', match:string|number} — same match rules. " +
+        "Look up the NutritionLog id and current items via recent_history. To edit which mealType a meal sits in, or its top-level notes/date, use update_nutrition.",
+      inputSchema: {
+        id: z.string().describe("NutritionLog.id"),
+        ops: z.array(NutritionLogOpSchema).min(1).describe("Operations applied in order to the log's items array."),
+      },
+    },
+    async ({ id, ops }) =>
+      safe(async () => {
+        const log = await prisma.nutritionLog.findUniqueOrThrow({ where: { id } });
+        const items = parseStoredItems(log.items);
+        let next: ReturnType<typeof applyNutritionLogOps>;
+        try {
+          next = applyNutritionLogOps(items, ops);
+        } catch (e) {
+          throw new Error(
+            `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
+          );
+        }
+        await prisma.nutritionLog.update({
+          where: { id },
+          data: { items: next as unknown as Prisma.InputJsonValue },
+        });
+        return {
+          id,
+          itemCount: next.length,
+          opsApplied: ops.length,
+          items: next,
+          message: `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`,
+        };
       }),
   );
 
