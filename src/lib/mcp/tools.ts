@@ -41,6 +41,11 @@ import {
   getExerciseHistory,
   getExerciseSummaries,
 } from "@/lib/records";
+import {
+  NutritionPlanShape,
+  applyNutritionPlanPatch,
+  parseStoredNutritionPlan,
+} from "@/lib/nutrition-plan";
 
 const DateKeyShape = z
   .string()
@@ -92,7 +97,18 @@ const ApplyDayOverrideShape = {
   nutritionText: z
     .string()
     .nullish()
-    .describe("Per-day nutrition guidance. null clears; omit to leave unchanged."),
+    .describe(
+      "Free-form day-level nutrition guidance (e.g. 'hydrate heavily', 'watch sodium'). " +
+        "Use nutritionPlan for structured per-meal planning. null clears; omit to leave unchanged.",
+    ),
+  nutritionPlan: NutritionPlanShape
+    .nullish()
+    .describe(
+      "Structured per-slot meal plan: { preworkout?, breakfast?, lunch?, snack?, postworkout?, dinner? }. " +
+        "Each slot is { items: [{name, qty?, notes?}], macros?: {calories?, proteinG?, carbsG?, fatG?, sodiumMg?, fiberG?}, notes? }. " +
+        "PATCH semantics: omit a slot to leave it unchanged, set it to null to clear that slot, pass an object to replace it. " +
+        "Pass null on this whole field to clear the entire plan; omit to leave unchanged.",
+    ),
   mobilityText: z
     .string()
     .nullish()
@@ -287,6 +303,18 @@ async function applyDayOverrideCore(
     updateData.nutritionText = input.nutritionText;
     updatedFields.push("nutritionText");
   }
+  // PATCH-merge nutritionPlan slot-by-slot against the existing stored plan
+  // so callers can update one meal without re-emitting the whole day.
+  let mergedNutritionPlan: ReturnType<typeof applyNutritionPlanPatch> | undefined;
+  if (input.nutritionPlan !== undefined) {
+    const existingPlan = parseStoredNutritionPlan(existing?.nutritionPlan);
+    mergedNutritionPlan = applyNutritionPlanPatch(existingPlan, input.nutritionPlan);
+    updateData.nutritionPlan =
+      mergedNutritionPlan === null
+        ? Prisma.JsonNull
+        : (mergedNutritionPlan as unknown as Prisma.InputJsonValue);
+    updatedFields.push("nutritionPlan");
+  }
   if (input.mobilityText !== undefined) {
     updateData.mobilityText = input.mobilityText;
     updatedFields.push("mobilityText");
@@ -319,6 +347,10 @@ async function applyDayOverrideCore(
           ? Prisma.JsonNull
           : (input.baselineTestNames as Prisma.InputJsonValue),
       nutritionText: input.nutritionText ?? null,
+      nutritionPlan:
+        mergedNutritionPlan == null
+          ? Prisma.JsonNull
+          : (mergedNutritionPlan as unknown as Prisma.InputJsonValue),
       mobilityText: input.mobilityText ?? null,
       notes: input.notes ?? null,
     },
@@ -327,7 +359,7 @@ async function applyDayOverrideCore(
 
   const preserved =
     existing != null
-      ? ["workoutJson", "baselineTestNames", "nutritionText", "mobilityText", "notes"].filter(
+      ? ["workoutJson", "baselineTestNames", "nutritionText", "nutritionPlan", "mobilityText", "notes"].filter(
           (f) => !updatedFields.includes(f),
         )
       : [];
@@ -563,6 +595,7 @@ function registerReadTools(server: McpServer) {
             if (o.workoutJson != null) driving.push("workoutJson");
             if (o.baselineTestNames != null) driving.push("baselineTestNames");
             if (o.nutritionText != null) driving.push("nutritionText");
+            if (o.nutritionPlan != null) driving.push("nutritionPlan");
             if (o.mobilityText != null) driving.push("mobilityText");
             if (o.notes != null) driving.push("notes");
             const workoutTitle =
@@ -1393,6 +1426,9 @@ function registerWriteTools(server: McpServer) {
         "When you pass workoutJson on a date that has rotation-default baselines AND no prior baseline decision exists on this override, " +
         "you MUST also pass baselineTestNames explicitly (re-list to keep, [] to suppress, swap to replace). Once a baseline decision is on file, " +
         "subsequent calls that only update other fields (e.g. nutritionText) will preserve it. Don't tell the user to ignore the baseline form — own the decision. " +
+        "Day-level nutrition has two shapes: nutritionText is free-form prose (e.g. 'hydrate heavily today'); nutritionPlan is structured per-slot meal planning (preworkout/breakfast/lunch/snack/postworkout/dinner) rendered alongside logged meals. " +
+        "nutritionPlan is PATCH-merged slot-by-slot against the existing plan: omit a slot to keep it, pass null to clear that slot, pass an object to replace it. Pass null on the whole nutritionPlan field to clear every slot at once. " +
+        "Prefer nutritionPlan when prescribing specific meals — it renders structured and shows planned-vs-eaten adherence. " +
         "Returns the list of fields actually changed by this call. " +
         "For applying many overrides atomically (e.g. a 12-day meal-planning batch), use batch_apply_day_overrides — all-or-nothing transaction.",
       inputSchema: ApplyDayOverrideShape,

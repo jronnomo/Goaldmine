@@ -157,7 +157,7 @@ export default async function HomePage() {
           </Link>
         }
       >
-        <NutritionToday logs={todayNutrition} />
+        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} />
       </Card>
 
       <Card

@@ -217,6 +217,12 @@ model PlanDayOverride {
   // Null/absent = use the rotation default. Empty array = explicitly no tests.
   baselineTestNames Json?
   nutritionText String?
+  // Structured per-slot meal plan: { preworkout?, breakfast?, lunch?, snack?,
+  // postworkout?, dinner? } where each slot is { items: [{name, qty?, notes?}],
+  // macros?: {calories?, proteinG?, carbsG?, fatG?, sodiumMg?, fiberG?},
+  // notes? }. Rendered alongside logged meals so planned-vs-eaten is visible
+  // at a glance. nutritionText stays as free-form day-level guidance.
+  nutritionPlan Json?
   mobilityText  String?
   notes         String?
   createdAt     DateTime @default(now())

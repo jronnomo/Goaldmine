@@ -3,6 +3,7 @@ import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { DayOverrideForm } from "@/components/DayOverrideForm";
 import { DayNoteForm } from "@/components/DayNoteForm";
+import { NutritionToday } from "@/components/NutritionToday";
 import { parseDateKey, resolveDay, startOfDay } from "@/lib/calendar";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 
@@ -109,11 +110,27 @@ export default async function DayDetail({
         </Card>
       )}
 
+      {(r.nutritionPlan || r.loggedNutrition.length > 0) && (
+        <Card title="Nutrition">
+          <NutritionToday
+            logs={r.loggedNutrition.map((n) => ({
+              id: n.id,
+              date: n.date,
+              mealType: n.mealType,
+              items: n.items,
+              notes: n.notes,
+            }))}
+            plan={r.nutritionPlan}
+            showLogForm={false}
+          />
+        </Card>
+      )}
+
       {(r.nutritionText || r.mobilityText) && (
         <Card title="Custom guidance">
           {r.nutritionText && (
             <div className="mb-2">
-              <p className="text-sm font-medium">Nutrition</p>
+              <p className="text-sm font-medium">Nutrition notes</p>
               <p className="text-sm text-[var(--muted)] whitespace-pre-wrap">{r.nutritionText}</p>
             </div>
           )}

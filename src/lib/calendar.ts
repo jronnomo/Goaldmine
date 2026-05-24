@@ -4,6 +4,7 @@
 import { prisma } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import type { BaselineDay, BaselineTest, DayTemplate, ProgramTemplate } from "@/lib/program-template";
+import { type NutritionPlan, parseStoredNutritionPlan } from "@/lib/nutrition-plan";
 
 export type CalendarDayCell = {
   date: Date;
@@ -206,6 +207,7 @@ export type ResolvedDay = {
   workoutTemplate: DayTemplate | null; // resolved (override-aware)
   isOverride: boolean;
   nutritionText: string | null;
+  nutritionPlan: NutritionPlan | null;
   mobilityText: string | null;
   notes: string | null;
   workouts: { id: string; startedAt: Date; title: string | null; exerciseCount: number; status: string }[];
@@ -232,6 +234,7 @@ export type ResolvedDay = {
     workoutJson?: unknown;
     baselineTestNames?: unknown;
     nutritionText?: string;
+    nutritionPlan?: NutritionPlan;
     mobilityText?: string;
     notes?: string;
   } | null;
@@ -373,6 +376,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     workoutTemplate,
     isOverride,
     nutritionText: override?.nutritionText ?? null,
+    nutritionPlan: parseStoredNutritionPlan(override?.nutritionPlan),
     mobilityText: override?.mobilityText ?? null,
     notes: override?.notes ?? null,
     workouts: workouts.map((w) => ({
@@ -411,6 +415,9 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
             baselineTestNames: override.baselineTestNames,
           }),
           ...(override.nutritionText != null && { nutritionText: override.nutritionText }),
+          ...(parseStoredNutritionPlan(override.nutritionPlan) && {
+            nutritionPlan: parseStoredNutritionPlan(override.nutritionPlan)!,
+          }),
           ...(override.mobilityText != null && { mobilityText: override.mobilityText }),
           ...(override.notes != null && { notes: override.notes }),
         }
