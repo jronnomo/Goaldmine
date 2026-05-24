@@ -1686,6 +1686,133 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "update_workout",
+    {
+      title: "Edit a logged workout's header fields",
+      description:
+        "PATCH-style partial update for an already-logged Workout. " +
+        "Only fields you pass are touched: omit a field to leave it unchanged; pass null on a nullable field (title, notes, source, sourceUrl) to clear it. " +
+        "Use for fixing a wrong title, rewording the session notes (e.g. correcting framing on a cycling note), changing source attribution, or correcting startedAt drift. " +
+        "Does NOT touch exercises or sets — use update_workout_exercise / update_workout_set for those. " +
+        "status accepts planned | completed | skipped. Returns the list of fields actually changed.",
+      inputSchema: {
+        id: z.string(),
+        title: z.string().nullish().describe("null clears; omit to leave unchanged."),
+        notes: z.string().nullish().describe("null clears; omit to leave unchanged."),
+        source: z.string().nullish().describe("e.g. 'manual', 'strong.app', 'claude', 'imported'. null clears."),
+        sourceUrl: z.string().nullish(),
+        startedAt: z.string().optional().describe("ISO datetime, e.g. 2026-05-02T15:59:00-06:00. Omit to leave unchanged."),
+        status: z.enum(["planned", "completed", "skipped"]).optional(),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Prisma.WorkoutUpdateInput = {};
+        const updatedFields: string[] = [];
+        if (input.title !== undefined) { data.title = input.title; updatedFields.push("title"); }
+        if (input.notes !== undefined) { data.notes = input.notes; updatedFields.push("notes"); }
+        if (input.source !== undefined) { data.source = input.source; updatedFields.push("source"); }
+        if (input.sourceUrl !== undefined) { data.sourceUrl = input.sourceUrl; updatedFields.push("sourceUrl"); }
+        if (input.startedAt !== undefined) {
+          const d = new Date(input.startedAt);
+          if (Number.isNaN(d.getTime())) throw new Error(`startedAt is not a valid ISO datetime: ${input.startedAt}`);
+          data.startedAt = d;
+          updatedFields.push("startedAt");
+        }
+        if (input.status !== undefined) { data.status = input.status; updatedFields.push("status"); }
+        if (updatedFields.length === 0) {
+          return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
+        }
+        await prisma.workout.update({ where: { id: input.id }, data });
+        return {
+          id: input.id,
+          updatedFields,
+          message: `Workout updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "update_workout_exercise",
+    {
+      title: "Edit one exercise on a logged workout",
+      description:
+        "PATCH-style update for a single WorkoutExercise row (one exercise within a logged session). " +
+        "Pass the exercise's id (look it up via export_workout). Edits name, equipment, notes, or orderIndex. " +
+        "Does NOT add or remove exercises and does NOT touch sets — use update_workout_set for set-level edits. " +
+        "null clears nullable fields (equipment, notes). Returns the list of fields actually changed.",
+      inputSchema: {
+        id: z.string(),
+        name: z.string().min(1).optional(),
+        equipment: z.string().nullish(),
+        notes: z.string().nullish(),
+        orderIndex: z.number().int().min(0).optional(),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Prisma.WorkoutExerciseUpdateInput = {};
+        const updatedFields: string[] = [];
+        if (input.name !== undefined) { data.name = input.name; updatedFields.push("name"); }
+        if (input.equipment !== undefined) { data.equipment = input.equipment; updatedFields.push("equipment"); }
+        if (input.notes !== undefined) { data.notes = input.notes; updatedFields.push("notes"); }
+        if (input.orderIndex !== undefined) { data.orderIndex = input.orderIndex; updatedFields.push("orderIndex"); }
+        if (updatedFields.length === 0) {
+          return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
+        }
+        await prisma.workoutExercise.update({ where: { id: input.id }, data });
+        return {
+          id: input.id,
+          updatedFields,
+          message: `Exercise updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "update_workout_set",
+    {
+      title: "Edit one set on a logged workout",
+      description:
+        "PATCH-style update for a single Set row (one set within a logged exercise). " +
+        "Pass the set's id (look it up via export_workout). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. " +
+        "Use to correct a mis-logged rep count, weight, RPE, or annotation without re-logging the whole workout. " +
+        "null clears nullable fields (all metric fields and notes). Returns the list of fields actually changed.",
+      inputSchema: {
+        id: z.string(),
+        setIndex: z.number().int().min(0).optional(),
+        reps: z.number().int().min(0).nullish(),
+        weightLb: z.number().min(0).nullish(),
+        durationSec: z.number().min(0).nullish(),
+        distanceMi: z.number().min(0).nullish(),
+        rpe: z.number().min(0).max(10).nullish(),
+        notes: z.string().nullish(),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const data: Prisma.SetUpdateInput = {};
+        const updatedFields: string[] = [];
+        if (input.setIndex !== undefined) { data.setIndex = input.setIndex; updatedFields.push("setIndex"); }
+        if (input.reps !== undefined) { data.reps = input.reps; updatedFields.push("reps"); }
+        if (input.weightLb !== undefined) { data.weightLb = input.weightLb; updatedFields.push("weightLb"); }
+        if (input.durationSec !== undefined) { data.durationSec = input.durationSec; updatedFields.push("durationSec"); }
+        if (input.distanceMi !== undefined) { data.distanceMi = input.distanceMi; updatedFields.push("distanceMi"); }
+        if (input.rpe !== undefined) { data.rpe = input.rpe; updatedFields.push("rpe"); }
+        if (input.notes !== undefined) { data.notes = input.notes; updatedFields.push("notes"); }
+        if (updatedFields.length === 0) {
+          return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
+        }
+        await prisma.set.update({ where: { id: input.id }, data });
+        return {
+          id: input.id,
+          updatedFields,
+          message: `Set updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
+        };
+      }),
+  );
+
+  server.registerTool(
     "delete_workout",
     {
       title: "Delete / remove a logged workout / session",
