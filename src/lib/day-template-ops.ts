@@ -217,5 +217,12 @@ export function applyWorkoutJsonOps(base: DayTemplate, ops: WorkoutJsonOp[]): Da
     }
   });
 
+  // Prune blocks that ended the chain with no exercises. Done once at the end
+  // (not after each op) so intra-chain patterns like
+  // [removeExercise X, addExercise Y] targeting the same block still work.
+  working.blocks = working.blocks.filter(
+    (b) => Array.isArray(b.exercises) && b.exercises.length > 0,
+  );
+
   return working;
 }
