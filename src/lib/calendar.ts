@@ -483,7 +483,11 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
       orderBy: { updatedAt: "desc" },
       include: { goal: { select: { id: true } } },
     }),
-    prisma.note.count({ where: { resolvedAt: null } }),
+    // Only count notes that actually call for a coaching decision: audibles
+    // (plan changes) and feedback. Journals are diary entries you rarely
+    // "resolve", and standing_rules are never resolved by design — counting
+    // them inflated this number into a permanent, misleading to-do badge.
+    prisma.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
   ]);
   if (!plan) return { count, goalId: null, planId: null };
   return { count, goalId: plan.goal.id, planId: plan.id };

@@ -3,7 +3,7 @@ import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { NutritionToday } from "@/components/NutritionToday";
 import { TodayCelebration } from "@/components/TodayCelebration";
-import { dateKey, startOfDay, endOfDay, getPendingNotesCount, resolveDay } from "@/lib/calendar";
+import { dateKey, startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -33,7 +33,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, pending, todayNutrition] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -42,7 +42,6 @@ export default async function HomePage() {
         include: { exercises: { include: { sets: true } } },
       }),
       resolveDay(now),
-      getPendingNotesCount(),
       prisma.nutritionLog.findMany({
         where: { date: { gte: todayStart, lte: todayEnd } },
         orderBy: { date: "asc" },
@@ -179,29 +178,6 @@ export default async function HomePage() {
           </p>
         )}
       </section>
-
-      {/* ── Pending notes ── */}
-      {pending.count > 0 && pending.goalId && (
-        <Card title={`${pending.count} pending note${pending.count === 1 ? "" : "s"}`}>
-          <p className="text-sm text-[var(--muted)] mb-2">
-            Ask Claude to review them and propose plan updates, or mark them resolved if no change is needed.
-          </p>
-          <div className="flex gap-2 flex-wrap">
-            <Link
-              href={`/goals/${pending.goalId}`}
-              className="text-xs rounded-full border border-[var(--border)] px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
-              View on goal →
-            </Link>
-            <Link
-              href="/coach"
-              className="text-xs rounded-full border border-[var(--accent)] text-[var(--accent)] px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
-              Coach prompts →
-            </Link>
-          </div>
-        </Card>
-      )}
 
       {/* ── Baselines due ── */}
       {baselinesDue.length > 0 && (
