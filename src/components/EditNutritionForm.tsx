@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { deleteNutrition, updateNutrition } from "@/lib/workout-actions";
+import { MacroInputs, type MacroDefaults } from "@/components/MacroInputs";
 
 const MEAL_TYPES = [
   { value: "preworkout", label: "Preworkout" },
@@ -17,7 +18,13 @@ export function EditNutritionForm({
   defaults,
 }: {
   id: string;
-  defaults: { mealType: string; itemsText: string; notes: string; date: string };
+  defaults: {
+    mealType: string;
+    itemsText: string;
+    notes: string;
+    date: string;
+    macros?: MacroDefaults;
+  };
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +90,8 @@ export function EditNutritionForm({
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm resize-y"
         />
       </label>
+
+      <MacroInputs defaults={defaults.macros} />
 
       {error && (
         <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">

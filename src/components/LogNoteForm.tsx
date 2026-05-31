@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState } from "react";
 import { logNote } from "@/lib/workout-actions";
+import { useFormFeedback } from "@/lib/use-form-feedback";
 
 const NOTE_TYPES = [
   {
@@ -33,8 +34,7 @@ const NOTE_TYPES = [
 type NoteType = (typeof NOTE_TYPES)[number]["value"];
 
 export function LogNoteForm() {
-  const [pending, startTransition] = useTransition();
-  const formRef = useRef<HTMLFormElement>(null);
+  const { pending, error, saved, formRef, submit } = useFormFeedback();
   const [type, setType] = useState<NoteType>("journal");
 
   const active = NOTE_TYPES.find((t) => t.value === type)!;
@@ -42,13 +42,13 @@ export function LogNoteForm() {
   return (
     <form
       ref={formRef}
-      action={(fd) =>
-        startTransition(async () => {
-          await logNote(fd);
-          formRef.current?.reset();
-          setType("journal");
-        })
-      }
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit(logNote, {
+          successMsg: "✓ Note saved",
+          onSuccess: () => setType("journal"),
+        });
+      }}
       className="flex flex-col gap-2"
     >
       <textarea
@@ -79,6 +79,11 @@ export function LogNoteForm() {
           {pending ? "Saving…" : "Save note"}
         </button>
       </div>
+      {/* Reserved height prevents layout shift whether saved, error, or empty */}
+      <p className="text-xs min-h-[1rem]" aria-live="polite">
+        {saved && <span className="text-[var(--success)]">{saved}</span>}
+        {error && !saved && <span className="text-[var(--danger)]">{error}</span>}
+      </p>
       <p className="text-xs text-[var(--muted)]">
         <span className="font-medium text-foreground">{active.label}:</span> {active.description}
       </p>

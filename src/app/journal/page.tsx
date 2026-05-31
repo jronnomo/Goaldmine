@@ -13,8 +13,17 @@ export default async function JournalPage() {
     prisma.note.findMany({ orderBy: { date: "desc" }, take: 50 }),
   ]);
 
-  const pendingNotes = allNotes.filter((n) => n.resolvedAt === null);
-  const olderNotes = allNotes.filter((n) => n.resolvedAt !== null);
+  // "Needs review" = unresolved audibles/feedback — the notes that call for a
+  // coaching decision. Matches getPendingNotesCount's tightened definition.
+  const ACTIONABLE_TYPES = new Set(["audible", "feedback"]);
+  const needsReview = allNotes.filter(
+    (n) => n.resolvedAt === null && ACTIONABLE_TYPES.has(n.type),
+  );
+  // Everything else stays visible in the log: journals, standing rules, and
+  // resolved notes (the resolved ones are dimmed below).
+  const otherNotes = allNotes.filter(
+    (n) => !(n.resolvedAt === null && ACTIONABLE_TYPES.has(n.type)),
+  );
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -38,30 +47,34 @@ export default async function JournalPage() {
         <LogNoteForm />
       </Card>
 
-      {pending.goalId && (
+      {pending.goalId && needsReview.length > 0 && (
         <Card
-          title={
-            pending.count > 0
-              ? `${pending.count} pending note${pending.count === 1 ? "" : "s"}`
-              : "Pending notes"
-          }
+          title={`${needsReview.length} note${needsReview.length === 1 ? "" : "s"} to review`}
           action={
             <Link href={`/goals/${pending.goalId}`} className="text-sm text-[var(--accent)]">
               Goal →
             </Link>
           }
         >
-          <PendingNotes notes={pendingNotes} goalId={pending.goalId} />
+          <p className="text-xs text-[var(--muted)] mb-2">
+            Audibles and feedback awaiting a coaching decision — Claude resolves these
+            when you review them together, or you can act on them on the goal.
+          </p>
+          <PendingNotes notes={needsReview} goalId={pending.goalId} />
         </Card>
       )}
 
-      {olderNotes.length > 0 && (
-        <Card title="Resolved notes">
+      {otherNotes.length > 0 && (
+        <Card title="Notes">
           <ul className="space-y-2 text-sm">
-            {olderNotes.map((n) => (
-              <li key={n.id} className="border-l-2 border-[var(--border)] pl-3 opacity-60">
+            {otherNotes.map((n) => (
+              <li
+                key={n.id}
+                className={`border-l-2 border-[var(--border)] pl-3 ${n.resolvedAt ? "opacity-60" : ""}`}
+              >
                 <p className="text-[var(--muted)] text-xs">
                   {new Date(n.date).toLocaleString()} · {n.type}
+                  {n.resolvedAt ? " · resolved" : ""}
                   {n.resolvedReason ? ` · ${n.resolvedReason}` : ""}
                 </p>
                 <p className="whitespace-pre-wrap">{n.body}</p>

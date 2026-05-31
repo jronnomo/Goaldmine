@@ -17,7 +17,7 @@ const PlannedMealItemShape = z.object({
   notes: z.string().optional(),
 });
 
-const PlannedMealMacrosShape = z.object({
+export const PlannedMealMacrosShape = z.object({
   calories: z.number().nonnegative().optional(),
   proteinG: z.number().nonnegative().optional(),
   carbsG: z.number().nonnegative().optional(),
@@ -25,6 +25,20 @@ const PlannedMealMacrosShape = z.object({
   sodiumMg: z.number().nonnegative().optional(),
   fiberG: z.number().nonnegative().optional(),
 });
+
+// Shared macro shape for both planned meals and logged-meal macros.
+export type NutritionMacros = z.infer<typeof PlannedMealMacrosShape>;
+
+// The macro column names on NutritionLog / PlannedMeal.macros, fixed order —
+// handy for summing and for building Prisma data objects.
+export const MACRO_KEYS = [
+  "calories",
+  "proteinG",
+  "carbsG",
+  "fatG",
+  "fiberG",
+  "sodiumMg",
+] as const;
 
 export const PlannedMealShape = z.object({
   items: z.array(PlannedMealItemShape).min(1),

@@ -130,10 +130,18 @@ model NutritionLog {
   id        String   @id @default(cuid())
   date      DateTime
   mealType  String   // preworkout | postworkout | breakfast | lunch | dinner | snack
-  // Array<{ name: string, qty?: string, notes?: string }> — food groups/items, not macros.
-  // Claude analyzes the items list and uses judgment to assess over/under.
+  // Array<{ name: string, qty?: string, notes?: string }> — food groups/items.
   items     Json
   notes     String?
+  // Optional structured macros for the logged meal. Null when not provided
+  // (older logs, or quick logs without estimates). Drives the Day-total
+  // "so far" number; falls back to plan macros when absent.
+  calories  Float?
+  proteinG  Float?
+  carbsG    Float?
+  fatG      Float?
+  fiberG    Float?
+  sodiumMg  Float?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

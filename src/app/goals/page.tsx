@@ -7,12 +7,15 @@ import { setActiveGoal } from "@/lib/goal-actions";
 
 export const dynamic = "force-dynamic";
 
-function goalProgress(g: { createdAt: Date; targetDate: Date; status: string }): number {
+function goalProgress(
+  g: { createdAt: Date; targetDate: Date; status: string },
+  now: number,
+): number {
   if (g.status === "achieved") return 1;
   if (g.status === "abandoned") return 0;
   const total = g.targetDate.getTime() - g.createdAt.getTime();
   if (total <= 0) return 0;
-  const elapsed = Date.now() - g.createdAt.getTime();
+  const elapsed = now - g.createdAt.getTime();
   return Math.max(0, Math.min(1, elapsed / total));
 }
 
@@ -34,6 +37,10 @@ export default async function GoalsPage() {
       targetDate: g.targetDate.toISOString(),
       targetCount: (g.targets as unknown[]).length,
     }));
+
+  // Server component: Date.now() is safe here — rendered once per request, never re-renders.
+  // eslint-disable-next-line react-hooks/purity
+  const now = Date.now();
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -58,9 +65,9 @@ export default async function GoalsPage() {
           <ul className="divide-y divide-[var(--border)]">
             {goals.map((g) => {
               const days = Math.ceil(
-                (new Date(g.targetDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                (new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24),
               );
-              const pct = goalProgress(g);
+              const pct = goalProgress(g, now);
               const isFocused = g.id === focusedId;
               const setActive = setActiveGoal.bind(null, g.id);
               const rowBody = (

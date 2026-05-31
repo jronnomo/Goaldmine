@@ -112,3 +112,80 @@ input, textarea, select, button {
     animation: none;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   BottomSheet — native <dialog>-based sheet.
+   The dialog element itself is used as a full-viewport overlay; the inner
+   .bottom-sheet-panel slides up from the bottom. Scrim via ::backdrop.
+   ────────────────────────────────────────────────────────────────────── */
+
+.bottom-sheet {
+  /* Reset dialog defaults */
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  /* Full-viewport overlay so the panel can anchor to the bottom. A modal
+     <dialog> is promoted to the top layer, so no z-index is needed. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* Closed dialogs are display:none — make sure nothing leaks through. */
+.bottom-sheet:not([open]) {
+  display: none;
+}
+
+/* Scrim via the native ::backdrop pseudo-element. Fades in on open. */
+.bottom-sheet::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+.bottom-sheet[open]::backdrop {
+  opacity: 1;
+}
+@starting-style {
+  .bottom-sheet[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* The panel — anchored to the bottom; slides up on open. */
+.bottom-sheet-panel {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-width: 28rem; /* max-w-md */
+  margin-inline: auto;
+  background: var(--card);
+  border-top-left-radius: 1rem;
+  border-top-right-radius: 1rem;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(0);
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Entry animation: start off-screen the first time the [open] panel renders,
+   then transition to translateY(0). Browsers without @starting-style support
+   simply show the panel instantly — still fully functional. */
+@starting-style {
+  .bottom-sheet[open] .bottom-sheet-panel {
+    transform: translateY(100%);
+  }
+}
+
+/* Reduced-motion: no slide/fade. */
+@media (prefers-reduced-motion: reduce) {
+  .bottom-sheet::backdrop,
+  .bottom-sheet-panel {
+    transition: none;
+  }
+}

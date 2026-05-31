@@ -118,7 +118,9 @@ export default async function StatsPage() {
 
       <Card title="Weight">
         {weights.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No measurements yet.</p>
+          <p className="text-sm text-[var(--muted)]">
+            No weight logged yet — tap Log in the nav to record your first weigh-in.
+          </p>
         ) : (
           <>
             <div className="grid grid-cols-3 gap-2 mb-3 text-center">
