@@ -1,21 +1,65 @@
 {
-  "feature": "App-wide UX overhaul — nav rebuild, Today redesign, Progress hub, form feedback",
+  "feature": "App-wide UX overhaul \u2014 nav rebuild, Today redesign, Progress hub, form feedback",
   "branch": "feature/ux-overhaul",
   "prd_path": "docs/prds/PRD-ux-overhaul.md",
   "prd_issue": "https://github.com/jronnomo/workout-planner/issues/18",
   "requirements": [
-    "REQ-A1", "REQ-A2", "REQ-A3", "REQ-A4", "REQ-A5", "REQ-A6",
-    "REQ-B1", "REQ-B2", "REQ-B3", "REQ-B4",
-    "REQ-C1", "REQ-C2",
-    "REQ-D1", "REQ-D2", "REQ-D3", "REQ-D4"
+    "REQ-A1",
+    "REQ-A2",
+    "REQ-A3",
+    "REQ-A4",
+    "REQ-A5",
+    "REQ-A6",
+    "REQ-B1",
+    "REQ-B2",
+    "REQ-B3",
+    "REQ-B4",
+    "REQ-C1",
+    "REQ-C2",
+    "REQ-D1",
+    "REQ-D2",
+    "REQ-D3",
+    "REQ-D4"
   ],
   "streams": {
-    "A": { "name": "Forms + states scaffolding", "reqs": ["REQ-A1","REQ-A2","REQ-A3","REQ-A4","REQ-A5","REQ-A6"] },
-    "B": { "name": "Navigation + bottom sheets", "reqs": ["REQ-B1","REQ-B2","REQ-B3","REQ-B4"] },
-    "C": { "name": "Progress hub", "reqs": ["REQ-C1","REQ-C2"] },
-    "D": { "name": "Today redesign", "reqs": ["REQ-D1","REQ-D2","REQ-D3","REQ-D4"] }
+    "A": {
+      "name": "Forms + states scaffolding",
+      "reqs": [
+        "REQ-A1",
+        "REQ-A2",
+        "REQ-A3",
+        "REQ-A4",
+        "REQ-A5",
+        "REQ-A6"
+      ]
+    },
+    "B": {
+      "name": "Navigation + bottom sheets",
+      "reqs": [
+        "REQ-B1",
+        "REQ-B2",
+        "REQ-B3",
+        "REQ-B4"
+      ]
+    },
+    "C": {
+      "name": "Progress hub",
+      "reqs": [
+        "REQ-C1",
+        "REQ-C2"
+      ]
+    },
+    "D": {
+      "name": "Today redesign",
+      "reqs": [
+        "REQ-D1",
+        "REQ-D2",
+        "REQ-D3",
+        "REQ-D4"
+      ]
+    }
   },
   "agents": [],
   "iteration": 1,
-  "status": "planning"
+  "status": "qa-passed"
 }

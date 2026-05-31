@@ -31,6 +31,8 @@ export async function logMeasurement(form: FormData) {
 
   revalidatePath("/");
   revalidatePath("/history");
+  revalidatePath("/progress");
+  revalidatePath("/stats");
 }
 
 export async function logNote(form: FormData) {
@@ -49,6 +51,7 @@ export async function logNote(form: FormData) {
 
   revalidatePath("/");
   revalidatePath("/history");
+  revalidatePath("/journal");
 }
 
 // Inline-row variant of logBaseline used by Today's BaselineBlockCard. Same

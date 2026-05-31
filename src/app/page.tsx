@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
-import { LogMeasurementForm } from "@/components/LogMeasurementForm";
-import { LogNoteForm } from "@/components/LogNoteForm";
 import { NutritionToday } from "@/components/NutritionToday";
-import { startOfDay, endOfDay, getPendingNotesCount, resolveDay } from "@/lib/calendar";
+import { TodayCelebration } from "@/components/TodayCelebration";
+import { dateKey, startOfDay, endOfDay, getPendingNotesCount, resolveDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -30,6 +29,9 @@ export default async function HomePage() {
   const now = new Date();
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
+  // Server-side dateKey — computed here so the client island never calls dateKey()
+  // (process.env.USER_TZ is undefined in the browser).
+  const todayDateKey = dateKey(now);
 
   const [latestMeasurement, recentWorkouts, resolved, pending, todayNutrition] =
     await Promise.all([
@@ -46,6 +48,9 @@ export default async function HomePage() {
         orderBy: { date: "asc" },
       }),
     ]);
+
+  // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
+  void latestMeasurement;
 
   const baselinesDue = resolved.baselinesDue;
   // The day's workout. resolved.workoutTemplate is override-aware: when an
@@ -65,41 +70,117 @@ export default async function HomePage() {
       ),
   );
 
+  // --- REQ-D1: Derive completion / rest-day / planned state ---
+  // Completed = a workout was logged today (resolveDay already queries this range).
+  const completed = resolved.workouts.length > 0;
+
+  // Rest day = workoutTemplate category is "rest".
+  // IMPORTANT: dayTemplate === null means OUTSIDE the plan range (not rest day).
+  // Verified: program-template.ts:413-428 — day 7 has category:"rest" with blocks;
+  // resolveDay returns a non-null workoutTemplate on rest day.
+  const isRestDay = !completed && dayTemplate?.category === "rest";
+
+  // Out-of-plan: dayTemplate === null AND not completed
+  const isOutOfPlan = !completed && !isRestDay && dayTemplate === null;
+
+  // Planned: in-plan day with workout blocks, not yet completed, not rest day
+  // (isPlanned = !completed && !isRestDay && !isOutOfPlan)
+
+  // Derived label shown next to the Bullseye
+  const stateLabel: string = completed
+    ? "Completed"
+    : isRestDay
+      ? "Rest day"
+      : isOutOfPlan
+        ? "No workout scheduled"
+        : "Today's plan";
+
   const dayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "short",
     day: "numeric",
   }).format(new Date());
 
+  // Summary copy — REQ-D4: no leaked dev string at old line 98
+  let summaryText: string | null = null;
+  if (dayTemplate?.summary) {
+    summaryText = dayTemplate.summary;
+  } else if (ctx.day?.summary) {
+    summaryText = ctx.day.summary;
+  }
+  // When neither is available, summaryText stays null.
+  // Previously this fell through to a dev-facing error string — removed (REQ-D4).
+  // Server-side log for diagnosability if both are absent but a template exists:
+  if (!summaryText && dayTemplate !== null) {
+    console.warn("[Today] day template present but no summary found; plan details unavailable");
+  }
+
+  const workoutTitle = dayTemplate?.title ?? ctx.day?.title;
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
-      <header className="space-y-1 pt-2">
-        <div className="flex items-start justify-between gap-2">
+      {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
+      <section
+        className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
+        aria-label="Today's workout"
+      >
+        {/* Eyeline: week / phase */}
+        <div className="flex items-center justify-between gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
             Week {ctx.weekIndex}
             {ctx.phase ? ` · Phase ${ctx.phase.index} · ${ctx.phase.name}` : ""}
           </p>
           <Link
             href="/import"
-            className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-foreground"
+            className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             + Import
           </Link>
         </div>
+
+        {/* Title */}
         <h1 className="text-2xl font-semibold tracking-tight">
-          {dayTemplate?.title ?? ctx.day?.title ?? "No workout for today"}
+          {workoutTitle ?? (isRestDay ? "Rest / Active Recovery" : isOutOfPlan ? "Off plan" : "Today")}
         </h1>
+
+        {/* Date + summary */}
         <p className="text-sm text-[var(--muted)]">
           {dayLabel}
-          {dayTemplate?.summary
-            ? ` · ${dayTemplate.summary}`
-            : ctx.day?.summary
-              ? ` · ${ctx.day.summary}`
-              : " · plan snapshot is malformed; restore from /goals/<id>/revisions or contact your coach"}
+          {summaryText ? ` · ${summaryText}` : summaryText === null && !isOutOfPlan ? " · plan details unavailable" : ""}
           {resolved.isOverride ? " · day overridden" : ""}
         </p>
-      </header>
 
+        {/* Completion / state indicator */}
+        <div className="flex items-center gap-2 overflow-visible">
+          {/* overflow-visible ensures the bullseye-pop scale(1.08) is not clipped */}
+          <div className="overflow-visible">
+            <TodayCelebration completed={completed} dateKey={todayDateKey} />
+          </div>
+          <span
+            className={`text-sm font-medium ${
+              completed
+                ? "text-[var(--success)]"
+                : isRestDay
+                  ? "text-[var(--muted)]"
+                  : "text-[var(--foreground)]"
+            }`}
+          >
+            {stateLabel}
+          </span>
+        </div>
+
+        {/* Rest-day hike-prep tip */}
+        {isRestDay && (
+          <p className="text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+            <strong className="text-[var(--foreground)] font-medium">Recovery tip:</strong>{" "}
+            Today is a great day for a short walk or light stretch. Consistent recovery sessions build
+            the aerobic base and joint resilience you&rsquo;ll need for Mt. Elbert — treat it as
+            training, not a day off.
+          </p>
+        )}
+      </section>
+
+      {/* ── Pending notes ── */}
       {pending.count > 0 && pending.goalId && (
         <Card title={`${pending.count} pending note${pending.count === 1 ? "" : "s"}`}>
           <p className="text-sm text-[var(--muted)] mb-2">
@@ -108,13 +189,13 @@ export default async function HomePage() {
           <div className="flex gap-2 flex-wrap">
             <Link
               href={`/goals/${pending.goalId}`}
-              className="text-xs rounded-full border border-[var(--border)] px-3 py-1"
+              className="text-xs rounded-full border border-[var(--border)] px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               View on goal →
             </Link>
             <Link
               href="/coach"
-              className="text-xs rounded-full border border-[var(--accent)] text-[var(--accent)] px-3 py-1"
+              className="text-xs rounded-full border border-[var(--accent)] text-[var(--accent)] px-3 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               Coach prompts →
             </Link>
@@ -122,10 +203,12 @@ export default async function HomePage() {
         </Card>
       )}
 
+      {/* ── Baselines due ── */}
       {baselinesDue.length > 0 && (
         <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
       )}
 
+      {/* ── Workout blocks ── */}
       {dayBlocks.map((block, i) => (
         <BlockCard key={i} block={block} index={i + (baselinesDue.length > 0 ? 1 : 0)} />
       ))}
@@ -142,43 +225,24 @@ export default async function HomePage() {
         </Card>
       )}
 
-      <Card title="Log weight">
-        <p className="text-xs text-[var(--muted)] mb-2">
-          Body weight (and optional resting heart rate). The text field is for context attached to <em>this</em> weigh-in — e.g. &ldquo;post-hike,&rdquo; &ldquo;morning fasted.&rdquo;
-        </p>
-        <LogMeasurementForm latestWeight={latestMeasurement?.weightLb ?? null} />
-      </Card>
-
+      {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}
       <Card
         title="Nutrition"
         action={
-          <Link href="/nutrition" className="text-sm text-[var(--accent)]">
+          <Link href="/nutrition" className="text-sm text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
             All →
           </Link>
         }
       >
-        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} />
+        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} showLogForm={false} />
       </Card>
 
-      <Card
-        title="Log a note"
-        action={
-          <Link href="/journal" className="text-sm text-[var(--accent)]">
-            Journal →
-          </Link>
-        }
-      >
-        <p className="text-xs text-[var(--muted)] mb-2">
-          Free-form, not tied to a weigh-in. Type tags it for Claude (Journal / Audible / Feedback).
-        </p>
-        <LogNoteForm />
-      </Card>
-
+      {/* ── Recent workouts ── */}
       {recentWorkouts.length > 0 && (
         <Card
           title="Recent workouts"
           action={
-            <Link href="/history" className="text-sm text-[var(--accent)]">
+            <Link href="/history" className="text-sm text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
               All →
             </Link>
           }
@@ -186,7 +250,7 @@ export default async function HomePage() {
           <ul className="space-y-2 text-sm">
             {recentWorkouts.map((w) => (
               <li key={w.id}>
-                <Link href={`/workouts/${w.id}`} className="flex justify-between">
+                <Link href={`/workouts/${w.id}`} className="flex justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
                   <span>{w.title ?? "Workout"}</span>
                   <span className="text-[var(--muted)]">
                     {new Date(w.startedAt).toLocaleDateString()} · {w.exercises.length} ex

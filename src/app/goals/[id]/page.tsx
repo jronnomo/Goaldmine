@@ -92,8 +92,10 @@ export default async function GoalDetail({
       targetCount: (g.targets as unknown[]).length,
     }));
 
+  // Server component: new Date() is safe here — rendered once per request, never re-renders.
+  const nowMs = new Date().getTime();
   const days = Math.ceil(
-    (new Date(goal.targetDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+    (new Date(goal.targetDate).getTime() - nowMs) / (1000 * 60 * 60 * 24),
   );
 
   return (

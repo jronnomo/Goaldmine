@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useState } from "react";
 import { logNutrition } from "@/lib/workout-actions";
+import { useFormFeedback } from "@/lib/use-form-feedback";
 
 const MEAL_TYPES = [
   { value: "preworkout", label: "Preworkout" },
@@ -23,26 +24,19 @@ function defaultMeal(): MealType {
 }
 
 export function LogNutritionForm() {
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
+  const { pending, error, saved, formRef, submit } = useFormFeedback();
   const [mealType, setMealType] = useState<MealType>(defaultMeal());
 
   return (
     <form
       ref={formRef}
-      action={(fd) =>
-        startTransition(async () => {
-          try {
-            setError(null);
-            await logNutrition(fd);
-            formRef.current?.reset();
-            setMealType(defaultMeal());
-          } catch (e) {
-            setError(e instanceof Error ? e.message : "Failed to save");
-          }
-        })
-      }
+      onSubmit={(e) => {
+        e.preventDefault();
+        submit(logNutrition, {
+          successMsg: "✓ Meal logged",
+          onSuccess: () => setMealType(defaultMeal()),
+        });
+      }}
       className="flex flex-col gap-2"
     >
       <select
@@ -70,7 +64,11 @@ export function LogNutritionForm() {
         placeholder="meal notes (optional)"
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
       />
-      {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
+      {/* Reserved height prevents layout shift whether saved, error, or empty */}
+      <p className="text-xs min-h-[1rem]" aria-live="polite">
+        {saved && <span className="text-[var(--success)]">{saved}</span>}
+        {error && !saved && <span className="text-[var(--danger)]">{error}</span>}
+      </p>
       <button
         type="submit"
         disabled={pending}
