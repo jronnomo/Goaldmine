@@ -229,10 +229,10 @@ Entry: app opens to Today. Bottom nav always visible. Log/More open sheets over 
 6. [ ] Tapping "More" opens a bottom sheet with Coach/Nutrition/History/Journal/Theme; each row navigates correctly.
 7. [ ] `/progress` renders readiness + weight + records summary at 390px; record rows deep-link to `/baselines/...`; `/stats` and `/baselines` still load.
 8. [ ] Logging weight via the sheet shows a `--success` confirmation and resets the field; same for a note; errors show a `--danger` line.
-9. [ ] Today renders the override-aware workout hero with a derived Completed/Planned/Rest-day state.
+9. [ ] Today renders the override-aware workout hero with a derived Completed/Planned/Rest-day state (rest day detected via `dayTemplate?.category === "rest"`, not a null/empty-blocks check).
 10. [ ] With a workout logged today, the first Today visit pops `bullseye-pop` once; a reload does not re-pop (localStorage flag per `dateKey`).
 11. [ ] `src/app/page.tsx` contains no user-facing "plan snapshot is malformed; restore from /goals…" string.
-12. [ ] `loading.tsx` + `error.tsx` exist at root; `error.tsx` is a client component with a reset action.
+12. [ ] `loading.tsx` + `error.tsx` exist at root; `error.tsx` is a client component whose retry button calls `unstable_retry()` (Next 16.2.4 — re-fetches server components; `reset` only clears client state).
 13. [ ] All Date math goes through `@/lib/calendar`; `grep -n 'setHours\|getDate()\|getMonth()\|getFullYear\|getHours' src/app src/components` shows no new violations in changed app code.
 14. [ ] Bottom sheets are keyboard-accessible (Esc closes, focus trapped, focus returns to trigger) and respect `prefers-reduced-motion`.
 15. [ ] No new npm dependency added; Recharts remains the only chart lib.
