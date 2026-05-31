@@ -86,31 +86,54 @@ export function NutritionToday({
     byMeal.set(log.mealType, arr);
   }
 
+  // Build one row per slot, then drop slots that are neither planned nor
+  // logged (no more bare "—" rows for unused meal times).
+  const rows = MEAL_ORDER.map((mt) => {
+    const meals = byMeal.get(mt) ?? [];
+    const loggedSummary = meals
+      .map((m) => summarize(asItems(m.items)))
+      .filter(Boolean)
+      .join(" · ");
+    return { mt, loggedSummary, planned: plan?.[mt] };
+  }).filter((r) => r.loggedSummary || r.planned);
+
   return (
     <div className="space-y-3">
-      <ul className="space-y-2 text-sm">
-        {MEAL_ORDER.map((mt) => {
-          const meals = byMeal.get(mt) ?? [];
-          const loggedSummary = meals
-            .map((m) => summarize(asItems(m.items)))
-            .filter(Boolean)
-            .join(" · ");
-          const planned = plan?.[mt];
-          const isEmpty = !loggedSummary && !planned;
-          return (
+      {rows.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">Nothing planned or logged today yet.</p>
+      ) : (
+        <ul className="space-y-2.5 text-sm">
+          {rows.map(({ mt, loggedSummary, planned }) => (
             <li key={mt} className="flex gap-2">
               <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
                 {MEAL_LABEL[mt]}
               </span>
               <div className="flex-1 min-w-0 space-y-1">
-                {planned && <PlannedRow meal={planned} />}
-                {loggedSummary && <span className="block">{loggedSummary}</span>}
-                {isEmpty && <span className="text-[var(--muted)]">—</span>}
+                {loggedSummary ? (
+                  // Logged: lead with what you ate; show the plan's macro target
+                  // as context instead of repeating the planned item list.
+                  <>
+                    <span className="block">
+                      <span className="text-[var(--success)] mr-1" aria-hidden>
+                        ✓
+                      </span>
+                      {loggedSummary}
+                    </span>
+                    {planned?.macros && (
+                      <span className="block text-xs text-[var(--muted)]">
+                        target {formatMacros(planned.macros)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  // Not logged yet: show the full planned prompt.
+                  <PlannedRow meal={planned!} />
+                )}
               </div>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      )}
       {showLogForm && (
         <div className="border-t border-[var(--border)] pt-3">
           <LogNutritionForm />
