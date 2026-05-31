@@ -455,7 +455,52 @@ async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise
   return { id: n.id, message: "Nutrition logged" };
 }
 
+// Decode a literal `\uXXXX` escape into its character. Conservative on purpose:
+// it ONLY touches \uXXXX sequences, never \n / \" / \\, so a legitimate
+// backslash in free text is left alone. A no-op on any string lacking the
+// pattern (ids, dates, enums pass through untouched).
+function decodeUnicodeEscapes(s: string): string {
+  // Single pass: an escaped backslash (\\) is consumed untouched so a
+  // double-escaped sequence like "\\u2014" stays literal, while a lone
+  // \uXXXX decodes to its character.
+  return s.replace(/\\\\|\\u([0-9a-fA-F]{4})/g, (m, hex: string | undefined) =>
+    hex === undefined ? m : String.fromCodePoint(parseInt(hex, 16)),
+  );
+}
+
+// Recursively decode \uXXXX escapes across all string values of a tool's
+// validated arguments. Plain JSON-RPC payloads only (objects/arrays/primitives).
+function decodeArgsDeep<T>(v: T): T {
+  if (typeof v === "string") return decodeUnicodeEscapes(v) as T;
+  if (Array.isArray(v)) return v.map((x) => decodeArgsDeep(x)) as T;
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) out[k] = decodeArgsDeep(val);
+    return out as T;
+  }
+  return v;
+}
+
 export function registerAll(server: McpServer) {
+  // Defensive guard against re-introducing the literal-escape corruption that
+  // had to be batch-fixed once: when a caller double-escapes JSON, free text
+  // arrives as e.g. "—" instead of "—" and gets stored verbatim. Decode at
+  // this single registration chokepoint so every tool's args are normalized
+  // before its handler runs — no need to touch 48 handlers individually.
+  const origRegister = server.registerTool.bind(server) as (
+    ...a: unknown[]
+  ) => unknown;
+  (server as { registerTool: unknown }).registerTool = (
+    name: unknown,
+    config: unknown,
+    cb: unknown,
+  ) => {
+    const handler = cb as (args: unknown, ...rest: unknown[]) => unknown;
+    return origRegister(name, config, (args: unknown, ...rest: unknown[]) =>
+      handler(decodeArgsDeep(args), ...rest),
+    );
+  };
+
   registerReadTools(server);
   registerWriteTools(server);
 }
