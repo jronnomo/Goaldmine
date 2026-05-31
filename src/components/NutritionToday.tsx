@@ -20,7 +20,18 @@ export type NutritionTodayLog = {
   mealType: string;
   items: unknown;
   notes: string | null;
+  // Optional structured macros (null on older / quick logs).
+  calories?: number | null;
+  proteinG?: number | null;
+  carbsG?: number | null;
+  fatG?: number | null;
+  fiberG?: number | null;
+  sodiumMg?: number | null;
 };
+
+// The macros we total + display on Today (calories + the big three).
+type Macros = { calories?: number; proteinG?: number; carbsG?: number; fatG?: number };
+const MACRO4 = ["calories", "proteinG", "carbsG", "fatG"] as const;
 
 function asItems(raw: unknown): Item[] {
   if (!Array.isArray(raw)) return [];
@@ -38,6 +49,36 @@ function summarize(items: Item[]): string {
   return items
     .map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name))
     .join(", ");
+}
+
+// Sum the actual logged macros across a slot's meals, keeping only fields that
+// were actually recorded. Returns null when none of the meals carry macros.
+function loggedMacros(meals: NutritionTodayLog[]): Macros | null {
+  const out: Macros = {};
+  let any = false;
+  for (const k of MACRO4) {
+    let fieldLogged = false;
+    let total = 0;
+    for (const m of meals) {
+      const v = m[k];
+      if (v != null) {
+        fieldLogged = true;
+        total += v;
+      }
+    }
+    if (fieldLogged) {
+      out[k] = total;
+      any = true;
+    }
+  }
+  return any ? out : null;
+}
+
+function addMacros(acc: { calories: number; proteinG: number; carbsG: number; fatG: number }, m: Macros) {
+  acc.calories += m.calories ?? 0;
+  acc.proteinG += m.proteinG ?? 0;
+  acc.carbsG += m.carbsG ?? 0;
+  acc.fatG += m.fatG ?? 0;
 }
 
 function formatMacros(macros: NonNullable<PlannedMeal["macros"]>): string {
@@ -94,30 +135,26 @@ export function NutritionToday({
       .map((m) => summarize(asItems(m.items)))
       .filter(Boolean)
       .join(" · ");
-    return { mt, loggedSummary, planned: plan?.[mt] };
+    return { mt, loggedSummary, planned: plan?.[mt], actualMacros: loggedMacros(meals) };
   }).filter((r) => r.loggedSummary || r.planned);
 
-  // Cumulative day totals. Logged meals don't store macros (only the plan
-  // does), so "so far" credits each logged slot's *planned* macros — i.e. your
-  // progress through the day's plan. "target" sums every planned slot.
+  // Cumulative day totals. "target" sums every planned slot's macros. "so far"
+  // uses the actual macros you logged per slot, falling back to that slot's
+  // planned macros when a logged meal didn't record any.
   const target = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
   const soFar = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
   for (const r of rows) {
-    const m = r.planned?.macros;
-    if (!m) continue;
-    target.calories += m.calories ?? 0;
-    target.proteinG += m.proteinG ?? 0;
-    target.carbsG += m.carbsG ?? 0;
-    target.fatG += m.fatG ?? 0;
+    if (r.planned?.macros) addMacros(target, r.planned.macros);
     if (r.loggedSummary) {
-      soFar.calories += m.calories ?? 0;
-      soFar.proteinG += m.proteinG ?? 0;
-      soFar.carbsG += m.carbsG ?? 0;
-      soFar.fatG += m.fatG ?? 0;
+      const src = r.actualMacros ?? r.planned?.macros;
+      if (src) addMacros(soFar, src);
     }
   }
-  const hasPlanMacros =
+  const targetPositive =
     target.calories > 0 || target.proteinG > 0 || target.carbsG > 0 || target.fatG > 0;
+  const soFarPositive =
+    soFar.calories > 0 || soFar.proteinG > 0 || soFar.carbsG > 0 || soFar.fatG > 0;
+  const showTotal = targetPositive || soFarPositive;
 
   return (
     <div className="space-y-3">
@@ -126,37 +163,41 @@ export function NutritionToday({
       ) : (
         <>
           <ul className="space-y-2.5 text-sm">
-          {rows.map(({ mt, loggedSummary, planned }) => (
-            <li key={mt} className="flex gap-2">
-              <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
-                {MEAL_LABEL[mt]}
-              </span>
-              <div className="flex-1 min-w-0 space-y-1">
-                {loggedSummary ? (
-                  // Logged: lead with what you ate; show the plan's macro target
-                  // as context instead of repeating the planned item list.
-                  <>
-                    <span className="block">
-                      <span className="text-[var(--success)] mr-1" aria-hidden>
-                        ✓
+            {rows.map(({ mt, loggedSummary, planned, actualMacros }) => (
+              <li key={mt} className="flex gap-2">
+                <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
+                  {MEAL_LABEL[mt]}
+                </span>
+                <div className="flex-1 min-w-0 space-y-1">
+                  {loggedSummary ? (
+                    // Logged: lead with what you ate, then the macros you logged
+                    // (or the plan's target as a fallback cue).
+                    <>
+                      <span className="block">
+                        <span className="text-[var(--success)] mr-1" aria-hidden>
+                          ✓
+                        </span>
+                        {loggedSummary}
                       </span>
-                      {loggedSummary}
-                    </span>
-                    {planned?.macros && (
-                      <span className="block text-xs text-[var(--muted)]">
-                        target {formatMacros(planned.macros)}
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  // Not logged yet: show the full planned prompt.
-                  <PlannedRow meal={planned!} />
-                )}
-              </div>
-            </li>
-          ))}
+                      {actualMacros ? (
+                        <span className="block text-xs text-[var(--muted)]">
+                          {formatMacros(actualMacros)}
+                        </span>
+                      ) : planned?.macros ? (
+                        <span className="block text-xs text-[var(--muted)]">
+                          target {formatMacros(planned.macros)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    // Not logged yet: show the full planned prompt.
+                    <PlannedRow meal={planned!} />
+                  )}
+                </div>
+              </li>
+            ))}
           </ul>
-          {hasPlanMacros && (
+          {showTotal && (
             <div className="flex gap-2 border-t border-[var(--border)] pt-2.5 text-sm">
               <span className="w-24 shrink-0 text-xs uppercase tracking-wide font-medium pt-0.5">
                 Day total
@@ -168,12 +209,14 @@ export function NutritionToday({
                   </span>
                   <span className="tabular-nums font-medium">{formatMacros(soFar)}</span>
                 </span>
-                <span className="block text-[var(--muted)]">
-                  <span className="text-[10px] uppercase tracking-wide mr-1 align-middle">
-                    target
+                {targetPositive && (
+                  <span className="block text-[var(--muted)]">
+                    <span className="text-[10px] uppercase tracking-wide mr-1 align-middle">
+                      target
+                    </span>
+                    <span className="tabular-nums">{formatMacros(target)}</span>
                   </span>
-                  <span className="tabular-nums">{formatMacros(target)}</span>
-                </span>
+                )}
               </div>
             </div>
           )}

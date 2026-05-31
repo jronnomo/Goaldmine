@@ -66,6 +66,14 @@ export default async function EditNutritionPage({
             itemsText: itemsToText(asItems(row.items)),
             notes: row.notes ?? "",
             date: localDatetime(new Date(row.date)),
+            macros: {
+              calories: row.calories,
+              proteinG: row.proteinG,
+              carbsG: row.carbsG,
+              fatG: row.fatG,
+              fiberG: row.fiberG,
+              sodiumMg: row.sodiumMg,
+            },
           }}
         />
       </Card>

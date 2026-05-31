@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { logNutrition } from "@/lib/workout-actions";
 import { useFormFeedback } from "@/lib/use-form-feedback";
+import { MacroInputs } from "@/components/MacroInputs";
 
 const MEAL_TYPES = [
   { value: "preworkout", label: "Preworkout" },
@@ -64,6 +65,7 @@ export function LogNutritionForm() {
         placeholder="meal notes (optional)"
         className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
       />
+      <MacroInputs />
       {/* Reserved height prevents layout shift whether saved, error, or empty */}
       <p className="text-xs min-h-[1rem]" aria-live="polite">
         {saved && <span className="text-[var(--success)]">{saved}</span>}

@@ -180,6 +180,25 @@ function parseItemsTextarea(raw: string): NutritionItem[] {
   return out;
 }
 
+// Parse the 6 optional macro inputs. Empty → null (lets an edit clear a value);
+// non-numeric / negative → null.
+function parseMacros(form: FormData) {
+  const read = (key: string): number | null => {
+    const raw = String(form.get(key) ?? "").trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  return {
+    calories: read("calories"),
+    proteinG: read("proteinG"),
+    carbsG: read("carbsG"),
+    fatG: read("fatG"),
+    fiberG: read("fiberG"),
+    sodiumMg: read("sodiumMg"),
+  };
+}
+
 export async function logNutrition(form: FormData) {
   const mealType = String(form.get("mealType") ?? "").trim();
   const itemsRaw = String(form.get("items") ?? "");
@@ -194,7 +213,7 @@ export async function logNutrition(form: FormData) {
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
   await prisma.nutritionLog.create({
-    data: { date, mealType, items, notes },
+    data: { date, mealType, items, notes, ...parseMacros(form) },
   });
 
   revalidatePath("/");
@@ -216,7 +235,7 @@ export async function updateNutrition(id: string, form: FormData) {
 
   await prisma.nutritionLog.update({
     where: { id },
-    data: { mealType, items, notes, date },
+    data: { mealType, items, notes, date, ...parseMacros(form) },
   });
 
   revalidatePath("/");

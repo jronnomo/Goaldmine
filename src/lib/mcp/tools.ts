@@ -43,6 +43,8 @@ import {
 } from "@/lib/records";
 import {
   NutritionPlanShape,
+  PlannedMealMacrosShape,
+  MACRO_KEYS,
   applyNutritionPlanPatch,
   parseStoredNutritionPlan,
 } from "@/lib/nutrition-plan";
@@ -187,6 +189,9 @@ const LogNutritionShape = {
   mealType: MealTypeShape,
   items: z.array(NutritionItemShape).min(1),
   notes: z.string().optional(),
+  macros: PlannedMealMacrosShape.optional().describe(
+    "Optional estimated macros for this meal (calories, proteinG, carbsG, fatG, fiberG, sodiumMg). Provide your best estimate from the items so the dashboard can total the day; omit any field you can't estimate.",
+  ),
   date: z.string().optional().describe("ISO datetime; default = now"),
 } as const;
 const LogNutritionSchema = z.object(LogNutritionShape);
@@ -450,6 +455,8 @@ async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise
       mealType: input.mealType,
       items: input.items as Prisma.InputJsonValue,
       notes: input.notes ?? null,
+      // Optional macros — undefined fields are omitted (stored as null).
+      ...input.macros,
     },
   });
   return { id: n.id, message: "Nutrition logged" };
@@ -1310,7 +1317,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a meal",
       description:
-        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Estimate macros from item names + qty when reasoning — there are no macro fields. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
+        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
       inputSchema: LogNutritionShape,
     },
     async (input) => safe(() => logNutritionCore(prisma, input)),
@@ -1320,12 +1327,23 @@ function registerWriteTools(server: McpServer) {
     "update_nutrition",
     {
       title: "Update a nutrition log",
-      description: "Edit a logged meal's mealType / items / notes / date. Pass only the fields to change.",
+      description: "Edit a logged meal's mealType / items / notes / macros / date. Pass only the fields to change. For macros, pass a number to set it or null to clear it; omitted macro fields are left unchanged.",
       inputSchema: {
         id: z.string(),
         mealType: MealTypeShape.optional(),
         items: z.array(NutritionItemShape).min(1).optional(),
         notes: z.string().nullable().optional(),
+        macros: PlannedMealMacrosShape.partial()
+          .extend({
+            calories: z.number().nonnegative().nullable().optional(),
+            proteinG: z.number().nonnegative().nullable().optional(),
+            carbsG: z.number().nonnegative().nullable().optional(),
+            fatG: z.number().nonnegative().nullable().optional(),
+            fiberG: z.number().nonnegative().nullable().optional(),
+            sodiumMg: z.number().nonnegative().nullable().optional(),
+          })
+          .optional()
+          .describe("Macro fields to set (number) or clear (null); omit a field to leave it unchanged."),
         date: z.string().optional().describe("ISO datetime"),
       },
     },
@@ -1336,6 +1354,11 @@ function registerWriteTools(server: McpServer) {
         if (input.items !== undefined) data.items = input.items as Prisma.InputJsonValue;
         if (input.notes !== undefined) data.notes = input.notes;
         if (input.date !== undefined) data.date = parseDateInput(input.date);
+        if (input.macros !== undefined) {
+          for (const k of MACRO_KEYS) {
+            if (input.macros[k] !== undefined) data[k] = input.macros[k];
+          }
+        }
         const updated = await prisma.nutritionLog.update({ where: { id: input.id }, data });
         return { id: updated.id, message: "Nutrition updated" };
       }),
@@ -2239,7 +2262,7 @@ function registerWriteTools(server: McpServer) {
       description:
         "Log multiple meals in one all-or-nothing transaction. " +
         "Use for bulk meal entry — a full HelloFresh week, prepped meal-prep schedule, or replaying meals from a paper log. " +
-        "Each operation has the same shape as a single log_nutrition call (mealType, items[], notes?, date?). " +
+        "Each operation has the same shape as a single log_nutrition call (mealType, items[], notes?, macros?, date?). " +
         `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
       inputSchema: {
         operations: z
