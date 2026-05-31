@@ -97,12 +97,35 @@ export function NutritionToday({
     return { mt, loggedSummary, planned: plan?.[mt] };
   }).filter((r) => r.loggedSummary || r.planned);
 
+  // Cumulative day totals. Logged meals don't store macros (only the plan
+  // does), so "so far" credits each logged slot's *planned* macros — i.e. your
+  // progress through the day's plan. "target" sums every planned slot.
+  const target = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+  const soFar = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+  for (const r of rows) {
+    const m = r.planned?.macros;
+    if (!m) continue;
+    target.calories += m.calories ?? 0;
+    target.proteinG += m.proteinG ?? 0;
+    target.carbsG += m.carbsG ?? 0;
+    target.fatG += m.fatG ?? 0;
+    if (r.loggedSummary) {
+      soFar.calories += m.calories ?? 0;
+      soFar.proteinG += m.proteinG ?? 0;
+      soFar.carbsG += m.carbsG ?? 0;
+      soFar.fatG += m.fatG ?? 0;
+    }
+  }
+  const hasPlanMacros =
+    target.calories > 0 || target.proteinG > 0 || target.carbsG > 0 || target.fatG > 0;
+
   return (
     <div className="space-y-3">
       {rows.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">Nothing planned or logged today yet.</p>
       ) : (
-        <ul className="space-y-2.5 text-sm">
+        <>
+          <ul className="space-y-2.5 text-sm">
           {rows.map(({ mt, loggedSummary, planned }) => (
             <li key={mt} className="flex gap-2">
               <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
@@ -132,7 +155,29 @@ export function NutritionToday({
               </div>
             </li>
           ))}
-        </ul>
+          </ul>
+          {hasPlanMacros && (
+            <div className="flex gap-2 border-t border-[var(--border)] pt-2.5 text-sm">
+              <span className="w-24 shrink-0 text-xs uppercase tracking-wide font-medium pt-0.5">
+                Day total
+              </span>
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <span className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-[var(--muted)] mr-1 align-middle">
+                    so far
+                  </span>
+                  <span className="tabular-nums font-medium">{formatMacros(soFar)}</span>
+                </span>
+                <span className="block text-[var(--muted)]">
+                  <span className="text-[10px] uppercase tracking-wide mr-1 align-middle">
+                    target
+                  </span>
+                  <span className="tabular-nums">{formatMacros(target)}</span>
+                </span>
+              </div>
+            </div>
+          )}
+        </>
       )}
       {showLogForm && (
         <div className="border-t border-[var(--border)] pt-3">
