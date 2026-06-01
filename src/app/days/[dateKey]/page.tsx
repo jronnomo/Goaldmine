@@ -98,15 +98,29 @@ export default async function DayDetail({
       )}
 
       {(isToday || isFuture) && r.workoutTemplate && dayBlocks.length > 0 && (
-        <Card title={`Planned workout: ${r.workoutTemplate.title}`}>
-          <p className="text-xs text-[var(--muted)] italic mb-2">{r.workoutTemplate.summary}</p>
-          <ol className="space-y-3">
-            {dayBlocks.map((block, i) => (
-              <li key={i}>
-                <BlockView block={block} index={i + (r.baselinesDue.length > 0 ? 1 : 0)} />
-              </li>
-            ))}
-          </ol>
+        <Card
+          title={
+            r.workoutDeferredForBaseline
+              ? `Deferred today — ${r.workoutTemplate.title}`
+              : `Planned workout: ${r.workoutTemplate.title}`
+          }
+        >
+          {r.workoutDeferredForBaseline && (
+            <p className="text-xs text-[var(--warning)] mb-2">
+              Baseline testing day — the tests above are your session. This workout steps aside; a
+              max-effort test is itself a hard day. Do a thorough warmup, then test.
+            </p>
+          )}
+          <div className={r.workoutDeferredForBaseline ? "opacity-60" : undefined}>
+            <p className="text-xs text-[var(--muted)] italic mb-2">{r.workoutTemplate.summary}</p>
+            <ol className="space-y-3">
+              {dayBlocks.map((block, i) => (
+                <li key={i}>
+                  <BlockView block={block} index={i + (r.baselinesDue.length > 0 ? 1 : 0)} />
+                </li>
+              ))}
+            </ol>
+          </div>
         </Card>
       )}
 

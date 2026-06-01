@@ -1071,8 +1071,8 @@ function registerReadTools(server: McpServer) {
       description:
         "Run structural + data-integrity checks over the active plan and surface findings before they bite. " +
         "Call this when reviewing a long plan, before proposing a revision, or when something on the calendar looks off. " +
-        "Checks: unanchored retests (a retest with no initial collected), retest weeks past the plan horizon, phase weeks that don't tile 1..totalWeeks, " +
-        "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), baseline tests colliding with heavy training days, " +
+        "Checks: unanchored retests (a retest with no initial collected), retest/initial weeks past the plan horizon, a retest at or before its initial week, phase weeks that don't tile 1..totalWeeks, " +
+        "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), " +
         "phantom baseline values (≤0), day overrides outside the plan range, and duplicate planned hikes on a date. " +
         "Each finding has severity 'error' (a structural invariant is broken — apply_plan_revision will refuse to write it) or 'warning' (worth fixing, non-blocking). " +
         "Read-only — fix findings via apply_plan_revision (template), update_plan_metadata (drift), update_baseline/delete_baseline (phantoms), or delete_hike (dup hikes).",

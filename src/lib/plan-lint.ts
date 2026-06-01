@@ -35,12 +35,6 @@ export type PlanMeta = {
   goalTargetDate: Date;
 };
 
-// Training categories that represent a hard session. A baseline test landing on
-// one of these in the rotation collides with real work — the user can't both
-// max-test and lift heavy on the same day. (zone2-mobility, long-endurance, and
-// rest are light enough to absorb a test.)
-const HEAVY_CATEGORIES = new Set<string>(["upper", "lower", "lower-power", "calisthenics"]);
-
 /**
  * Template-only + metadata rules. Pure (no DB) so a proposed revision snapshot
  * can be vetted before it's persisted. `error` findings represent structural
@@ -142,20 +136,10 @@ export function lintTemplate(template: ProgramTemplate, meta: PlanMeta): LintFin
     });
   }
 
-  // Rule: a baseline test sits on a heavy training day in the rotation. (warning)
-  const categoryByDay = new Map<number, string>();
-  for (const d of template.weeklySplit ?? []) categoryByDay.set(d.dayOfWeek, d.category);
-  for (const bday of template.baselineWeek ?? []) {
-    const cat = categoryByDay.get(bday.dayOfWeek);
-    if (cat && HEAVY_CATEGORIES.has(cat) && (bday.tests?.length ?? 0) > 0) {
-      findings.push({
-        rule: "baseline-on-heavy-day",
-        severity: "warning",
-        message: `Baseline tests on rotation day ${bday.dayOfWeek} ("${bday.title}") collide with a "${cat}" training day. Max-testing and heavy work on the same day undercut both.`,
-        context: { dayOfWeek: bday.dayOfWeek, category: cat, testCount: bday.tests?.length ?? 0 },
-      });
-    }
-  }
+  // (Baseline-on-heavy-day is intentionally NOT a finding: on a test day the
+  // benchmark replaces the prescribed session — resolveDay sets
+  // workoutDeferredForBaseline — so testing on an upper/lower/power rotation
+  // day is correct, not a collision.)
 
   return findings;
 }

@@ -231,6 +231,11 @@ export type ResolvedDay = {
   weekIndex: number | null;
   workoutTemplate: DayTemplate | null; // resolved (override-aware)
   isOverride: boolean;
+  // True when baseline tests are due on this rotation day and the prescribed
+  // (non-rest) session steps aside — the test IS the day's work. A max-effort
+  // benchmark is itself a hard session; you don't test AND train heavy the same
+  // day. workoutTemplate is still populated (so the UI can name what's deferred).
+  workoutDeferredForBaseline: boolean;
   nutritionText: string | null;
   nutritionPlan: NutritionPlan | null;
   mobilityText: string | null;
@@ -393,6 +398,14 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
 
   const isGoalDate = !!goal && dateKey(goal.targetDate) === dateKey(date);
 
+  // On a test day the benchmark replaces the prescribed session. Only defer a
+  // real session (not rest, not a user's explicit workout override).
+  const workoutDeferredForBaseline =
+    baselinesDue.length > 0 &&
+    !isOverride &&
+    !!workoutTemplate &&
+    workoutTemplate.category !== "rest";
+
   return {
     date: dayStart,
     dateKey: dateKey(date),
@@ -402,6 +415,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     weekIndex,
     workoutTemplate,
     isOverride,
+    workoutDeferredForBaseline,
     nutritionText: override?.nutritionText ?? null,
     nutritionPlan: parseStoredNutritionPlan(override?.nutritionPlan),
     mobilityText: override?.mobilityText ?? null,
