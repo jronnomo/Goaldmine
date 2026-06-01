@@ -1,0 +1,176 @@
+[
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item",
+    "value": "Claude can create and delete ScheduledItems for a project goal (tasks, milestones, launch steps, reviews), enabling the first plannable unit of work on any non-fitness goal.",
+    "acceptanceCriteria": [
+      "A new file `src/lib/mcp/tools/project-tools.ts` exports `registerProjectTools(server: McpServer): void`.",
+      "`registerAll` in `src/lib/mcp/tools.ts` imports and calls `registerProjectTools(server)` after `registerWriteTools`.",
+      "The existing `decodeArgsDeep` monkey-patch (applied at the top of `registerAll`) covers `schedule_item` and `delete_scheduled_item` automatically — no extra decode call needed in the new file.",
+      "`tools/list` response includes `schedule_item` with a typed Zod inputSchema: `goalId: string`, `date: DateKeyShape (yyyy-mm-dd)`, `type: string.min(1) (open enum: 'task'|'milestone'|'launch-step'|'review')`, `title: string.min(1).max(500)`, `detail?: string`, `payload?: unknown`, `externalRef?: string`.",
+      "`schedule_item` description explicitly states it is for non-fitness / project goals and NOT for logging fitness workouts, hikes, or baselines.",
+      "`tools/call schedule_item` with a valid project goalId, `date='2026-06-01'`, `type='milestone'`, `title='Submit to App Store'` creates a `ScheduledItem` row; verify via `prisma.scheduledItem.findFirst` in a Node REPL.",
+      "Date input uses `parseDateInput` (already defined in `tools.ts`) so bare `yyyy-mm-dd` is USER_TZ midnight, not UTC midnight.",
+      "Return shape: `{ id: string, goalId: string, date: string, type: string, title: string, status: 'planned', message: string }`.",
+      "`tools/list` includes `delete_scheduled_item` with `inputSchema: { id: string }`.",
+      "`delete_scheduled_item` description states it is for project goal ScheduledItems only.",
+      "`tools/call delete_scheduled_item` with a valid id hard-deletes the row; a second call returns a user-friendly error (not an unhandled Prisma throw).",
+      "`npx tsc --noEmit` passes with zero new errors.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging — the tool list changed."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts (new)",
+      "src/lib/mcp/tools.ts (import + call registerProjectTools)"
+    ],
+    "effort": "Medium",
+    "priority": "High",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models (Epic A)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-2: complete_item + update_scheduled_item",
+    "value": "Claude can mark a ScheduledItem done (completing a task or milestone) and patch its metadata (reschedule, rename, change type/status), enabling lifecycle management of project work items.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `complete_item` with `inputSchema: { id: string, completedAt?: string (ISO datetime; defaults to now in USER_TZ) }`.",
+      "`complete_item` description states it sets `status='done'` and stamps `completedAt`; clarifies it is for project goal ScheduledItems, not fitness logs.",
+      "`tools/call complete_item` with a valid ScheduledItem id sets `status='done'` and `completedAt` on the row; verify via DB query.",
+      "When `completedAt` is omitted, `completedAt` defaults to current time (using `new Date()`, not a date-only parse); when supplied as `yyyy-mm-dd`, `parseDateInput` is used so it lands at USER_TZ midnight.",
+      "Return shape: `{ id: string, status: 'done', completedAt: string (ISO), message: string }`.",
+      "`tools/list` includes `update_scheduled_item` with PATCH-style inputSchema: `{ id: string, title?: string, detail?: string, date?: DateKeyShape, status?: string, type?: string }`.",
+      "`update_scheduled_item` description clarifies it is for project goal ScheduledItems and lists editable fields.",
+      "`tools/call update_scheduled_item` with `{ id, title: 'New title' }` updates only `title`; other fields are unchanged (true PATCH, not replace-all).",
+      "If `date` is provided, it goes through `parseDateInput` → `startOfDay` to enforce USER_TZ midnight.",
+      "Calling either tool with an id that does not exist returns a user-friendly error result (not a raw Prisma `RecordNotFound` throw).",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-3: list_scheduled_items",
+    "value": "Claude can query a goal's scheduled work across any date range and filter by status, enabling 'what's planned this week', 'what milestones are still open', and milestone burn-down coaching prompts.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `list_scheduled_items` with inputSchema: `{ goalId: string, from?: DateKeyShape, to?: DateKeyShape, status?: z.enum(['planned','done','skipped']), type?: string, limit?: z.number().int().min(1).max(200).default(50) }`.",
+      "`list_scheduled_items` description explicitly states it queries ScheduledItems for project / non-fitness goals, lists filter params, and gives example use cases ('what's planned this sprint', 'open milestones', 'milestone burn-down').",
+      "When `from`/`to` are provided they are parsed via `parseDateInput` → `startOfDay`/`endOfDay` for USER_TZ correctness.",
+      "When `goalId` is provided but the goal does not exist, a user-friendly error is returned (not a raw throw).",
+      "When no filters are provided, returns the most recent `limit` items ordered by `date desc`.",
+      "When `status='planned'` is passed, only rows with `status='planned'` are returned.",
+      "Return shape: `{ count: number, items: { id, goalId, date, type, title, detail, status, completedAt, externalRef, createdAt }[] }`.",
+      "Smoke: call `list_scheduled_items` for the chewgether test goal after seeding 3 items → response `count` matches DB row count.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-4: log_metric + list_log_entries",
+    "value": "Claude can record and query LogEntry observations (MRR snapshots, download counts, milestone counts, qualitative notes) for a project goal, feeding the readiness/progress system with real data.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `log_metric` with inputSchema: `{ goalId: string, metric: z.string().min(1).describe(\"Short key, e.g. 'mrr', 'downloads', 'milestones_done'\"), value?: z.number(), text?: z.string(), date?: z.string().optional().describe('ISO datetime; default = now'), source?: z.enum(['manual','github','claude']).default('manual') }`.",
+      "`log_metric` description explicitly states it is for project / non-fitness goals, gives examples ('log MRR: metric=mrr value=450', 'log milestone completion: metric=milestones_done value=3'), and states it is NOT for fitness measurements (use log_measurement for weight/body fat).",
+      "At least one of `value` or `text` must be provided; the tool returns a user-friendly error if both are omitted.",
+      "When `date` is omitted, `createdAt`/`date` defaults to `new Date()` (current instant, not midnight).",
+      "When `date` is provided as `yyyy-mm-dd`, `parseDateInput` is used for USER_TZ correctness.",
+      "Return shape: `{ id: string, goalId: string, metric: string, value: number|null, text: string|null, date: string, source: string, message: string }`.",
+      "`tools/call log_metric` with `{ goalId, metric: 'mrr', value: 450 }` creates a LogEntry row; verify row in DB.",
+      "`tools/list` includes `list_log_entries` with inputSchema: `{ goalId: string, metric?: string, from?: z.string(), to?: z.string(), limit?: z.number().int().min(1).max(500).default(50) }`.",
+      "`list_log_entries` description states it queries LogEntry observations for project goals, explains it can filter by metric key, and gives 'list_log_entries(metric=mrr)' as an example for MRR trend.",
+      "Return shape: `{ count: number, entries: { id, goalId, date, metric, value, text, source, createdAt }[] }` ordered by `date desc`.",
+      "Smoke: `list_log_entries` for the chewgether test goal after logging 2 MRR entries → `count: 2`, entries sorted newest-first.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Medium",
+    "priority": "High",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models (Epic A)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response)",
+    "value": "When claude.ai calls get_today_plan and the active goal is a project goal, the response includes today's ScheduledItems so Claude can open coaching sessions with a grounded project view without an extra tool call.",
+    "acceptanceCriteria": [
+      "`get_today_plan` return shape gains a `todayItems` field: `{ id, type, title, status, completedAt }[]` — present for project goals (non-empty when items exist today), empty array for fitness goals (zero regression).",
+      "The query is a parallel `prisma.scheduledItem.findMany({ where: { goalId: activeGoal.id, date: { gte: todayStart, lte: todayEnd } }, orderBy: { date: 'asc' } })` added to the existing `resolveDay` call or the `get_today_plan` handler — does NOT touch `resolveDay` logic, does NOT alter existing fitness fields.",
+      "For a fitness active goal (kind='fitness'), `todayItems` is `[]` and no `ScheduledItem` query is issued (guard on `goal.kind === 'project'`).",
+      "For a project active goal (kind='project'), `todayItems` reflects actual DB rows for today in USER_TZ.",
+      "`activeGoal` field (added in Epic A) must already be present in the response; this story adds `todayItems` alongside it.",
+      "Smoke: curl `tools/call get_today_plan` with the fitness goal active → response has `todayItems: []`; after activating a test project goal and scheduling an item for today → `todayItems` has that item.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: No connector reload needed (get_today_plan is an existing tool; its return shape is additive — claude.ai does not cache output shapes)."
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (get_today_plan handler or resolveDay call site)"
+    ],
+    "effort": "Small",
+    "priority": "Medium",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models and get_today_plan activeGoal field (Epic A)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-6: Epic B integration smoke + Sprint 2 QA gate",
+    "value": "Verifies the full project tool pack end-to-end before merging to main, confirming all 7 tools are discoverable, the fitness path is untouched, and the codebase is type-clean and buildable.",
+    "acceptanceCriteria": [
+      "curl `tools/list` response includes exactly these 7 new tools: `schedule_item`, `complete_item`, `update_scheduled_item`, `delete_scheduled_item`, `list_scheduled_items`, `log_metric`, `list_log_entries`.",
+      "None of the 7 new tools appear in the fitness-focused description fields of existing tools (no name collision, no confusion).",
+      "Create a test chewgether goal via MCP (`create_goal` with `kind='project'`) — `list_goals` response includes it with `kind='project'`.",
+      "End-to-end flow: `schedule_item` (milestone) → `list_scheduled_items` (status=planned) → `complete_item` → `list_scheduled_items` (status=done) — all return correct data.",
+      "End-to-end flow: `log_metric` (metric='mrr', value=450) → `list_log_entries` (metric='mrr') → entry appears.",
+      "`get_today_plan` with the project goal active returns `todayItems` populated for today's scheduled item.",
+      "Switch active goal back to the fitness goal → `get_today_plan` returns fitness-identical output with `todayItems: []`; no fitness tool behavior changed.",
+      "`npx tsc --noEmit` passes with zero errors.",
+      "`npm run build` succeeds.",
+      "claude.ai connector reload performed; new tools visible in claude.ai's tool picker."
+    ],
+    "touches": [
+      "No code changes — QA-only story. Documents the curl commands and expected outputs as runbook for the developer."
+    ],
+    "effort": "Small",
+    "priority": "High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item",
+      "B-2: complete_item + update_scheduled_item",
+      "B-3: list_scheduled_items",
+      "B-4: log_metric + list_log_entries",
+      "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  }
+]

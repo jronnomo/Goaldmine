@@ -1,0 +1,176 @@
+[
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D1",
+    "title": "Active-context resolution: fetch active Goal in page.tsx and branch on kind",
+    "value": "Today page correctly detects whether a project goal or fitness program is active, so activating a project goal actually switches the UI to the project view instead of silently continuing to render the fitness body.",
+    "background": "C2 critical fix. src/app/page.tsx never fetches the active Goal — it calls getActiveProgram() and renders the fitness body unconditionally. When a project goal is created via create_goal(), createGoalCore() deactivates all other goals but the fitness Program record is untouched, so Today keeps rendering the fitness view. This story adds the active-Goal fetch and inserts the kind-branch routing logic. Precedence rule (must be decided and implemented here): active project goal takes priority over a lingering fitness Program — if goal.kind === 'project', render the project body; if goal.kind === 'fitness' or no active goal, render the existing Program-based body. This single precedence decision is the backbone all other D stories build on.",
+    "acceptanceCriteria": [
+      "page.tsx fetches the active Goal (prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: 'desc' }, select: { id, kind, objective, targetDate } })) in parallel with the existing getActiveProgram() call — no waterfall",
+      "When goal.kind === 'project': render a <ProjectTodayShell> placeholder (empty card with 'Project goal active — full view coming in D2') — this gates the route so D2 can fill in the real body",
+      "When goal.kind === 'fitness' or goal is null: the existing fitness Today body renders byte-identical to before this change — no behavior delta for fitness path",
+      "When goal is null and program is null: the existing NoActiveProgram card is shown — unchanged",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) and npm run lint is clean",
+      "npm run build succeeds",
+      "Browser smoke at 390px: toggling between a fitness goal active and a project goal active routes to the correct body",
+      "The precedence rule (project goal wins over a lingering Program) is implemented and documented in an inline code comment"
+    ],
+    "touches": [
+      "src/app/page.tsx"
+    ],
+    "effort": "S",
+    "priority": "P0",
+    "dependsOn": ["Epic A — Generic data spine (Goal.kind column must exist)"],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "This is the gate story. All other D stories depend on it. The <ProjectTodayShell> placeholder is intentionally minimal — D2 replaces it. Keep the fitness path byte-identical: do NOT refactor, extract, or rename anything in the fitness render branch."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D2",
+    "title": "Project Today body: ScheduledItems + LogEntry MRR + next milestone + recent commits",
+    "value": "When a project goal is active, the Today page shows actionable context for the day: what's scheduled, current MRR progress toward the goal target, the next upcoming milestone, and recent GitHub commits — giving the same 'what do I do today' answer that the fitness body gives for workouts.",
+    "background": "Implements the full project Today body that D1's <ProjectTodayShell> placeholder reserved space for. Queries Epic B/C data: ScheduledItem (today's items), LogEntry (latest log:mrr value), ScheduledItem milestones (next incomplete one by date), and optionally GitHub commits via the get_project_overview data. The component is a new server component <ProjectTodayView> that replaces the placeholder. The fitness body is entirely untouched.",
+    "acceptanceCriteria": [
+      "When goal.kind === 'project': Today renders <ProjectTodayView> instead of the placeholder card",
+      "ProjectTodayView shows today's ScheduledItems (status=planned, date=today in USER_TZ) as a task list — each item shows title, type badge, and a 'done' affordance linking to the day page",
+      "ProjectTodayView shows a progress card with: the latest log:mrr LogEntry value (or '—' if none) vs the goal target from goal.targets, formatted as '$X / $Y MRR'",
+      "ProjectTodayView shows the next upcoming incomplete milestone (earliest ScheduledItem with type='milestone' and status='planned' after today) — title + due date + days-remaining",
+      "When no ScheduledItems exist for today: renders an empty-state card ('Nothing scheduled today — ask Claude to schedule items for this goal')",
+      "When no log:mrr entries exist: MRR card shows '— / $Y' without crashing",
+      "When no upcoming milestones exist: milestone card is hidden",
+      "Fitness Today path is byte-identical to before (git diff on the fitness render branch is empty)",
+      "All date queries use startOfDay/endOfDay from @/lib/calendar (USER_TZ-aware) — no raw Date comparisons",
+      "Renders correctly at 390px — mobile-first layout",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/components/ProjectTodayView.tsx (new)"
+    ],
+    "effort": "M",
+    "priority": "P1",
+    "dependsOn": ["D1 (active-context resolution must be in place)", "Epic A (ScheduledItem + LogEntry tables)", "Epic B (project MCP tool pack — ScheduledItems + LogEntries must be writable before this view is useful, though the view itself only reads)"],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "Do not add a GitHub commit feed in this story if it requires Epic C to be complete — gate it behind a conditional import or leave it as a follow-on. The core value is ScheduledItems + MRR + milestone. Keep the component a pure server component (no 'use client')."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D3",
+    "title": "Calendar legend: add 'scheduled-item' kind to LegendKindSchema + MarkerIcon variant + CalendarMonth render branch",
+    "value": "ScheduledItems from project goals become visible as markers on the calendar — closing the C3 three-file gap that would otherwise produce silent no-renders when a project goal's legend includes a 'scheduled-item' entry.",
+    "background": "C3 critical fix. LegendKindSchema in src/lib/legend.ts is a closed Zod enum. Adding 'scheduled-item' requires all three files: legend.ts (enum + MCP tool description), CalendarMonth.tsx (render branch in markersFor()), and MarkerIcon.tsx (render branch if needed — currently 'trained' has a special SVG branch; all others fall through to the icon string span, which is sufficient for 'scheduled-item'). The calendar's getCalendarMonth in calendar.ts already fetches the active Goal but does NOT select 'kind' — that compile error must also be fixed here (W1 fix). The ScheduledItem calendar query itself (D4) is a separate story — this story only adds the rendering infrastructure so that when D4 supplies scheduledItemCount on CalendarDayCell, the calendar can render it.",
+    "acceptanceCriteria": [
+      "src/lib/legend.ts: 'scheduled-item' is added to LegendKindSchema z.enum([...]) — the enum is extended, not replaced",
+      "src/lib/legend.ts: the MCP tool description on LegendKindSchema.describe() is updated to document 'scheduled-item' as a valid kind",
+      "src/components/MarkerIcon.tsx: 'scheduled-item' kind renders correctly — the existing icon-string span branch handles it (no SVG special-case needed unless desired); confirm no runtime crash for this kind",
+      "src/components/CalendarMonth.tsx: markersFor() gains a branch that pushes 'scheduled-item' when cell.scheduledItemCount > 0 (the field is added to CalendarDayCell type but returns 0 until D4 wires the query — this is intentional; render branch is present but dormant)",
+      "src/lib/calendar.ts: getCalendarMonth's goal select gains kind: true (W1 fix) — TypeScript strict-mode compile no longer errors on goal?.kind",
+      "src/lib/calendar.ts: CalendarDayCell type gains scheduledItemCount: number field (default 0)",
+      "DEFAULT_LEGEND in legend.ts does NOT include 'scheduled-item' — fitness goals that fall through to the default are unchanged",
+      "Existing fitness goal calendar: all six existing kinds (trained, hike-completed, hike-planned, override, goal-date, baseline) render byte-identical to before — regression-check markersFor() output",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) — the kind: true addition to the goal select must eliminate the W1 type error",
+      "npm run build succeeds",
+      "Browser smoke at 390px: calendar with an active fitness goal shows identical markers to before"
+    ],
+    "touches": [
+      "src/lib/legend.ts",
+      "src/components/CalendarMonth.tsx",
+      "src/components/MarkerIcon.tsx",
+      "src/lib/calendar.ts"
+    ],
+    "effort": "S",
+    "priority": "P1",
+    "dependsOn": ["D1 (active-context resolution establishes the goal.kind pattern; D3 may land in parallel if Epic A is done, but D1 is the logical predecessor for review)"],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "MarkerIcon already handles all non-'trained' kinds with a generic icon-string <span> — 'scheduled-item' gets that same treatment by default. Only add a special branch if a distinct icon behavior is explicitly desired. The scheduledItemCount field on CalendarDayCell stays at 0 until D4 adds the DB query — this is by design (render infrastructure first, data second)."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D4",
+    "title": "Calendar ScheduledItem source: query ScheduledItems in getCalendarMonth and populate scheduledItemCount on cells",
+    "value": "ScheduledItem markers actually appear on the calendar for project goals — completing the C3 fix by wiring the data query that D3's render infrastructure is waiting for.",
+    "background": "D3 added the render branch and CalendarDayCell.scheduledItemCount field, but that field is hard-coded to 0. This story adds the DB query inside getCalendarMonth: when goal.kind === 'project', query ScheduledItems in the grid date range for that goalId, bucket them by date key, and populate scheduledItemCount on each cell. The fitness path is gated: when goal.kind !== 'project' (or goal is null), the ScheduledItem query is skipped entirely — no extra DB call for fitness users. This preserves the override-baseline safety pattern established in the existing calendar code.",
+    "acceptanceCriteria": [
+      "getCalendarMonth in src/lib/calendar.ts adds a ScheduledItem query to its Promise.all block, gated on goal?.kind === 'project'",
+      "The ScheduledItem query fetches all items where goalId = goal.id AND date is within the grid range (gridStart..gridEnd) AND status IN ('planned', 'done') — select id, date, status, type",
+      "scheduledItemCount on each CalendarDayCell is the count of ScheduledItems for that dateKey (planned + done combined)",
+      "When goal.kind !== 'project' or goal is null: scheduledItemCount is 0 for all cells and no ScheduledItem DB query is issued",
+      "Fitness calendar: all existing fields (workoutCount, hikeCount, plannedHikeCount, hasOverride, baselinesDue, isGoalDate) are byte-identical to before — no behavior delta",
+      "Date bucketing uses dateKey() from @/lib/calendar (USER_TZ-aware) — same pattern as workoutsByKey and hikesByKey",
+      "Browser smoke at 390px with an active project goal: cells with ScheduledItems show the 'scheduled-item' legend marker",
+      "Browser smoke at 390px with an active fitness goal: calendar is byte-identical to before D3/D4",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/lib/calendar.ts"
+    ],
+    "effort": "S",
+    "priority": "P1",
+    "dependsOn": ["D3 (CalendarDayCell.scheduledItemCount field + render branch must exist)", "Epic A (ScheduledItem table must exist)", "Epic B (ScheduledItems must be writable for the query to return data during smoke testing)"],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "The goal.kind guard is critical. Do NOT query ScheduledItem unconditionally — the fitness path must make zero new DB calls. Mirror the pattern used for overrides: `program?.id ? prisma.planDayOverride.findMany(...) : Promise.resolve([])`."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D5",
+    "title": "Project Plan view: phases + milestones page at /goals/[id]/plan for project goals",
+    "value": "A project goal's plan is visible as a phase/milestone timeline instead of the fitness weeklySplit rotation — giving the user and Claude a shared visual of what's been scheduled and what's upcoming.",
+    "background": "The existing /goals/[id]/plan route (linked from the GoalDetail page's 'Full plan →' link) renders a fitness PlanOverview. For project goals, the Plan table's planJson may be minimal or absent — the meaningful structure is in ScheduledItems (milestones, launch steps, tasks). This story adds a kind-branch in the /goals/[id]/plan route: if goal.kind === 'project', render a <ProjectPlanView> that groups ScheduledItems by month or phase, showing status (planned/done/skipped), type badge, and completedAt. If goal.kind === 'fitness', the existing plan page is byte-identical. The fitness path must not be touched.",
+    "acceptanceCriteria": [
+      "src/app/goals/[id]/plan/page.tsx: fetches goal.kind in addition to the existing plan data",
+      "When goal.kind === 'project': renders <ProjectPlanView> — a server component that queries ScheduledItems for the goalId, ordered by date asc",
+      "ProjectPlanView groups items visually by month (heading: 'June 2026', etc.) with each item showing: type badge (milestone / task / launch-step / review), title, status icon (planned=open circle, done=filled circle, skipped=strikethrough), and due date",
+      "ProjectPlanView shows a summary line: 'X of Y milestones complete' (count of type='milestone' items with status='done' vs total)",
+      "When no ScheduledItems exist: renders an empty-state card ('No items scheduled yet — ask Claude to schedule milestones for this goal')",
+      "When goal.kind === 'fitness': the page renders byte-identical to before — the existing PlanOverview component is shown unchanged",
+      "Renders correctly at 390px",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/goals/[id]/plan/page.tsx",
+      "src/components/ProjectPlanView.tsx (new)"
+    ],
+    "effort": "M",
+    "priority": "P2",
+    "dependsOn": ["D1 (active-context pattern established)", "Epic A (ScheduledItem table)", "Epic B (ScheduledItems writable)"],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "Check whether src/app/goals/[id]/plan/page.tsx already exists (the GoalDetail page links to it). If it does not exist yet, create it. If it exists as a fitness-only page, add the kind-branch. Keep ProjectPlanView a pure server component."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D6",
+    "title": "Project Progress view: log:* metric readiness + milestone burn-down on stats and progress pages",
+    "value": "The Stats and Progress pages show meaningful readiness charts and a milestone burn-down for project goals — so 'how am I tracking toward $1k MRR?' is answerable from the dashboard without coaching.",
+    "background": "stats/page.tsx and progress/page.tsx both call computeReadiness(targets) and computeReadinessSeries(g.createdAt, targets) without passing goalId. The C1 fix (Epic A story) adds goalId as a required param to those functions and updates all call sites. This story assumes C1 is done and builds on it: for project goals with log:mrr or log:* targets, the readiness chart already works (via the log:* resolver from Epic A). This story adds a milestone burn-down card on the progress page: a simple list or chart of ScheduledItem milestones (type='milestone') showing done-count over time using completedAt dates. The fitness readiness display on both pages must be byte-identical to before.",
+    "acceptanceCriteria": [
+      "src/app/progress/page.tsx: adds a milestone burn-down card for any active goal that has ScheduledItems with type='milestone'",
+      "Burn-down card shows: total milestone count, done count, remaining count, and the next upcoming milestone (earliest status='planned' by date)",
+      "Burn-down card is gated on goal.kind === 'project' AND scheduledMilestoneCount > 0 — fitness goals do not see this card",
+      "src/app/stats/page.tsx: no new project-specific card required in this story — the existing readiness chart already handles log:* metrics once C1's goalId fix is in place; this acceptance criterion confirms the stats page renders correctly for a project goal with log:mrr targets",
+      "For fitness goals: stats/page.tsx and progress/page.tsx render byte-identical to before (readiness chart, weight card, totals card, records summary all unchanged)",
+      "The milestone burn-down query is gated (only runs when goal.kind === 'project') — no extra DB calls for fitness users",
+      "Renders correctly at 390px",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) — in particular, the computeReadiness / computeReadinessSeries calls must pass goalId (inherited from C1 fix in Epic A)",
+      "npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/progress/page.tsx",
+      "src/app/stats/page.tsx (verify only — may require no changes if C1 is complete)",
+      "src/components/MilestoneBurnDown.tsx (new, optional — may be inline)"
+    ],
+    "effort": "M",
+    "priority": "P2",
+    "dependsOn": [
+      "D1 (active-context resolution)",
+      "Epic A — C1 goalId cascade fix (computeReadiness + computeReadinessSeries must accept goalId before this story can compile cleanly)",
+      "Epic A (LogEntry table for log:* metrics)",
+      "Epic B (log_goal_metric tool must exist for data to be present during smoke)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "The C1 fix lives in Epic A. This story's acceptance criteria include a compile check that the call sites in stats/page.tsx and progress/page.tsx pass goalId correctly — if the C1 story was built correctly, there should be no compile errors here. If there are, fix them in this story and note the delta. Do not change readiness.ts — that belongs to Epic A."
+  }
+]

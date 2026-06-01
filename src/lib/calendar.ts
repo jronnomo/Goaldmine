@@ -194,12 +194,14 @@ function countBaselinesDueForCell(program: ActiveProgramSnapshot, weekIndex: num
   if (!day) return 0;
   let count = 0;
   for (const t of day.tests) {
-    // Initial test = week 1; retests at retestWeeks.
-    if (weekIndex === 1) {
+    // Initial test = the test's first-collection week (default 1); retests at
+    // retestWeeks beyond it.
+    const initialWeek = t.initialWeek ?? 1;
+    if (weekIndex === initialWeek) {
       count += 1;
       continue;
     }
-    if (t.retestWeeks?.includes(weekIndex)) count += 1;
+    if (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex)) count += 1;
   }
   return count;
 }
@@ -229,6 +231,11 @@ export type ResolvedDay = {
   weekIndex: number | null;
   workoutTemplate: DayTemplate | null; // resolved (override-aware)
   isOverride: boolean;
+  // True when baseline tests are due on this rotation day and the prescribed
+  // (non-rest) session steps aside — the test IS the day's work. A max-effort
+  // benchmark is itself a hard session; you don't test AND train heavy the same
+  // day. workoutTemplate is still populated (so the UI can name what's deferred).
+  workoutDeferredForBaseline: boolean;
   nutritionText: string | null;
   nutritionPlan: NutritionPlan | null;
   mobilityText: string | null;
@@ -369,17 +376,19 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
           const loggedOnDate = result
             ? { id: result.id, value: result.value, units: result.units, date: result.date }
             : null;
-          // Rotation default: week 1 surfaces initials, retestWeeks trigger
-          // retests, all else is silent. With an override, the user has
-          // explicitly placed these tests on this date — bypass the week
-          // filter entirely (a deferred "initial" can land outside week 1).
+          // Rotation default: the test's initialWeek (default 1) surfaces the
+          // initial, retestWeeks beyond it trigger retests, all else is silent.
+          // With an override, the user has explicitly placed these tests on this
+          // date — bypass the week filter entirely (a deferred "initial" can
+          // land outside its scheduled week).
+          const initialWeek = test.initialWeek ?? 1;
           const checkpoint: "initial" | "retest" =
-            test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+            weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
           if (overrideNames !== null) {
             baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
-          } else if (weekIndex === 1) {
+          } else if (weekIndex === initialWeek) {
             baselinesDue.push({ test, baselineDay, checkpoint: "initial", loggedOnDate });
-          } else if (test.retestWeeks?.includes(weekIndex)) {
+          } else if (weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex)) {
             baselinesDue.push({ test, baselineDay, checkpoint: "retest", loggedOnDate });
           }
         }
@@ -388,6 +397,14 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
   }
 
   const isGoalDate = !!goal && dateKey(goal.targetDate) === dateKey(date);
+
+  // On a test day the benchmark replaces the prescribed session. Only defer a
+  // real session (not rest, not a user's explicit workout override).
+  const workoutDeferredForBaseline =
+    baselinesDue.length > 0 &&
+    !isOverride &&
+    !!workoutTemplate &&
+    workoutTemplate.category !== "rest";
 
   return {
     date: dayStart,
@@ -398,6 +415,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     weekIndex,
     workoutTemplate,
     isOverride,
+    workoutDeferredForBaseline,
     nutritionText: override?.nutritionText ?? null,
     nutritionPlan: parseStoredNutritionPlan(override?.nutritionPlan),
     mobilityText: override?.mobilityText ?? null,
@@ -494,7 +512,10 @@ export function rotationBaselineNamesForDate(
   const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
   if (!baselineDay) return [];
   return baselineDay.tests
-    .filter((t) => weekIndex === 1 || t.retestWeeks?.includes(weekIndex))
+    .filter((t) => {
+      const initialWeek = t.initialWeek ?? 1;
+      return weekIndex === initialWeek || (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex));
+    })
     .map((t) => t.testName);
 }
 

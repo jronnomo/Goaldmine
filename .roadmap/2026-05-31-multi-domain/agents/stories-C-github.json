@@ -1,0 +1,136 @@
+[
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-1",
+    "title": "registerGitHubTools scaffold + link_github_project tool",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0",
+    "effort": "Small",
+    "value": "Establishes the GitHub tool pack module and lets Claude bind a goal to a GitHub repo+project in one call; prerequisite for all other C stories.",
+    "dependsOn": ["A-1 (Goal.githubRepo + Goal.githubProjectNumber fields exist in schema)", "B-1 (registerProjectTools pattern — follow same module structure)"],
+    "touches": [
+      "src/lib/mcp/tools.ts — add registerGitHubTools(server) helper; call it from registerAll() after registerProjectTools()",
+      "src/lib/mcp/github-tools.ts (new file) — OR inline in tools.ts following existing functional split; implement link_github_project",
+      ".env.local — document GITHUB_TOKEN variable (add comment, never commit value)",
+      "src/app/api/mcp/route.ts — no change needed; registerAll already called"
+    ],
+    "acceptanceCriteria": [
+      "registerGitHubTools(server) is called from registerAll() in tools.ts; curl tools/list returns all 5 GitHub tools by name.",
+      "link_github_project(goalId, repo, projectNumber?) writes Goal.githubRepo and Goal.githubProjectNumber via prisma.goal.update; get_goal after the call returns the new field values.",
+      "repo input validated with z.string().regex(/^[\\w.-]+\\/[\\w.-]+$/) — rejects bare repo names or full URLs.",
+      "If goalId does not exist, tool returns errorResult (not a 500); error message does NOT contain process.env.GITHUB_TOKEN.",
+      "GITHUB_TOKEN is loaded from process.env inside the handler; it is never present in any jsonResult or errorResult payload — verified by inspecting all return paths.",
+      "If GITHUB_TOKEN env var is absent, link_github_project still succeeds (it only writes to DB; no GitHub API call is made in this tool).",
+      "tsc --noEmit and npm run build pass with no new errors.",
+      "Connector reload note: after merging, reload the claude.ai MCP connector so the new tools appear."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-2",
+    "title": "get_project_overview read tool — REST + GraphQL, rate-limit header, token sanitization",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0",
+    "effort": "Medium",
+    "value": "Gives Claude a one-call snapshot of the linked repo (open issues, PRs, milestones with due dates, recent commits, optional Projects v2 board columns) to drive coaching without requiring multiple back-and-forth tool calls.",
+    "dependsOn": ["C-1 (registerGitHubTools scaffold, Goal.githubRepo readable)", "A-1 (Goal.githubRepo field)"],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) — implement get_project_overview",
+      "No new npm dependencies — all fetches via native fetch + Authorization: Bearer header"
+    ],
+    "acceptanceCriteria": [
+      "get_project_overview(goalId) resolves Goal.githubRepo; if field is null or goal not found, returns errorResult('No GitHub repo linked — call link_github_project first.').",
+      "Makes the following GitHub API calls in parallel where safe (repo metadata, open issues count, milestones, recent commits, open PRs) — all via REST GET to https://api.github.com except the optional Projects v2 GraphQL call.",
+      "If Goal.githubProjectNumber is set, makes exactly ONE GraphQL POST to https://api.github.com/graphql for Projects v2 board columns; if not set, projectBoard is null in the response.",
+      "Returns the documented shape: { repo, defaultBranch, openIssues, openPRs, milestones: [{number,title,dueOn,openIssues,closedIssues,state}], recentCommits: [{sha,message,date,author}] (last 5), projectBoard?: {columns:[{name,cardCount}]}|null, rateLimitRemaining: number }.",
+      "rateLimitRemaining is extracted from the X-RateLimit-Remaining response header of any REST call and included in the jsonResult — allows Claude to self-moderate on heavy sessions.",
+      "Token sanitization: a safeGitHub(fn) helper (or equivalent pattern) wraps all GitHub fetch logic; any error thrown inside is caught, and the message is sanitized with message.replaceAll(process.env.GITHUB_TOKEN ?? 'REDACTED', '[REDACTED]') before being passed to errorResult. The generic safe() wrapper is NOT relied upon for this sanitization.",
+      "If the repo is private/inaccessible or the token is wrong, tool returns a sanitized errorResult (not a 500); the raw GitHub 401/403/404 body is sanitized before surfacing.",
+      "GITHUB_TOKEN is never present in any jsonResult field — verified by grepping the returned JSON for the actual token value in a smoke test.",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload required after merge."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-3",
+    "title": "list_project_issues read tool — paginated, state/label/milestone filters",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P1",
+    "effort": "Small",
+    "value": "Lets Claude enumerate issues by state, label, or milestone for sprint planning and weekly review — granular view beyond the counts in get_project_overview.",
+    "dependsOn": ["C-2 (safeGitHub sanitization helper established, GITHUB_TOKEN pattern set)"],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) — add list_project_issues"
+    ],
+    "acceptanceCriteria": [
+      "list_project_issues(goalId, state?, label?, milestone?, limit?) resolves Goal.githubRepo; returns errorResult if not linked.",
+      "state defaults to 'open'; accepted values are 'open' | 'closed' | 'all' (Zod enum, rejects other strings).",
+      "label and milestone are optional strings passed as GET query params to GET /repos/{owner}/{repo}/issues.",
+      "limit defaults to 30, max 100; Zod enforces z.number().int().min(1).max(100).default(30).",
+      "Returns { count: number, issues: [{ number, title, state, labels: string[], milestone: string|null, createdAt, updatedAt, url }] }.",
+      "Token sanitization: uses the same safeGitHub pattern established in C-2; GITHUB_TOKEN absent from all returned fields.",
+      "Inaccessible repo or bad token returns sanitized errorResult (not 500).",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload note."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-4",
+    "title": "sync_github_milestones — idempotent UTC→USER_TZ upsert to ScheduledItem",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0",
+    "effort": "Medium",
+    "value": "Mirrors GitHub milestones into the ScheduledItem table so Claude and the UI can reason about the project timeline without making a live GitHub call on every coaching turn.",
+    "dependsOn": [
+      "C-1 (link_github_project — Goal.githubRepo must be set)",
+      "B-1 (ScheduledItem table + @@unique([goalId,externalRef]) constraint exist from Epic A/B; schedule_item write path available as a pattern)",
+      "A-1 (ScheduledItem schema with externalRef + @@unique constraint)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) — add sync_github_milestones",
+      "Uses prisma.scheduledItem.upsert — imports from @/lib/db",
+      "Uses parseDateKey + startOfDay from @/lib/calendar for UTC→USER_TZ date bucketing"
+    ],
+    "acceptanceCriteria": [
+      "sync_github_milestones(goalId, closeCompleted?) fetches all milestones from GET /repos/{owner}/{repo}/milestones?state=open (and optionally state=closed when closeCompleted=true) via the GitHub REST API.",
+      "For each milestone, externalRef is set to 'gh:milestone:<milestone_number>' (e.g. 'gh:milestone:3').",
+      "Upsert logic: prisma.scheduledItem.upsert({ where: { goalId_externalRef: { goalId, externalRef } }, update: { title, detail, date, payload }, create: { goalId, externalRef, type: 'milestone', title, detail, date, payload, status: 'planned' } }). Re-running creates 0 new rows — idempotency verified by running twice and comparing count before/after.",
+      "UTC date bucketing: GitHub milestone due_on is an ISO string (e.g. '2026-06-15T07:00:00Z'). The due date is extracted as due_on.slice(0, 10) (the yyyy-mm-dd portion) and passed through startOfDay(parseDateKey(dateStr)) from @/lib/calendar. Never use new Date(due_on) directly — this would produce a UTC midnight, which is yesterday in MT.",
+      "Milestones with no due_on (null) are synced with date set to a sentinel far-future date (e.g. new Date('2099-12-31')) or skipped — decision must be made explicit in the implementation (not left to chance). Document in code comment.",
+      "payload field on each ScheduledItem stores the raw GitHub milestone object (number, title, description, due_on, open_issues, closed_issues, state) as Json.",
+      "Returns { synced: number, updated: number, skipped: number, items: [{ externalRef, title, date: string }] }.",
+      "If closeCompleted is true, milestones in GitHub state='closed' are upserted with status='done' and completedAt set to the GitHub milestone's closed_at timestamp.",
+      "Token sanitization: uses safeGitHub pattern; GITHUB_TOKEN absent from all returned fields and error messages.",
+      "tsc --noEmit and npm run build pass.",
+      "Smoke test: call sync_github_milestones twice in a row; second call returns synced=0 new rows (idempotency confirmed); existing ScheduledItems are updated, not duplicated.",
+      "Connector reload note."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-5",
+    "title": "set_github_issue_status light write — open/close a GitHub issue",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P2",
+    "effort": "Small",
+    "value": "Lets Claude close or reopen a GitHub issue from the coaching session without leaving claude.ai — supports triage and done-marking after a weekly review.",
+    "dependsOn": ["C-1 (link_github_project, Goal.githubRepo, safeGitHub pattern)", "C-2 (safeGitHub sanitization helper)"],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) — add set_github_issue_status"
+    ],
+    "acceptanceCriteria": [
+      "set_github_issue_status(goalId, issueNumber, state) resolves Goal.githubRepo; returns errorResult if not linked.",
+      "state is z.enum(['open','closed']); issueNumber is z.number().int().positive().",
+      "Calls PATCH /repos/{owner}/{repo}/issues/{issue_number} with { state } in the JSON body and Authorization: Bearer GITHUB_TOKEN header.",
+      "On GitHub 200, returns { issueNumber, title, state, url, message: 'Issue #N is now <state>.' }.",
+      "On GitHub 404 (issue not found), returns sanitized errorResult('Issue #N not found in <repo>.').",
+      "On GitHub 403/401 (token insufficient or private repo), returns sanitized errorResult with no token in message.",
+      "Token sanitization: uses safeGitHub pattern; GITHUB_TOKEN absent from all returned fields.",
+      "Attempting to close an already-closed issue (GitHub returns 200 with state=closed) is not an error — tool returns success.",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload note."
+    ]
+  }
+]

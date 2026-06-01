@@ -1,0 +1,1010 @@
+[
+  {
+    "epic": "Generic data spine",
+    "title": "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration",
+    "value": "so that all subsequent epics have the DB tables and Goal columns they need to build on, with zero disruption to existing fitness data",
+    "acceptanceCriteria": [
+      "prisma/schema.prisma adds Goal.kind String @default(\"fitness\") with @@index([kind])",
+      "prisma/schema.prisma adds Goal.githubRepo String? and Goal.githubProjectNumber Int? as nullable columns",
+      "prisma/schema.prisma adds the ScheduledItem model exactly as specified in plan-blueprint.md \u00a71b: id, goalId FK (onDelete Cascade), date DateTime, type String, title String, detail String?, payload Json?, status String @default(\"planned\"), completedAt DateTime?, externalRef String?, createdAt, updatedAt \u2014 with @@index([goalId,date]), @@index([goalId,status]), @@unique([goalId,externalRef])",
+      "prisma/schema.prisma adds the LogEntry model exactly as specified in plan-blueprint.md \u00a71c: id, goalId FK (onDelete Cascade), date DateTime, metric String, value Float?, text String?, payload Json?, source String?, createdAt \u2014 with @@index([goalId,metric,date]) and @@index([goalId,date])",
+      "Goal model gains a scheduledItems ScheduledItem[] and logEntries LogEntry[] relation field",
+      "Migration additive: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datasource prisma/schema.prisma (against pre-change snapshot) shows only CREATE TABLE and ALTER TABLE ... ADD COLUMN \u2014 no DROP, no ALTER TYPE",
+      "npx prisma migrate dev --name multi-domain-spine runs without error against the Neon DB",
+      "npx prisma generate succeeds and src/generated/prisma contains ScheduledItem and LogEntry types",
+      "npx tsc --noEmit passes (no new type errors introduced)",
+      "npm run build passes",
+      "Existing Goal rows have kind='fitness' by default \u2014 verified via prisma studio or a quick SELECT"
+    ],
+    "touches": [
+      "prisma/schema.prisma",
+      "prisma/migrations/<timestamp>_multi_domain_spine/migration.sql"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Add required goalId param to computeReadiness and computeReadinessSeries and update all 5 call sites so fitness readiness stays byte-identical",
+    "value": "so that log:* metrics (added in the next story) are scoped to the correct goal and cannot cross-contaminate a fitness goal's readiness score with another goal's LogEntry rows",
+    "acceptanceCriteria": [
+      "computeReadiness signature changes to: computeReadiness(targets: GoalTarget[], asOf: Date = new Date(), goalId: string) \u2014 goalId is REQUIRED (not optional) to prevent silent fallback to no-filter",
+      "computeReadinessSeries signature changes to: computeReadinessSeries(goalCreatedAt: Date, targets: GoalTarget[], now: Date = new Date(), goalId: string) \u2014 goalId REQUIRED",
+      "computeReadiness passes goalId through to resolveMetricValue on every call inside its targets loop",
+      "computeReadinessSeries passes goalId through to computeReadiness on every recursive cursor call",
+      "resolveMetricValue signature changes to: resolveMetricValue(prisma, metric, asOf, goalId: string) \u2014 REQUIRED param; existing fitness metric branches (weightLb, baseline:*, hike:*, workout:count) accept but ignore goalId \u2014 their DB queries are unchanged",
+      "resolveMetricStart signature changes to: resolveMetricStart(prisma, metric, goalId: string) \u2014 REQUIRED; existing branches ignore it",
+      "stats/page.tsx: computeReadiness(targets) call at line 39 updated to computeReadiness(targets, undefined, g.id); computeReadinessSeries(g.createdAt, targets) at line 40 updated to computeReadinessSeries(g.createdAt, targets, undefined, g.id)",
+      "progress/page.tsx: same two call sites (lines 37-38) updated identically with g.id",
+      "goals/[id]/page.tsx: computeReadiness(targets) at line 80 updated to computeReadiness(targets, undefined, goal.id)",
+      "npx tsc --noEmit passes with zero errors \u2014 TypeScript strict-mode errors on all missing goalId arguments are the compiler signal that no call site was missed",
+      "npm run build passes",
+      "Browser smoke: /stats and /progress pages load and display the existing fitness goal's readiness score identically to before this change \u2014 score value unchanged, breakdown identical"
+    ],
+    "touches": [
+      "src/lib/readiness.ts",
+      "src/lib/goal-targets.ts",
+      "src/app/stats/page.tsx",
+      "src/app/progress/page.tsx",
+      "src/app/goals/[id]/page.tsx"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor, and register log:mrr and log:milestones_done in the METRICS registry",
+    "value": "so that project-goal targets like log:mrr and log:milestones_done are scoreable by the readiness engine with correct historical fidelity, and fitness readiness is byte-identical",
+    "acceptanceCriteria": [
+      "resolveMetricValue: new branch for metric.startsWith(\"log:\") executes a prisma.logEntry.findFirst({ where: { goalId, metric: key, date: { lte: asOf }, value: { not: null } }, orderBy: { date: \"desc\" } }) and returns entry?.value ?? null \u2014 goalId is used in the WHERE clause",
+      "resolveMetricStart: new branch for metric.startsWith(\"log:\") returns 0 immediately (build-from-zero start, same as hike:* and workout:count)",
+      "progressFor: build-from-zero guard updated to also match target.metric.startsWith(\"log:\") \u2014 the three conditions are: hike:*, workout:count, log:* \u2014 existing fitness conditions unchanged",
+      "METRICS array in goal-targets.ts gains exactly two new entries: { id: \"log:mrr\", label: \"Monthly recurring revenue\", units: \"$\", direction: \"increase\", description: \"Latest MRR snapshot from a LogEntry.\" } and { id: \"log:milestones_done\", label: \"Milestones completed\", units: \"milestones\", direction: \"increase\", description: \"Count of completed milestones, logged via log_metric.\" }",
+      "For a fitness goal (no log:* targets): computeReadiness output is byte-identical \u2014 verified by calling the function with the existing Mt. Elbert targets and confirming score and breakdown are unchanged",
+      "For a project goal with a log:mrr target: computeReadiness returns progress=0 when no LogEntry rows exist (start=0, current=null \u2192 null progress), and returns correct fractional progress when a LogEntry(metric=\"mrr\",value=500) exists against a target of 1000",
+      "No new LogEntry table query is executed for any fitness metric branch (weightLb, baseline:*, hike:*, workout:count) \u2014 only the log:* branch queries LogEntry",
+      "npx tsc --noEmit passes",
+      "npm run build passes"
+    ],
+    "touches": [
+      "src/lib/goal-targets.ts",
+      "src/lib/readiness.ts"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration",
+      "Add required goalId param to computeReadiness and computeReadinessSeries and update all 5 call sites so fitness readiness stays byte-identical"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools",
+    "value": "so that Claude can route to the correct tool pack from the very first turn of a session, without needing a separate get_goal call",
+    "acceptanceCriteria": [
+      "create_goal tool input schema gains a kind field: z.enum([\"fitness\", \"project\"]).default(\"fitness\").describe(\"Goal domain; determines which tool pack Claude uses. fitness = workout/hike/baseline tools; project = schedule_item/log_metric/GitHub tools.\") \u2014 persisted to Goal.kind on create",
+      "list_goals tool response includes kind in each goal object alongside the existing id, objective, targetDate, status, active fields",
+      "get_today_plan tool response gains an activeGoal field: { id: string, kind: string, objective: string, githubRepo: string | null } \u2014 populated from prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: \"desc\" } }); null if no active goal",
+      "Existing fitness goal created without kind defaults to kind=\"fitness\" \u2014 verified by calling create_goal without kind and confirming the stored row has kind=\"fitness\"",
+      "curl smoke: tools/call get_today_plan returns activeGoal.kind=\"fitness\" for the existing Mt. Elbert goal",
+      "curl smoke: tools/call list_goals returns kind for each goal in the array",
+      "curl smoke: tools/call create_goal with kind=\"project\" stores kind=\"project\" (verify via get_goal)",
+      "npx tsc --noEmit passes",
+      "npm run build passes",
+      "MCP connector reload in claude.ai required after merge \u2014 noted in PR/commit message"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item",
+    "value": "Claude can create and delete ScheduledItems for a project goal (tasks, milestones, launch steps, reviews), enabling the first plannable unit of work on any non-fitness goal.",
+    "acceptanceCriteria": [
+      "A new file `src/lib/mcp/tools/project-tools.ts` exports `registerProjectTools(server: McpServer): void`.",
+      "`registerAll` in `src/lib/mcp/tools.ts` imports and calls `registerProjectTools(server)` after `registerWriteTools`.",
+      "The existing `decodeArgsDeep` monkey-patch (applied at the top of `registerAll`) covers `schedule_item` and `delete_scheduled_item` automatically \u2014 no extra decode call needed in the new file.",
+      "`tools/list` response includes `schedule_item` with a typed Zod inputSchema: `goalId: string`, `date: DateKeyShape (yyyy-mm-dd)`, `type: string.min(1) (open enum: 'task'|'milestone'|'launch-step'|'review')`, `title: string.min(1).max(500)`, `detail?: string`, `payload?: unknown`, `externalRef?: string`.",
+      "`schedule_item` description explicitly states it is for non-fitness / project goals and NOT for logging fitness workouts, hikes, or baselines.",
+      "`tools/call schedule_item` with a valid project goalId, `date='2026-06-01'`, `type='milestone'`, `title='Submit to App Store'` creates a `ScheduledItem` row; verify via `prisma.scheduledItem.findFirst` in a Node REPL.",
+      "Date input uses `parseDateInput` (already defined in `tools.ts`) so bare `yyyy-mm-dd` is USER_TZ midnight, not UTC midnight.",
+      "Return shape: `{ id: string, goalId: string, date: string, type: string, title: string, status: 'planned', message: string }`.",
+      "`tools/list` includes `delete_scheduled_item` with `inputSchema: { id: string }`.",
+      "`delete_scheduled_item` description states it is for project goal ScheduledItems only.",
+      "`tools/call delete_scheduled_item` with a valid id hard-deletes the row; a second call returns a user-friendly error (not an unhandled Prisma throw).",
+      "`npx tsc --noEmit` passes with zero new errors.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging \u2014 the tool list changed."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts (new)",
+      "src/lib/mcp/tools.ts (import + call registerProjectTools)"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models (Epic A)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-2: complete_item + update_scheduled_item",
+    "value": "Claude can mark a ScheduledItem done (completing a task or milestone) and patch its metadata (reschedule, rename, change type/status), enabling lifecycle management of project work items.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `complete_item` with `inputSchema: { id: string, completedAt?: string (ISO datetime; defaults to now in USER_TZ) }`.",
+      "`complete_item` description states it sets `status='done'` and stamps `completedAt`; clarifies it is for project goal ScheduledItems, not fitness logs.",
+      "`tools/call complete_item` with a valid ScheduledItem id sets `status='done'` and `completedAt` on the row; verify via DB query.",
+      "When `completedAt` is omitted, `completedAt` defaults to current time (using `new Date()`, not a date-only parse); when supplied as `yyyy-mm-dd`, `parseDateInput` is used so it lands at USER_TZ midnight.",
+      "Return shape: `{ id: string, status: 'done', completedAt: string (ISO), message: string }`.",
+      "`tools/list` includes `update_scheduled_item` with PATCH-style inputSchema: `{ id: string, title?: string, detail?: string, date?: DateKeyShape, status?: string, type?: string }`.",
+      "`update_scheduled_item` description clarifies it is for project goal ScheduledItems and lists editable fields.",
+      "`tools/call update_scheduled_item` with `{ id, title: 'New title' }` updates only `title`; other fields are unchanged (true PATCH, not replace-all).",
+      "If `date` is provided, it goes through `parseDateInput` \u2192 `startOfDay` to enforce USER_TZ midnight.",
+      "Calling either tool with an id that does not exist returns a user-friendly error result (not a raw Prisma `RecordNotFound` throw).",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-3: list_scheduled_items",
+    "value": "Claude can query a goal's scheduled work across any date range and filter by status, enabling 'what's planned this week', 'what milestones are still open', and milestone burn-down coaching prompts.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `list_scheduled_items` with inputSchema: `{ goalId: string, from?: DateKeyShape, to?: DateKeyShape, status?: z.enum(['planned','done','skipped']), type?: string, limit?: z.number().int().min(1).max(200).default(50) }`.",
+      "`list_scheduled_items` description explicitly states it queries ScheduledItems for project / non-fitness goals, lists filter params, and gives example use cases ('what's planned this sprint', 'open milestones', 'milestone burn-down').",
+      "When `from`/`to` are provided they are parsed via `parseDateInput` \u2192 `startOfDay`/`endOfDay` for USER_TZ correctness.",
+      "When `goalId` is provided but the goal does not exist, a user-friendly error is returned (not a raw throw).",
+      "When no filters are provided, returns the most recent `limit` items ordered by `date desc`.",
+      "When `status='planned'` is passed, only rows with `status='planned'` are returned.",
+      "Return shape: `{ count: number, items: { id, goalId, date, type, title, detail, status, completedAt, externalRef, createdAt }[] }`.",
+      "Smoke: call `list_scheduled_items` for the chewgether test goal after seeding 3 items \u2192 response `count` matches DB row count.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-4: log_metric + list_log_entries",
+    "value": "Claude can record and query LogEntry observations (MRR snapshots, download counts, milestone counts, qualitative notes) for a project goal, feeding the readiness/progress system with real data.",
+    "acceptanceCriteria": [
+      "`tools/list` includes `log_metric` with inputSchema: `{ goalId: string, metric: z.string().min(1).describe(\"Short key, e.g. 'mrr', 'downloads', 'milestones_done'\"), value?: z.number(), text?: z.string(), date?: z.string().optional().describe('ISO datetime; default = now'), source?: z.enum(['manual','github','claude']).default('manual') }`.",
+      "`log_metric` description explicitly states it is for project / non-fitness goals, gives examples ('log MRR: metric=mrr value=450', 'log milestone completion: metric=milestones_done value=3'), and states it is NOT for fitness measurements (use log_measurement for weight/body fat).",
+      "At least one of `value` or `text` must be provided; the tool returns a user-friendly error if both are omitted.",
+      "When `date` is omitted, `createdAt`/`date` defaults to `new Date()` (current instant, not midnight).",
+      "When `date` is provided as `yyyy-mm-dd`, `parseDateInput` is used for USER_TZ correctness.",
+      "Return shape: `{ id: string, goalId: string, metric: string, value: number|null, text: string|null, date: string, source: string, message: string }`.",
+      "`tools/call log_metric` with `{ goalId, metric: 'mrr', value: 450 }` creates a LogEntry row; verify row in DB.",
+      "`tools/list` includes `list_log_entries` with inputSchema: `{ goalId: string, metric?: string, from?: z.string(), to?: z.string(), limit?: z.number().int().min(1).max(500).default(50) }`.",
+      "`list_log_entries` description states it queries LogEntry observations for project goals, explains it can filter by metric key, and gives 'list_log_entries(metric=mrr)' as an example for MRR trend.",
+      "Return shape: `{ count: number, entries: { id, goalId, date, metric, value, text, source, createdAt }[] }` ordered by `date desc`.",
+      "Smoke: `list_log_entries` for the chewgether test goal after logging 2 MRR entries \u2192 `count: 2`, entries sorted newest-first.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: claude.ai connector reload required after merging."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models (Epic A)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response)",
+    "value": "When claude.ai calls get_today_plan and the active goal is a project goal, the response includes today's ScheduledItems so Claude can open coaching sessions with a grounded project view without an extra tool call.",
+    "acceptanceCriteria": [
+      "`get_today_plan` return shape gains a `todayItems` field: `{ id, type, title, status, completedAt }[]` \u2014 present for project goals (non-empty when items exist today), empty array for fitness goals (zero regression).",
+      "The query is a parallel `prisma.scheduledItem.findMany({ where: { goalId: activeGoal.id, date: { gte: todayStart, lte: todayEnd } }, orderBy: { date: 'asc' } })` added to the existing `resolveDay` call or the `get_today_plan` handler \u2014 does NOT touch `resolveDay` logic, does NOT alter existing fitness fields.",
+      "For a fitness active goal (kind='fitness'), `todayItems` is `[]` and no `ScheduledItem` query is issued (guard on `goal.kind === 'project'`).",
+      "For a project active goal (kind='project'), `todayItems` reflects actual DB rows for today in USER_TZ.",
+      "`activeGoal` field (added in Epic A) must already be present in the response; this story adds `todayItems` alongside it.",
+      "Smoke: curl `tools/call get_today_plan` with the fitness goal active \u2192 response has `todayItems: []`; after activating a test project goal and scheduling an item for today \u2192 `todayItems` has that item.",
+      "`npx tsc --noEmit` passes.",
+      "`npm run build` succeeds.",
+      "NOTE: No connector reload needed (get_today_plan is an existing tool; its return shape is additive \u2014 claude.ai does not cache output shapes)."
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (get_today_plan handler or resolveDay call site)"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "Add ScheduledItem + LogEntry Prisma models and get_today_plan activeGoal field (Epic A)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Project MCP tool pack",
+    "title": "B-6: Epic B integration smoke + Sprint 2 QA gate",
+    "value": "Verifies the full project tool pack end-to-end before merging to main, confirming all 7 tools are discoverable, the fitness path is untouched, and the codebase is type-clean and buildable.",
+    "acceptanceCriteria": [
+      "curl `tools/list` response includes exactly these 7 new tools: `schedule_item`, `complete_item`, `update_scheduled_item`, `delete_scheduled_item`, `list_scheduled_items`, `log_metric`, `list_log_entries`.",
+      "None of the 7 new tools appear in the fitness-focused description fields of existing tools (no name collision, no confusion).",
+      "Create a test chewgether goal via MCP (`create_goal` with `kind='project'`) \u2014 `list_goals` response includes it with `kind='project'`.",
+      "End-to-end flow: `schedule_item` (milestone) \u2192 `list_scheduled_items` (status=planned) \u2192 `complete_item` \u2192 `list_scheduled_items` (status=done) \u2014 all return correct data.",
+      "End-to-end flow: `log_metric` (metric='mrr', value=450) \u2192 `list_log_entries` (metric='mrr') \u2192 entry appears.",
+      "`get_today_plan` with the project goal active returns `todayItems` populated for today's scheduled item.",
+      "Switch active goal back to the fitness goal \u2192 `get_today_plan` returns fitness-identical output with `todayItems: []`; no fitness tool behavior changed.",
+      "`npx tsc --noEmit` passes with zero errors.",
+      "`npm run build` succeeds.",
+      "claude.ai connector reload performed; new tools visible in claude.ai's tool picker."
+    ],
+    "touches": [
+      "No code changes \u2014 QA-only story. Documents the curl commands and expected outputs as runbook for the developer."
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item",
+      "B-2: complete_item + update_scheduled_item",
+      "B-3: list_scheduled_items",
+      "B-4: log_metric + list_log_entries",
+      "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-1",
+    "title": "registerGitHubTools scaffold + link_github_project tool",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0 - Critical",
+    "effort": "Small",
+    "value": "Establishes the GitHub tool pack module and lets Claude bind a goal to a GitHub repo+project in one call; prerequisite for all other C stories.",
+    "dependsOn": [
+      "A-1 (Goal.githubRepo + Goal.githubProjectNumber fields exist in schema)",
+      "B-1 (registerProjectTools pattern \u2014 follow same module structure)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts \u2014 add registerGitHubTools(server) helper; call it from registerAll() after registerProjectTools()",
+      "src/lib/mcp/github-tools.ts (new file) \u2014 OR inline in tools.ts following existing functional split; implement link_github_project",
+      ".env.local \u2014 document GITHUB_TOKEN variable (add comment, never commit value)",
+      "src/app/api/mcp/route.ts \u2014 no change needed; registerAll already called"
+    ],
+    "acceptanceCriteria": [
+      "registerGitHubTools(server) is called from registerAll() in tools.ts; curl tools/list returns all 5 GitHub tools by name.",
+      "link_github_project(goalId, repo, projectNumber?) writes Goal.githubRepo and Goal.githubProjectNumber via prisma.goal.update; get_goal after the call returns the new field values.",
+      "repo input validated with z.string().regex(/^[\\w.-]+\\/[\\w.-]+$/) \u2014 rejects bare repo names or full URLs.",
+      "If goalId does not exist, tool returns errorResult (not a 500); error message does NOT contain process.env.GITHUB_TOKEN.",
+      "GITHUB_TOKEN is loaded from process.env inside the handler; it is never present in any jsonResult or errorResult payload \u2014 verified by inspecting all return paths.",
+      "If GITHUB_TOKEN env var is absent, link_github_project still succeeds (it only writes to DB; no GitHub API call is made in this tool).",
+      "tsc --noEmit and npm run build pass with no new errors.",
+      "Connector reload note: after merging, reload the claude.ai MCP connector so the new tools appear."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-2",
+    "title": "get_project_overview read tool \u2014 REST + GraphQL, rate-limit header, token sanitization",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0 - Critical",
+    "effort": "Medium",
+    "value": "Gives Claude a one-call snapshot of the linked repo (open issues, PRs, milestones with due dates, recent commits, optional Projects v2 board columns) to drive coaching without requiring multiple back-and-forth tool calls.",
+    "dependsOn": [
+      "C-1 (registerGitHubTools scaffold, Goal.githubRepo readable)",
+      "A-1 (Goal.githubRepo field)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) \u2014 implement get_project_overview",
+      "No new npm dependencies \u2014 all fetches via native fetch + Authorization: Bearer header"
+    ],
+    "acceptanceCriteria": [
+      "get_project_overview(goalId) resolves Goal.githubRepo; if field is null or goal not found, returns errorResult('No GitHub repo linked \u2014 call link_github_project first.').",
+      "Makes the following GitHub API calls in parallel where safe (repo metadata, open issues count, milestones, recent commits, open PRs) \u2014 all via REST GET to https://api.github.com except the optional Projects v2 GraphQL call.",
+      "If Goal.githubProjectNumber is set, makes exactly ONE GraphQL POST to https://api.github.com/graphql for Projects v2 board columns; if not set, projectBoard is null in the response.",
+      "Returns the documented shape: { repo, defaultBranch, openIssues, openPRs, milestones: [{number,title,dueOn,openIssues,closedIssues,state}], recentCommits: [{sha,message,date,author}] (last 5), projectBoard?: {columns:[{name,cardCount}]}|null, rateLimitRemaining: number }.",
+      "rateLimitRemaining is extracted from the X-RateLimit-Remaining response header of any REST call and included in the jsonResult \u2014 allows Claude to self-moderate on heavy sessions.",
+      "Token sanitization: a safeGitHub(fn) helper (or equivalent pattern) wraps all GitHub fetch logic; any error thrown inside is caught, and the message is sanitized with message.replaceAll(process.env.GITHUB_TOKEN ?? 'REDACTED', '[REDACTED]') before being passed to errorResult. The generic safe() wrapper is NOT relied upon for this sanitization.",
+      "If the repo is private/inaccessible or the token is wrong, tool returns a sanitized errorResult (not a 500); the raw GitHub 401/403/404 body is sanitized before surfacing.",
+      "GITHUB_TOKEN is never present in any jsonResult field \u2014 verified by grepping the returned JSON for the actual token value in a smoke test.",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload required after merge."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-3",
+    "title": "list_project_issues read tool \u2014 paginated, state/label/milestone filters",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P1 - High",
+    "effort": "Small",
+    "value": "Lets Claude enumerate issues by state, label, or milestone for sprint planning and weekly review \u2014 granular view beyond the counts in get_project_overview.",
+    "dependsOn": [
+      "C-2 (safeGitHub sanitization helper established, GITHUB_TOKEN pattern set)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) \u2014 add list_project_issues"
+    ],
+    "acceptanceCriteria": [
+      "list_project_issues(goalId, state?, label?, milestone?, limit?) resolves Goal.githubRepo; returns errorResult if not linked.",
+      "state defaults to 'open'; accepted values are 'open' | 'closed' | 'all' (Zod enum, rejects other strings).",
+      "label and milestone are optional strings passed as GET query params to GET /repos/{owner}/{repo}/issues.",
+      "limit defaults to 30, max 100; Zod enforces z.number().int().min(1).max(100).default(30).",
+      "Returns { count: number, issues: [{ number, title, state, labels: string[], milestone: string|null, createdAt, updatedAt, url }] }.",
+      "Token sanitization: uses the same safeGitHub pattern established in C-2; GITHUB_TOKEN absent from all returned fields.",
+      "Inaccessible repo or bad token returns sanitized errorResult (not 500).",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload note."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-4",
+    "title": "sync_github_milestones \u2014 idempotent UTC\u2192USER_TZ upsert to ScheduledItem",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P0 - Critical",
+    "effort": "Medium",
+    "value": "Mirrors GitHub milestones into the ScheduledItem table so Claude and the UI can reason about the project timeline without making a live GitHub call on every coaching turn.",
+    "dependsOn": [
+      "C-1 (link_github_project \u2014 Goal.githubRepo must be set)",
+      "B-1 (ScheduledItem table + @@unique([goalId,externalRef]) constraint exist from Epic A/B; schedule_item write path available as a pattern)",
+      "A-1 (ScheduledItem schema with externalRef + @@unique constraint)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) \u2014 add sync_github_milestones",
+      "Uses prisma.scheduledItem.upsert \u2014 imports from @/lib/db",
+      "Uses parseDateKey + startOfDay from @/lib/calendar for UTC\u2192USER_TZ date bucketing"
+    ],
+    "acceptanceCriteria": [
+      "sync_github_milestones(goalId, closeCompleted?) fetches all milestones from GET /repos/{owner}/{repo}/milestones?state=open (and optionally state=closed when closeCompleted=true) via the GitHub REST API.",
+      "For each milestone, externalRef is set to 'gh:milestone:<milestone_number>' (e.g. 'gh:milestone:3').",
+      "Upsert logic: prisma.scheduledItem.upsert({ where: { goalId_externalRef: { goalId, externalRef } }, update: { title, detail, date, payload }, create: { goalId, externalRef, type: 'milestone', title, detail, date, payload, status: 'planned' } }). Re-running creates 0 new rows \u2014 idempotency verified by running twice and comparing count before/after.",
+      "UTC date bucketing: GitHub milestone due_on is an ISO string (e.g. '2026-06-15T07:00:00Z'). The due date is extracted as due_on.slice(0, 10) (the yyyy-mm-dd portion) and passed through startOfDay(parseDateKey(dateStr)) from @/lib/calendar. Never use new Date(due_on) directly \u2014 this would produce a UTC midnight, which is yesterday in MT.",
+      "Milestones with no due_on (null) are synced with date set to a sentinel far-future date (e.g. new Date('2099-12-31')) or skipped \u2014 decision must be made explicit in the implementation (not left to chance). Document in code comment.",
+      "payload field on each ScheduledItem stores the raw GitHub milestone object (number, title, description, due_on, open_issues, closed_issues, state) as Json.",
+      "Returns { synced: number, updated: number, skipped: number, items: [{ externalRef, title, date: string }] }.",
+      "If closeCompleted is true, milestones in GitHub state='closed' are upserted with status='done' and completedAt set to the GitHub milestone's closed_at timestamp.",
+      "Token sanitization: uses safeGitHub pattern; GITHUB_TOKEN absent from all returned fields and error messages.",
+      "tsc --noEmit and npm run build pass.",
+      "Smoke test: call sync_github_milestones twice in a row; second call returns synced=0 new rows (idempotency confirmed); existing ScheduledItems are updated, not duplicated.",
+      "Connector reload note."
+    ]
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "id": "C-5",
+    "title": "set_github_issue_status light write \u2014 open/close a GitHub issue",
+    "sprint": "Sprint 3 - GitHub integration",
+    "priority": "P2 - Medium",
+    "effort": "Small",
+    "value": "Lets Claude close or reopen a GitHub issue from the coaching session without leaving claude.ai \u2014 supports triage and done-marking after a weekly review.",
+    "dependsOn": [
+      "C-1 (link_github_project, Goal.githubRepo, safeGitHub pattern)",
+      "C-2 (safeGitHub sanitization helper)"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts (or github-tools.ts) \u2014 add set_github_issue_status"
+    ],
+    "acceptanceCriteria": [
+      "set_github_issue_status(goalId, issueNumber, state) resolves Goal.githubRepo; returns errorResult if not linked.",
+      "state is z.enum(['open','closed']); issueNumber is z.number().int().positive().",
+      "Calls PATCH /repos/{owner}/{repo}/issues/{issue_number} with { state } in the JSON body and Authorization: Bearer GITHUB_TOKEN header.",
+      "On GitHub 200, returns { issueNumber, title, state, url, message: 'Issue #N is now <state>.' }.",
+      "On GitHub 404 (issue not found), returns sanitized errorResult('Issue #N not found in <repo>.').",
+      "On GitHub 403/401 (token insufficient or private repo), returns sanitized errorResult with no token in message.",
+      "Token sanitization: uses safeGitHub pattern; GITHUB_TOKEN absent from all returned fields.",
+      "Attempting to close an already-closed issue (GitHub returns 200 with state=closed) is not an error \u2014 tool returns success.",
+      "tsc --noEmit and npm run build pass.",
+      "Connector reload note."
+    ]
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D1",
+    "title": "Active-context resolution: fetch active Goal in page.tsx and branch on kind",
+    "value": "Today page correctly detects whether a project goal or fitness program is active, so activating a project goal actually switches the UI to the project view instead of silently continuing to render the fitness body.",
+    "background": "C2 critical fix. src/app/page.tsx never fetches the active Goal \u2014 it calls getActiveProgram() and renders the fitness body unconditionally. When a project goal is created via create_goal(), createGoalCore() deactivates all other goals but the fitness Program record is untouched, so Today keeps rendering the fitness view. This story adds the active-Goal fetch and inserts the kind-branch routing logic. Precedence rule (must be decided and implemented here): active project goal takes priority over a lingering fitness Program \u2014 if goal.kind === 'project', render the project body; if goal.kind === 'fitness' or no active goal, render the existing Program-based body. This single precedence decision is the backbone all other D stories build on.",
+    "acceptanceCriteria": [
+      "page.tsx fetches the active Goal (prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: 'desc' }, select: { id, kind, objective, targetDate } })) in parallel with the existing getActiveProgram() call \u2014 no waterfall",
+      "When goal.kind === 'project': render a <ProjectTodayShell> placeholder (empty card with 'Project goal active \u2014 full view coming in D2') \u2014 this gates the route so D2 can fill in the real body",
+      "When goal.kind === 'fitness' or goal is null: the existing fitness Today body renders byte-identical to before this change \u2014 no behavior delta for fitness path",
+      "When goal is null and program is null: the existing NoActiveProgram card is shown \u2014 unchanged",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) and npm run lint is clean",
+      "npm run build succeeds",
+      "Browser smoke at 390px: toggling between a fitness goal active and a project goal active routes to the correct body",
+      "The precedence rule (project goal wins over a lingering Program) is implemented and documented in an inline code comment"
+    ],
+    "touches": [
+      "src/app/page.tsx"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Epic A \u2014 Generic data spine (Goal.kind column must exist)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "This is the gate story. All other D stories depend on it. The <ProjectTodayShell> placeholder is intentionally minimal \u2014 D2 replaces it. Keep the fitness path byte-identical: do NOT refactor, extract, or rename anything in the fitness render branch."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D2",
+    "title": "Project Today body: ScheduledItems + LogEntry MRR + next milestone + recent commits",
+    "value": "When a project goal is active, the Today page shows actionable context for the day: what's scheduled, current MRR progress toward the goal target, the next upcoming milestone, and recent GitHub commits \u2014 giving the same 'what do I do today' answer that the fitness body gives for workouts.",
+    "background": "Implements the full project Today body that D1's <ProjectTodayShell> placeholder reserved space for. Queries Epic B/C data: ScheduledItem (today's items), LogEntry (latest log:mrr value), ScheduledItem milestones (next incomplete one by date), and optionally GitHub commits via the get_project_overview data. The component is a new server component <ProjectTodayView> that replaces the placeholder. The fitness body is entirely untouched.",
+    "acceptanceCriteria": [
+      "When goal.kind === 'project': Today renders <ProjectTodayView> instead of the placeholder card",
+      "ProjectTodayView shows today's ScheduledItems (status=planned, date=today in USER_TZ) as a task list \u2014 each item shows title, type badge, and a 'done' affordance linking to the day page",
+      "ProjectTodayView shows a progress card with: the latest log:mrr LogEntry value (or '\u2014' if none) vs the goal target from goal.targets, formatted as '$X / $Y MRR'",
+      "ProjectTodayView shows the next upcoming incomplete milestone (earliest ScheduledItem with type='milestone' and status='planned' after today) \u2014 title + due date + days-remaining",
+      "When no ScheduledItems exist for today: renders an empty-state card ('Nothing scheduled today \u2014 ask Claude to schedule items for this goal')",
+      "When no log:mrr entries exist: MRR card shows '\u2014 / $Y' without crashing",
+      "When no upcoming milestones exist: milestone card is hidden",
+      "Fitness Today path is byte-identical to before (git diff on the fitness render branch is empty)",
+      "All date queries use startOfDay/endOfDay from @/lib/calendar (USER_TZ-aware) \u2014 no raw Date comparisons",
+      "Renders correctly at 390px \u2014 mobile-first layout",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/components/ProjectTodayView.tsx (new)"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "D1 (active-context resolution must be in place)",
+      "Epic A (ScheduledItem + LogEntry tables)",
+      "Epic B (project MCP tool pack \u2014 ScheduledItems + LogEntries must be writable before this view is useful, though the view itself only reads)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "Do not add a GitHub commit feed in this story if it requires Epic C to be complete \u2014 gate it behind a conditional import or leave it as a follow-on. The core value is ScheduledItems + MRR + milestone. Keep the component a pure server component (no 'use client')."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D3",
+    "title": "Calendar legend: add 'scheduled-item' kind to LegendKindSchema + MarkerIcon variant + CalendarMonth render branch",
+    "value": "ScheduledItems from project goals become visible as markers on the calendar \u2014 closing the C3 three-file gap that would otherwise produce silent no-renders when a project goal's legend includes a 'scheduled-item' entry.",
+    "background": "C3 critical fix. LegendKindSchema in src/lib/legend.ts is a closed Zod enum. Adding 'scheduled-item' requires all three files: legend.ts (enum + MCP tool description), CalendarMonth.tsx (render branch in markersFor()), and MarkerIcon.tsx (render branch if needed \u2014 currently 'trained' has a special SVG branch; all others fall through to the icon string span, which is sufficient for 'scheduled-item'). The calendar's getCalendarMonth in calendar.ts already fetches the active Goal but does NOT select 'kind' \u2014 that compile error must also be fixed here (W1 fix). The ScheduledItem calendar query itself (D4) is a separate story \u2014 this story only adds the rendering infrastructure so that when D4 supplies scheduledItemCount on CalendarDayCell, the calendar can render it.",
+    "acceptanceCriteria": [
+      "src/lib/legend.ts: 'scheduled-item' is added to LegendKindSchema z.enum([...]) \u2014 the enum is extended, not replaced",
+      "src/lib/legend.ts: the MCP tool description on LegendKindSchema.describe() is updated to document 'scheduled-item' as a valid kind",
+      "src/components/MarkerIcon.tsx: 'scheduled-item' kind renders correctly \u2014 the existing icon-string span branch handles it (no SVG special-case needed unless desired); confirm no runtime crash for this kind",
+      "src/components/CalendarMonth.tsx: markersFor() gains a branch that pushes 'scheduled-item' when cell.scheduledItemCount > 0 (the field is added to CalendarDayCell type but returns 0 until D4 wires the query \u2014 this is intentional; render branch is present but dormant)",
+      "src/lib/calendar.ts: getCalendarMonth's goal select gains kind: true (W1 fix) \u2014 TypeScript strict-mode compile no longer errors on goal?.kind",
+      "src/lib/calendar.ts: CalendarDayCell type gains scheduledItemCount: number field (default 0)",
+      "DEFAULT_LEGEND in legend.ts does NOT include 'scheduled-item' \u2014 fitness goals that fall through to the default are unchanged",
+      "Existing fitness goal calendar: all six existing kinds (trained, hike-completed, hike-planned, override, goal-date, baseline) render byte-identical to before \u2014 regression-check markersFor() output",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) \u2014 the kind: true addition to the goal select must eliminate the W1 type error",
+      "npm run build succeeds",
+      "Browser smoke at 390px: calendar with an active fitness goal shows identical markers to before"
+    ],
+    "touches": [
+      "src/lib/legend.ts",
+      "src/components/CalendarMonth.tsx",
+      "src/components/MarkerIcon.tsx",
+      "src/lib/calendar.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "D1 (active-context resolution establishes the goal.kind pattern; D3 may land in parallel if Epic A is done, but D1 is the logical predecessor for review)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "MarkerIcon already handles all non-'trained' kinds with a generic icon-string <span> \u2014 'scheduled-item' gets that same treatment by default. Only add a special branch if a distinct icon behavior is explicitly desired. The scheduledItemCount field on CalendarDayCell stays at 0 until D4 adds the DB query \u2014 this is by design (render infrastructure first, data second)."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D4",
+    "title": "Calendar ScheduledItem source: query ScheduledItems in getCalendarMonth and populate scheduledItemCount on cells",
+    "value": "ScheduledItem markers actually appear on the calendar for project goals \u2014 completing the C3 fix by wiring the data query that D3's render infrastructure is waiting for.",
+    "background": "D3 added the render branch and CalendarDayCell.scheduledItemCount field, but that field is hard-coded to 0. This story adds the DB query inside getCalendarMonth: when goal.kind === 'project', query ScheduledItems in the grid date range for that goalId, bucket them by date key, and populate scheduledItemCount on each cell. The fitness path is gated: when goal.kind !== 'project' (or goal is null), the ScheduledItem query is skipped entirely \u2014 no extra DB call for fitness users. This preserves the override-baseline safety pattern established in the existing calendar code.",
+    "acceptanceCriteria": [
+      "getCalendarMonth in src/lib/calendar.ts adds a ScheduledItem query to its Promise.all block, gated on goal?.kind === 'project'",
+      "The ScheduledItem query fetches all items where goalId = goal.id AND date is within the grid range (gridStart..gridEnd) AND status IN ('planned', 'done') \u2014 select id, date, status, type",
+      "scheduledItemCount on each CalendarDayCell is the count of ScheduledItems for that dateKey (planned + done combined)",
+      "When goal.kind !== 'project' or goal is null: scheduledItemCount is 0 for all cells and no ScheduledItem DB query is issued",
+      "Fitness calendar: all existing fields (workoutCount, hikeCount, plannedHikeCount, hasOverride, baselinesDue, isGoalDate) are byte-identical to before \u2014 no behavior delta",
+      "Date bucketing uses dateKey() from @/lib/calendar (USER_TZ-aware) \u2014 same pattern as workoutsByKey and hikesByKey",
+      "Browser smoke at 390px with an active project goal: cells with ScheduledItems show the 'scheduled-item' legend marker",
+      "Browser smoke at 390px with an active fitness goal: calendar is byte-identical to before D3/D4",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/lib/calendar.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "D3 (CalendarDayCell.scheduledItemCount field + render branch must exist)",
+      "Epic A (ScheduledItem table must exist)",
+      "Epic B (ScheduledItems must be writable for the query to return data during smoke testing)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "The goal.kind guard is critical. Do NOT query ScheduledItem unconditionally \u2014 the fitness path must make zero new DB calls. Mirror the pattern used for overrides: `program?.id ? prisma.planDayOverride.findMany(...) : Promise.resolve([])`."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D5",
+    "title": "Project Plan view: phases + milestones page at /goals/[id]/plan for project goals",
+    "value": "A project goal's plan is visible as a phase/milestone timeline instead of the fitness weeklySplit rotation \u2014 giving the user and Claude a shared visual of what's been scheduled and what's upcoming.",
+    "background": "The existing /goals/[id]/plan route (linked from the GoalDetail page's 'Full plan \u2192' link) renders a fitness PlanOverview. For project goals, the Plan table's planJson may be minimal or absent \u2014 the meaningful structure is in ScheduledItems (milestones, launch steps, tasks). This story adds a kind-branch in the /goals/[id]/plan route: if goal.kind === 'project', render a <ProjectPlanView> that groups ScheduledItems by month or phase, showing status (planned/done/skipped), type badge, and completedAt. If goal.kind === 'fitness', the existing plan page is byte-identical. The fitness path must not be touched.",
+    "acceptanceCriteria": [
+      "src/app/goals/[id]/plan/page.tsx: fetches goal.kind in addition to the existing plan data",
+      "When goal.kind === 'project': renders <ProjectPlanView> \u2014 a server component that queries ScheduledItems for the goalId, ordered by date asc",
+      "ProjectPlanView groups items visually by month (heading: 'June 2026', etc.) with each item showing: type badge (milestone / task / launch-step / review), title, status icon (planned=open circle, done=filled circle, skipped=strikethrough), and due date",
+      "ProjectPlanView shows a summary line: 'X of Y milestones complete' (count of type='milestone' items with status='done' vs total)",
+      "When no ScheduledItems exist: renders an empty-state card ('No items scheduled yet \u2014 ask Claude to schedule milestones for this goal')",
+      "When goal.kind === 'fitness': the page renders byte-identical to before \u2014 the existing PlanOverview component is shown unchanged",
+      "Renders correctly at 390px",
+      "TypeScript compiles with zero errors and npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/goals/[id]/plan/page.tsx",
+      "src/components/ProjectPlanView.tsx (new)"
+    ],
+    "effort": "Medium",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "D1 (active-context pattern established)",
+      "Epic A (ScheduledItem table)",
+      "Epic B (ScheduledItems writable)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "Check whether src/app/goals/[id]/plan/page.tsx already exists (the GoalDetail page links to it). If it does not exist yet, create it. If it exists as a fitness-only page, add the kind-branch. Keep ProjectPlanView a pure server component."
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "id": "D6",
+    "title": "Project Progress view: log:* metric readiness + milestone burn-down on stats and progress pages",
+    "value": "The Stats and Progress pages show meaningful readiness charts and a milestone burn-down for project goals \u2014 so 'how am I tracking toward $1k MRR?' is answerable from the dashboard without coaching.",
+    "background": "stats/page.tsx and progress/page.tsx both call computeReadiness(targets) and computeReadinessSeries(g.createdAt, targets) without passing goalId. The C1 fix (Epic A story) adds goalId as a required param to those functions and updates all call sites. This story assumes C1 is done and builds on it: for project goals with log:mrr or log:* targets, the readiness chart already works (via the log:* resolver from Epic A). This story adds a milestone burn-down card on the progress page: a simple list or chart of ScheduledItem milestones (type='milestone') showing done-count over time using completedAt dates. The fitness readiness display on both pages must be byte-identical to before.",
+    "acceptanceCriteria": [
+      "src/app/progress/page.tsx: adds a milestone burn-down card for any active goal that has ScheduledItems with type='milestone'",
+      "Burn-down card shows: total milestone count, done count, remaining count, and the next upcoming milestone (earliest status='planned' by date)",
+      "Burn-down card is gated on goal.kind === 'project' AND scheduledMilestoneCount > 0 \u2014 fitness goals do not see this card",
+      "src/app/stats/page.tsx: no new project-specific card required in this story \u2014 the existing readiness chart already handles log:* metrics once C1's goalId fix is in place; this acceptance criterion confirms the stats page renders correctly for a project goal with log:mrr targets",
+      "For fitness goals: stats/page.tsx and progress/page.tsx render byte-identical to before (readiness chart, weight card, totals card, records summary all unchanged)",
+      "The milestone burn-down query is gated (only runs when goal.kind === 'project') \u2014 no extra DB calls for fitness users",
+      "Renders correctly at 390px",
+      "TypeScript compiles with zero errors (npx tsc --noEmit) \u2014 in particular, the computeReadiness / computeReadinessSeries calls must pass goalId (inherited from C1 fix in Epic A)",
+      "npm run lint is clean",
+      "npm run build succeeds"
+    ],
+    "touches": [
+      "src/app/progress/page.tsx",
+      "src/app/stats/page.tsx (verify only \u2014 may require no changes if C1 is complete)",
+      "src/components/MilestoneBurnDown.tsx (new, optional \u2014 may be inline)"
+    ],
+    "effort": "Medium",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "D1 (active-context resolution)",
+      "Epic A \u2014 C1 goalId cascade fix (computeReadiness + computeReadinessSeries must accept goalId before this story can compile cleanly)",
+      "Epic A (LogEntry table for log:* metrics)",
+      "Epic B (log_goal_metric tool must exist for data to be present during smoke)"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI",
+    "notes": "The C1 fix lives in Epic A. This story's acceptance criteria include a compile check that the call sites in stats/page.tsx and progress/page.tsx pass goalId correctly \u2014 if the C1 story was built correctly, there should be no compile errors here. If there are, fix them in this story and note the delta. Do not change readiness.ts \u2014 that belongs to Epic A."
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+    "value": "The real chewgether goal exists in the DB with the correct kind, objective, targets, and GitHub repo link so every downstream story has a stable goalId to test against and the full readiness/coaching loop can be validated against production data.",
+    "acceptanceCriteria": [
+      "A seed script `prisma/seed-chewgether.ts` (or an extension to `prisma/seed.ts`) creates the chewgether Goal idempotently: if a Goal with objective containing 'Chewgether' and kind='project' already exists, it prints its id and skips creation.",
+      "The created Goal has: kind='project', objective='Ship Chewgether to the App Store + reach $1,000/mo MRR', active=true, githubRepo='jronnomo/Chewgether'.",
+      "The Goal's targets array contains at least two GoalTarget entries: { metric: 'log:mrr', label: 'Monthly recurring revenue', units: '$', direction: 'increase', target: 1000, weight: 0.6, rationale: 'Primary success metric \u2014 $1k/mo MRR validates product-market fit and self-sustainability.' } and { metric: 'log:milestones_done', label: 'Launch milestones completed', units: 'milestones', direction: 'increase', target: 7, weight: 0.4, rationale: '7 gated milestones (Apple Dev ownership, monetization build, TestFlight, store metadata, submit, launch, growth to $1k) \u2014 completion rate is the leading indicator of shipping.' }.",
+      "Running the seed script a second time does not create a duplicate Goal row.",
+      "After running the seed, `list_goals` via MCP returns the chewgether goal with kind='project' and the correct objective.",
+      "After running the seed, `get_goal` with the chewgether goalId returns targets array with log:mrr and log:milestones_done entries.",
+      "The Mt. Elbert fitness goal is NOT deactivated by this seed script \u2014 the seed must NOT call createGoalCore (which bulk-deactivates all goals). It should use prisma.goal.create directly and set active=false OR explicitly check and only set active=true if there is no currently active project goal, or add a note that the operator must manually manage active state to avoid deactivating the fitness goal mid-program. The seed script MUST document this W7 risk in a comment.",
+      "npx tsx prisma/seed-chewgether.ts (with DATABASE_URL set) runs without error.",
+      "npx tsc --noEmit passes."
+    ],
+    "touches": [
+      "prisma/seed-chewgether.ts (new)"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration (Epic A)",
+      "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor, and register log:mrr and log:milestones_done in the METRICS registry (Epic A)",
+      "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools (Epic A)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+    "value": "The 7 gated launch milestones exist as ScheduledItems on the chewgether goal so the milestone burn-down is visible from day one, coaching prompts have concrete items to reference, and GitHub milestone sync (Epic C) has a baseline to update against.",
+    "acceptanceCriteria": [
+      "The seed script (extending E-1's script or a separate `prisma/seed-chewgether-milestones.ts`) creates the following 7 ScheduledItems for the chewgether goalId, idempotently (upsert on a deterministic externalRef or title+goalId guard): { type: 'milestone', title: 'Apple Developer account ownership + correct bundle ID (not app.rork.*)', date: <estimated date, e.g. 2026-06-07>, status: 'planned', detail: 'Transfer or create Apple Dev account; change bundle ID from app.rork.* to a user-owned reverse-domain ID before TestFlight submission.' }, { type: 'milestone', title: 'Monetization built \u2014 at least one IAP or subscription configured in-app', date: <2026-06-21>, status: 'planned', detail: 'No IAP/subscription exists today. Build and test at least one revenue flow before TestFlight so beta testers can validate the payment path.' }, { type: 'milestone', title: 'TestFlight build live and shared with beta testers', date: <2026-07-05>, status: 'planned', detail: 'Upload a signed build to App Store Connect; distribute to internal/external testers; collect feedback.' }, { type: 'milestone', title: 'App Store metadata complete (screenshots, description, keywords, privacy URL)', date: <2026-07-12>, status: 'planned', detail: 'All required App Store listing fields filled; screenshots at required device sizes; privacy policy URL live.' }, { type: 'milestone', title: 'Submit for App Store review', date: <2026-07-19>, status: 'planned', detail: 'Submit to Apple review queue; expected review time 1-3 days.' }, { type: 'milestone', title: 'App Store launch (public)', date: <2026-07-26>, status: 'planned', detail: 'App released on the App Store. Track first downloads and initial MRR.' }, { type: 'milestone', title: 'Growth milestone: reach $1,000/mo MRR', date: <2026-09-30>, status: 'planned', detail: 'First month with logged MRR >= $1000. Log via log_metric(metric=mrr, value=...).' }",
+      "All 7 items have externalRef=null (not yet synced from GitHub; GitHub sync is Epic C).",
+      "Running the seed a second time does not create duplicate rows \u2014 guard on (goalId + title) or a seed-local externalRef like 'seed:chewgether-milestone-<slug>'.",
+      "After seeding, `list_scheduled_items(goalId=<chewgether>, status='planned')` via MCP returns all 7 items.",
+      "Dates in the seed use parseDateKey / startOfDay from @/lib/calendar for USER_TZ midnight correctness \u2014 NOT raw new Date('2026-06-07') which would be UTC midnight.",
+      "npx tsx prisma/seed-chewgether-milestones.ts (or the combined script) runs without error.",
+      "npx tsc --noEmit passes."
+    ],
+    "touches": [
+      "prisma/seed-chewgether.ts (extended) OR prisma/seed-chewgether-milestones.ts (new)"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item (Epic B)",
+      "B-3: list_scheduled_items (Epic B)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+    "value": "The chewgether goal's ScheduledItems are backed by real GitHub milestone data so coaching prompts like 'what milestones are open on GitHub' are grounded in the live repo state and the seed dates can be corrected to match actual GitHub milestone due dates.",
+    "acceptanceCriteria": [
+      "GITHUB_TOKEN is set in .env.local (scoped to repo read + write for jronnomo/Chewgether) \u2014 verified by curl to https://api.github.com/repos/jronnomo/Chewgether returning 200.",
+      "GITHUB_TOKEN is set in Vercel environment variables for the production deployment.",
+      "`link_github_project` MCP tool call with { goalId: <chewgether id>, repo: 'jronnomo/Chewgether' } succeeds and the chewgether Goal row has githubRepo='jronnomo/Chewgether'.",
+      "`get_project_overview` MCP call with the chewgether goalId returns: repo='jronnomo/Chewgether', openIssues > 0 (or 0 if true), milestones array, recentCommits array (up to 5). Response contains NO occurrence of the GITHUB_TOKEN value.",
+      "`sync_github_milestones` MCP call with { goalId: <chewgether> } creates or updates ScheduledItems with externalRef='gh:milestone:<N>' for each open GitHub milestone. A second call produces no duplicate rows (idempotent upsert verified by row count before and after).",
+      "For each synced milestone: ScheduledItem.date = startOfDay(parseDateKey(ghMilestone.due_on.slice(0,10))) when due_on is non-null; date = goal.targetDate or a far-future fallback when due_on is null. The W2 TZ note is explicitly followed \u2014 NOT new Date(ghMilestone.due_on).",
+      "The 7 seed milestones (from E-2) that have no externalRef are NOT overwritten by sync_github_milestones \u2014 the upsert key is (goalId, externalRef) and NULLs don't collide.",
+      "`list_scheduled_items(goalId=<chewgether>)` after sync returns both the seed milestones (externalRef=null or seed-local ref) and the GitHub-synced ones (externalRef='gh:milestone:*').",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "NOTE: claude.ai connector reload required only if Epic C tools were not already deployed. If Epic C was deployed in Sprint 3, no reload needed."
+    ],
+    "touches": [
+      ".env.local (GITHUB_TOKEN \u2014 NOT committed to git)",
+      "Vercel env (GITHUB_TOKEN \u2014 set via Vercel dashboard or CLI)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+      "link_github_project + get_project_overview + list_project_issues (Epic C)",
+      "sync_github_milestones + set_github_issue_status (Epic C)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-4: Update MCP server instructions string for goal-kind-aware coaching routing",
+    "value": "Claude automatically routes to the correct tool pack (project+GitHub vs workout/nutrition) from the first turn of any session, eliminating manual coaching setup and ensuring fitness coaching is byte-identical to before.",
+    "acceptanceCriteria": [
+      "The `instructions` string in `src/app/api/mcp/route.ts` is updated to include goal-kind routing per plan-blueprint.md \u00a75b: describes kind='fitness' \u2192 workout/hike/baseline/nutrition tools; kind='project' \u2192 schedule_item/complete_item/log_metric/get_project_overview/list_project_issues/sync_github_milestones tools.",
+      "The updated instructions include the weekly project-goal review cadence: 'Weekly review = MRR trend (list_log_entries metric=mrr) + milestone burn (list_scheduled_items status=planned) + open PRs/issues (get_project_overview)'.",
+      "The instructions retain the existing fitness coaching rules unchanged: 'For fitness: call read tools (get_today_plan, recent_history, get_goal) before proposing changes. Propose before applying apply_plan_revision or apply_day_override.'",
+      "The instructions include the golden rule for both kinds: 'Read get_today_plan first on every session start. activeGoal.kind determines which tool pack to use.'",
+      "The instructions do NOT include the GITHUB_TOKEN value or any reference to how to obtain it.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "curl smoke (POST /api/mcp, method=initialize or tools/list) returns a 200 response confirming the server starts correctly with the new instructions string.",
+      "CRITICAL: claude.ai connector must be reloaded after deployment \u2014 the instructions field is sent on connection and cached per connector session. Note this in the commit message.",
+      "Manual verification: open claude.ai, ask 'what's my active goal?' \u2192 Claude calls get_today_plan, reads activeGoal.kind, and routes to the correct pack without further prompting."
+    ],
+    "touches": [
+      "src/app/api/mcp/route.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools (Epic A)",
+      "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response) (Epic B)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-5: Project-goal coaching prompt set \u2014 weekly launch review, MRR check-in, what-ships-this-week",
+    "value": "A documented, tested set of claude.ai prompts for the project-goal coaching vertical gives the user a consistent weekly rhythm (analogous to the fitness coach prompts) and validates that the MCP tool pack + instructions produce grounded, non-hallucinated coaching responses.",
+    "acceptanceCriteria": [
+      "A file `docs/coaching/project-goal-prompts.md` is created containing at least three canonical coaching prompts with expected tool call sequences: (1) Weekly launch review: 'What ships this week for Chewgether?' \u2192 expected: Claude calls get_today_plan (reads kind=project), then list_scheduled_items(status=planned, from=weekStart, to=weekEnd), then get_project_overview \u2014 response cites specific milestones and open issues by title, not fabricated content. (2) MRR check-in: 'How is Chewgether MRR trending?' \u2192 expected: Claude calls list_log_entries(metric=mrr) \u2014 response shows actual logged values or correctly states 'no MRR logged yet'. (3) Blocking-issue scan: 'What is blocking Chewgether from shipping?' \u2192 expected: Claude calls get_project_overview and list_project_issues(state=open) \u2014 response cites actual GitHub issues by number and title.",
+      "Each prompt documents the MCP tool call sequence (tool name + key inputs) and the expected response shape.",
+      "The file notes which prompts require GitHub data (need GITHUB_TOKEN set and E-3 complete) vs. which work with only seed data (E-1 + E-2).",
+      "Manual validation: each of the 3 prompts is run in claude.ai against the live chewgether goal and produces a grounded response (cites real data, does not hallucinate milestone titles or MRR values). Pass/fail status documented in the file.",
+      "Fitness coaching prompts are NOT present in this file \u2014 it is project-vertical only.",
+      "NOTE: This story produces a documentation artifact, not a code change. The acceptance criteria are verified manually in claude.ai."
+    ],
+    "touches": [
+      "docs/coaching/project-goal-prompts.md (new)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+      "E-4: Update MCP server instructions string for goal-kind-aware coaching routing"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-6: Verify chewgether readiness scoring \u2014 log:mrr and log:milestones_done against targets",
+    "value": "Confirms the readiness engine correctly scores the chewgether goal's two targets from real LogEntry data so the /progress and /stats pages show meaningful progress (not flat zeroes) once any MRR or milestone data is logged.",
+    "acceptanceCriteria": [
+      "Log a test MRR entry via MCP: `log_metric(goalId=<chewgether>, metric='mrr', value=200)` \u2014 verify the LogEntry row exists.",
+      "Log a test milestones_done entry via MCP: `log_metric(goalId=<chewgether>, metric='milestones_done', value=1)` \u2014 verify the LogEntry row exists.",
+      "computeReadiness called with the chewgether goal's targets + goalId returns: log:mrr progress = 200/1000 = 0.2 (20%); log:milestones_done progress = 1/7 \u2248 0.143; overall weighted readiness = (0.2 * 0.6) + (0.143 * 0.4) \u2248 0.177 (17.7%). Verify via a direct Node call or by reading /progress in the browser.",
+      "Browser smoke: navigate to /progress or /goals/<chewgether id> with the project goal active \u2192 readiness percentage is non-zero and matches the expected calculation above.",
+      "Fitness goal readiness: after switching active goal back to Mt. Elbert, /progress shows the fitness readiness score unchanged \u2014 no cross-contamination from chewgether's LogEntry rows.",
+      "computeReadinessSeries for chewgether: the series returns flat zeros for all weekly points before the log_metric calls above, and the correct value at the point the entry was logged. The S1 suggestion (flat series before first log) is expected and documented, not a bug.",
+      "Delete the two test LogEntry rows after validation (or document they are test data that should be cleaned up before the first real coaching session).",
+      "npx tsc --noEmit passes. npm run build passes."
+    ],
+    "touches": [
+      "No code changes \u2014 validation-only story. Uses existing MCP tools + browser smoke."
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-4: log_metric + list_log_entries (Epic B)",
+      "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor (Epic A)",
+      "Goal-type-aware UI \u2014 Today page kind-branch + ProjectTodayView (Epic D)",
+      "Goal-type-aware UI \u2014 Progress/readiness hub (Epic D)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-7: add set_active_goal MCP tool and document goal-switching covenant",
+    "value": "Claude can programmatically switch the active goal between Mt. Elbert (fitness) and chewgether (project) without the user navigating the UI, eliminating the W7 coaching landmine where creating the project goal silently deactivates the fitness goal mid-program.",
+    "acceptanceCriteria": [
+      "`tools/list` response includes `set_active_goal` with inputSchema: `{ goalId: z.string().describe('The goal to activate. All other goals will be set inactive.') }`.",
+      "`set_active_goal` description warns: 'This deactivates ALL other goals. If the user is mid-program on a fitness goal, confirm before switching. Use list_goals to show the user their goals and let them confirm.' \u2014 matching the propose-before-applying rule.",
+      "`tools/call set_active_goal({ goalId: <chewgether id> })` sets the chewgether Goal active=true and the Mt. Elbert Goal active=false in a single transaction.",
+      "`tools/call set_active_goal({ goalId: <mtElbert id> })` reverses the switch: Mt. Elbert becomes active, chewgether becomes inactive.",
+      "After each set_active_goal call, `get_today_plan` returns activeGoal.kind matching the newly activated goal's kind.",
+      "Calling `set_active_goal` with an id that does not exist returns a user-friendly error, not a raw Prisma throw.",
+      "The tool is registered in `registerWriteTools` or `registerProjectTools` (not as a standalone file) \u2014 keep the registration footprint minimal.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "NOTE: claude.ai connector reload required after merge."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts (or src/lib/mcp/tools.ts)"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item (Epic B)"
+    ],
+    "sprint": "Sprint 2 - Project tool pack"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-8: End-to-end Sprint 5 verification \u2014 chewgether goal is plannable, trackable, scorable, and coachable",
+    "value": "A full coaching session in claude.ai confirms the entire multi-domain stack is production-ready: the chewgether goal is visible, GitHub data flows, readiness scores, the UI renders a project Today view, and fitness coaching is byte-identical to before.",
+    "acceptanceCriteria": [
+      "PLANNER CHECK: `list_goals` returns both the Mt. Elbert (kind=fitness) and chewgether (kind=project) goals with correct kinds.",
+      "TRACKABLE CHECK: `list_scheduled_items(goalId=<chewgether>, status=planned)` returns the 7 seeded launch milestones plus any GitHub-synced milestones.",
+      "GITHUB CHECK: `get_project_overview(goalId=<chewgether>)` returns real repo data (not an error). GITHUB_TOKEN is confirmed live in production (Vercel deployment).",
+      "SCORABLE CHECK: After logging at least one log:mrr entry, the chewgether readiness score in the UI is non-zero and matches the expected weighted calculation. Fitness goal readiness is unchanged when fitness goal is active.",
+      "COACHABLE CHECK (the Sprint 5 QA gate): In claude.ai, ask 'What's blocking Chewgether from shipping this week?' \u2192 Claude calls get_today_plan (reads activeGoal.kind='project'), then get_project_overview or list_scheduled_items, and returns a grounded answer using real GitHub issues and scheduled milestones \u2014 NOT fabricated content. Document the actual tool call sequence observed.",
+      "FITNESS REGRESSION CHECK: Switch active goal to Mt. Elbert \u2192 Today page shows the workout hero (existing fitness UI), not the ProjectTodayView. get_today_plan returns fitness-specific fields. The coaching session 'what's my workout today?' routes to the fitness tool pack. All fitness tools work identically to Sprint 4.",
+      "CONTEXT SWITCH CHECK: `set_active_goal` switches between goals; Today page and get_today_plan both reflect the correct active goal within one page reload.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "Production deployment (Vercel) is live; the MCP endpoint at https://workout-planner-gold-three.vercel.app/api/mcp responds correctly to tools/list.",
+      "claude.ai connector is connected to the production URL and all Sprint 5 tools are visible."
+    ],
+    "touches": [
+      "No code changes \u2014 end-to-end verification story. Documents the verification session as a runbook."
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+      "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+      "E-4: Update MCP server instructions string for goal-kind-aware coaching routing",
+      "E-5: Project-goal coaching prompt set \u2014 weekly launch review, MRR check-in, what-ships-this-week",
+      "E-6: Verify chewgether readiness scoring \u2014 log:mrr and log:milestones_done against targets",
+      "E-7: add set_active_goal MCP tool and document goal-switching covenant",
+      "Goal-type-aware UI \u2014 Today page kind-branch + ProjectTodayView (Epic D)",
+      "Goal-type-aware UI \u2014 Calendar ScheduledItem source, LegendSchema, plan route (Epic D)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Self-serve / in-app planner (Option B) for non-operator goal seeding",
+    "value": "Allow the user to seed a goal and its milestones from within the app (or via a guided claude.ai flow) without the operator running a seed script \u2014 removing the `prisma/seed-chewgether.ts` manual step.",
+    "acceptanceCriteria": [
+      "Captured as a backlog item. Not designed for v1."
+    ],
+    "touches": [],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Fitness vertical convergence onto ScheduledItem / LogEntry spine",
+    "value": "Migrate planned hikes and workout scheduling to use ScheduledItem, and body measurements / baselines to use LogEntry, so the fitness and project verticals share the same generic primitives and the calendar cell builder has one data source.",
+    "acceptanceCriteria": [
+      "Captured as a backlog item. Not designed for v1. Note: ScheduledItem.status='done' vs Hike.status='completed' semantic mismatch must be resolved before this migration."
+    ],
+    "touches": [],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Standalone personal-finance vertical",
+    "value": "Add a 'finance' goal kind with budget/savings/income tracking as a third vertical alongside fitness and project, reusing the ScheduledItem + LogEntry spine.",
+    "acceptanceCriteria": [
+      "Captured as a backlog item. Not designed for v1. The log:* metric namespace already handles numeric finance metrics (log:savings, log:income) with zero new code once Epic A ships."
+    ],
+    "touches": [],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Multi-tenancy / GitHub OAuth / per-user auth",
+    "value": "Support multiple users with per-user GitHub tokens, OAuth flows, and separate goal/data namespaces \u2014 enabling the app to be used by more than one person or shared with collaborators.",
+    "acceptanceCriteria": [
+      "Captured as a backlog item. Not designed for v1. The GoalIntegration table pattern (deferred in plan-blueprint.md \u00a71d) is the right seam for this."
+    ],
+    "touches": [],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "title": "Provision GITHUB_TOKEN env + document required scopes",
+    "value": "so the GitHub MCP pack can authenticate before its tools are smoke-tested",
+    "acceptanceCriteria": [
+      "GITHUB_TOKEN added to .env + Vercel env (repo + read:project scopes)",
+      "Documented in quality-tools.md",
+      "Token never echoed in logs/responses"
+    ],
+    "touches": [
+      ".env",
+      ".env.example",
+      ".claude/quality-tools.md"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 3 - GitHub integration"
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "title": "Fitness-coexistence regression gate: verify fitness vertical byte-identical end-to-end",
+    "value": "so the strangler approach provably doesn't disturb the live Mt. Elbert program",
+    "acceptanceCriteria": [
+      "With a fitness goal active: Today/calendar/stats/progress render identical to pre-initiative (screenshot/DOM diff)",
+      "get_today_plan for a fitness goal returns unchanged shape",
+      "npx tsc + build green"
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/lib/calendar.ts",
+      "src/app/stats/page.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Active-context resolution: fetch active Goal in page.tsx and branch on kind"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "Update CLAUDE.md + quality-tools for the multi-domain spine (models, tools, kinds, env)",
+    "value": "so the new ScheduledItem/LogEntry models, project/GitHub MCP packs, Goal.kind, and GITHUB_TOKEN are documented",
+    "acceptanceCriteria": [
+      "CLAUDE.md describes Goal.kind + the project/github tool packs",
+      "quality-tools.md notes the new models + GITHUB_TOKEN + connector-reload",
+      "Docs match shipped reality"
+    ],
+    "touches": [
+      "CLAUDE.md",
+      ".claude/quality-tools.md"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Sprint 1 QA gate: migration additive, fitness readiness identical, tsc/build green",
+    "value": "so Sprint 1 leaves main deployable with the fitness vertical untouched",
+    "acceptanceCriteria": [
+      "prisma migrate diff shows only additive ops",
+      "Fitness goal readiness score byte-identical on /stats + goals/[id]",
+      "npx tsc --noEmit + npm run build green"
+    ],
+    "touches": [
+      "(verification only)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor, and register log:mrr and log:milestones_done in the METRICS registry"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "GitHub-tracking integration",
+    "title": "Sprint 3 QA gate: GitHub pack curl smoke + token non-leak + idempotent sync",
+    "value": "so Sprint 3 leaves main deployable and secure",
+    "acceptanceCriteria": [
+      "tools/call get_project_overview returns shape; GITHUB_TOKEN absent from output",
+      "sync_github_milestones re-run creates 0 duplicate ScheduledItems",
+      "UTC due dates bucket to correct USER_TZ dateKey",
+      "tsc+build green"
+    ],
+    "touches": [
+      "(verification only)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "sync_github_milestones \u2014 idempotent UTC\u2192USER_TZ upsert to ScheduledItem"
+    ],
+    "sprint": "Sprint 3 - GitHub integration"
+  },
+  {
+    "epic": "Goal-type-aware UI",
+    "title": "Sprint 4 QA gate: fitness + project UI at 390px, no regressions",
+    "value": "so Sprint 4 leaves main deployable on both verticals",
+    "acceptanceCriteria": [
+      "Fitness + project Today/calendar render at 390px",
+      "Fitness path unchanged (regression gate passes)",
+      "tsc+build green"
+    ],
+    "touches": [
+      "(verification only)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Fitness-coexistence regression gate: verify fitness vertical byte-identical end-to-end"
+    ],
+    "sprint": "Sprint 4 - Goal-type UI"
+  }
+]

@@ -1,0 +1,38 @@
+{
+  "Status": {
+    "id": "PVTSSF_lAHOAZXu284BZVzfzhUVGnw",
+    "options": {
+      "Todo": "f75ad846",
+      "In Progress": "47fc9ee4",
+      "Done": "98236657"
+    }
+  },
+  "Priority": {
+    "id": "PVTSSF_lAHOAZXu284BZVzfzhUVGrw",
+    "options": {
+      "P0 - Critical": "fabc52d2",
+      "P1 - High": "ea5919e8",
+      "P2 - Medium": "470ecbae",
+      "P3 - Low": "2d2539d4"
+    }
+  },
+  "Effort": {
+    "id": "PVTSSF_lAHOAZXu284BZVzfzhUVGtA",
+    "options": {
+      "Small": "e4809652",
+      "Medium": "687be6a8",
+      "Large": "c4e6f3c0"
+    }
+  },
+  "Sprint": {
+    "id": "PVTSSF_lAHOAZXu284BZVzfzhUVOCw",
+    "options": {
+      "Backlog": "44fecc6d",
+      "Sprint 1 - Generic data spine": "25ba1eaa",
+      "Sprint 2 - Project tool pack": "00a6a05f",
+      "Sprint 3 - GitHub integration": "db3b74aa",
+      "Sprint 4 - Goal-type UI": "326ed56d",
+      "Sprint 5 - Chewgether MVP": "3c0fb3cf"
+    }
+  }
+}

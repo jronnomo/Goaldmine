@@ -1,0 +1,113 @@
+[
+  {
+    "epic": "Generic data spine",
+    "title": "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration",
+    "value": "so that all subsequent epics have the DB tables and Goal columns they need to build on, with zero disruption to existing fitness data",
+    "acceptanceCriteria": [
+      "prisma/schema.prisma adds Goal.kind String @default(\"fitness\") with @@index([kind])",
+      "prisma/schema.prisma adds Goal.githubRepo String? and Goal.githubProjectNumber Int? as nullable columns",
+      "prisma/schema.prisma adds the ScheduledItem model exactly as specified in plan-blueprint.md §1b: id, goalId FK (onDelete Cascade), date DateTime, type String, title String, detail String?, payload Json?, status String @default(\"planned\"), completedAt DateTime?, externalRef String?, createdAt, updatedAt — with @@index([goalId,date]), @@index([goalId,status]), @@unique([goalId,externalRef])",
+      "prisma/schema.prisma adds the LogEntry model exactly as specified in plan-blueprint.md §1c: id, goalId FK (onDelete Cascade), date DateTime, metric String, value Float?, text String?, payload Json?, source String?, createdAt — with @@index([goalId,metric,date]) and @@index([goalId,date])",
+      "Goal model gains a scheduledItems ScheduledItem[] and logEntries LogEntry[] relation field",
+      "Migration additive: npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datasource prisma/schema.prisma (against pre-change snapshot) shows only CREATE TABLE and ALTER TABLE ... ADD COLUMN — no DROP, no ALTER TYPE",
+      "npx prisma migrate dev --name multi-domain-spine runs without error against the Neon DB",
+      "npx prisma generate succeeds and src/generated/prisma contains ScheduledItem and LogEntry types",
+      "npx tsc --noEmit passes (no new type errors introduced)",
+      "npm run build passes",
+      "Existing Goal rows have kind='fitness' by default — verified via prisma studio or a quick SELECT"
+    ],
+    "touches": [
+      "prisma/schema.prisma",
+      "prisma/migrations/<timestamp>_multi_domain_spine/migration.sql"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Add required goalId param to computeReadiness and computeReadinessSeries and update all 5 call sites so fitness readiness stays byte-identical",
+    "value": "so that log:* metrics (added in the next story) are scoped to the correct goal and cannot cross-contaminate a fitness goal's readiness score with another goal's LogEntry rows",
+    "acceptanceCriteria": [
+      "computeReadiness signature changes to: computeReadiness(targets: GoalTarget[], asOf: Date = new Date(), goalId: string) — goalId is REQUIRED (not optional) to prevent silent fallback to no-filter",
+      "computeReadinessSeries signature changes to: computeReadinessSeries(goalCreatedAt: Date, targets: GoalTarget[], now: Date = new Date(), goalId: string) — goalId REQUIRED",
+      "computeReadiness passes goalId through to resolveMetricValue on every call inside its targets loop",
+      "computeReadinessSeries passes goalId through to computeReadiness on every recursive cursor call",
+      "resolveMetricValue signature changes to: resolveMetricValue(prisma, metric, asOf, goalId: string) — REQUIRED param; existing fitness metric branches (weightLb, baseline:*, hike:*, workout:count) accept but ignore goalId — their DB queries are unchanged",
+      "resolveMetricStart signature changes to: resolveMetricStart(prisma, metric, goalId: string) — REQUIRED; existing branches ignore it",
+      "stats/page.tsx: computeReadiness(targets) call at line 39 updated to computeReadiness(targets, undefined, g.id); computeReadinessSeries(g.createdAt, targets) at line 40 updated to computeReadinessSeries(g.createdAt, targets, undefined, g.id)",
+      "progress/page.tsx: same two call sites (lines 37-38) updated identically with g.id",
+      "goals/[id]/page.tsx: computeReadiness(targets) at line 80 updated to computeReadiness(targets, undefined, goal.id)",
+      "npx tsc --noEmit passes with zero errors — TypeScript strict-mode errors on all missing goalId arguments are the compiler signal that no call site was missed",
+      "npm run build passes",
+      "Browser smoke: /stats and /progress pages load and display the existing fitness goal's readiness score identically to before this change — score value unchanged, breakdown identical"
+    ],
+    "touches": [
+      "src/lib/readiness.ts",
+      "src/lib/goal-targets.ts",
+      "src/app/stats/page.tsx",
+      "src/app/progress/page.tsx",
+      "src/app/goals/[id]/page.tsx"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor, and register log:mrr and log:milestones_done in the METRICS registry",
+    "value": "so that project-goal targets like log:mrr and log:milestones_done are scoreable by the readiness engine with correct historical fidelity, and fitness readiness is byte-identical",
+    "acceptanceCriteria": [
+      "resolveMetricValue: new branch for metric.startsWith(\"log:\") executes a prisma.logEntry.findFirst({ where: { goalId, metric: key, date: { lte: asOf }, value: { not: null } }, orderBy: { date: \"desc\" } }) and returns entry?.value ?? null — goalId is used in the WHERE clause",
+      "resolveMetricStart: new branch for metric.startsWith(\"log:\") returns 0 immediately (build-from-zero start, same as hike:* and workout:count)",
+      "progressFor: build-from-zero guard updated to also match target.metric.startsWith(\"log:\") — the three conditions are: hike:*, workout:count, log:* — existing fitness conditions unchanged",
+      "METRICS array in goal-targets.ts gains exactly two new entries: { id: \"log:mrr\", label: \"Monthly recurring revenue\", units: \"$\", direction: \"increase\", description: \"Latest MRR snapshot from a LogEntry.\" } and { id: \"log:milestones_done\", label: \"Milestones completed\", units: \"milestones\", direction: \"increase\", description: \"Count of completed milestones, logged via log_goal_metric.\" }",
+      "For a fitness goal (no log:* targets): computeReadiness output is byte-identical — verified by calling the function with the existing Mt. Elbert targets and confirming score and breakdown are unchanged",
+      "For a project goal with a log:mrr target: computeReadiness returns progress=0 when no LogEntry rows exist (start=0, current=null → null progress), and returns correct fractional progress when a LogEntry(metric=\"mrr\",value=500) exists against a target of 1000",
+      "No new LogEntry table query is executed for any fitness metric branch (weightLb, baseline:*, hike:*, workout:count) — only the log:* branch queries LogEntry",
+      "npx tsc --noEmit passes",
+      "npm run build passes"
+    ],
+    "touches": [
+      "src/lib/goal-targets.ts",
+      "src/lib/readiness.ts"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration",
+      "Add required goalId param to computeReadiness and computeReadinessSeries and update all 5 call sites so fitness readiness stays byte-identical"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  },
+  {
+    "epic": "Generic data spine",
+    "title": "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools",
+    "value": "so that Claude can route to the correct tool pack from the very first turn of a session, without needing a separate get_goal call",
+    "acceptanceCriteria": [
+      "create_goal tool input schema gains a kind field: z.enum([\"fitness\", \"project\"]).default(\"fitness\").describe(\"Goal domain; determines which tool pack Claude uses. fitness = workout/hike/baseline tools; project = schedule_item/log_goal_metric/GitHub tools.\") — persisted to Goal.kind on create",
+      "list_goals tool response includes kind in each goal object alongside the existing id, objective, targetDate, status, active fields",
+      "get_today_plan tool response gains an activeGoal field: { id: string, kind: string, objective: string, githubRepo: string | null } — populated from prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: \"desc\" } }); null if no active goal",
+      "Existing fitness goal created without kind defaults to kind=\"fitness\" — verified by calling create_goal without kind and confirming the stored row has kind=\"fitness\"",
+      "curl smoke: tools/call get_today_plan returns activeGoal.kind=\"fitness\" for the existing Mt. Elbert goal",
+      "curl smoke: tools/call list_goals returns kind for each goal in the array",
+      "curl smoke: tools/call create_goal with kind=\"project\" stores kind=\"project\" (verify via get_goal)",
+      "npx tsc --noEmit passes",
+      "npm run build passes",
+      "MCP connector reload in claude.ai required after merge — noted in PR/commit message"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration"
+    ],
+    "sprint": "Sprint 1 - Generic data spine"
+  }
+]

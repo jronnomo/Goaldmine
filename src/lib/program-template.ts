@@ -64,7 +64,12 @@ export type BaselineTest = {
   testName: string;
   units: string;
   protocol: string;
-  retestWeeks: number[]; // e.g. [6, 12]
+  // Week the test is FIRST collected. Defaults to 1 when omitted. Set this for
+  // tests introduced mid-plan (e.g. a descent-prep test that only makes sense
+  // once the Achilles has proven itself) so the schedule treats that week as
+  // the initial, not as a retest with no prior result to compare against.
+  initialWeek?: number;
+  retestWeeks: number[]; // weeks AFTER initialWeek, e.g. [6, 12]
 };
 
 export type BaselineDay = {
