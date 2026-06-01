@@ -3,6 +3,7 @@ import { Card } from "@/components/Card";
 import {
   getBaselineSchedule,
   getExerciseSummaries,
+  checkpointLabel,
   type ScheduledBaseline,
   type CheckpointStatus,
 } from "@/lib/records";
@@ -74,7 +75,7 @@ export async function RecordsSummary({
                       <p className="font-medium truncate">{s.testName}</p>
                       <p className="text-xs">
                         <span className={statusTextClass(next.status)}>
-                          {next.label} {next.status}
+                          {checkpointLabel(next)} {next.status}
                         </span>
                         <span className="text-[var(--muted)]">
                           {" · wk "}{next.week}

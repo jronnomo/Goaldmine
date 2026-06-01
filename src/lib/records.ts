@@ -14,7 +14,22 @@ export type ScheduledCheckpoint = {
   status: CheckpointStatus;
   completedOn?: Date;
   completedValue?: number;
+  /**
+   * True for a not-yet-done retest checkpoint whose initial (and every earlier
+   * checkpoint) was never completed — there is no prior result to retest
+   * against, so calling it a "retest" is meaningless. Display as an overdue
+   * initial; the plan linter treats it as an error.
+   */
+  unanchored?: boolean;
 };
+
+/**
+ * Human label for a checkpoint. An unanchored retest reads as an overdue
+ * initial — there's no prior result to retest against — rather than "retest".
+ */
+export function checkpointLabel(cp: Pick<ScheduledCheckpoint, "label" | "unanchored">): string {
+  return cp.unanchored ? "initial (overdue)" : cp.label;
+}
 
 export type ScheduledBaseline = {
   testName: string;
@@ -162,6 +177,19 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
         ...statusFor(t.targetDate, rows, now, windowStart, windowEnd),
       };
     });
+
+    // Honest labels: a retest needs a prior result to retest against. Walk the
+    // chain in order; once any checkpoint is done, later retests are anchored.
+    // A not-done retest with no earlier done checkpoint is flagged unanchored
+    // (an overdue initial in disguise) rather than left looking like a retest.
+    let anchored = false;
+    for (const cp of checkpoints) {
+      if (cp.status === "done") {
+        anchored = true;
+        continue;
+      }
+      if (cp.label === "retest" && !anchored) cp.unanchored = true;
+    }
 
     const latest = rows.at(-1);
     return {

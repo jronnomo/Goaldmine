@@ -32,8 +32,9 @@ import {
   assertValidDayTemplate,
 } from "@/lib/day-template-validation";
 import { WorkoutJsonOpSchema, applyWorkoutJsonOps } from "@/lib/day-template-ops";
-import type { DayTemplate } from "@/lib/program-template";
+import type { DayTemplate, ProgramTemplate } from "@/lib/program-template";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
+import { lintActivePlan, lintTemplate, type LintFinding } from "@/lib/plan-lint";
 import {
   getBaselineHistory,
   getBaselineSchedule,
@@ -1064,6 +1065,42 @@ function registerReadTools(server: McpServer) {
   );
 
   server.registerTool(
+    "lint_plan",
+    {
+      title: "Lint the active plan for scheduling / data-integrity problems",
+      description:
+        "Run structural + data-integrity checks over the active plan and surface findings before they bite. " +
+        "Call this when reviewing a long plan, before proposing a revision, or when something on the calendar looks off. " +
+        "Checks: unanchored retests (a retest with no initial collected), retest weeks past the plan horizon, phase weeks that don't tile 1..totalWeeks, " +
+        "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), baseline tests colliding with heavy training days, " +
+        "phantom baseline values (≤0), day overrides outside the plan range, and duplicate planned hikes on a date. " +
+        "Each finding has severity 'error' (a structural invariant is broken — apply_plan_revision will refuse to write it) or 'warning' (worth fixing, non-blocking). " +
+        "Read-only — fix findings via apply_plan_revision (template), update_plan_metadata (drift), update_baseline/delete_baseline (phantoms), or delete_hike (dup hikes).",
+      inputSchema: {},
+    },
+    async () =>
+      safe(async () => {
+        const { planId, findings } = await lintActivePlan();
+        if (planId === null) {
+          return { ok: true, findings: [], message: "No active plan to lint." };
+        }
+        const errors = findings.filter((f) => f.severity === "error");
+        const warnings = findings.filter((f) => f.severity === "warning");
+        return {
+          ok: errors.length === 0,
+          planId,
+          errorCount: errors.length,
+          warningCount: warnings.length,
+          findings,
+          message:
+            findings.length === 0
+              ? "Plan is clean — no lint findings."
+              : `${errors.length} error${errors.length === 1 ? "" : "s"}, ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`,
+        };
+      }),
+  );
+
+  server.registerTool(
     "export_workout",
     {
       title: "Export / share / copy / print a logged workout",
@@ -1231,18 +1268,76 @@ function registerWriteTools(server: McpServer) {
         "Examples: 1.5-mile run time, max pull-ups, deep-squat hold seconds, 8-rep DB press max, vertical jump. " +
         "Use a testName from the program template's baseline week when applicable so the result joins the existing test schedule; " +
         "use a custom name only for one-off measurements. Each result drives the trend on /baselines/test/[testName] and " +
-        "feeds get_baseline_history / get_baseline_schedule.",
+        "feeds get_baseline_history / get_baseline_schedule. " +
+        "Idempotent per day: logging the same testName again on the same calendar date updates that result in place rather than creating a duplicate row. " +
+        "value must be > 0 — a 0/blank result is rejected as a phantom completion; to deliberately document a DNF / skipped / substituted test, pass allowZero=true (recorded with no workout mirror).",
       inputSchema: {
         testName: z.string(),
         value: z.number(),
         units: z.string(),
         date: z.string().optional(),
         notes: z.string().optional(),
+        allowZero: z
+          .boolean()
+          .optional()
+          .describe(
+            "Permit value=0 to document a DNF / skipped / substituted test. Without this, value<=0 is rejected as a phantom completion.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
+        // Reject phantom completions: a bare 0 reads as "logged but no real
+        // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
+        // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
+        // reach 6.5 cm short of the toes is -6.5). The linter surfaces value<=0
+        // as a non-blocking warning so signed/legacy values still get a look.
+        if (input.value === 0 && !input.allowZero) {
+          throw new Error(
+            `value=0 for "${input.testName}" looks like a phantom completion. Pass the real measured value, ` +
+              `or set allowZero=true to deliberately record a DNF / skipped / substituted test.`,
+          );
+        }
+
         const date = input.date ? parseDateInput(input.date) : new Date();
+
+        // Idempotency: one result per testName per calendar day. A repeat call
+        // updates the existing row in place (mirrors apply_day_override's upsert
+        // and log_hike's finalize-in-place) instead of stacking duplicates.
+        const existing = await prisma.baseline.findFirst({
+          where: {
+            testName: input.testName,
+            date: { gte: startOfDay(date), lte: endOfDay(date) },
+          },
+          orderBy: { date: "asc" },
+        });
+
+        if (existing) {
+          const updated = await prisma.baseline.update({
+            where: { id: existing.id },
+            data: {
+              value: input.value,
+              units: input.units,
+              date,
+              notes: input.notes ?? null,
+            },
+          });
+          await syncBaselineUpdateToWorkout({
+            testName: input.testName,
+            oldDate: existing.date,
+            oldValue: existing.value,
+            newDate: date,
+            newValue: input.value,
+            newUnits: input.units,
+            newNotes: input.notes ?? null,
+          });
+          return {
+            id: updated.id,
+            deduped: true,
+            message: `Existing ${input.testName} result on this date updated in place (no duplicate created).`,
+          };
+        }
+
         const b = await prisma.baseline.create({
           data: {
             testName: input.testName,
@@ -1259,7 +1354,7 @@ function registerWriteTools(server: McpServer) {
           date,
           notes: input.notes ?? null,
         });
-        return { id: b.id, message: "Baseline logged (and appended to day's baseline workout)" };
+        return { id: b.id, deduped: false, message: "Baseline logged (and appended to day's baseline workout)" };
       }),
   );
 
@@ -1272,6 +1367,7 @@ function registerWriteTools(server: McpServer) {
         "Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. " +
         "Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar " +
         "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression. " +
+        "Scheduling is idempotent per day: calling with status='planned' for a date that already has a planned hike updates that row in place (no duplicate). " +
         "To finalize a previously-planned hike (the user did the hike that was on the calendar), pass replacesPlannedHikeId — the existing planned row " +
         "is updated in place with the actual route/distance/elevation/duration/pack/rpe/notes and status flips to 'completed' (or 'skipped' if you pass that). " +
         "The original Hike id is preserved, so any downstream references stay intact. Avoids the duplicate-row trap where you'd otherwise have a " +
@@ -1341,10 +1437,51 @@ function registerWriteTools(server: McpServer) {
           };
         }
 
+        const hikeDate = parseDateInput(input.date);
+
+        // Idempotent scheduling: at most one *planned* hike per calendar day.
+        // A repeat schedule call for the same day updates the existing planned
+        // row in place instead of stacking a duplicate boot icon (the two-hikes-
+        // same-Saturday bug). Completed/skipped hikes can legitimately repeat on
+        // a date, so this only applies to status='planned'.
+        if (input.status === "planned") {
+          const existingPlanned = await prisma.hike.findFirst({
+            where: {
+              status: "planned",
+              date: { gte: startOfDay(hikeDate), lte: endOfDay(hikeDate) },
+            },
+            orderBy: { date: "asc" },
+          });
+          if (existingPlanned) {
+            const updated = await prisma.hike.update({
+              where: { id: existingPlanned.id },
+              data: {
+                date: hikeDate,
+                route: input.route,
+                distanceMi: input.distanceMi,
+                elevationFt: input.elevationFt,
+                durationMin: input.durationMin,
+                packWeightLb: input.packWeightLb ?? null,
+                rpe: input.rpe ?? null,
+                status: "planned",
+                notes: input.notes ?? null,
+              },
+            });
+            return {
+              id: updated.id,
+              finalized: false,
+              deduped: true,
+              message:
+                "Existing planned hike on this date updated in place (no duplicate planned row created). " +
+                "To finalize a planned hike to completed, pass replacesPlannedHikeId.",
+            };
+          }
+        }
+
         // Default path: create a new hike row.
         const h = await prisma.hike.create({
           data: {
-            date: parseDateInput(input.date),
+            date: hikeDate,
             route: input.route,
             distanceMi: input.distanceMi,
             elevationFt: input.elevationFt,
@@ -1355,7 +1492,7 @@ function registerWriteTools(server: McpServer) {
             notes: input.notes ?? null,
           },
         });
-        return { id: h.id, finalized: false, message: "Hike logged" };
+        return { id: h.id, finalized: false, deduped: false, message: "Hike logged" };
       }),
   );
 
@@ -1488,7 +1625,9 @@ function registerWriteTools(server: McpServer) {
       title: "Apply a plan revision",
       description:
         "Atomically write a PlanRevision and update Plan.planJson to the new full snapshot. Use after reasoning over a note + recent state. snapshotJson is the *complete* plan template after the change (cascades included). Pass resolvedNoteIds for every note this revision folds in — they'll be marked resolved in the same transaction so they drop from pending. " +
-        "IMPORTANT: this tool only rewrites the template snapshot. It does NOT update Plan.endsOn / Plan.weeks / Plan.name or Goal.targetDate — PlanOverview, the calendar's plan range, and the goal-date pin read those columns directly, so they will drift unless you follow up with update_plan_metadata. It also does NOT anchor anything to a specific calendar date — events (races, inserted hikes, vacation days, sick swaps) need apply_day_override on each date. If the user asked to shift, extend, insert, or skip days, your proposal must list those follow-up calls explicitly.",
+        "The snapshot is linted before it's written: structural errors (phase weeks that don't tile 1..totalWeeks, a retest week past totalWeeks) REJECT the write; non-blocking warnings (metadata drift, baseline-on-heavy-day) are returned in the response. " +
+        "Plan.weeks/endsOn drift: by default this tool rewrites only the template snapshot, so if totalWeeks changed you must follow up with update_plan_metadata — OR pass cascadeMetadata=true to sync Plan.weeks and Plan.endsOn in the same transaction. Either way, when totalWeeks ≠ Plan.weeks the response carries a metadataDrift block. Goal.targetDate is never auto-changed (event date may intentionally differ from plan end) — use update_plan_metadata for that. " +
+        "It also does NOT anchor anything to a specific calendar date — events (races, inserted hikes, vacation days, sick swaps) need apply_day_override on each date. If the user asked to shift, extend, insert, or skip days, your proposal must list those follow-up calls explicitly.",
       inputSchema: {
         planId: z.string(),
         summary: z.string().min(1).max(200),
@@ -1501,6 +1640,12 @@ function registerWriteTools(server: McpServer) {
           .optional()
           .describe(
             "Notes addressed by this revision. They'll be marked resolved with a reference to the new revision id.",
+          ),
+        cascadeMetadata: z
+          .boolean()
+          .optional()
+          .describe(
+            "When true and the snapshot's totalWeeks differs from Plan.weeks, also update Plan.weeks and Plan.endsOn (= startedOn + totalWeeks*7) in the same transaction, so the calendar's week counter and plan range stay in sync. Does not touch Goal.targetDate.",
           ),
       },
     },
@@ -1521,6 +1666,33 @@ function registerWriteTools(server: McpServer) {
         assertValidProgramTemplate(snapshot);
 
         const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        const template = snapshot as ProgramTemplate;
+
+        // Lint the proposed snapshot before writing. Structural errors block;
+        // warnings ride along in the response. goalTargetDate isn't used by the
+        // template-only rules, so the plan end stands in here.
+        const lintFindings: LintFinding[] = lintTemplate(template, {
+          weeks: plan.weeks,
+          endsOn: plan.endsOn,
+          startedOn: plan.startedOn,
+          goalTargetDate: plan.endsOn,
+        });
+        const lintErrors = lintFindings.filter((f) => f.severity === "error");
+        if (lintErrors.length > 0) {
+          throw new Error(
+            `Refusing to apply: the snapshot has ${lintErrors.length} structural error(s). ` +
+              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+              " Fix the template and retry.",
+          );
+        }
+        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+
+        // Metadata drift / Phase-5 cascade.
+        const totalWeeks = template.totalWeeks;
+        const weeksChanged = totalWeeks !== plan.weeks;
+        const expectedEndsOn = startOfDay(addDays(plan.startedOn, totalWeeks * 7));
+        const willCascade = weeksChanged && input.cascadeMetadata === true;
+
         const resolveIds = [
           ...new Set([
             ...(input.resolvedNoteIds ?? []),
@@ -1540,7 +1712,10 @@ function registerWriteTools(server: McpServer) {
           });
           await tx.plan.update({
             where: { id: plan.id },
-            data: { planJson: snapshot as Prisma.InputJsonValue },
+            data: {
+              planJson: snapshot as Prisma.InputJsonValue,
+              ...(willCascade ? { weeks: totalWeeks, endsOn: expectedEndsOn } : {}),
+            },
           });
           let resolvedCount = 0;
           if (resolveIds.length > 0) {
@@ -1555,10 +1730,32 @@ function registerWriteTools(server: McpServer) {
           }
           return { rev: r, resolvedCount };
         });
+
+        // Surface drift so the two can't silently diverge even when the coach
+        // didn't opt into the cascade.
+        const metadataDrift = weeksChanged
+          ? {
+              planWeeks: plan.weeks,
+              snapshotTotalWeeks: totalWeeks,
+              currentEndsOn: toDateKey(plan.endsOn),
+              expectedEndsOn: toDateKey(expectedEndsOn),
+              cascaded: willCascade,
+              ...(willCascade
+                ? {}
+                : { fix: "Call update_plan_metadata to sync Plan.weeks/endsOn (and Goal.targetDate if the goal date moved)." }),
+            }
+          : null;
+
         return {
           revisionId: rev.id,
           resolvedNoteCount: resolvedCount,
-          message: `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}`,
+          warnings: lintWarnings,
+          metadataDrift,
+          message:
+            `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}` +
+            (willCascade ? ` — Plan.weeks/endsOn synced to ${totalWeeks}w.` : "") +
+            (metadataDrift && !willCascade ? " — metadata drift detected (see metadataDrift); follow up with update_plan_metadata." : "") +
+            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
         };
       }),
   );

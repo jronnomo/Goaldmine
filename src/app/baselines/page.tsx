@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
-import { getBaselineSchedule, getExerciseSummaries, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
+import { getBaselineSchedule, getExerciseSummaries, checkpointLabel, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
 
 export const dynamic = "force-dynamic";
 
@@ -148,7 +148,7 @@ function ScheduledRow({ s }: { s: ScheduledBaseline }) {
         </p>
         <p className="text-xs">
           <span className={statusClass(next.status)}>
-            {next.label} {next.status}
+            {checkpointLabel(next)} {next.status}
           </span>
           <span className="text-[var(--muted)]">
             {" · week "}
