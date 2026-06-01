@@ -3,7 +3,7 @@
 
 import { prisma } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
-import type { BaselineDay, BaselineTest, DayTemplate, ProgramTemplate } from "@/lib/program-template";
+import type { BaselineDay, BaselineTest, DayTemplate } from "@/lib/program-template";
 import { type NutritionPlan, parseStoredNutritionPlan } from "@/lib/nutrition-plan";
 
 export type CalendarDayCell = {
@@ -305,7 +305,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
   let weekIndex: number | null = null;
   let workoutTemplate: DayTemplate | null = null;
   let isOverride = false;
-  let baselinesDue: ResolvedDay["baselinesDue"] = [];
+  const baselinesDue: ResolvedDay["baselinesDue"] = [];
 
   if (program) {
     const startMid = startOfDay(program.startedOn);
