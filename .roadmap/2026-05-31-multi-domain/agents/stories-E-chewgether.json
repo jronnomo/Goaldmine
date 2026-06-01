@@ -1,0 +1,266 @@
+[
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+    "value": "The real chewgether goal exists in the DB with the correct kind, objective, targets, and GitHub repo link so every downstream story has a stable goalId to test against and the full readiness/coaching loop can be validated against production data.",
+    "acceptanceCriteria": [
+      "A seed script `prisma/seed-chewgether.ts` (or an extension to `prisma/seed.ts`) creates the chewgether Goal idempotently: if a Goal with objective containing 'Chewgether' and kind='project' already exists, it prints its id and skips creation.",
+      "The created Goal has: kind='project', objective='Ship Chewgether to the App Store + reach $1,000/mo MRR', active=true, githubRepo='jronnomo/Chewgether'.",
+      "The Goal's targets array contains at least two GoalTarget entries: { metric: 'log:mrr', label: 'Monthly recurring revenue', units: '$', direction: 'increase', target: 1000, weight: 0.6, rationale: 'Primary success metric — $1k/mo MRR validates product-market fit and self-sustainability.' } and { metric: 'log:milestones_done', label: 'Launch milestones completed', units: 'milestones', direction: 'increase', target: 7, weight: 0.4, rationale: '7 gated milestones (Apple Dev ownership, monetization build, TestFlight, store metadata, submit, launch, growth to $1k) — completion rate is the leading indicator of shipping.' }.",
+      "Running the seed script a second time does not create a duplicate Goal row.",
+      "After running the seed, `list_goals` via MCP returns the chewgether goal with kind='project' and the correct objective.",
+      "After running the seed, `get_goal` with the chewgether goalId returns targets array with log:mrr and log:milestones_done entries.",
+      "The Mt. Elbert fitness goal is NOT deactivated by this seed script — the seed must NOT call createGoalCore (which bulk-deactivates all goals). It should use prisma.goal.create directly and set active=false OR explicitly check and only set active=true if there is no currently active project goal, or add a note that the operator must manually manage active state to avoid deactivating the fitness goal mid-program. The seed script MUST document this W7 risk in a comment.",
+      "npx tsx prisma/seed-chewgether.ts (with DATABASE_URL set) runs without error.",
+      "npx tsc --noEmit passes."
+    ],
+    "touches": [
+      "prisma/seed-chewgether.ts (new)"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Add ScheduledItem, LogEntry, Goal.kind, and Goal GitHub-link fields via additive Prisma migration (Epic A)",
+      "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor, and register log:mrr and log:milestones_done in the METRICS registry (Epic A)",
+      "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools (Epic A)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+    "value": "The 7 gated launch milestones exist as ScheduledItems on the chewgether goal so the milestone burn-down is visible from day one, coaching prompts have concrete items to reference, and GitHub milestone sync (Epic C) has a baseline to update against.",
+    "acceptanceCriteria": [
+      "The seed script (extending E-1's script or a separate `prisma/seed-chewgether-milestones.ts`) creates the following 7 ScheduledItems for the chewgether goalId, idempotently (upsert on a deterministic externalRef or title+goalId guard): { type: 'milestone', title: 'Apple Developer account ownership + correct bundle ID (not app.rork.*)', date: <estimated date, e.g. 2026-06-07>, status: 'planned', detail: 'Transfer or create Apple Dev account; change bundle ID from app.rork.* to a user-owned reverse-domain ID before TestFlight submission.' }, { type: 'milestone', title: 'Monetization built — at least one IAP or subscription configured in-app', date: <2026-06-21>, status: 'planned', detail: 'No IAP/subscription exists today. Build and test at least one revenue flow before TestFlight so beta testers can validate the payment path.' }, { type: 'milestone', title: 'TestFlight build live and shared with beta testers', date: <2026-07-05>, status: 'planned', detail: 'Upload a signed build to App Store Connect; distribute to internal/external testers; collect feedback.' }, { type: 'milestone', title: 'App Store metadata complete (screenshots, description, keywords, privacy URL)', date: <2026-07-12>, status: 'planned', detail: 'All required App Store listing fields filled; screenshots at required device sizes; privacy policy URL live.' }, { type: 'milestone', title: 'Submit for App Store review', date: <2026-07-19>, status: 'planned', detail: 'Submit to Apple review queue; expected review time 1-3 days.' }, { type: 'milestone', title: 'App Store launch (public)', date: <2026-07-26>, status: 'planned', detail: 'App released on the App Store. Track first downloads and initial MRR.' }, { type: 'milestone', title: 'Growth milestone: reach $1,000/mo MRR', date: <2026-09-30>, status: 'planned', detail: 'First month with logged MRR >= $1000. Log via log_goal_metric(metric=mrr, value=...).' }",
+      "All 7 items have externalRef=null (not yet synced from GitHub; GitHub sync is Epic C).",
+      "Running the seed a second time does not create duplicate rows — guard on (goalId + title) or a seed-local externalRef like 'seed:chewgether-milestone-<slug>'.",
+      "After seeding, `list_scheduled_items(goalId=<chewgether>, status='planned')` via MCP returns all 7 items.",
+      "Dates in the seed use parseDateKey / startOfDay from @/lib/calendar for USER_TZ midnight correctness — NOT raw new Date('2026-06-07') which would be UTC midnight.",
+      "npx tsx prisma/seed-chewgether-milestones.ts (or the combined script) runs without error.",
+      "npx tsc --noEmit passes."
+    ],
+    "touches": [
+      "prisma/seed-chewgether.ts (extended) OR prisma/seed-chewgether-milestones.ts (new)"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item (Epic B)",
+      "B-3: list_scheduled_items (Epic B)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+    "value": "The chewgether goal's ScheduledItems are backed by real GitHub milestone data so coaching prompts like 'what milestones are open on GitHub' are grounded in the live repo state and the seed dates can be corrected to match actual GitHub milestone due dates.",
+    "acceptanceCriteria": [
+      "GITHUB_TOKEN is set in .env.local (scoped to repo read + write for jronnomo/Chewgether) — verified by curl to https://api.github.com/repos/jronnomo/Chewgether returning 200.",
+      "GITHUB_TOKEN is set in Vercel environment variables for the production deployment.",
+      "`link_github_project` MCP tool call with { goalId: <chewgether id>, repo: 'jronnomo/Chewgether' } succeeds and the chewgether Goal row has githubRepo='jronnomo/Chewgether'.",
+      "`get_project_overview` MCP call with the chewgether goalId returns: repo='jronnomo/Chewgether', openIssues > 0 (or 0 if true), milestones array, recentCommits array (up to 5). Response contains NO occurrence of the GITHUB_TOKEN value.",
+      "`sync_github_milestones` MCP call with { goalId: <chewgether> } creates or updates ScheduledItems with externalRef='gh:milestone:<N>' for each open GitHub milestone. A second call produces no duplicate rows (idempotent upsert verified by row count before and after).",
+      "For each synced milestone: ScheduledItem.date = startOfDay(parseDateKey(ghMilestone.due_on.slice(0,10))) when due_on is non-null; date = goal.targetDate or a far-future fallback when due_on is null. The W2 TZ note is explicitly followed — NOT new Date(ghMilestone.due_on).",
+      "The 7 seed milestones (from E-2) that have no externalRef are NOT overwritten by sync_github_milestones — the upsert key is (goalId, externalRef) and NULLs don't collide.",
+      "`list_scheduled_items(goalId=<chewgether>)` after sync returns both the seed milestones (externalRef=null or seed-local ref) and the GitHub-synced ones (externalRef='gh:milestone:*').",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "NOTE: claude.ai connector reload required only if Epic C tools were not already deployed. If Epic C was deployed in Sprint 3, no reload needed."
+    ],
+    "touches": [
+      ".env.local (GITHUB_TOKEN — NOT committed to git)",
+      "Vercel env (GITHUB_TOKEN — set via Vercel dashboard or CLI)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+      "link_github_project + get_project_overview + list_project_issues (Epic C)",
+      "sync_github_milestones + set_github_issue_status (Epic C)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-4: Update MCP server instructions string for goal-kind-aware coaching routing",
+    "value": "Claude automatically routes to the correct tool pack (project+GitHub vs workout/nutrition) from the first turn of any session, eliminating manual coaching setup and ensuring fitness coaching is byte-identical to before.",
+    "acceptanceCriteria": [
+      "The `instructions` string in `src/app/api/mcp/route.ts` is updated to include goal-kind routing per plan-blueprint.md §5b: describes kind='fitness' → workout/hike/baseline/nutrition tools; kind='project' → schedule_item/complete_item/log_goal_metric/get_project_overview/list_project_issues/sync_github_milestones tools.",
+      "The updated instructions include the weekly project-goal review cadence: 'Weekly review = MRR trend (list_log_entries metric=mrr) + milestone burn (list_scheduled_items status=planned) + open PRs/issues (get_project_overview)'.",
+      "The instructions retain the existing fitness coaching rules unchanged: 'For fitness: call read tools (get_today_plan, recent_history, get_goal) before proposing changes. Propose before applying apply_plan_revision or apply_day_override.'",
+      "The instructions include the golden rule for both kinds: 'Read get_today_plan first on every session start. activeGoal.kind determines which tool pack to use.'",
+      "The instructions do NOT include the GITHUB_TOKEN value or any reference to how to obtain it.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "curl smoke (POST /api/mcp, method=initialize or tools/list) returns a 200 response confirming the server starts correctly with the new instructions string.",
+      "CRITICAL: claude.ai connector must be reloaded after deployment — the instructions field is sent on connection and cached per connector session. Note this in the commit message.",
+      "Manual verification: open claude.ai, ask 'what's my active goal?' → Claude calls get_today_plan, reads activeGoal.kind, and routes to the correct pack without further prompting."
+    ],
+    "touches": [
+      "src/app/api/mcp/route.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "Expose Goal.kind on create_goal, list_goals, and get_today_plan MCP tools (Epic A)",
+      "B-5: get_today_plan project-goal branch (today's ScheduledItems in plan response) (Epic B)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-5: Project-goal coaching prompt set — weekly launch review, MRR check-in, what-ships-this-week",
+    "value": "A documented, tested set of claude.ai prompts for the project-goal coaching vertical gives the user a consistent weekly rhythm (analogous to the fitness coach prompts) and validates that the MCP tool pack + instructions produce grounded, non-hallucinated coaching responses.",
+    "acceptanceCriteria": [
+      "A file `docs/coaching/project-goal-prompts.md` is created containing at least three canonical coaching prompts with expected tool call sequences: (1) Weekly launch review: 'What ships this week for Chewgether?' → expected: Claude calls get_today_plan (reads kind=project), then list_scheduled_items(status=planned, from=weekStart, to=weekEnd), then get_project_overview — response cites specific milestones and open issues by title, not fabricated content. (2) MRR check-in: 'How is Chewgether MRR trending?' → expected: Claude calls list_log_entries(metric=mrr) — response shows actual logged values or correctly states 'no MRR logged yet'. (3) Blocking-issue scan: 'What is blocking Chewgether from shipping?' → expected: Claude calls get_project_overview and list_project_issues(state=open) — response cites actual GitHub issues by number and title.",
+      "Each prompt documents the MCP tool call sequence (tool name + key inputs) and the expected response shape.",
+      "The file notes which prompts require GitHub data (need GITHUB_TOKEN set and E-3 complete) vs. which work with only seed data (E-1 + E-2).",
+      "Manual validation: each of the 3 prompts is run in claude.ai against the live chewgether goal and produces a grounded response (cites real data, does not hallucinate milestone titles or MRR values). Pass/fail status documented in the file.",
+      "Fitness coaching prompts are NOT present in this file — it is project-vertical only.",
+      "NOTE: This story produces a documentation artifact, not a code change. The acceptance criteria are verified manually in claude.ai."
+    ],
+    "touches": [
+      "docs/coaching/project-goal-prompts.md (new)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+      "E-4: Update MCP server instructions string for goal-kind-aware coaching routing"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-6: Verify chewgether readiness scoring — log:mrr and log:milestones_done against targets",
+    "value": "Confirms the readiness engine correctly scores the chewgether goal's two targets from real LogEntry data so the /progress and /stats pages show meaningful progress (not flat zeroes) once any MRR or milestone data is logged.",
+    "acceptanceCriteria": [
+      "Log a test MRR entry via MCP: `log_goal_metric(goalId=<chewgether>, metric='mrr', value=200)` — verify the LogEntry row exists.",
+      "Log a test milestones_done entry via MCP: `log_goal_metric(goalId=<chewgether>, metric='milestones_done', value=1)` — verify the LogEntry row exists.",
+      "computeReadiness called with the chewgether goal's targets + goalId returns: log:mrr progress = 200/1000 = 0.2 (20%); log:milestones_done progress = 1/7 ≈ 0.143; overall weighted readiness = (0.2 * 0.6) + (0.143 * 0.4) ≈ 0.177 (17.7%). Verify via a direct Node call or by reading /progress in the browser.",
+      "Browser smoke: navigate to /progress or /goals/<chewgether id> with the project goal active → readiness percentage is non-zero and matches the expected calculation above.",
+      "Fitness goal readiness: after switching active goal back to Mt. Elbert, /progress shows the fitness readiness score unchanged — no cross-contamination from chewgether's LogEntry rows.",
+      "computeReadinessSeries for chewgether: the series returns flat zeros for all weekly points before the log_goal_metric calls above, and the correct value at the point the entry was logged. The S1 suggestion (flat series before first log) is expected and documented, not a bug.",
+      "Delete the two test LogEntry rows after validation (or document they are test data that should be cleaned up before the first real coaching session).",
+      "npx tsc --noEmit passes. npm run build passes."
+    ],
+    "touches": [
+      "No code changes — validation-only story. Uses existing MCP tools + browser smoke."
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-4: log_metric + list_log_entries (Epic B)",
+      "Implement log:* metric namespace in resolveMetricValue, resolveMetricStart, and progressFor (Epic A)",
+      "Goal-type-aware UI — Today page kind-branch + ProjectTodayView (Epic D)",
+      "Goal-type-aware UI — Progress/readiness hub (Epic D)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-7: add set_active_goal MCP tool and document goal-switching covenant",
+    "value": "Claude can programmatically switch the active goal between Mt. Elbert (fitness) and chewgether (project) without the user navigating the UI, eliminating the W7 coaching landmine where creating the project goal silently deactivates the fitness goal mid-program.",
+    "acceptanceCriteria": [
+      "`tools/list` response includes `set_active_goal` with inputSchema: `{ goalId: z.string().describe('The goal to activate. All other goals will be set inactive.') }`.",
+      "`set_active_goal` description warns: 'This deactivates ALL other goals. If the user is mid-program on a fitness goal, confirm before switching. Use list_goals to show the user their goals and let them confirm.' — matching the propose-before-applying rule.",
+      "`tools/call set_active_goal({ goalId: <chewgether id> })` sets the chewgether Goal active=true and the Mt. Elbert Goal active=false in a single transaction.",
+      "`tools/call set_active_goal({ goalId: <mtElbert id> })` reverses the switch: Mt. Elbert becomes active, chewgether becomes inactive.",
+      "After each set_active_goal call, `get_today_plan` returns activeGoal.kind matching the newly activated goal's kind.",
+      "Calling `set_active_goal` with an id that does not exist returns a user-friendly error, not a raw Prisma throw.",
+      "The tool is registered in `registerWriteTools` or `registerProjectTools` (not as a standalone file) — keep the registration footprint minimal.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "NOTE: claude.ai connector reload required after merge."
+    ],
+    "touches": [
+      "src/lib/mcp/tools/project-tools.ts (or src/lib/mcp/tools.ts)"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "B-1: registerProjectTools scaffold + schedule_item + delete_scheduled_item (Epic B)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "E-8: End-to-end Sprint 5 verification — chewgether goal is plannable, trackable, scorable, and coachable",
+    "value": "A full coaching session in claude.ai confirms the entire multi-domain stack is production-ready: the chewgether goal is visible, GitHub data flows, readiness scores, the UI renders a project Today view, and fitness coaching is byte-identical to before.",
+    "acceptanceCriteria": [
+      "PLANNER CHECK: `list_goals` returns both the Mt. Elbert (kind=fitness) and chewgether (kind=project) goals with correct kinds.",
+      "TRACKABLE CHECK: `list_scheduled_items(goalId=<chewgether>, status=planned)` returns the 7 seeded launch milestones plus any GitHub-synced milestones.",
+      "GITHUB CHECK: `get_project_overview(goalId=<chewgether>)` returns real repo data (not an error). GITHUB_TOKEN is confirmed live in production (Vercel deployment).",
+      "SCORABLE CHECK: After logging at least one log:mrr entry, the chewgether readiness score in the UI is non-zero and matches the expected weighted calculation. Fitness goal readiness is unchanged when fitness goal is active.",
+      "COACHABLE CHECK (the Sprint 5 QA gate): In claude.ai, ask 'What's blocking Chewgether from shipping this week?' → Claude calls get_today_plan (reads activeGoal.kind='project'), then get_project_overview or list_scheduled_items, and returns a grounded answer using real GitHub issues and scheduled milestones — NOT fabricated content. Document the actual tool call sequence observed.",
+      "FITNESS REGRESSION CHECK: Switch active goal to Mt. Elbert → Today page shows the workout hero (existing fitness UI), not the ProjectTodayView. get_today_plan returns fitness-specific fields. The coaching session 'what's my workout today?' routes to the fitness tool pack. All fitness tools work identically to Sprint 4.",
+      "CONTEXT SWITCH CHECK: `set_active_goal` switches between goals; Today page and get_today_plan both reflect the correct active goal within one page reload.",
+      "npx tsc --noEmit passes. npm run build passes.",
+      "Production deployment (Vercel) is live; the MCP endpoint at https://workout-planner-gold-three.vercel.app/api/mcp responds correctly to tools/list.",
+      "claude.ai connector is connected to the production URL and all Sprint 5 tools are visible."
+    ],
+    "touches": [
+      "No code changes — end-to-end verification story. Documents the verification session as a runbook."
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "E-1: Seed the chewgether Goal row (kind=project, targets, GitHub link)",
+      "E-2: Seed the 7 launch milestones as ScheduledItems for the chewgether goal",
+      "E-3: Link chewgether goal to GitHub repo and run initial milestone sync",
+      "E-4: Update MCP server instructions string for goal-kind-aware coaching routing",
+      "E-5: Project-goal coaching prompt set — weekly launch review, MRR check-in, what-ships-this-week",
+      "E-6: Verify chewgether readiness scoring — log:mrr and log:milestones_done against targets",
+      "E-7: add set_active_goal MCP tool and document goal-switching covenant",
+      "Goal-type-aware UI — Today page kind-branch + ProjectTodayView (Epic D)",
+      "Goal-type-aware UI — Calendar ScheduledItem source, LegendSchema, plan route (Epic D)"
+    ],
+    "sprint": "Sprint 5 - Chewgether MVP"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Self-serve / in-app planner (Option B) for non-operator goal seeding",
+    "value": "Allow the user to seed a goal and its milestones from within the app (or via a guided claude.ai flow) without the operator running a seed script — removing the `prisma/seed-chewgether.ts` manual step.",
+    "acceptanceCriteria": ["Captured as a backlog item. Not designed for v1."],
+    "touches": [],
+    "effort": "Unknown",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Fitness vertical convergence onto ScheduledItem / LogEntry spine",
+    "value": "Migrate planned hikes and workout scheduling to use ScheduledItem, and body measurements / baselines to use LogEntry, so the fitness and project verticals share the same generic primitives and the calendar cell builder has one data source.",
+    "acceptanceCriteria": ["Captured as a backlog item. Not designed for v1. Note: ScheduledItem.status='done' vs Hike.status='completed' semantic mismatch must be resolved before this migration."],
+    "touches": [],
+    "effort": "Unknown",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Standalone personal-finance vertical",
+    "value": "Add a 'finance' goal kind with budget/savings/income tracking as a third vertical alongside fitness and project, reusing the ScheduledItem + LogEntry spine.",
+    "acceptanceCriteria": ["Captured as a backlog item. Not designed for v1. The log:* metric namespace already handles numeric finance metrics (log:savings, log:income) with zero new code once Epic A ships."],
+    "touches": [],
+    "effort": "Unknown",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Chewgether goal MVP + coaching",
+    "title": "BACKLOG: Multi-tenancy / GitHub OAuth / per-user auth",
+    "value": "Support multiple users with per-user GitHub tokens, OAuth flows, and separate goal/data namespaces — enabling the app to be used by more than one person or shared with collaborators.",
+    "acceptanceCriteria": ["Captured as a backlog item. Not designed for v1. The GoalIntegration table pattern (deferred in plan-blueprint.md §1d) is the right seam for this."],
+    "touches": [],
+    "effort": "Unknown",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  }
+]
