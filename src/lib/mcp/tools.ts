@@ -1006,6 +1006,64 @@ function registerReadTools(server: McpServer) {
   );
 
   server.registerTool(
+    "list_planned_hikes",
+    {
+      title: "List planned / scheduled / upcoming hikes (to review, move, or reschedule)",
+      description:
+        "Return every Hike row with status='planned' — the upcoming hikes on the calendar (the faded boot icons): training hikes, the Mt. Elbert build-up, backpacking trips. " +
+        "This is THE tool to call when you need to see or move planned hikes — 'what hikes are scheduled', 'list all planned hikes', 'which Saturdays have a hike between now and date X', 'reschedule/shift the planned hikes'. " +
+        "Do NOT poll get_day per Saturday and do NOT read planJson — planned hikes are Hike rows, returned here directly with their ids so you can then finalize (log_hike.replacesPlannedHikeId), delete (delete_hike), or reschedule them. " +
+        "Defaults to all future planned hikes (today onward); pass from/to (yyyy-mm-dd) to bound the window, or includePast=true to also surface stale/overdue planned rows. " +
+        "Note: one-off special days inserted as day OVERRIDES (races, vacation, sick swaps) are not Hike rows — those show up in get_goal.upcomingOverrides instead.",
+      inputSchema: {
+        from: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd lower bound (inclusive). Default = today (USER_TZ)."),
+        to: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd upper bound (inclusive). Default = no upper bound (all future)."),
+        includePast: z
+          .boolean()
+          .optional()
+          .describe("Also include planned hikes dated before the lower bound (default false) — useful to catch overdue/stale planned rows."),
+      },
+    },
+    async ({ from, to, includePast }) =>
+      safe(async () => {
+        const lower = from ? parseDateInput(from) : startOfDay(new Date());
+        const dateFilter: { gte?: Date; lte?: Date } = {};
+        if (!includePast) dateFilter.gte = lower;
+        if (to) dateFilter.lte = endOfDay(parseDateInput(to));
+        const rows = await prisma.hike.findMany({
+          where: {
+            status: "planned",
+            ...(dateFilter.gte || dateFilter.lte ? { date: dateFilter } : {}),
+          },
+          orderBy: { date: "asc" },
+        });
+        return {
+          count: rows.length,
+          hikes: rows.map((h) => ({
+            id: h.id,
+            date: toDateKey(h.date),
+            route: h.route,
+            distanceMi: h.distanceMi,
+            elevationFt: h.elevationFt,
+            packWeightLb: h.packWeightLb,
+            durationMin: h.durationMin,
+            notes: h.notes,
+          })),
+          message:
+            rows.length === 0
+              ? "No planned hikes in range."
+              : `${rows.length} planned hike${rows.length === 1 ? "" : "s"}.`,
+        };
+      }),
+  );
+
+  server.registerTool(
     "export_workout",
     {
       title: "Export / share / copy / print a logged workout",
