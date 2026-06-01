@@ -156,14 +156,19 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   const scheduled: ScheduledBaseline[] = flat.map(({ day, test }) => {
     const rows = byName.get(test.testName) ?? [];
 
-    // Initial checkpoint = end of week 1 (day 7 of program); retests follow.
+    // Initial checkpoint = end of the test's first-collection week (week 1
+    // unless initialWeek says otherwise); retests follow. retestWeeks at or
+    // before the initial week are dropped — they can't be retests of it.
+    const initialWeek = test.initialWeek ?? 1;
     const targets: { week: number; targetDate: Date; label: "initial" | "retest" }[] = [
-      { week: 1, targetDate: addDays(startedOn, 7), label: "initial" },
-      ...test.retestWeeks.map((w) => ({
-        week: w,
-        targetDate: addDays(startedOn, w * 7),
-        label: "retest" as const,
-      })),
+      { week: initialWeek, targetDate: addDays(startedOn, initialWeek * 7), label: "initial" },
+      ...test.retestWeeks
+        .filter((w) => w > initialWeek)
+        .map((w) => ({
+          week: w,
+          targetDate: addDays(startedOn, w * 7),
+          label: "retest" as const,
+        })),
     ];
 
     // Each checkpoint owns the window [prev target or program start, next target or +28d).
@@ -179,16 +184,18 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
     });
 
     // Honest labels: a retest needs a prior result to retest against. Walk the
-    // chain in order; once any checkpoint is done, later retests are anchored.
-    // A not-done retest with no earlier done checkpoint is flagged unanchored
-    // (an overdue initial in disguise) rather than left looking like a retest.
+    // chain in order. A not-done retest is unanchored only when no earlier
+    // checkpoint was completed AND none is still collectable — i.e. the initial
+    // already came due and was missed. If an earlier checkpoint is still
+    // upcoming/due, the chain isn't broken yet, so we don't cry wolf.
     let anchored = false;
+    let earlierPending = false;
     for (const cp of checkpoints) {
-      if (cp.status === "done") {
-        anchored = true;
-        continue;
+      if (cp.label === "retest" && cp.status !== "done" && !anchored && !earlierPending) {
+        cp.unanchored = true;
       }
-      if (cp.label === "retest" && !anchored) cp.unanchored = true;
+      if (cp.status === "done") anchored = true;
+      if (cp.status === "upcoming" || cp.status === "due") earlierPending = true;
     }
 
     const latest = rows.at(-1);

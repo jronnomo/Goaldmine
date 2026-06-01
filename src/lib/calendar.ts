@@ -194,12 +194,14 @@ function countBaselinesDueForCell(program: ActiveProgramSnapshot, weekIndex: num
   if (!day) return 0;
   let count = 0;
   for (const t of day.tests) {
-    // Initial test = week 1; retests at retestWeeks.
-    if (weekIndex === 1) {
+    // Initial test = the test's first-collection week (default 1); retests at
+    // retestWeeks beyond it.
+    const initialWeek = t.initialWeek ?? 1;
+    if (weekIndex === initialWeek) {
       count += 1;
       continue;
     }
-    if (t.retestWeeks?.includes(weekIndex)) count += 1;
+    if (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex)) count += 1;
   }
   return count;
 }
@@ -369,17 +371,19 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
           const loggedOnDate = result
             ? { id: result.id, value: result.value, units: result.units, date: result.date }
             : null;
-          // Rotation default: week 1 surfaces initials, retestWeeks trigger
-          // retests, all else is silent. With an override, the user has
-          // explicitly placed these tests on this date — bypass the week
-          // filter entirely (a deferred "initial" can land outside week 1).
+          // Rotation default: the test's initialWeek (default 1) surfaces the
+          // initial, retestWeeks beyond it trigger retests, all else is silent.
+          // With an override, the user has explicitly placed these tests on this
+          // date — bypass the week filter entirely (a deferred "initial" can
+          // land outside its scheduled week).
+          const initialWeek = test.initialWeek ?? 1;
           const checkpoint: "initial" | "retest" =
-            test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+            weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
           if (overrideNames !== null) {
             baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
-          } else if (weekIndex === 1) {
+          } else if (weekIndex === initialWeek) {
             baselinesDue.push({ test, baselineDay, checkpoint: "initial", loggedOnDate });
-          } else if (test.retestWeeks?.includes(weekIndex)) {
+          } else if (weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex)) {
             baselinesDue.push({ test, baselineDay, checkpoint: "retest", loggedOnDate });
           }
         }
@@ -494,7 +498,10 @@ export function rotationBaselineNamesForDate(
   const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
   if (!baselineDay) return [];
   return baselineDay.tests
-    .filter((t) => weekIndex === 1 || t.retestWeeks?.includes(weekIndex))
+    .filter((t) => {
+      const initialWeek = t.initialWeek ?? 1;
+      return weekIndex === initialWeek || (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex));
+    })
     .map((t) => t.testName);
 }
 

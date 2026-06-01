@@ -51,9 +51,20 @@ export function lintTemplate(template: ProgramTemplate, meta: PlanMeta): LintFin
   const findings: LintFinding[] = [];
   const totalWeeks = template.totalWeeks;
 
-  // Rule: retestWeeks entry beyond the plan horizon. (error)
+  // Rule: a baseline checkpoint scheduled beyond the plan horizon, or a retest
+  // at/before its initial collection week (it can't retest a not-yet-collected
+  // initial). (error)
   for (const day of template.baselineWeek ?? []) {
     for (const test of day.tests ?? []) {
+      const initialWeek = test.initialWeek ?? 1;
+      if (initialWeek > totalWeeks) {
+        findings.push({
+          rule: "initial-week-out-of-range",
+          severity: "error",
+          message: `"${test.testName}" is first collected in week ${initialWeek}, past the plan's ${totalWeeks}-week horizon. It will never come due.`,
+          context: { testName: test.testName, initialWeek, totalWeeks },
+        });
+      }
       for (const w of test.retestWeeks ?? []) {
         if (w > totalWeeks) {
           findings.push({
@@ -61,6 +72,14 @@ export function lintTemplate(template: ProgramTemplate, meta: PlanMeta): LintFin
             severity: "error",
             message: `"${test.testName}" has a retest scheduled in week ${w}, past the plan's ${totalWeeks}-week horizon. It will never come due.`,
             context: { testName: test.testName, retestWeek: w, totalWeeks },
+          });
+        }
+        if (w <= initialWeek) {
+          findings.push({
+            rule: "retest-before-initial",
+            severity: "error",
+            message: `"${test.testName}" has a retest in week ${w} at or before its initial collection week (${initialWeek}) — there's no prior result to retest. Set initialWeek earlier or drop the retest.`,
+            context: { testName: test.testName, retestWeek: w, initialWeek },
           });
         }
       }
