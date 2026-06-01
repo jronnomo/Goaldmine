@@ -122,7 +122,7 @@ function buildCell(args: {
   workoutsByKey: Map<string, { id: string; startedAt: Date; status: string; title: string | null }[]>;
   hikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
   plannedHikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
-  overridesByKey: Map<string, { workoutJson: unknown; nutritionText: string | null; mobilityText: string | null }>;
+  overridesByKey: Map<string, { workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -157,10 +157,17 @@ function buildCell(args: {
   const workoutCount = args.workoutsByKey.get(k)?.length ?? 0;
   const hikeCount = args.hikesByKey.get(k)?.length ?? 0;
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
-  const hasOverride = args.overridesByKey.has(k);
-  const baselinesDue = isInPlan
-    ? countBaselinesDueForCell(args.program!, weekIndex!, rotationDay!)
-    : 0;
+  const cellOverride = args.overridesByKey.get(k);
+  const hasOverride = cellOverride !== undefined;
+  // Override-aware baseline count. An override's baselineTestNames replaces the
+  // rotation default for that day — an empty array means "explicitly none"
+  // (mirrors resolveDay). Without this, a day that suppressed baselines via an
+  // override still showed the week's rotation count on the calendar badge.
+  const baselinesDue = !isInPlan
+    ? 0
+    : Array.isArray(cellOverride?.baselineTestNames)
+      ? countBaselinesFromOverride(args.program!, cellOverride.baselineTestNames as string[])
+      : countBaselinesDueForCell(args.program!, weekIndex!, rotationDay!);
 
   return {
     date: new Date(args.date),
@@ -193,6 +200,22 @@ function countBaselinesDueForCell(program: ActiveProgramSnapshot, weekIndex: num
       continue;
     }
     if (t.retestWeeks?.includes(weekIndex)) count += 1;
+  }
+  return count;
+}
+
+// Count baselines for a day whose override explicitly lists baselineTestNames.
+// Mirrors resolveDay's override path: each name is matched against a real test
+// in the baselineWeek (unknown names are ignored); an empty list yields 0.
+function countBaselinesFromOverride(program: ActiveProgramSnapshot, names: string[]): number {
+  let count = 0;
+  for (const name of names) {
+    for (const day of program.template.baselineWeek ?? []) {
+      if (day.tests.some((t) => t.testName === name)) {
+        count += 1;
+        break;
+      }
+    }
   }
   return count;
 }
