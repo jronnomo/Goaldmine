@@ -36,8 +36,8 @@ export default async function StatsPage() {
         return { goal: g, snapshot: null, series: [] as { date: string; score: number }[] };
       }
       const [snapshot, series] = await Promise.all([
-        computeReadiness(targets),
-        computeReadinessSeries(g.createdAt, targets),
+        computeReadiness(targets, new Date(), g.id),
+        computeReadinessSeries(g.createdAt, targets, new Date(), g.id),
       ]);
       return {
         goal: g,

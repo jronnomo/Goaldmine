@@ -77,7 +77,7 @@ export default async function GoalDetail({
 
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
-  const readiness = targets.length > 0 ? await computeReadiness(targets) : null;
+  const readiness = targets.length > 0 ? await computeReadiness(targets, new Date(), goal.id) : null;
 
   const otherGoals = await prisma.goal.findMany({
     where: { id: { not: id } },

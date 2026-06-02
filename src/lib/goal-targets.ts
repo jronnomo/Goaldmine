@@ -32,6 +32,9 @@ export type MetricSpec = {
   description: string;
 };
 
+/** Namespace prefix for metrics backed by LogEntry rows. */
+export const LOG_METRIC_PREFIX = "log:" as const;
+
 /** Curated registry — keeps the UI to known metrics and avoids typos. */
 export const METRICS: MetricSpec[] = [
   {
@@ -124,6 +127,20 @@ export const METRICS: MetricSpec[] = [
     units: "sessions",
     direction: "increase",
     description: "Total completed workouts since program start.",
+  },
+  {
+    id: "log:mrr",
+    label: "Monthly recurring revenue",
+    units: "$",
+    direction: "increase",
+    description: "Latest MRR snapshot from a LogEntry.",
+  },
+  {
+    id: "log:milestones_done",
+    label: "Milestones completed",
+    units: "milestones",
+    direction: "increase",
+    description: "Count of completed milestones, logged via log_metric.",
   },
 ];
 
@@ -232,6 +249,7 @@ export async function resolveMetricValue(
   prisma: PrismaClient,
   metric: string,
   asOf: Date = new Date(),
+  goalId: string,
 ): Promise<number | null> {
   if (metric === "weightLb") {
     const m = await prisma.measurement.findFirst({
@@ -291,6 +309,20 @@ export async function resolveMetricValue(
     });
   }
 
+  if (metric.startsWith(LOG_METRIC_PREFIX)) {
+    const key = metric.slice(LOG_METRIC_PREFIX.length);
+    const entry = await prisma.logEntry.findFirst({
+      where: {
+        goalId,
+        metric: key,
+        date: { lte: asOf },
+        value: { not: null },
+      },
+      orderBy: { date: "desc" },
+    });
+    return entry?.value ?? null;
+  }
+
   return null;
 }
 
@@ -298,7 +330,9 @@ export async function resolveMetricValue(
 export async function resolveMetricStart(
   prisma: PrismaClient,
   metric: string,
+  goalId: string, // reserved for future goal-scoped start queries; fitness branches ignore it
 ): Promise<number | null> {
+  void goalId;
   if (metric === "weightLb") {
     const m = await prisma.measurement.findFirst({
       where: { weightLb: { not: null } },
@@ -318,6 +352,9 @@ export async function resolveMetricStart(
 
   // Cumulative / count / max metrics start at 0.
   if (metric.startsWith("hike:") || metric === "workout:count") return 0;
+
+  // log:* metrics build from zero — same pattern as hike:*/workout:count.
+  if (metric.startsWith(LOG_METRIC_PREFIX)) return 0;
 
   return null;
 }

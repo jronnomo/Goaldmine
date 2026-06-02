@@ -1,6 +1,7 @@
 import { addDays, startOfWeekMonday } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import {
+  LOG_METRIC_PREFIX,
   type GoalTarget,
   resolveMetricStart,
   resolveMetricValue,
@@ -32,7 +33,11 @@ export function progressFor(target: GoalTarget, current: number | null, start: n
   if (current === null) return null;
 
   // Build-from-zero metrics: progress = current / target, no start needed.
-  if (target.metric.startsWith("hike:") || target.metric === "workout:count") {
+  if (
+    target.metric.startsWith("hike:") ||
+    target.metric === "workout:count" ||
+    target.metric.startsWith(LOG_METRIC_PREFIX)
+  ) {
     if (target.target === 0) return null;
     return clamp01(current / target.target);
   }
@@ -55,15 +60,16 @@ export function progressFor(target: GoalTarget, current: number | null, start: n
 export async function computeReadiness(
   targets: GoalTarget[],
   asOf: Date = new Date(),
+  goalId: string,
 ): Promise<ReadinessSnapshot> {
   const breakdown: TargetProgress[] = [];
   const missing: GoalTarget[] = [];
 
   for (const t of targets) {
-    const current = await resolveMetricValue(prisma, t.metric, asOf);
+    const current = await resolveMetricValue(prisma, t.metric, asOf, goalId);
     const start = t.start !== undefined && t.start !== null
       ? t.start
-      : await resolveMetricStart(prisma, t.metric);
+      : await resolveMetricStart(prisma, t.metric, goalId);
     const progress = progressFor(t, current, start);
 
     if (progress === null) {
@@ -86,18 +92,19 @@ export async function computeReadinessSeries(
   goalCreatedAt: Date,
   targets: GoalTarget[],
   now: Date = new Date(),
+  goalId: string,
 ): Promise<ReadinessSeriesPoint[]> {
   const points: ReadinessSeriesPoint[] = [];
   const start = startOfWeek(goalCreatedAt);
   let cursor = addDays(start, 6); // first week-end (Sunday)
   while (cursor <= now) {
-    const snap = await computeReadiness(targets, cursor);
+    const snap = await computeReadiness(targets, cursor, goalId);
     points.push({ weekEnd: new Date(cursor), score: snap.score });
     cursor = addDays(cursor, 7);
   }
   // Always include "today" as the latest point.
   if (points.length === 0 || points.at(-1)!.weekEnd.getTime() < now.getTime() - 24 * 3600 * 1000) {
-    const snap = await computeReadiness(targets, now);
+    const snap = await computeReadiness(targets, now, goalId);
     points.push({ weekEnd: new Date(now), score: snap.score });
   }
   return points;
