@@ -14,7 +14,8 @@
   },
   "agents": [],
   "iteration": 1,
-  "status": "planning",
+  "status": "complete",
+  "commits": { "20": "62fdda1", "21": "df53451", "22": "df53451", "23": "7813179", "docs": "2f2f0be" },
   "hazards": [
     "createGoalCore deactivates all goals; create_goal kind=project smoke must be Tech-Lead-reverted; Mt. Elbert must end active=true",
     "Neon DB shared with prod; review migration SQL diff before applying",
