@@ -1,0 +1,23 @@
+{
+  "feature": "Sprint 1 — Generic Data Spine",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-sprint-1-data-spine.md",
+  "prd_issue": null,
+  "board_issues": [20, 21, 22, 23, 56],
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005"],
+  "build_order": "REQ-001 (gate, merge+apply) -> [REQ-002 -> REQ-003] || REQ-004 -> REQ-005 (QA)",
+  "streams": {
+    "schema": ["REQ-001"],
+    "backend-readiness": ["REQ-002", "REQ-003"],
+    "mcp": ["REQ-004"],
+    "qa": ["REQ-005"]
+  },
+  "agents": [],
+  "iteration": 1,
+  "status": "planning",
+  "hazards": [
+    "createGoalCore deactivates all goals; create_goal kind=project smoke must be Tech-Lead-reverted; Mt. Elbert must end active=true",
+    "Neon DB shared with prod; review migration SQL diff before applying",
+    "src/generated/prisma gitignored; each worktree must run prisma generate"
+  ]
+}
