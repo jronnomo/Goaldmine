@@ -17,7 +17,7 @@ model Workout {
   week      Int?
   dayIndex  Int?
   status    String   @default("completed") // planned | completed | skipped
-  source    String?  // manual | strong.app | claude | imported
+  source    String? // manual | strong.app | claude | imported
   sourceUrl String?
   notes     String?
   createdAt DateTime @default(now())
@@ -29,9 +29,9 @@ model Workout {
 }
 
 model WorkoutExercise {
-  id         String   @id @default(cuid())
+  id         String  @id @default(cuid())
   workoutId  String
-  workout    Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  workout    Workout @relation(fields: [workoutId], references: [id], onDelete: Cascade)
   name       String
   equipment  String?
   orderIndex Int
@@ -83,18 +83,18 @@ model Baseline {
 }
 
 model Note {
-  id         String    @id @default(cuid())
-  date       DateTime  @default(now())
-  body       String
-  type       String    @default("journal") // audible | journal | feedback | standing_rule
+  id                 String    @id @default(cuid())
+  date               DateTime  @default(now())
+  body               String
+  type               String    @default("journal") // audible | journal | feedback | standing_rule
   // Optional: which future date this note is *about* (vs. when it was written).
   // Lets Claude know "the user wants the May 8 plan adjusted because of this."
-  targetDate DateTime?
+  targetDate         DateTime?
   // When set, the note has been folded in (via plan revision) or
   // explicitly acknowledged as not requiring a plan change. Pending notes
   // are those with resolvedAt IS NULL.
-  resolvedAt     DateTime?
-  resolvedReason String?
+  resolvedAt         DateTime?
+  resolvedReason     String?
   // For type="standing_rule" only. Bumped via acknowledge_standing_rule
   // whenever the coach references the rule in a turn — surfaces freshness so
   // stale rules are easy to spot. Null for non-rule notes.
@@ -118,7 +118,7 @@ model Hike {
   packWeightLb Float?
   durationMin  Int
   status       String   @default("completed") // planned | completed | skipped
-  rpe          Float?   // 1-10 perceived exertion (post-hike)
+  rpe          Float? // 1-10 perceived exertion (post-hike)
   notes        String?
   createdAt    DateTime @default(now())
 
@@ -129,7 +129,7 @@ model Hike {
 model NutritionLog {
   id        String   @id @default(cuid())
   date      DateTime
-  mealType  String   // preworkout | postworkout | breakfast | lunch | dinner | snack
+  mealType  String // preworkout | postworkout | breakfast | lunch | dinner | snack
   // Array<{ name: string, qty?: string, notes?: string }> — food groups/items.
   items     Json
   notes     String?
@@ -152,7 +152,7 @@ model NutritionLog {
 model MobilityCheckin {
   id               String   @id @default(cuid())
   date             DateTime
-  areasWorked      String   // comma-separated tags: ankles,hips,thoracic,etc.
+  areasWorked      String // comma-separated tags: ankles,hips,thoracic,etc.
   deepSquatHoldSec Int?
   notes            String?
   createdAt        DateTime @default(now())
@@ -161,29 +161,71 @@ model MobilityCheckin {
 }
 
 model Goal {
-  id         String   @id @default(cuid())
-  objective  String
-  targetDate DateTime
-  notes      String?
-  status     String   @default("active") // active | achieved | abandoned
-  active     Boolean  @default(true)
+  id                  String   @id @default(cuid())
+  objective           String
+  targetDate          DateTime
+  notes               String?
+  status              String   @default("active") // active | achieved | abandoned
+  active              Boolean  @default(true)
   // Optional readiness targets — array of { metric, label, target, start?, weight, units, direction }
-  targets    Json?
+  targets             Json?
   // Optional references — array of { id, kind: 'url' | 'doc', value, label?, addedAt, claudeSummary? }
   // The app stores these; Claude reads them via MCP and uses them to refine targets.
-  references Json?
+  references          Json?
   // Optional calendar legend — array of { icon, label, kind } where kind ∈
   // {"trained", "hike-completed", "hike-planned", "override", "goal-date"}.
   // Drives both the calendar legend AND which icons render in cells. Null
   // = use the default Mt. Elbert-flavored legend in src/lib/legend.ts.
-  legend     Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  legend              Json?
+  kind                String   @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
+  githubRepo          String? // "owner/repo" for project goals; null otherwise
+  githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  plans Plan[]
+  plans          Plan[]
+  scheduledItems ScheduledItem[]
+  logEntries     LogEntry[]
 
   @@index([active])
   @@index([targetDate])
+  @@index([kind])
+}
+
+model ScheduledItem {
+  id          String    @id @default(cuid())
+  goalId      String
+  goal        Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  date        DateTime // USER_TZ midnight; written via parseDateInput by future tools
+  type        String // e.g. "milestone" | "task" | "review"
+  title       String
+  detail      String?
+  payload     Json?
+  status      String    @default("planned") // planned | done | skipped
+  completedAt DateTime?
+  externalRef String? // e.g. GitHub milestone node id, for idempotent sync
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([goalId, externalRef])
+  @@index([goalId, date])
+  @@index([goalId, status])
+}
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  date      DateTime // USER_TZ midnight
+  metric    String // bare metric key WITHOUT the "log:" registry prefix — e.g. "mrr", not "log:mrr"
+  value     Float?
+  text      String?
+  payload   Json?
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@index([goalId, metric, date])
+  @@index([goalId, date])
 }
 
 model Plan {
@@ -214,27 +256,27 @@ model Plan {
 // and mobility). Used when the user customizes a single day without revising
 // the entire plan.
 model PlanDayOverride {
-  id            String   @id @default(cuid())
-  planId        String
-  plan          Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
-  date          DateTime // midnight in user's local TZ
-  workoutJson   Json?    // override DayTemplate
+  id                String   @id @default(cuid())
+  planId            String
+  plan              Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  date              DateTime // midnight in user's local TZ
+  workoutJson       Json? // override DayTemplate
   // Optional: replace which baseline tests appear on this date with this exact
   // list. Each entry is a testName from the program's baselineWeek (any day).
   // When set, overrides the rotation-derived baselinesDue for this date.
   // Null/absent = use the rotation default. Empty array = explicitly no tests.
   baselineTestNames Json?
-  nutritionText String?
+  nutritionText     String?
   // Structured per-slot meal plan: { preworkout?, breakfast?, lunch?, snack?,
   // postworkout?, dinner? } where each slot is { items: [{name, qty?, notes?}],
   // macros?: {calories?, proteinG?, carbsG?, fatG?, sodiumMg?, fiberG?},
   // notes? }. Rendered alongside logged meals so planned-vs-eaten is visible
   // at a glance. nutritionText stays as free-form day-level guidance.
-  nutritionPlan Json?
-  mobilityText  String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  nutritionPlan     Json?
+  mobilityText      String?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@unique([planId, date])
   @@index([planId, date])
@@ -270,7 +312,7 @@ model Program {
   day       Int      @default(1)
   version   Int      @default(1)
   active    Boolean  @default(true)
-  planJson  Json     // 12-week template: phases -> days -> exercises
+  planJson  Json // 12-week template: phases -> days -> exercises
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
