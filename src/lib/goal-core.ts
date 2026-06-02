@@ -19,6 +19,7 @@ export interface CreateGoalCoreInput {
   objective: string;
   targetDate: Date;
   notes?: string | null;
+  kind?: "fitness" | "project";
   copyFromGoalId?: string | null;
   targets?: GoalTarget[] | null;
   legend?: Legend;
@@ -84,6 +85,7 @@ export async function createGoalCore(
         targetDate,
         notes: normalizedNotes,
         targets: targets ?? undefined,
+        kind: input.kind ?? "fitness",
         ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
         plans: {
           create: {

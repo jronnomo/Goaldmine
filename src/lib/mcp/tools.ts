@@ -527,7 +527,7 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
-        const [r, standingRules] = await Promise.all([
+        const [r, standingRules, activeGoalRow] = await Promise.all([
           resolveDay(new Date()),
           prisma.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
@@ -542,8 +542,21 @@ function registerReadTools(server: McpServer) {
               lastAcknowledgedAt: true,
             },
           }),
+          prisma.goal.findFirst({
+            where: { active: true },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, kind: true, objective: true, githubRepo: true },
+          }),
         ]);
-        return { ...r, standingRules };
+        const activeGoal = activeGoalRow
+          ? {
+              id: activeGoalRow.id,
+              kind: activeGoalRow.kind,
+              objective: activeGoalRow.objective,
+              githubRepo: activeGoalRow.githubRepo,
+            }
+          : null;
+        return { ...r, standingRules, activeGoal };
       }),
   );
 
@@ -637,6 +650,7 @@ function registerReadTools(server: McpServer) {
           targetDate: g.targetDate,
           status: g.status,
           active: g.active,
+          kind: g.kind,
           targetCount: Array.isArray(g.targets) ? (g.targets as unknown[]).length : 0,
           activePlanId: g.plans[0]?.id ?? null,
         }));
@@ -2427,6 +2441,9 @@ function registerWriteTools(server: McpServer) {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape,
         notes: z.string().optional(),
+        kind: z.enum(["fitness", "project"]).default("fitness").describe(
+          "Goal domain; determines which tool pack Claude uses. fitness = workout/hike/baseline tools; project = schedule_item/log_metric/GitHub tools.",
+        ),
         copyFromGoalId: z
           .string()
           .optional()
@@ -2436,13 +2453,14 @@ function registerWriteTools(server: McpServer) {
         ),
       },
     },
-    async ({ objective, targetDate, notes, copyFromGoalId, legend }) =>
+    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend }) =>
       safe(async () => {
         const parsedDate = parseDateInput(targetDate);
         const { goal, planId } = await createGoalCore({
           objective,
           targetDate: parsedDate,
           notes,
+          kind,
           copyFromGoalId,
           legend,
         });
