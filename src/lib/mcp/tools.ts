@@ -41,6 +41,7 @@ import {
   getBaselineSummaries,
   getExerciseHistory,
   getExerciseSummaries,
+  recordsSetInWorkout,
 } from "@/lib/records";
 import {
   NutritionPlanShape,
@@ -60,7 +61,11 @@ const DateKeyShape = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
   .describe("ISO date yyyy-mm-dd in the user's local time zone");
 
-const NoteTypeShape = z.enum(["journal", "audible", "feedback", "standing_rule"]);
+const NoteTypeShape = z.enum(["journal", "audible", "feedback", "standing_rule", "review"]);
+
+/** Note types surfaced by recent_history. First-class types (review, open_item,
+ *  standing_rule) are excluded — they have dedicated read tools. */
+const ACTIVITY_NOTE_TYPES = ["journal", "audible", "feedback"] as const;
 
 const MealTypeShape = z.enum([
   "preworkout",
@@ -514,6 +519,37 @@ export function registerAll(server: McpServer) {
 }
 
 // ----------------------------------------------------------------------------
+// Module helpers for new cold-start tools
+// ----------------------------------------------------------------------------
+
+// Shared helper: fetch unresolved open_item notes sorted by targetDate
+// (nulls last) then createdAt date. Computes overdue flag from startOfDay(now).
+async function fetchOpenItems(): Promise<
+  { id: string; body: string; targetDate: string | null; priority: string | null; overdue: boolean }[]
+> {
+  const now = startOfDay(new Date());
+  const items = await prisma.note.findMany({
+    where: { type: "open_item", resolvedAt: null },
+    orderBy: [{ targetDate: { sort: "asc", nulls: "last" } }, { date: "asc" }],
+    select: { id: true, body: true, targetDate: true, priority: true, date: true },
+  });
+  return items.map((item) => ({
+    id: item.id,
+    body: item.body,
+    targetDate: item.targetDate ? toDateKey(item.targetDate) : null,
+    priority: item.priority,
+    overdue: item.targetDate !== null && item.targetDate < now,
+  }));
+}
+
+/** Returns the first line of `body`, capped at 80 chars. Used for standing-rule
+ *  headers in get_session_brief so full bodies are not repeated there. */
+function noteHeader(body: string): string {
+  const firstLine = body.split("\n")[0] ?? body;
+  return firstLine.length <= 80 ? firstLine : firstLine.slice(0, 77) + "...";
+}
+
+// ----------------------------------------------------------------------------
 // Read tools — context for coaching reasoning
 // ----------------------------------------------------------------------------
 
@@ -580,10 +616,12 @@ function registerReadTools(server: McpServer) {
     {
       title: "Recent activity / lookback window — workouts, measurements, notes, baselines, hikes",
       description:
-        "Pull the last N days of activity across every log type — workouts, body measurements, notes, baseline test results, hikes, nutrition. " +
+        "Pull the last N days of activity across every log type — workouts, body measurements, notes (journal/audible/feedback only), baseline test results, hikes, nutrition. " +
         "Use to answer 'what happened recently', 'what did I do last week', or before proposing a plan revision so the audible reflects actual recent state. " +
         "Default lookback is 14 days; max 180. " +
-        "NOTE: this is a firehose — a wide window (e.g. 42 days) can exceed the client's tool-result size cap and get truncated, dropping the trailing nutrition. For nutrition-only questions use get_nutrition_history; for a single day use get_day.",
+        "NOTE: this is a firehose — a wide window (e.g. 42 days) can exceed the client's tool-result size cap and get truncated. " +
+        "For nutrition-only questions use get_nutrition_history; for a single day use get_day. " +
+        "For standing-rule bodies use get_today_plan; for reviews use get_latest_review; for open items use list_open_items.",
       inputSchema: {
         days: z
           .number()
@@ -609,7 +647,7 @@ function registerReadTools(server: McpServer) {
             orderBy: { date: "desc" },
           }),
           prisma.note.findMany({
-            where: { date: { gte: since } },
+            where: { date: { gte: since }, type: { in: [...ACTIVITY_NOTE_TYPES] } },
             orderBy: { date: "desc" },
           }),
           prisma.baseline.findMany({
@@ -931,6 +969,272 @@ function registerReadTools(server: McpServer) {
           getBaselineSummaries(),
         ]);
         return { exercises, baselines };
+      }),
+  );
+
+  server.registerTool(
+    "list_open_items",
+    {
+      title: "List unresolved open items (action threads)",
+      description:
+        "All unresolved open items — structured action threads, decisions, or reminders created via log_open_item. " +
+        "Returns them sorted by targetDate (soonest first, nulls last) with an overdue flag. " +
+        "Use this (NOT recent_history) to surface pending decisions and in-flight threads across coaching sessions. " +
+        "To create an open item use log_open_item; to resolve one use resolve_open_item. " +
+        "Surfaced in get_session_brief.openItems — call this for a live standalone view.",
+    },
+    async () =>
+      safe(async () => {
+        const openItems = await fetchOpenItems();
+        return { count: openItems.length, openItems };
+      }),
+  );
+
+  server.registerTool(
+    "get_latest_review",
+    {
+      title: "Get the most recent weekly review",
+      description:
+        "The most recent review note (type:'review') as a discrete object with body, date, and weekOf. " +
+        "Returns null when no review has been logged yet. " +
+        "Use this (NOT recent_history) to surface the most recent Sunday recap in a coaching session. " +
+        "To log a review use log_review. " +
+        "Surfaced in get_session_brief.latestReview — call this for a standalone latest review.",
+    },
+    async () =>
+      safe(async () => {
+        const note = await prisma.note.findFirst({
+          where: { type: "review" },
+          orderBy: { date: "desc" },
+          select: { id: true, body: true, date: true, targetDate: true },
+        });
+        if (!note) return { review: null };
+        return {
+          review: {
+            body: note.body,
+            date: toDateKey(note.date),
+            weekOf: note.targetDate ? toDateKey(note.targetDate) : null,
+          },
+        };
+      }),
+  );
+
+  server.registerTool(
+    "get_session_brief",
+    {
+      title: "Cold-start coaching catch-up (one call)",
+      description:
+        "One-call cold-start catch-up for a NEW coaching conversation — today's date, active goal + days-to-go, " +
+        "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
+        "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
+        "the latest review, and unresolved open items. " +
+        "Call this FIRST in a fresh chat instead of stitching together get_today_plan + recent_history + get_goal. " +
+        "For today's full workout/nutrition/baselines use get_today_plan; " +
+        "for a wide activity lookback use recent_history; " +
+        "for all-time PRs use get_records_summary.",
+    },
+    async () =>
+      safe(async () => {
+        const now = new Date();
+        const MS_PER_DAY = 1000 * 60 * 60 * 24;
+        const cutoff30 = addDays(startOfDay(now), -31);
+
+        // Parallel fetch everything — resolveDay + getActiveProgram both call
+        // getActiveProgram internally but since they're separate awaits the
+        // overhead is one extra DB round-trip (acceptable for a cold-start tool).
+        const [
+          resolved,
+          program,
+          activeGoal,
+          standingRules,
+          recentWorkouts,
+          recentHikes,
+          latestReviewNote,
+          openItems,
+          measurements,
+        ] = await Promise.all([
+          resolveDay(now),
+          getActiveProgram(),
+          prisma.goal.findFirst({
+            where: { active: true },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, objective: true, targetDate: true, kind: true },
+          }),
+          // ASC puts NULL first (Postgres default) → never-acknowledged rules surface
+          // first in the brief. Intentional: stale rules are the ones the coach is most
+          // at risk of forgetting. get_today_plan uses desc/nulls-last (freshest first)
+          // because it's a per-turn surface, not a cold-start orientation.
+          prisma.note.findMany({
+            where: { type: "standing_rule", resolvedAt: null },
+            orderBy: { lastAcknowledgedAt: "asc" },
+            select: { id: true, body: true, lastAcknowledgedAt: true },
+          }),
+          prisma.workout.findMany({
+            where: { status: "completed", startedAt: { lte: now } },
+            orderBy: { startedAt: "desc" },
+            take: 5,
+            select: {
+              id: true,
+              startedAt: true,
+              title: true,
+              notes: true,
+              exercises: { select: { name: true }, take: 3 },
+            },
+          }),
+          prisma.hike.findMany({
+            where: { status: "completed", date: { lte: endOfDay(now) } },
+            orderBy: { date: "desc" },
+            take: 5,
+            select: { id: true, date: true, route: true, distanceMi: true, elevationFt: true, durationMin: true },
+          }),
+          prisma.note.findFirst({
+            where: { type: "review" },
+            orderBy: { date: "desc" },
+            select: { body: true, date: true, targetDate: true },
+          }),
+          fetchOpenItems(),
+          prisma.measurement.findMany({
+            where: { date: { gte: cutoff30 }, weightLb: { not: null } },
+            orderBy: { date: "asc" },
+            select: { date: true, weightLb: true },
+          }),
+        ]);
+
+        // --- goal ---
+        let goal: {
+          id: string;
+          objective: string;
+          targetDate: string | null;
+          daysToGo: number | null;
+          kind: string | null;
+        } | null = null;
+        if (activeGoal) {
+          const daysToGo = activeGoal.targetDate
+            ? Math.round(
+                (startOfDay(activeGoal.targetDate).getTime() - startOfDay(now).getTime()) /
+                  MS_PER_DAY,
+              )
+            : null;
+          goal = {
+            id: activeGoal.id,
+            objective: activeGoal.objective,
+            targetDate: activeGoal.targetDate ? toDateKey(activeGoal.targetDate) : null,
+            daysToGo,
+            kind: activeGoal.kind,
+          };
+        }
+
+        // --- plan ---
+        let plan: {
+          name: string;
+          week: number;
+          totalWeeks: number;
+          phase: { index: number; name: string } | null;
+        } | null = null;
+        if (resolved.isInPlan && program && resolved.weekIndex !== null) {
+          const weekIndex = resolved.weekIndex;
+          const matchedPhase = program.template.phases?.find(
+            (p) => Array.isArray(p?.weeks) && p.weeks.includes(weekIndex),
+          );
+          plan = {
+            name: program.name,
+            week: weekIndex,
+            totalWeeks: program.template.totalWeeks,
+            phase: matchedPhase
+              ? { index: matchedPhase.index, name: matchedPhase.name }
+              : null,
+          };
+        }
+
+        // --- recentSessions: blend workouts + hikes, newest-first, take 5 ---
+        type Session = { date: string; kind: "workout" | "hike"; title: string; summary: string };
+        const sessions: Session[] = [
+          ...recentWorkouts.map((w) => ({
+            date: toDateKey(w.startedAt),
+            kind: "workout" as const,
+            title: w.title ?? "Workout",
+            summary:
+              w.exercises.length > 0
+                ? w.exercises
+                    .slice(0, 3)
+                    .map((e) => e.name)
+                    .join(", ") + (w.exercises.length > 3 ? ` +${w.exercises.length - 3} more` : "")
+                : w.notes ?? "",
+          })),
+          ...recentHikes.map((h) => ({
+            date: toDateKey(h.date),
+            kind: "hike" as const,
+            title: h.route,
+            summary: `${h.distanceMi} mi, ${h.elevationFt} ft gain, ${h.durationMin} min`,
+          })),
+        ]
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, 5);
+
+        // --- weightTrend ---
+        const latest = measurements.at(-1) ?? null;
+        const target7d = addDays(startOfDay(now), -7);
+        const target30d = addDays(startOfDay(now), -30);
+
+        function nearestMeasurement(
+          mList: { date: Date; weightLb: number | null }[],
+          target: Date,
+        ): { date: Date; weightLb: number } | null {
+          let best: { date: Date; weightLb: number } | null = null;
+          let bestDist = Infinity;
+          for (const m of mList) {
+            if (m.weightLb === null) continue;
+            const weightLb = m.weightLb;
+            const dist = Math.abs(m.date.getTime() - target.getTime());
+            if (dist < bestDist) { best = { date: m.date, weightLb }; bestDist = dist; }
+          }
+          return best;
+        }
+
+        const m7d = nearestMeasurement(measurements, target7d);
+        const m30d = nearestMeasurement(measurements, target30d);
+        const weightTrend = {
+          latest: latest
+            ? { date: toDateKey(latest.date), weightLb: latest.weightLb }
+            : null,
+          delta7d:
+            m7d && latest && latest.weightLb !== null
+              ? Math.round((latest.weightLb - m7d.weightLb) * 10) / 10
+              : null,
+          delta30d:
+            m30d && latest && latest.weightLb !== null
+              ? Math.round((latest.weightLb - m30d.weightLb) * 10) / 10
+              : null,
+        };
+
+        // --- standingRules (headers, NOT bodies) ---
+        const standingRulesOut = standingRules.map((r) => ({
+          id: r.id,
+          header: noteHeader(r.body),
+          lastAcknowledgedAt: r.lastAcknowledgedAt?.toISOString() ?? null,
+        }));
+
+        // --- latestReview ---
+        const latestReview = latestReviewNote
+          ? {
+              body: latestReviewNote.body,
+              date: toDateKey(latestReviewNote.date),
+              weekOf: latestReviewNote.targetDate
+                ? toDateKey(latestReviewNote.targetDate)
+                : null,
+            }
+          : null;
+
+        return {
+          today: toDateKey(now),
+          goal,
+          plan,
+          recentSessions: sessions,
+          weightTrend,
+          standingRules: standingRulesOut,
+          latestReview,
+          openItems,
+        };
       }),
   );
 
@@ -1321,7 +1625,8 @@ function registerWriteTools(server: McpServer) {
             },
           },
         });
-        return { id: created.id, message: "Workout logged" };
+        const recordsSet = await recordsSetInWorkout(created.id);
+        return { id: created.id, message: "Workout logged", recordsSet };
       }),
   );
 
@@ -1598,10 +1903,110 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a note",
       description:
-        "Audible / journal / feedback / standing_rule. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note.",
+        "Audible / journal / feedback / standing_rule / review. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note. For a structured first-class weekly review (surfaced by get_latest_review) use log_review.",
       inputSchema: LogNoteShape,
     },
     async (input) => safe(() => logNoteCore(prisma, input)),
+  );
+
+  server.registerTool(
+    "log_open_item",
+    {
+      title: "Log a resolvable open item (action thread)",
+      description:
+        "Create a resolvable open item — an unresolved decision, pending action, or thread to track across sessions. " +
+        "NOT for plan-change coaching notes (use log_note type:'audible'). " +
+        "NOT for week recaps (use log_review). " +
+        "Resolve via resolve_open_item; list via list_open_items or get_session_brief.",
+      inputSchema: {
+        body: z
+          .string()
+          .min(1)
+          .describe("The unresolved thread, e.g. 'Pick the Longs Peak date' or 'Test Bierstadt fueling strategy'"),
+        targetDate: DateKeyShape.optional().describe(
+          "Optional due/decide-by date (yyyy-mm-dd, USER_TZ). Surfaces as overdue in list_open_items / get_session_brief once past.",
+        ),
+        priority: z
+          .enum(["high", "normal", "low"])
+          .optional()
+          .describe("Optional priority. Default: normal when omitted."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const n = await prisma.note.create({
+          data: {
+            body: input.body,
+            type: "open_item",
+            targetDate: input.targetDate ? parseDateInput(input.targetDate) : null,
+            priority: input.priority ?? null,
+          },
+        });
+        return { id: n.id, message: "Open item logged" };
+      }),
+  );
+
+  server.registerTool(
+    "resolve_open_item",
+    {
+      title: "Resolve an open item",
+      description:
+        "Mark an open item as resolved with a reason. " +
+        "Removes it from list_open_items and get_session_brief.openItems. " +
+        "Errors if the note is not type:'open_item'. " +
+        "Use list_open_items to find the id.",
+      inputSchema: {
+        id: z.string().describe("The open item's Note.id"),
+        reason: z
+          .string()
+          .min(1)
+          .describe("Brief resolution note, e.g. 'Decided on July 12 for Longs'"),
+      },
+    },
+    async ({ id, reason }) =>
+      safe(async () => {
+        const note = await prisma.note.findUniqueOrThrow({ where: { id } });
+        if (note.type !== "open_item") {
+          throw new Error(`Note ${id} is type '${note.type}', not 'open_item'.`);
+        }
+        const updated = await prisma.note.update({
+          where: { id },
+          data: { resolvedAt: new Date(), resolvedReason: reason },
+        });
+        return { id: updated.id, message: "Open item resolved" };
+      }),
+  );
+
+  server.registerTool(
+    "log_review",
+    {
+      title: "Log a weekly review / Sunday recap",
+      description:
+        "Log a weekly review or Sunday recap as a first-class review object (NOT a plain journal note). " +
+        "Surfaced by get_latest_review and get_session_brief.latestReview. " +
+        "For day-to-day observations use log_note; " +
+        "for trackable action items pulled out of the review use log_open_item.",
+      inputSchema: {
+        body: z
+          .string()
+          .min(1)
+          .describe("The week review / Sunday recap prose."),
+        weekOf: DateKeyShape.optional().describe(
+          "Week-ending date the review covers (yyyy-mm-dd). Stored so get_latest_review can report it.",
+        ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const n = await prisma.note.create({
+          data: {
+            body: input.body,
+            type: "review",
+            targetDate: input.weekOf ? parseDateInput(input.weekOf) : null,
+          },
+        });
+        return { id: n.id, message: "Review logged" };
+      }),
   );
 
   server.registerTool(
@@ -2008,7 +2413,8 @@ function registerWriteTools(server: McpServer) {
       description:
         "Edit an existing note's body, type, or targetDate without losing the note id. " +
         "Common uses: fix a typo, retarget a note to a different date, change a journal entry to a feedback note, or mark a pending audible 'resolved' by rewriting the body. " +
-        "Pass only the fields to change; omit the rest. To change type to standing_rule, prefer promote_note (it stamps lastAcknowledgedAt). To delete entirely, use delete_note.",
+        "Pass only the fields to change; omit the rest. To change type to standing_rule, prefer promote_note (it stamps lastAcknowledgedAt). To delete entirely, use delete_note. " +
+        "Note types: journal / audible / feedback / standing_rule / review. Note: open_item is not a retargetable type here — create open items via log_open_item.",
       inputSchema: {
         id: z.string(),
         body: z.string().optional(),
@@ -2075,7 +2481,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Delete / remove a note (journal, audible, feedback, standing rule)",
       description:
-        "Permanently remove a note by id — any type (journal, audible, feedback, standing_rule). " +
+        "Permanently remove a note by id — any type (journal, audible, feedback, standing_rule, review, open_item). " +
         "PlanRevision.triggerNoteId references are set to null (the audit entry stays but loses the link). " +
         "To resolve a note without deleting (preserves history), use acknowledge_notes. To edit, use update_note.",
       inputSchema: { id: z.string() },
@@ -2092,7 +2498,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Change a note's type (e.g. promote feedback → standing_rule)",
       description:
-        "Change the type of an existing note. The intended use is promoting a feedback-type note that captures a persistent coaching rule into the standing_rule type so it auto-surfaces in get_today_plan. When promoting to 'standing_rule', lastAcknowledgedAt is stamped to now (override with stampAcknowledged=false to preserve any existing timestamp). Propose before applying — show the user the note text and the target type before calling. Use list_promotable_notes to discover candidates.",
+        "Change the type of an existing note. The intended use is promoting a feedback-type note that captures a persistent coaching rule into the standing_rule type so it auto-surfaces in get_today_plan. Also accepts type:'review' to promote a note to a first-class review. When promoting to 'standing_rule', lastAcknowledgedAt is stamped to now (override with stampAcknowledged=false to preserve any existing timestamp). Propose before applying — show the user the note text and the target type before calling. Use list_promotable_notes to discover candidates. Note: open_item is not a retargetable type here — create open items via log_open_item.",
       inputSchema: {
         id: z.string().describe("Note id (from list_promotable_notes or get_pending_notes)"),
         type: NoteTypeShape.describe("Target type — usually 'standing_rule'"),
@@ -2660,7 +3066,7 @@ function registerWriteTools(server: McpServer) {
       description:
         "Log multiple notes in one all-or-nothing transaction. " +
         "Use for bulk note creation — importing a backlog of standing rules, attaching journal entries across many dates, or seeding feedback for a planning session. " +
-        "Each operation has the same shape as a single log_note call (body, type?, targetDate?). type='standing_rule' stamps lastAcknowledgedAt for each, same as the single-op tool. " +
+        "Each operation has the same shape as a single log_note call (body, type?, targetDate?). Types: journal / audible / feedback / standing_rule / review. type='standing_rule' stamps lastAcknowledgedAt for each, same as the single-op tool. " +
         `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
       inputSchema: {
         operations: z

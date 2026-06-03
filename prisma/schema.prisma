@@ -86,7 +86,7 @@ model Note {
   id                 String    @id @default(cuid())
   date               DateTime  @default(now())
   body               String
-  type               String    @default("journal") // audible | journal | feedback | standing_rule
+  type               String    @default("journal") // audible | journal | feedback | standing_rule | review | open_item
   // Optional: which future date this note is *about* (vs. when it was written).
   // Lets Claude know "the user wants the May 8 plan adjusted because of this."
   targetDate         DateTime?
@@ -99,6 +99,9 @@ model Note {
   // whenever the coach references the rule in a turn — surfaces freshness so
   // stale rules are easy to spot. Null for non-rule notes.
   lastAcknowledgedAt DateTime?
+  // Priority for type="open_item" notes. One of "high" | "normal" | "low".
+  // Null for all other note types and for open_items logged without a priority.
+  priority           String?
   createdAt          DateTime  @default(now())
 
   triggeredRevisions PlanRevision[]

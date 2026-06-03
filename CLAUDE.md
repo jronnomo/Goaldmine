@@ -47,10 +47,10 @@ Endpoint: `POST /api/mcp` (also GET, DELETE for the streamable HTTP protocol). S
 All tools are registered in `src/lib/mcp/tools.ts` via `McpServer.registerTool()`. The route handler in `src/app/api/mcp/route.ts` creates a fresh server per request, registers tools, and pipes the request through `WebStandardStreamableHTTPServerTransport.handleRequest`.
 
 ### Read tools
-`get_today_plan`, `get_day`, `recent_history`, `get_nutrition_history`, `list_goals`, `get_goal`, `weekly_summary_data`, `get_baseline_schedule`, `get_baseline_history`, `get_records_summary`, `get_exercise_history`, `export_workout`.
+`get_today_plan`, `get_day`, `recent_history` (**now excludes standing_rule/review/open_item notes**), `get_nutrition_history`, `list_goals`, `get_goal`, `weekly_summary_data`, `get_baseline_schedule`, `get_baseline_history`, `get_records_summary`, `get_exercise_history`, `export_workout`, `get_session_brief`, `list_open_items`, `get_latest_review`.
 
 ### Write tools
-`log_workout`, `log_measurement`, `log_baseline`, `log_hike`, `log_note`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`.
+`log_workout` (**now returns recordsSet[]**), `log_measurement`, `log_baseline`, `log_hike`, `log_note`, `log_open_item`, `resolve_open_item`, `log_review`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`.
 
 `log_workout` accepts the structured shape produced by `parseStrongWorkout()` — paste a Strong-app txt in claude.ai, Claude parses, then calls this tool.
 

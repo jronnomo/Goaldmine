@@ -75,6 +75,27 @@ export type ExerciseHistoryPoint = {
   rawDuration: number | null;
 };
 
+/**
+ * A personal record set in a single workout session.
+ * Returned by recordsSetInWorkout and surfaced via log_workout.
+ */
+export type RecordSet = {
+  name: string;
+  equipment: string | null;
+  /** Which metric determined this is a PR. */
+  kind: "rm" | "reps" | "duration";
+  /** New personal best: Epley 1RM (lb), max reps, or max durationSec. */
+  value: number;
+  /** Previous all-time best (same metric, excluding this workout). */
+  prior: number;
+  /** The raw set that produced the new best. */
+  raw: {
+    weightLb: number | null;
+    reps: number | null;
+    durationSec: number | null;
+  };
+};
+
 export function epley1RM(weightLb: number, reps: number): number {
   return weightLb * (1 + reps / 30);
 }
@@ -351,7 +372,104 @@ export async function getExerciseHistory(name: string, equipment: string | null)
   return { summary: summaryOut, history };
 }
 
-function bestSetSummary(sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[]): {
+/**
+ * For each unique name+equipment group in the given workout, compare this
+ * session's best against the prior all-time best (excluding this workout).
+ * Returns only the exercises where this session strictly beats the prior best.
+ *
+ * Edge cases:
+ *  - Brand-new exercise (no prior history) → NOT a PR (no prior to beat).
+ *  - Prior primary type differs from this session's → use this session's primary
+ *    to select the prior metric value too (consistent with getExerciseHistory).
+ *  - Sets with no metric at all → skipped.
+ *  - Re-logging same workout: the `workout: { id: { not: workoutId } }` filter
+ *    prevents the just-created workout from inflating the prior baseline.
+ */
+export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[]> {
+  // 1. Load all exercises (with sets) for this workout.
+  const exercises = await prisma.workoutExercise.findMany({
+    where: { workoutId },
+    include: { sets: true },
+  });
+
+  if (exercises.length === 0) return [];
+
+  // 2. Group exercises by name+equipment (same key used everywhere in records.ts).
+  const byKey = new Map<
+    string,
+    {
+      name: string;
+      equipment: string | null;
+      sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[];
+    }
+  >();
+  for (const ex of exercises) {
+    const key = `${ex.name}|${ex.equipment ?? ""}`;
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = { name: ex.name, equipment: ex.equipment, sets: [] };
+      byKey.set(key, bucket);
+    }
+    bucket.sets.push(...ex.sets);
+  }
+
+  const results: RecordSet[] = [];
+
+  for (const [, bucket] of byKey) {
+    // 3. Compute this session's best.
+    const thisSummary = bestSetSummary(bucket.sets);
+    if (!thisSummary) continue; // no metric at all — skip
+
+    // 4. Query prior sets for this name+equipment from OTHER workouts.
+    //    Prisma null equality: `equipment: null` → IS NULL in SQL.
+    const priorExercises = await prisma.workoutExercise.findMany({
+      where: {
+        name: bucket.name,
+        equipment: bucket.equipment,
+        workout: { id: { not: workoutId } },
+      },
+      include: { sets: true },
+    });
+
+    const priorSets = priorExercises.flatMap((e) => e.sets);
+    const priorSummary = bestSetSummary(priorSets);
+
+    // 5. Brand-new exercise (no prior history) → NOT a PR per PRD §6.
+    if (!priorSummary) continue;
+
+    // 6. Use this session's primary to compare apples-to-apples.
+    //    If the metric type hasn't changed, priorSummary.value is already
+    //    on the right metric. If it DID change (rare), re-derive the prior
+    //    value using thisSummary.primary.
+    let priorValue: number;
+    if (priorSummary.primary === thisSummary.primary) {
+      priorValue = priorSummary.value;
+    } else {
+      // Re-select the prior best under this session's primary.
+      const recomputed = priorSets
+        .map((s) => metricValue(s, thisSummary.primary))
+        .filter((v): v is number => v !== null);
+      if (recomputed.length === 0) continue; // no comparable prior data
+      priorValue = Math.max(...recomputed);
+    }
+
+    // 7. Strict improvement only.
+    if (thisSummary.value <= priorValue) continue;
+
+    results.push({
+      name: bucket.name,
+      equipment: bucket.equipment,
+      kind: thisSummary.primary,
+      value: thisSummary.value,
+      prior: priorValue,
+      raw: thisSummary.raw,
+    });
+  }
+
+  return results;
+}
+
+export function bestSetSummary(sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[]): {
   primary: "rm" | "reps" | "duration";
   value: number;
   raw: { weightLb: number | null; reps: number | null; durationSec: number | null };
