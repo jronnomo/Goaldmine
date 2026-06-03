@@ -1,0 +1,21 @@
+{
+  "feature": "Cold-Start Ergonomics for the MCP Server",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-cold-start-ergonomics.md",
+  "prd_issue": null,
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
+  "agents": ["research", "architect", "devils-advocate", "developer"],
+  "iteration": 2,
+  "status": "complete",
+  "iteration_2_fix": "get_session_brief recentSessions filtered to completed/past (caught by live smoke — future planned hikes were crowding out real sessions)",
+  "critique_verdict": "NEEDS REVISION — 3 medium fixes folded into developer brief; Phase shape verified correct",
+  "decisions": {
+    "reviews": "both — type:'review' on log_note AND dedicated log_review; get_latest_review reads newest",
+    "recent_history_excludes": ["standing_rule", "review", "open_item"],
+    "brief_sessions": "workouts + hikes blended, last 5",
+    "open_items": "body + targetDate + priority (new nullable Note column); resolve via resolvedAt/resolvedReason"
+  },
+  "parallelization": "single backend developer — all code converges on src/lib/mcp/tools.ts; parallel worktrees would conflict on that file",
+  "new_tools": ["get_session_brief", "list_open_items", "get_latest_review", "log_open_item", "resolve_open_item", "log_review"],
+  "modified_tools": ["recent_history", "log_workout", "log_note", "batch_log_note"]
+}
