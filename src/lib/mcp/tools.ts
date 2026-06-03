@@ -582,7 +582,8 @@ function registerReadTools(server: McpServer) {
       description:
         "Pull the last N days of activity across every log type — workouts, body measurements, notes, baseline test results, hikes, nutrition. " +
         "Use to answer 'what happened recently', 'what did I do last week', or before proposing a plan revision so the audible reflects actual recent state. " +
-        "Default lookback is 14 days; max 180.",
+        "Default lookback is 14 days; max 180. " +
+        "NOTE: this is a firehose — a wide window (e.g. 42 days) can exceed the client's tool-result size cap and get truncated, dropping the trailing nutrition. For nutrition-only questions use get_nutrition_history; for a single day use get_day.",
       inputSchema: {
         days: z
           .number()
@@ -948,6 +949,88 @@ function registerReadTools(server: McpServer) {
     },
     async ({ name, equipment }) =>
       safe(() => getExerciseHistory(name, equipment ?? null)),
+  );
+
+  server.registerTool(
+    "get_nutrition_history",
+    {
+      title: "Logged meals / nutrition over a date window (compact, grouped by day)",
+      description:
+        "Every logged meal (NutritionLog) over the last N days, grouped by day with per-day macro totals. " +
+        "Use this for ANY question about what the user has actually eaten — 'my nutrition this week', 'meals over the last month', 'how has my protein been'. " +
+        "Prefer this over recent_history for nutrition questions: recent_history bundles workouts + every other log type and can be large enough that the client truncates it and drops the trailing nutrition. This tool is nutrition-only and stays compact. " +
+        "Default look-back 14 days (max 180). Optional mealType filter. Days are newest-first.",
+      inputSchema: {
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(180)
+          .default(14)
+          .describe("Look-back window in days (default 14, max 180)"),
+        mealType: z
+          .enum(["preworkout", "postworkout", "breakfast", "lunch", "dinner", "snack"])
+          .optional()
+          .describe("Optional: restrict to a single meal slot"),
+      },
+    },
+    async ({ days, mealType }) =>
+      safe(async () => {
+        const since = startOfDay(addDays(new Date(), -days));
+        const rows = await prisma.nutritionLog.findMany({
+          where: { date: { gte: since }, ...(mealType ? { mealType } : {}) },
+          orderBy: { date: "desc" },
+          select: {
+            date: true,
+            mealType: true,
+            items: true,
+            notes: true,
+            calories: true,
+            proteinG: true,
+            carbsG: true,
+            fatG: true,
+            fiberG: true,
+            sodiumMg: true,
+          },
+        });
+
+        const MACROS = ["calories", "proteinG", "carbsG", "fatG", "fiberG", "sodiumMg"] as const;
+        type MacroKey = (typeof MACROS)[number];
+        // Group by USER_TZ date key (a 00:30Z meal is the prior evening in MT —
+        // toDateKey buckets it on the correct local day, never raw UTC date).
+        const byDayMap = new Map<
+          string,
+          { dateKey: string; totals: Partial<Record<MacroKey, number>>; meals: Array<Record<string, unknown>> }
+        >();
+
+        for (const r of rows) {
+          const key = toDateKey(r.date);
+          let day = byDayMap.get(key);
+          if (!day) {
+            day = { dateKey: key, totals: {}, meals: [] };
+            byDayMap.set(key, day);
+          }
+          day.meals.push({
+            mealType: r.mealType,
+            items: r.items,
+            notes: r.notes,
+            calories: r.calories,
+            proteinG: r.proteinG,
+            carbsG: r.carbsG,
+            fatG: r.fatG,
+            fiberG: r.fiberG,
+            sodiumMg: r.sodiumMg,
+          });
+          for (const m of MACROS) {
+            const v = r[m];
+            if (typeof v === "number") day.totals[m] = (day.totals[m] ?? 0) + v;
+          }
+        }
+
+        // Map preserves insertion order; rows are date-desc, so byDay is newest-first.
+        const byDay = Array.from(byDayMap.values());
+        return { since, days, mealType: mealType ?? null, entryCount: rows.length, byDay };
+      }),
   );
 
   server.registerTool(
