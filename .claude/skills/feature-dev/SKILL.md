@@ -102,9 +102,15 @@ Report the issue URL back to the user.
 
 ### Step 3 (conditional): UX research
 
-For any feature touching the UI surface, invoke `/ux-research`. Pass it the PRD path (or issue number, if opted in) and a feature description that includes everything from `/ux-research`'s "Required context to relay" section. Run it in the background — it does not block Phase 3, but Phase 4 (development) MUST wait for findings.
+For any feature touching the UI surface, invoke `/ux-research`. Pass it the PRD path (or issue number, if opted in) and a feature description that includes everything the orchestrator needs (current UX state, problems, open questions, constraints, benchmark apps). The orchestrator reads everything else product-specific from the active app profile (`.claude/skills/ux-research/profiles/goaldmine.profile.md`). Run it in the background — it does not block Phase 3, but Phase 4 (development) MUST wait for findings.
 
-**Skip UX research** if the change is pure backend / MCP-tool / data-model / refactor / infrastructure, or if the user explicitly says to skip.
+**Invocation contract (R5 — `outcome.enforce_invocation`).** For any feature that touches UI, you MUST resolve to exactly ONE of:
+
+- **(A) Invoke** `/ux-research` (the default), or
+- **(B) Record a skip** — write a one-line entry into the PRD header:
+  `UX-research: skipped — <reason>`, where `<reason>` cites a specific skip condition (pure backend / MCP-tool / data-model / bug fix / refactor / infrastructure / user said keep it simple).
+
+A UI-touching feature with **neither** an invocation **nor** a recorded skip line is a contract violation — **do not proceed to Phase 4** until one exists. This turns "sometimes researched, sometimes not" into an auditable decision: a later reader sees, in the PRD, that the choice was made on purpose. (Gated on the active profile's `outcome.enforce_invocation`; if no profile, treat as `true`.)
 
 ### Step 4: Wait for UX research & ExitPlanMode
 
@@ -113,6 +119,7 @@ If UX research was invoked, **do NOT proceed to Phase 3 development until**:
 2. You have read those findings and extracted design decisions.
 3. You have updated the PRD's "Open Questions" section with the resolved answers.
 4. The user approves the plan via `ExitPlanMode`.
+5. You have noted the **Recommendation Ledger** location (the `UXR-…` table in the research report, or the active profile's `outcome.ledger_path`). You will tick its rows in Phase 7. (Skip this item only if the active profile sets `outcome.ledger: false`.)
 
 The wait is what makes the pipeline work — research-informed design produces better code on the first pass.
 
@@ -348,6 +355,16 @@ If Phase 5 found issues:
 
 Run all gates one more time: `npx tsc --noEmit`, `npm run lint`, `npm run build`. Read every changed file yourself.
 
+### Step 1b: Tick the Recommendation Ledger (R5 — `outcome.ledger`)
+
+Before committing, update the ux-research **Recommendation Ledger** so the tool can measure what actually landed:
+
+- For each `UXR-<issue|slug>-NN` row, set Status → `shipped` | `reworked` | `dropped` and fill **Evidence**: a commit SHA, a `file:line`, or a one-line reason (e.g. "playtest: too subtle → bolder", "cut for scope").
+- Pay special attention to **`tuning⚠` / `decoration⚠`** rows — these are the categories the tool historically over-trusted, so their shipped-vs-reworked outcome is the highest-value signal to record.
+- Update in place: edit the GitHub comment's ledger, or the active profile's `outcome.ledger_path` (`docs/ux-research/<slug>-ledger.md`) if delivered as a file.
+
+Skip this step only if the active profile sets `outcome.ledger: false`.
+
 ### Step 2: Commit
 
 This repo's commit style (recent examples: `113bc5c`, `c7aef56`, `86f6b4e`) is conventional + descriptive subject + bulleted body, with a `Co-Authored-By` trailer. Use a HEREDOC:
@@ -384,6 +401,7 @@ Write to `$RUN_DIR/phases/completion-report.md`:
 - Requirements status (all DONE)
 - Iterations required
 - Agent utilization summary
+- **UX-research ledger:** N shipped / M reworked / K dropped (link) — if `/ux-research` ran
 - Known limitations or follow-up
 
 ### Step 5: Report to user
