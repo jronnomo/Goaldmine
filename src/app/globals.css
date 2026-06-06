@@ -91,6 +91,7 @@ body {
 
 input, textarea, select, button {
   font-family: inherit;
+  color: inherit;
 }
 
 /* Bullseye-pop: one-shot scale + opacity animation triggered by adding
