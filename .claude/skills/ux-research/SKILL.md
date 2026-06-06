@@ -15,8 +15,8 @@ Spawn a team of specialist researchers and mockup agents to produce creative, on
 
 Before anything else, read the **active profile**:
 
-1. Look in `profiles/` (next to this skill) for the file with `active: true` in its frontmatter. If exactly one exists, that's the profile.
-2. If none/many are active, default to `profiles/chewabl.profile.md` and note the ambiguity in the output.
+1. Look in `.claude/skills/ux-research/profiles/` (the `profiles/` dir beside this `SKILL.md`) for the file with `active: true` in its frontmatter. If exactly one exists, that's the profile.
+2. If none/many are active, fall back to the single profile present; if still ambiguous, stop and ask which to use. (Never assume a specific product — each repo ships its own profile.)
 
 The profile supplies: `platform`, `mockup_width`, `stack`, `design_tokens`, `brand_voice` (may be disabled), `benchmark_apps`, `product_thesis`, `invariant_rules`, `deliverable` (comment vs file, repo, path, `flavor_layer`), `visualization` (which Phase-B artifacts to produce), and optionally a **`named_interactions` catalog** + **`screen_inventory`** (with `file:line`) that spoon-feed a mature codebase's signature interactions and routes to the research team instead of making them rediscover each run. A well-profiled product (e.g. Chewabl) thus gets richer, more on-brand research than a generic sweep — without the SKILL hard-coding anything.
 
