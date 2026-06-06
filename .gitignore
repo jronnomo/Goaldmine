@@ -44,3 +44,6 @@ next-env.d.ts
 
 # feature-dev agent worktrees (transient — never commit)
 .claude/worktrees/
+
+# local tooling-migration backups
+*.pre-v2.bak
