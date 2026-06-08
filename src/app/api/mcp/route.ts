@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { registerAll } from "@/lib/mcp/tools";
+import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const server = new McpServer(
-    { name: "workout-planner", version: "1.0.0" },
+    { name: "workout-planner", version: MCP_SERVER_VERSION },
     {
       capabilities: { tools: {} },
       instructions:

@@ -496,6 +496,12 @@ function decodeArgsDeep<T>(v: T): T {
   return v;
 }
 
+// Bumped per deploy via the Git commit SHA. MCP clients (e.g. claude.ai's
+// connector) cache tools/list keyed by the server's advertised (name, version)
+// from the initialize handshake — a static version means a stale tool list
+// survives every deploy. Stamping the SHA forces a fresh fetch after each deploy.
+export const MCP_SERVER_VERSION = `1.1.0+${process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev"}`;
+
 export function registerAll(server: McpServer) {
   // Defensive guard against re-introducing the literal-escape corruption that
   // had to be batch-fixed once: when a caller double-escapes JSON, free text
