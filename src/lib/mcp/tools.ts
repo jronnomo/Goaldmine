@@ -1691,16 +1691,20 @@ const ExerciseInputShape = z.object({
 async function guardedAdvanceConfirmedThrough(
   program: ActiveProgramSnapshot,
   targetWeekIndex: number,
+  opts?: { dryRun?: boolean },
 ): Promise<
-  | { ok: true; confirmedThroughDate: Date }
-  | { ok: false; blockedBy: WeekConflict[]; reason?: string }
+  | { ok: true; confirmedThroughDate: Date; previousConfirmedThroughDate: Date | null }
+  | { ok: false; blockedBy: WeekConflict[]; reason?: string; previousConfirmedThroughDate: Date | null }
 > {
+  const previous: Date | null = program.confirmedThroughDate ?? null;
+
   // Clamp guard: refuse beyond plan end.
   if (targetWeekIndex > program.template.totalWeeks) {
     return {
       ok: false,
       blockedBy: [],
       reason: `weekIndex ${targetWeekIndex} exceeds plan length (${program.template.totalWeeks} weeks).`,
+      previousConfirmedThroughDate: previous,
     };
   }
 
@@ -1721,12 +1725,17 @@ async function guardedAdvanceConfirmedThrough(
       ok: false,
       blockedBy: [],
       reason: `Week ${targetWeekIndex} is already below the confirmed mark (week ${currentWeekIdx}). Use reopen_week to move the mark backward.`,
+      previousConfirmedThroughDate: previous,
     };
   }
 
   // M-2: same-week re-confirm is a no-op — return early without a DB write.
   if (targetWeekIndex === currentWeekIdx) {
-    return { ok: true, confirmedThroughDate: program.confirmedThroughDate! };
+    return {
+      ok: true,
+      confirmedThroughDate: program.confirmedThroughDate!,
+      previousConfirmedThroughDate: previous,
+    };
   }
 
   // Guard: check each newly-covered week for conflicts.
@@ -1743,18 +1752,22 @@ async function guardedAdvanceConfirmedThrough(
     accumulated.push(...wConflicts);
   }
   if (accumulated.length > 0) {
-    return { ok: false, blockedBy: accumulated };
+    return { ok: false, blockedBy: accumulated, previousConfirmedThroughDate: previous };
   }
 
-  // Write the new mark.
+  // Compute the target mark date.
   const targetDate = endOfDay(
     addDays(startOfDay(program.startedOn), (targetWeekIndex - 1) * 7 + 6),
   );
-  await prisma.plan.update({
-    where: { id: program.id },
-    data: { confirmedThroughDate: targetDate },
-  });
-  return { ok: true, confirmedThroughDate: targetDate };
+  // Write the new mark (skipped in dryRun mode — everything above still runs so the
+  // preview is accurate; confirmedThroughDate in the return is the value that WOULD be set).
+  if (!opts?.dryRun) {
+    await prisma.plan.update({
+      where: { id: program.id },
+      data: { confirmedThroughDate: targetDate },
+    });
+  }
+  return { ok: true, confirmedThroughDate: targetDate, previousConfirmedThroughDate: previous };
 }
 
 function registerWriteTools(server: McpServer) {
@@ -2167,24 +2180,45 @@ function registerWriteTools(server: McpServer) {
         "Refused if any week in the newly-covered span has an unresolved conflict " +
         "(long-effort or retest-on-hike) — returns blockedBy listing the conflicts. " +
         "Past weeks are skipped in the conflict guard (stale planned hikes are unresolvable). " +
-        "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances.",
+        "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances. " +
+        "Pass dryRun:true to preview blockedBy and the target mark WITHOUT writing — useful for inspecting conflicts before committing.",
       inputSchema: {
         weekIndex: z
           .number()
           .int()
           .min(1)
           .describe("Rotation week number (1-based) to confirm through."),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            "Preview only — compute blockedBy and the target mark WITHOUT advancing confirmedThroughDate. Use to inspect conflicts before committing.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan to confirm.");
-        const result = await guardedAdvanceConfirmedThrough(program, input.weekIndex);
+        const result = await guardedAdvanceConfirmedThrough(program, input.weekIndex, { dryRun: input.dryRun });
+        const previousConfirmedThroughDate = result.previousConfirmedThroughDate
+          ? result.previousConfirmedThroughDate.toISOString()
+          : null;
         if (result.ok) {
-          return { ok: true, confirmedThroughDate: result.confirmedThroughDate.toISOString() };
+          return {
+            ok: true,
+            dryRun: !!input.dryRun,
+            previousConfirmedThroughDate,
+            confirmedThroughDate: result.confirmedThroughDate.toISOString(),
+          };
         }
-        return result;
+        return {
+          ok: false,
+          dryRun: !!input.dryRun,
+          previousConfirmedThroughDate,
+          blockedBy: result.blockedBy,
+          reason: result.reason,
+        };
       }),
   );
 
@@ -2195,7 +2229,8 @@ function registerWriteTools(server: McpServer) {
       description:
         "Move Plan.confirmedThroughDate back to the end of weekIndex-1 (or null if weekIndex ≤ 1). " +
         "Use when a work trip, injury, or plan deviation makes a previously-locked week provisional again. " +
-        "No conflict guard — the coach explicitly chooses to reopen.",
+        "No conflict guard — the coach explicitly chooses to reopen. " +
+        "Returns previousConfirmedThroughDate so the coach can offer to restore the prior mark.",
       inputSchema: {
         weekIndex: z
           .number()
@@ -2208,11 +2243,14 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan.");
+        const previous: Date | null = program.confirmedThroughDate ?? null;
+        const previousConfirmedThroughDate = previous ? previous.toISOString() : null;
         // D-6: guard against weekIndex far beyond plan end (would set mark past endsOn).
         if (input.weekIndex > program.template.totalWeeks + 1) {
           return {
             ok: false,
             confirmedThroughDate: null as string | null,
+            previousConfirmedThroughDate,
             reason: `weekIndex ${input.weekIndex} exceeds plan length (${program.template.totalWeeks} weeks).`,
           };
         }
@@ -2229,6 +2267,7 @@ function registerWriteTools(server: McpServer) {
         return {
           ok: true,
           confirmedThroughDate: newDate ? newDate.toISOString() : null,
+          previousConfirmedThroughDate,
         };
       }),
   );
@@ -2697,6 +2736,27 @@ function registerWriteTools(server: McpServer) {
       }),
   );
 
+  // Surgical body-edit ops for update_note.
+  const NoteBodyOpSchema = z.discriminatedUnion("op", [
+    z.object({
+      op: z.literal("append"),
+      text: z.string().min(1).describe("Appended on a new line at the end of the body."),
+    }),
+    z.object({
+      op: z.literal("prepend"),
+      text: z.string().min(1).describe("Prepended on its own line at the start of the body."),
+    }),
+    z.object({
+      op: z.literal("replace"),
+      find: z.string().min(1),
+      replace: z.string(),
+      all: z
+        .boolean()
+        .optional()
+        .describe("Replace all occurrences (default: first only)."),
+    }),
+  ]);
+
   server.registerTool(
     "update_note",
     {
@@ -2705,10 +2765,19 @@ function registerWriteTools(server: McpServer) {
         "Edit an existing note's body, type, or targetDate without losing the note id. " +
         "Common uses: fix a typo, retarget a note to a different date, change a journal entry to a feedback note, or mark a pending audible 'resolved' by rewriting the body. " +
         "Pass only the fields to change; omit the rest. To change type to standing_rule, prefer promote_note (it stamps lastAcknowledgedAt). To delete entirely, use delete_note. " +
-        "Note types: journal / audible / feedback / standing_rule / review. Note: open_item is not a retargetable type here — create open items via log_open_item.",
+        "Note types: journal / audible / feedback / standing_rule / review. Note: open_item is not a retargetable type here — create open items via log_open_item. " +
+        "Use bodyOps for surgical edits (append/prepend/replace) without resending the whole body; mutually exclusive with body.",
       inputSchema: {
         id: z.string(),
         body: z.string().optional(),
+        bodyOps: z
+          .array(NoteBodyOpSchema)
+          .min(1)
+          .optional()
+          .describe(
+            "Surgical edits to the note body, applied in order, WITHOUT resending the whole body. " +
+            "Mutually exclusive with body. 'replace' errors if find is not present.",
+          ),
         type: NoteTypeShape.optional(),
         targetDate: DateKeyShape.nullable().optional().describe(
           "Pass an ISO date to retarget; pass null to clear; omit to leave unchanged",
@@ -2717,8 +2786,41 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        if (input.body !== undefined && input.bodyOps !== undefined) {
+          throw new Error(
+            "body and bodyOps are mutually exclusive — pass body for a full replace, bodyOps for surgical edits.",
+          );
+        }
+
         const data: Record<string, unknown> = {};
-        if (input.body !== undefined) data.body = input.body;
+
+        if (input.bodyOps !== undefined) {
+          // Load existing note and apply ops in order.
+          const existing = await prisma.note.findUniqueOrThrow({ where: { id: input.id } });
+          let current = existing.body;
+          for (const op of input.bodyOps) {
+            if (op.op === "append") {
+              current = current.length ? current + "\n" + op.text : op.text;
+            } else if (op.op === "prepend") {
+              current = current.length ? op.text + "\n" + current : op.text;
+            } else {
+              // replace
+              if (!current.includes(op.find)) {
+                throw new Error(`replace op: "${op.find}" not found in note body.`);
+              }
+              if (op.all) {
+                current = current.split(op.find).join(op.replace);
+              } else {
+                const idx = current.indexOf(op.find);
+                current = current.slice(0, idx) + op.replace + current.slice(idx + op.find.length);
+              }
+            }
+          }
+          data.body = current;
+        } else if (input.body !== undefined) {
+          data.body = input.body;
+        }
+
         if (input.type !== undefined) data.type = input.type;
         if (input.targetDate !== undefined) {
           data.targetDate = input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null;
