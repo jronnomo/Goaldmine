@@ -21,7 +21,7 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const server = new McpServer(
-    { name: "workout-planner", version: MCP_SERVER_VERSION },
+    { name: "goaldmine", version: MCP_SERVER_VERSION },
     {
       capabilities: { tools: {} },
       instructions:
