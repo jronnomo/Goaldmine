@@ -8,9 +8,17 @@
 // name, marker labels, link to the day page). Today is selected by default.
 // This split keeps the grid uncluttered on narrow phones (~48px cells) while
 // the cells still carry the goal's own custom legend icons, not generic dots.
-import { useState } from "react";
+//
+// Track 2 additions:
+//   - 6-week rows with WeekRail (spine + confidence cap) in a 16px left gutter
+//   - DayCell provisional opacity + dashed top hairline (REQ-006)
+//   - DayCell conflict corner wedge (REQ-006, D-2 colorblind-safe redundancy)
+//   - bullseye-pop flip on newly-confirmed weeks via localStorage gate (REQ-007)
+
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { MarkerIcon } from "@/components/MarkerIcon";
+import { WeekRail } from "@/components/WeekRail";
 import type { CalendarDayCell } from "@/lib/calendar";
 import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
 
@@ -49,10 +57,12 @@ export function CalendarMonth({
   cells,
   monthKey,
   legend,
+  confirmedThroughDate,
 }: {
   cells: CalendarDayCell[];
   monthKey: string; // "yyyy-mm" of the displayed month
   legend: readonly LegendEntry[];
+  confirmedThroughDate?: Date | null; // Track 2: from calendar/page.tsx via program
 }) {
   // Compare via the tz-stable dateKey string, not Date.getMonth() — the latter
   // is shifted by the client's timezone and can misclassify boundary days
@@ -66,10 +76,55 @@ export function CalendarMonth({
 
   const selected = cells.find((c) => c.dateKey === selectedKey) ?? null;
 
+  // ── REQ-007: bullseye-pop flip ──────────────────────────────────────────────
+  // The pop is applied imperatively via a DOM query in useEffect so we avoid:
+  //   1. Accessing refs during render (ESLint react-hooks/refs)
+  //   2. setState/re-render/SSR hydration mismatch (mirrors TodayCelebration.tsx)
+  // WeekRail marks each cap wrapper with data-testid="week-cap-{weekIndex}",
+  // so we can querySelector without any ref plumbing through JSX.
+  useEffect(() => {
+    // Scan all cells for confirmed weekIndices on this render.
+    const confirmedWeekIndices = new Set(
+      cells
+        .filter((c) => c.isInPlan && c.confidence === "confirmed" && c.weekIndex != null)
+        .map((c) => c.weekIndex as number),
+    );
+
+    // C-3: sort descending — fire the pop for the HIGHEST (most-recently confirmed)
+    // week first. A confirm_week(5) call covers weeks 1-5; the "completion moment"
+    // should be associated with week 5, not week 1.
+    const sorted = [...confirmedWeekIndices].sort((a, b) => b - a);
+
+    for (const wi of sorted) {
+      const key = `goaldmine.weekConfirmed.${wi}`;
+      try {
+        if (!localStorage.getItem(key)) {
+          localStorage.setItem(key, "1");
+          // Query the cap wrapper by its data-testid and imperatively add the
+          // pop class — no ref needed; no setState; no re-render; no mismatch.
+          const capEl = document.querySelector(`[data-testid="week-cap-${wi}"]`);
+          capEl?.classList.add("week-confirm-pop");
+          break; // Only one pop per render cycle.
+        }
+      } catch {
+        // localStorage blocked (private browsing, storage quota) — degrade silently.
+      }
+    }
+  }, [cells]);
+
+  // ── Week-row grid ────────────────────────────────────────────────────────────
+  // The 42 padded cells already arrive Mon–Sun aligned from getCalendarMonth
+  // (via startOfWeekMonday/endOfWeekSunday), so chunking by 7 gives correct rows.
+  const weeks = Array.from({ length: 6 }, (_, i) => cells.slice(i * 7, i * 7 + 7));
+
   return (
     <div className="space-y-3">
       <div>
-        <div className="grid grid-cols-7 mb-1">
+        {/* Header: 16px rail gutter spacer + 7 day-name columns (same grid as rows).
+            The spacer keeps columns perfectly aligned with the week data rows. */}
+        <div className="grid grid-cols-[16px_repeat(7,1fr)] mb-1">
+          {/* Header gets the 16px rail spacer but no spine/cap component */}
+          <div aria-hidden="true" />
           {DAY_HEADERS.map((d) => (
             <div
               key={d}
@@ -79,23 +134,45 @@ export function CalendarMonth({
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-1">
-          {cells.map((c) => (
-            <DayCell
-              key={c.dateKey}
-              cell={c}
-              inMonth={inMonth(c)}
-              legend={legend}
-              selected={c.dateKey === selectedKey}
-              onSelect={() => setSelectedKey(c.dateKey)}
-            />
-          ))}
+
+        {/* Week rows: col 1 = WeekRail (16px), cols 2-8 = DayCell */}
+        <div className="space-y-1">
+          {weeks.map((weekCells, rowIdx) => {
+            const weekIndex = weekCells.find((c) => c.isInPlan)?.weekIndex ?? null;
+            return (
+              <div
+                key={rowIdx}
+                data-testid={weekIndex != null ? `week-row-${weekIndex}` : undefined}
+                className="grid grid-cols-[16px_repeat(7,1fr)] gap-1"
+              >
+                <WeekRail
+                  cells={weekCells}
+                  weekIndex={weekIndex}
+                  confirmedThroughDate={confirmedThroughDate ?? null}
+                />
+                {weekCells.map((c) => (
+                  <DayCell
+                    key={c.dateKey}
+                    cell={c}
+                    inMonth={inMonth(c)}
+                    legend={legend}
+                    selected={c.dateKey === selectedKey}
+                    onSelect={() => setSelectedKey(c.dateKey)}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       </div>
       {selected && <DayDetail cell={selected} legend={legend} />}
     </div>
   );
 }
+
+// ─── DayCell ──────────────────────────────────────────────────────────────────
+// REQ-006: provisional opacity + dashed top hairline; conflict corner wedge.
+// D-3: isPopping prop does not exist — the pop lives on the WeekRail cap ref.
 
 function DayCell({
   cell,
@@ -140,13 +217,35 @@ function DayCell({
         ? "text-[var(--muted)]"
         : "";
 
+  // REQ-006: provisional cue — reduced opacity + dashed top hairline.
+  // Only applied to in-month, in-plan provisional cells (not to out-of-month padding).
+  // ⚠ opacity 0.62 starting point — verify date number stays ≥ WCAG AA on cream;
+  //   raise to 0.68 if too faint (the range is 0.55–0.70 per UX §9).
+  const confidenceClass =
+    inMonth && cell.isInPlan && cell.confidence === "provisional"
+      ? "opacity-[0.62] border-t border-dashed border-t-[var(--muted)]"
+      : "";
+
+  // REQ-006 / a11y: extend aria-label with confidence + conflict info.
+  const ariaLabel = [
+    cell.dateKey,
+    cell.dayTitle ? `— ${cell.dayTitle}` : "",
+    cell.confidence && cell.confidence !== "past" ? `· ${cell.confidence}` : "",
+    cell.conflict ? `· conflict: ${cell.conflict.kind}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      aria-label={`${cell.dateKey}${cell.dayTitle ? ` — ${cell.dayTitle}` : ""}`}
-      className={`min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass}`}
+      aria-label={ariaLabel}
+      data-testid={`day-cell-${cell.dateKey}`}
+      data-confidence={cell.confidence ?? "out-of-plan"}
+      data-conflict={cell.conflict?.kind ?? undefined}
+      className={`relative min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass} ${confidenceClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
       <span className="flex flex-wrap items-center justify-center gap-0.5">
@@ -154,9 +253,24 @@ function DayCell({
           <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
         ))}
       </span>
+
+      {/* REQ-006 / D-2: conflict corner wedge.
+          Geometric non-color redundant channel — required for colorblind-safety
+          alongside the warning-color BullseyeWarning cap (UX §8). Without the wedge
+          the conflict state would be color-only.
+          ⚠ 11px wedge: verify it doesn't fight the today/selected ring at 390px. */}
+      {cell.conflict != null && (
+        <span
+          data-testid={`day-conflict-${cell.dateKey}`}
+          aria-hidden="true"
+          className="absolute top-0 right-0 w-0 h-0 border-t-[11px] border-t-[var(--warning)] border-l-[11px] border-l-transparent rounded-tr-lg"
+        />
+      )}
     </button>
   );
 }
+
+// ─── DayDetail ────────────────────────────────────────────────────────────────
 
 function DayDetail({
   cell,

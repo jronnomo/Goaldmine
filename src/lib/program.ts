@@ -7,6 +7,9 @@ export type ActiveProgramSnapshot = {
   name: string;
   startedOn: Date;
   template: ProgramTemplate;
+  // Track 2: high-water mark from Plan.confirmedThroughDate. null when no
+  // weeks have been confirmed, or when falling back to the Program table.
+  confirmedThroughDate: Date | null;
 };
 
 export type TodayContext = {
@@ -31,6 +34,7 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
       name: plan.name,
       startedOn: plan.startedOn,
       template: plan.planJson as unknown as ProgramTemplate,
+      confirmedThroughDate: plan.confirmedThroughDate ?? null,
     };
   }
   const program = await prisma.program.findFirst({
@@ -43,6 +47,8 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
     name: program.name,
     startedOn: program.startedOn,
     template: program.planJson as unknown as ProgramTemplate,
+    // Program table has no confirmedThroughDate column — always null.
+    confirmedThroughDate: null,
   };
 }
 

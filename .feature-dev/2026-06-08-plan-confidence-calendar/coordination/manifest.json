@@ -1,0 +1,19 @@
+{
+  "feature": "Plan-Confidence Calendar — Track 2 (visual + confirm)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-plan-confidence-calendar.md",
+  "design_spec": "docs/design/long-effort-reconciliation.md",
+  "ux_research": "docs/ux-research/plan-confidence-calendar.md (DONE — Option B; ledger to tick in Phase 7)",
+  "ux_ledger": "docs/ux-research/plan-confidence-calendar-ledger.md",
+  "prd_issue": null,
+  "depends_on": "Track 1 (747f8d0): weekConflicts, WeekConflict, CalendarDayCell.conflict",
+  "decisions": {
+    "confirm_trigger": "MCP-only (read-only PWA)",
+    "visual_scope": "full (rail+cap+provisional cue+conflict wedge+flip)",
+    "git_flow": "direct to main"
+  },
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
+  "agents": [],
+  "iteration": 1,
+  "status": "architecting"
+}

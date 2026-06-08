@@ -118,6 +118,45 @@ input, textarea, select, button {
   }
 }
 
+/* Week-confirm pop — reuses the same keyframe + timing as TodayCelebration.
+   Applied imperatively via ref to the WeekRail cap wrapper (REQ-007).
+   A second class name avoids collisions in case cap + today refs overlap. */
+.week-confirm-pop {
+  animation: bullseye-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .week-confirm-pop {
+    animation: none;
+  }
+}
+
+/* Rail spine dashed patterns — Tailwind v4 can't express repeating-linear-gradient
+   dash/gap utilities inline, so these live in globals. Two color variants:
+   provisional (muted) and conflict (warning). ⚠ dash=4px/gap=9px are provisional;
+   verify at 390px that the rail reads as "present but quiet." */
+.rail-spine-dashed-muted {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--muted) 0,
+    var(--muted) 4px,
+    transparent 4px,
+    transparent 13px
+  );
+  background-size: 100% 13px;
+}
+
+.rail-spine-dashed-warning {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--warning) 0,
+    var(--warning) 4px,
+    transparent 4px,
+    transparent 13px
+  );
+  background-size: 100% 13px;
+}
+
 /* ──────────────────────────────────────────────────────────────────────
    BottomSheet — native <dialog>-based sheet.
    The dialog element itself is used as a full-viewport overlay; the inner

@@ -1668,6 +1668,84 @@ const ExerciseInputShape = z.object({
   sets: z.array(SetInputShape),
 });
 
+// ---------------------------------------------------------------------------
+// Shared helper — guarded advance of Plan.confirmedThroughDate (REQ-003/004).
+// Advances the mark to end-of-week `targetWeekIndex`.
+// Refuses (ok:false) when:
+//   - targetWeekIndex < currentConfirmedWeekIdx  → direct to reopen_week (C-1)
+//   - targetWeekIndex === currentConfirmedWeekIdx → no-op, returns ok:true  (M-2)
+//   - targetWeekIndex > totalWeeks               → out of range
+//   - any week in the newly-covered span has conflicts (past weeks skipped, C-2)
+// ---------------------------------------------------------------------------
+async function guardedAdvanceConfirmedThrough(
+  program: ActiveProgramSnapshot,
+  targetWeekIndex: number,
+): Promise<
+  | { ok: true; confirmedThroughDate: Date }
+  | { ok: false; blockedBy: WeekConflict[]; reason?: string }
+> {
+  // Clamp guard: refuse beyond plan end.
+  if (targetWeekIndex > program.template.totalWeeks) {
+    return {
+      ok: false,
+      blockedBy: [],
+      reason: `weekIndex ${targetWeekIndex} exceeds plan length (${program.template.totalWeeks} weeks).`,
+    };
+  }
+
+  // Derive the current confirmed week index from confirmedThroughDate.
+  const currentWeekIdx: number = (() => {
+    if (!program.confirmedThroughDate) return 0;
+    const startMid = startOfDay(program.startedOn);
+    const markMid = startOfDay(program.confirmedThroughDate);
+    const delta = Math.floor(
+      (markMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
+    );
+    return delta < 0 ? 0 : Math.floor(delta / 7) + 1;
+  })();
+
+  // C-1: refuse if target is below current mark — use reopen_week instead.
+  if (targetWeekIndex < currentWeekIdx) {
+    return {
+      ok: false,
+      blockedBy: [],
+      reason: `Week ${targetWeekIndex} is already below the confirmed mark (week ${currentWeekIdx}). Use reopen_week to move the mark backward.`,
+    };
+  }
+
+  // M-2: same-week re-confirm is a no-op — return early without a DB write.
+  if (targetWeekIndex === currentWeekIdx) {
+    return { ok: true, confirmedThroughDate: program.confirmedThroughDate! };
+  }
+
+  // Guard: check each newly-covered week for conflicts.
+  // C-2: skip past weeks — stale planned-hike conflicts on past weeks are
+  //      unresolvable and must never block confirmation.
+  const todayMid = startOfDay(new Date());
+  const accumulated: WeekConflict[] = [];
+  for (let w = currentWeekIdx + 1; w <= targetWeekIndex; w++) {
+    if (w > program.template.totalWeeks) continue; // M-1: skip out-of-plan weeks
+    // Determine if this week's last day is already in the past.
+    const weekLastDay = addDays(startOfDay(program.startedOn), (w - 1) * 7 + 6);
+    if (weekLastDay.getTime() < todayMid.getTime()) continue; // past week — skip
+    const wConflicts = await weekConflicts(program, w);
+    accumulated.push(...wConflicts);
+  }
+  if (accumulated.length > 0) {
+    return { ok: false, blockedBy: accumulated };
+  }
+
+  // Write the new mark.
+  const targetDate = endOfDay(
+    addDays(startOfDay(program.startedOn), (targetWeekIndex - 1) * 7 + 6),
+  );
+  await prisma.plan.update({
+    where: { id: program.id },
+    data: { confirmedThroughDate: targetDate },
+  });
+  return { ok: true, confirmedThroughDate: targetDate };
+}
+
 function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_workout",
@@ -2070,6 +2148,81 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "confirm_week",
+    {
+      title: "Confirm (lock) a rotation week",
+      description:
+        "Advance Plan.confirmedThroughDate to the end of the given rotation weekIndex. " +
+        "Refused if any week in the newly-covered span has an unresolved conflict " +
+        "(long-effort or retest-on-hike) — returns blockedBy listing the conflicts. " +
+        "Past weeks are skipped in the conflict guard (stale planned hikes are unresolvable). " +
+        "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances.",
+      inputSchema: {
+        weekIndex: z
+          .number()
+          .int()
+          .min(1)
+          .describe("Rotation week number (1-based) to confirm through."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const program = await getActiveProgram();
+        if (!program) throw new Error("No active plan to confirm.");
+        const result = await guardedAdvanceConfirmedThrough(program, input.weekIndex);
+        if (result.ok) {
+          return { ok: true, confirmedThroughDate: result.confirmedThroughDate.toISOString() };
+        }
+        return result;
+      }),
+  );
+
+  server.registerTool(
+    "reopen_week",
+    {
+      title: "Reopen (un-confirm) a rotation week",
+      description:
+        "Move Plan.confirmedThroughDate back to the end of weekIndex-1 (or null if weekIndex ≤ 1). " +
+        "Use when a work trip, injury, or plan deviation makes a previously-locked week provisional again. " +
+        "No conflict guard — the coach explicitly chooses to reopen.",
+      inputSchema: {
+        weekIndex: z
+          .number()
+          .int()
+          .min(1)
+          .describe("The week to reopen; the mark is set to the end of weekIndex-1 (null if ≤ 1)."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const program = await getActiveProgram();
+        if (!program) throw new Error("No active plan.");
+        // D-6: guard against weekIndex far beyond plan end (would set mark past endsOn).
+        if (input.weekIndex > program.template.totalWeeks + 1) {
+          return {
+            ok: false,
+            confirmedThroughDate: null as string | null,
+            reason: `weekIndex ${input.weekIndex} exceeds plan length (${program.template.totalWeeks} weeks).`,
+          };
+        }
+        let newDate: Date | null = null;
+        if (input.weekIndex > 1) {
+          newDate = endOfDay(
+            addDays(startOfDay(program.startedOn), (input.weekIndex - 2) * 7 + 6),
+          );
+        }
+        await prisma.plan.update({
+          where: { id: program.id },
+          data: { confirmedThroughDate: newDate },
+        });
+        return {
+          ok: true,
+          confirmedThroughDate: newDate ? newDate.toISOString() : null,
+        };
+      }),
+  );
+
+  server.registerTool(
     "log_review",
     {
       title: "Log a weekly review / Sunday recap",
@@ -2086,10 +2239,20 @@ function registerWriteTools(server: McpServer) {
         weekOf: DateKeyShape.optional().describe(
           "Week-ending date the review covers (yyyy-mm-dd). Stored so get_latest_review can report it.",
         ),
+        confirmThroughWeekEnd: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe(
+            "If present, advances Plan.confirmedThroughDate to the end of this rotation weekIndex " +
+            "as part of the review. Same conflict guard as confirm_week. Omit to skip confirmation.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
+        // Note is always persisted; confirm failure is a non-fatal advisory in the return.
         const n = await prisma.note.create({
           data: {
             body: input.body,
@@ -2097,7 +2260,29 @@ function registerWriteTools(server: McpServer) {
             targetDate: input.weekOf ? parseDateInput(input.weekOf) : null,
           },
         });
-        return { id: n.id, message: "Review logged" };
+
+        let confirmResult:
+          | { ok: true; confirmedThroughDate: string }
+          | { ok: false; blockedBy: WeekConflict[]; reason?: string }
+          | undefined = undefined;
+
+        if (input.confirmThroughWeekEnd !== undefined) {
+          const program = await getActiveProgram();
+          if (!program) {
+            confirmResult = { ok: false, blockedBy: [], reason: "No active plan to confirm." };
+          } else {
+            const raw = await guardedAdvanceConfirmedThrough(program, input.confirmThroughWeekEnd);
+            confirmResult = raw.ok
+              ? { ok: true, confirmedThroughDate: raw.confirmedThroughDate.toISOString() }
+              : raw;
+          }
+        }
+
+        return {
+          id: n.id,
+          message: "Review logged",
+          ...(confirmResult !== undefined && { confirm: confirmResult }),
+        };
       }),
   );
 

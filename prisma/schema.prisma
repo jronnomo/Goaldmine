@@ -242,7 +242,10 @@ model Plan {
   active    Boolean  @default(true)
   // Full plan template: phases, weeklySplit, nutrition, mobility, baselineWeek.
   // Always reflects the latest applied PlanRevision.
-  planJson  Json
+  planJson              Json
+  // High-water mark: every in-plan day with date <= this is "confirmed".
+  // null = nothing confirmed yet (all future days provisional).
+  confirmedThroughDate  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

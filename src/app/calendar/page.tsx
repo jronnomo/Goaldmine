@@ -68,6 +68,7 @@ export default async function CalendarPage({
           cells={cells}
           monthKey={`${year}-${String(month + 1).padStart(2, "0")}`}
           legend={legend}
+          confirmedThroughDate={program?.confirmedThroughDate ?? null}
         />
       </Card>
 

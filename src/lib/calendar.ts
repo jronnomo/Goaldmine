@@ -27,6 +27,12 @@ export type CalendarDayCell = {
   // If a cell has both kinds (theoretically possible but rare), "retest-on-hike"
   // takes precedence as the more immediately actionable signal.
   conflict: { kind: "long-effort" | "retest-on-hike"; withDates: string[] } | null;
+  // Track 2: confidence state for the plan-confidence calendar visual.
+  //   null        := !isInPlan (out-of-month padding, before startedOn, after endsOn)
+  //   "past"      := isInPlan && isPast
+  //   "confirmed" := isInPlan && !isPast && confirmedThroughDate >= cell date
+  //   "provisional":= isInPlan && (isFuture || isToday) && (no mark OR date > mark)
+  confidence: "past" | "confirmed" | "provisional" | null;
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -151,6 +157,31 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   };
 }
 
+/**
+ * Derive confidence for a single date given the program snapshot.
+ * Pure — no IO. Returns null when date is not in-plan.
+ *
+ * Rules (from REQ-002):
+ *   null        := !isInPlan
+ *   "past"      := isInPlan && isPast
+ *   "confirmed" := isInPlan && !isPast && mark != null && startOfDay(date) <= startOfDay(mark)
+ *   "provisional":= everything else (future/today with no mark, or date > mark)
+ */
+function deriveConfidence(
+  date: Date,
+  isInPlan: boolean,
+  isPast: boolean,
+  program: ActiveProgramSnapshot | null,
+): CalendarDayCell["confidence"] {
+  if (!isInPlan) return null;
+  if (isPast) return "past";
+  const mark = program?.confirmedThroughDate ?? null;
+  if (mark != null && startOfDay(date).getTime() <= startOfDay(mark).getTime()) {
+    return "confirmed";
+  }
+  return "provisional";
+}
+
 function buildCell(args: {
   date: Date;
   todayKey: string;
@@ -258,6 +289,8 @@ function buildCell(args: {
     }
   }
 
+  const confidence = deriveConfidence(args.date, isInPlan, isPast, args.program);
+
   return {
     date: new Date(args.date),
     dateKey: k,
@@ -275,6 +308,7 @@ function buildCell(args: {
     hasOverride,
     baselinesDue,
     conflict,
+    confidence,
   };
 }
 
@@ -370,6 +404,10 @@ export type ResolvedDay = {
   }[];
   notesAboutDate: { id: string; body: string; type: string; date: Date; targetDate: Date | null }[];
   goalObjective: string | null;
+  // Track 2: confidence state — same derivation as CalendarDayCell.confidence.
+  // Allows get_day / get_today_plan to surface confidence to the coach without
+  // a second query (program snapshot already carries confirmedThroughDate).
+  confidence: "past" | "confirmed" | "provisional" | null;
   // Only fields actively set on the row are included. Absence of a key means
   // "not overriding this field" (rotation default applies). Presence of a
   // non-null value means the override is driving that field.
@@ -573,6 +611,10 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     !!workoutTemplate &&
     workoutTemplate.category !== "rest";
 
+  // Track 2: confidence state for MCP parity (get_day / get_today_plan).
+  const isPastForConfidence = dayStart.getTime() < startOfDay(new Date()).getTime();
+  const confidence = deriveConfidence(dayStart, isInPlan, isPastForConfidence, program);
+
   return {
     date: dayStart,
     dateKey: dateKey(date),
@@ -613,6 +655,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
       targetDate: n.targetDate,
     })),
     goalObjective: isGoalDate ? goal?.objective ?? null : null,
+    confidence,
     override: override
       ? {
           id: override.id,
