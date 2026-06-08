@@ -32,22 +32,58 @@ export type LintFinding = {
   // on the plan. Suppressed findings are still returned but excluded from the
   // active counts in the lint_plan tool response.
   suppressed?: boolean;
-  // Optional per-entity discriminator for rules that recur per-entity (e.g.
-  // one finding per goal, per hike, etc.). Omit for singleton rules like
-  // goal-date-vs-plan-end.
-  contextKey?: string;
+  // Content fingerprint: rule + stable serialisation of context. Set by
+  // lintActivePlan on every finding before acknowledgement matching. Exposed
+  // to the coach via lint_plan so they can pass it to acknowledge_lint_finding.
+  fingerprint?: string;
 };
 
 /**
  * A stored acknowledgement that a lint finding is intentional. Persisted as
  * JSON in Plan.lintAcknowledgements (Array<LintAcknowledgement>).
+ *
+ * Keyed by content fingerprint (not rule+contextKey) so the ack self-expires
+ * when the finding's substance changes (e.g. dates shift, values update).
  */
 export type LintAcknowledgement = {
-  rule: string;
-  contextKey?: string;
+  rule: string; // for human display / clearing by rule
+  fingerprint: string; // content key — matches LintFinding.fingerprint
   note: string;
   at: string; // ISO timestamp
 };
+
+// ---------------------------------------------------------------------------
+// Fingerprinting helpers (exported for tools.ts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic JSON serialiser with sorted object keys and Dates as
+ * toISOString(). Stable across key-insertion order differences.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (value instanceof Date) return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const sorted = Object.keys(obj)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+    return `{${sorted.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Deterministic content fingerprint for a lint finding.
+ * Returns `"${rule}#${stableStringify(context)}"`.
+ * Acknowledgements keyed to this fingerprint self-expire when the finding's
+ * substance changes (e.g. goal dates shift).
+ */
+export function fingerprintFinding(rule: string, context: unknown): string {
+  return `${rule}#${stableStringify(context)}`;
+}
 
 export type PlanMeta = {
   weeks: number;
@@ -388,18 +424,22 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
     }
   }
 
+  // Set content fingerprints on all findings before acknowledgement matching.
+  for (const f of findings) {
+    f.fingerprint = fingerprintFinding(f.rule, f.context);
+  }
+
   // Apply lint acknowledgements: mark matching findings as suppressed.
+  // Matching is keyed on content fingerprint so a stale ack auto-clears when
+  // the finding's substance changes. Old acks lacking a fingerprint field simply
+  // won't match anything (acceptable — coach re-acknowledges after merge).
   // plan.lintAcknowledgements is Json? — guard the shape before trusting it.
   const rawAcks = plan.lintAcknowledgements;
   const acks: LintAcknowledgement[] = Array.isArray(rawAcks)
     ? (rawAcks as LintAcknowledgement[])
     : [];
   for (const f of findings) {
-    const matched = acks.some(
-      (ack) =>
-        ack.rule === f.rule &&
-        (ack.contextKey === undefined || ack.contextKey === f.contextKey),
-    );
+    const matched = acks.some((ack) => ack.fingerprint === f.fingerprint);
     if (matched) f.suppressed = true;
   }
 

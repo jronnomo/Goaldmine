@@ -42,7 +42,7 @@ export type CalendarDayCell = {
 export type WeekConflict = {
   dateKey: string; // "yyyy-mm-dd" of the conflicted day
   kind: "long-effort" | "retest-on-hike";
-  // For "long-effort": the dates of hikes elsewhere in the week displacing Day 6.
+  // For "long-effort": the dates of hikes elsewhere in the week displacing the long-endurance day.
   // For "retest-on-hike": withDates[0] === dateKey — the hike and retest co-occur
   // on the same day; consumers should display this as a same-day collision.
   withDates: string[]; // dateKey(s) of the hike(s) driving the conflict
@@ -272,18 +272,16 @@ function buildCell(args: {
         }
       }
 
-      // Priority 2: long-effort conflict (only on Day 6)
-      if (!conflict && rotationDay === 6) {
-        const tmpl = args.program.template.weeklySplit.find((d) => d.dayOfWeek === 6);
-        if (tmpl?.category === "long-endurance") {
-          const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
-          const hikesElsewhere = weekHikes.filter((h) => dateKey(h.date) !== k);
-          if (!hikeOnThisDay && hikesElsewhere.length > 0) {
-            conflict = {
-              kind: "long-effort",
-              withDates: hikesElsewhere.map((h) => dateKey(h.date)),
-            };
-          }
+      // Priority 2: long-effort conflict (only on the long-endurance rotation day)
+      const tmpl = args.program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
+      if (!conflict && tmpl?.category === "long-endurance") {
+        const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
+        const hikesElsewhere = weekHikes.filter((h) => dateKey(h.date) !== k);
+        if (!hikeOnThisDay && hikesElsewhere.length > 0) {
+          conflict = {
+            kind: "long-effort",
+            withDates: hikesElsewhere.map((h) => dateKey(h.date)),
+          };
         }
       }
     }
@@ -376,12 +374,12 @@ export type ResolvedDay = {
   // no explicit override is present. The gym session is NOT removed; this is a hint
   // that the hike is likely the day's work.
   workoutDeferredForHike: boolean;
-  // Flag B — the loud conflict signal for Day 6. Set on the Day-6 (long-endurance)
-  // slot when a planned hike exists elsewhere in the same rotation week AND no
+  // Flag B — the loud conflict signal for the long-endurance rotation day. Set on the
+  // long-endurance slot when a planned hike exists elsewhere in the same rotation week AND no
   // override has already resolved the day. workoutTemplate is left fully populated —
   // nothing is silently rewritten.
   longEffortConflict: {
-    rotationLongEffortDate: string; // dateKey ("yyyy-mm-dd") of the Day-6 slot
+    rotationLongEffortDate: string; // dateKey ("yyyy-mm-dd") of the long-endurance slot
     plannedHikeDates: string[]; // dateKey(s) of hike(s) planned elsewhere this week
   } | null;
   nutritionText: string | null;
@@ -821,7 +819,7 @@ export function reconcileLongEffort(args: {
     workoutTemplate !== null &&
     workoutTemplate.category !== "rest";
 
-  // Flag B: long-effort conflict — only on the Day-6 long-endurance slot.
+  // Flag B: long-effort conflict — only on the long-endurance rotation slot.
   const hikesElsewhere = plannedHikesThisWeek.filter((h) => dateKey(h.date) !== thisDateKey);
   const longEffortConflict: ResolvedDay["longEffortConflict"] =
     workoutTemplate?.category === "long-endurance" &&
@@ -867,17 +865,19 @@ export async function weekConflicts(
   const conflicts: WeekConflict[] = [];
 
   // --- long-effort conflict ---
-  const day6Date = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + 5);
-  const day6Key  = dateKey(day6Date);
+  // Derive the long-endurance day from the rotation template rather than
+  // hardcoding Day 6, so a re-anchored rotation stays correct.
+  const longTmpl = program.template.weeklySplit.find((d) => d.category === "long-endurance");
+  if (longTmpl !== undefined) {
+    const longDate = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + (longTmpl.dayOfWeek - 1));
+    const longKey  = dateKey(longDate);
 
-  if (!overrideKeys.has(day6Key)) {
-    const day6Tmpl = program.template.weeklySplit.find((d) => d.dayOfWeek === 6);
-    if (day6Tmpl?.category === "long-endurance") {
-      const hikeOnDay6     = plannedHikes.find((h) => dateKey(h.date) === day6Key);
-      const hikesElsewhere = plannedHikes.filter((h) => dateKey(h.date) !== day6Key);
-      if (!hikeOnDay6 && hikesElsewhere.length > 0) {
+    if (!overrideKeys.has(longKey)) {
+      const hikeOnLongDay  = plannedHikes.find((h) => dateKey(h.date) === longKey);
+      const hikesElsewhere = plannedHikes.filter((h) => dateKey(h.date) !== longKey);
+      if (!hikeOnLongDay && hikesElsewhere.length > 0) {
         conflicts.push({
-          dateKey: day6Key,
+          dateKey: longKey,
           kind: "long-effort",
           withDates: hikesElsewhere.map((h) => dateKey(h.date)),
         });

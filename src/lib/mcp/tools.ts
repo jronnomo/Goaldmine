@@ -36,7 +36,7 @@ import {
 import { WorkoutJsonOpSchema, applyWorkoutJsonOps } from "@/lib/day-template-ops";
 import type { DayTemplate, ProgramTemplate } from "@/lib/program-template";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
-import { lintActivePlan, lintTemplate, type LintFinding, type LintAcknowledgement } from "@/lib/plan-lint";
+import { fingerprintFinding, lintActivePlan, lintTemplate, type LintFinding, type LintAcknowledgement } from "@/lib/plan-lint";
 import {
   getBaselineHistory,
   getBaselineSchedule,
@@ -3398,7 +3398,8 @@ function registerWriteTools(server: McpServer) {
       title: "Acknowledge a lint finding as intentional",
       description:
         "Acknowledge a lint finding as intentional so it moves to lint_plan's `suppressed` list instead of cluttering active findings. " +
-        "Use the finding's `rule` (e.g. 'goal-date-vs-plan-end'). " +
+        "Acknowledged by the finding's content fingerprint, so if the underlying values change (e.g. the goal date is updated) the acknowledgement stops matching and the finding resurfaces automatically. " +
+        "Pass `fingerprint` from lint_plan for precision; omit it and the tool resolves it from the single active finding matching `rule`. " +
         "NOT for fixing a real problem — only for deliberate, reviewed exceptions (e.g. Longs Peak buffer where Goal.targetDate intentionally precedes plan end). " +
         "Reverse with clear_lint_acknowledgement.",
       inputSchema: {
@@ -3409,14 +3410,33 @@ function registerWriteTools(server: McpServer) {
           .string()
           .min(1)
           .describe("Why this finding is intentional, e.g. 'Longs Peak buffer — goal date intentionally precedes plan end'."),
-        contextKey: z
+        fingerprint: z
           .string()
           .optional()
-          .describe("Only for rules that recur per-entity; omit for singletons like goal-date-vs-plan-end."),
+          .describe(
+            "Content fingerprint from lint_plan. If omitted, the tool resolves it automatically from the single active finding with this rule. " +
+            "Required when more than one active finding shares the same rule.",
+          ),
       },
     },
-    async ({ rule, note, contextKey }) =>
+    async ({ rule, note, fingerprint }) =>
       safe(async () => {
+        // Resolve fingerprint if not provided.
+        let resolvedFingerprint = fingerprint;
+        if (resolvedFingerprint === undefined) {
+          const { findings } = await lintActivePlan();
+          const matching = findings.filter((f) => f.rule === rule && !f.suppressed);
+          if (matching.length === 0) {
+            throw new Error(`No active finding with rule '${rule}' to acknowledge.`);
+          }
+          if (matching.length > 1) {
+            throw new Error(
+              `Multiple findings with rule '${rule}' — pass the specific fingerprint from lint_plan.`,
+            );
+          }
+          resolvedFingerprint = matching[0].fingerprint ?? fingerprintFinding(rule, matching[0].context);
+        }
+
         const plan = await prisma.plan.findFirst({
           where: { active: true },
           orderBy: { updatedAt: "desc" },
@@ -3427,9 +3447,9 @@ function registerWriteTools(server: McpServer) {
           : [];
         const ack: LintAcknowledgement = {
           rule,
+          fingerprint: resolvedFingerprint,
           note,
           at: new Date().toISOString(),
-          ...(contextKey !== undefined ? { contextKey } : {}),
         };
         const updated = [...existing, ack];
         await prisma.plan.update({
@@ -3440,6 +3460,7 @@ function registerWriteTools(server: McpServer) {
           planId: plan.id,
           message: `Acknowledged lint finding '${rule}' — it will appear in lint_plan's suppressed list.`,
           acknowledgementCount: updated.length,
+          fingerprint: resolvedFingerprint,
         };
       }),
   );
@@ -3450,17 +3471,26 @@ function registerWriteTools(server: McpServer) {
       title: "Remove a lint acknowledgement",
       description:
         "Remove a previously stored lint acknowledgement so the finding resurfaces in lint_plan's active findings. " +
-        "Pass the same `rule` (and `contextKey` if one was set) that was used in acknowledge_lint_finding.",
+        "Pass `fingerprint` to remove a single precise ack; pass `rule` to remove ALL acks for that rule (e.g. when clearing after a template revision). " +
+        "At least one of `rule` or `fingerprint` must be provided.",
       inputSchema: {
-        rule: z.string().describe("The lint rule to un-acknowledge."),
-        contextKey: z
+        rule: z
           .string()
           .optional()
-          .describe("The contextKey used when the acknowledgement was created; omit for singleton rules."),
+          .describe("Remove all acknowledgements whose rule matches this value."),
+        fingerprint: z
+          .string()
+          .optional()
+          .describe(
+            "Remove the single acknowledgement matching this content fingerprint. More precise than rule.",
+          ),
       },
     },
-    async ({ rule, contextKey }) =>
+    async ({ rule, fingerprint }) =>
       safe(async () => {
+        if (rule === undefined && fingerprint === undefined) {
+          throw new Error("Provide at least one of `rule` or `fingerprint`.");
+        }
         const plan = await prisma.plan.findFirst({
           where: { active: true },
           orderBy: { updatedAt: "desc" },
@@ -3469,20 +3499,23 @@ function registerWriteTools(server: McpServer) {
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
-        const filtered = existing.filter(
-          (ack) => !(ack.rule === rule && ack.contextKey === contextKey),
-        );
+        const filtered = existing.filter((ack) => {
+          if (fingerprint !== undefined && ack.fingerprint === fingerprint) return false;
+          if (fingerprint === undefined && rule !== undefined && ack.rule === rule) return false;
+          return true;
+        });
         const removed = existing.length - filtered.length;
         await prisma.plan.update({
           where: { id: plan.id },
           data: { lintAcknowledgements: filtered },
         });
+        const label = fingerprint !== undefined ? `fingerprint '${fingerprint}'` : `rule '${rule}'`;
         return {
           planId: plan.id,
           message:
             removed > 0
-              ? `Removed ${removed} acknowledgement${removed === 1 ? "" : "s"} for rule '${rule}'.`
-              : `No matching acknowledgement found for rule '${rule}'${contextKey !== undefined ? ` / contextKey '${contextKey}'` : ""}.`,
+              ? `Removed ${removed} acknowledgement${removed === 1 ? "" : "s"} for ${label}.`
+              : `No matching acknowledgement found for ${label}.`,
           removed,
         };
       }),
