@@ -70,6 +70,10 @@ export type BaselineTest = {
   // the initial, not as a retest with no prior result to compare against.
   initialWeek?: number;
   retestWeeks: number[]; // weeks AFTER initialWeek, e.g. [6, 12]
+  // When true, a negative or zero value is a legitimate result (e.g. Toe Touch
+  // / sit-and-reach: negative = reached past the floor), so the
+  // phantom-completion lint exempts it.
+  signed?: boolean;
 };
 
 export type BaselineDay = {
@@ -511,7 +515,7 @@ export const PROGRAM_TEMPLATE: ProgramTemplate = {
       title: "Mobility Assessment",
       tests: [
         { testName: "Deep Squat Hold", units: "sec", protocol: "Hold deep squat without discomfort.", retestWeeks: [6, 12] },
-        { testName: "Toe Touch Reach", units: "in", protocol: "Standing forward fold, distance from fingertips to floor (negative if past).", retestWeeks: [6, 12] },
+        { testName: "Toe Touch Reach", units: "in", protocol: "Standing forward fold, distance from fingertips to floor (negative if past).", retestWeeks: [6, 12], signed: true },
         { testName: "Shoulder Flexion Overhead", units: "deg", protocol: "Subjective: 0-180. Can you fully extend overhead?", retestWeeks: [6, 12] },
       ],
     },

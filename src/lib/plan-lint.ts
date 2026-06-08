@@ -28,6 +28,25 @@ export type LintFinding = {
   severity: LintSeverity;
   message: string;
   context?: unknown;
+  // Populated by lintActivePlan when a matching LintAcknowledgement is stored
+  // on the plan. Suppressed findings are still returned but excluded from the
+  // active counts in the lint_plan tool response.
+  suppressed?: boolean;
+  // Optional per-entity discriminator for rules that recur per-entity (e.g.
+  // one finding per goal, per hike, etc.). Omit for singleton rules like
+  // goal-date-vs-plan-end.
+  contextKey?: string;
+};
+
+/**
+ * A stored acknowledgement that a lint finding is intentional. Persisted as
+ * JSON in Plan.lintAcknowledgements (Array<LintAcknowledgement>).
+ */
+export type LintAcknowledgement = {
+  rule: string;
+  contextKey?: string;
+  note: string;
+  at: string; // ISO timestamp
 };
 
 export type PlanMeta = {
@@ -211,11 +230,20 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
 
   // Rule: legacy baseline rows at value <= 0 (phantom completions). The Phase-2
   // write guard prevents new ones; this surfaces any already in the DB. (warning)
+  // Signed tests (e.g. "Toe Touch Reach" where negative = reached past the floor)
+  // are legitimately ≤0 — skip them entirely.
+  const signedTestNames = new Set(
+    (template.baselineWeek ?? [])
+      .flatMap((d) => d.tests ?? [])
+      .filter((t) => t.signed)
+      .map((t) => t.testName),
+  );
   const phantomBaselines = await prisma.baseline.findMany({
     where: { value: { lte: 0 } },
     orderBy: { date: "asc" },
   });
   for (const b of phantomBaselines) {
+    if (signedTestNames.has(b.testName)) continue;
     findings.push({
       rule: "phantom-baseline-value",
       severity: "warning",
@@ -358,6 +386,21 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
         });
       }
     }
+  }
+
+  // Apply lint acknowledgements: mark matching findings as suppressed.
+  // plan.lintAcknowledgements is Json? — guard the shape before trusting it.
+  const rawAcks = plan.lintAcknowledgements;
+  const acks: LintAcknowledgement[] = Array.isArray(rawAcks)
+    ? (rawAcks as LintAcknowledgement[])
+    : [];
+  for (const f of findings) {
+    const matched = acks.some(
+      (ack) =>
+        ack.rule === f.rule &&
+        (ack.contextKey === undefined || ack.contextKey === f.contextKey),
+    );
+    if (matched) f.suppressed = true;
   }
 
   return { planId: plan.id, findings };

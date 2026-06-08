@@ -246,6 +246,12 @@ model Plan {
   // High-water mark: every in-plan day with date <= this is "confirmed".
   // null = nothing confirmed yet (all future days provisional).
   confirmedThroughDate  DateTime?
+  // Acknowledged lint findings that are intentional (not bugs).
+  // Shape: Array<{ rule: string; contextKey?: string; note: string; at: string }>
+  // where `rule` matches LintFinding.rule, `contextKey` scopes the ack to a
+  // specific entity (omit for singleton rules like goal-date-vs-plan-end),
+  // `note` is a human-readable reason, and `at` is an ISO timestamp.
+  lintAcknowledgements  Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

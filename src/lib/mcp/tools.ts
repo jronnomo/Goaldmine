@@ -36,7 +36,7 @@ import {
 import { WorkoutJsonOpSchema, applyWorkoutJsonOps } from "@/lib/day-template-ops";
 import type { DayTemplate, ProgramTemplate } from "@/lib/program-template";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
-import { lintActivePlan, lintTemplate, type LintFinding } from "@/lib/plan-lint";
+import { lintActivePlan, lintTemplate, type LintFinding, type LintAcknowledgement } from "@/lib/plan-lint";
 import {
   getBaselineHistory,
   getBaselineSchedule,
@@ -1551,44 +1551,55 @@ function registerReadTools(server: McpServer) {
         "Call this when reviewing a long plan, before proposing a revision, or when something on the calendar looks off. " +
         "Checks: unanchored retests (a retest with no initial collected), retest/initial weeks past the plan horizon, a retest at or before its initial week, phase weeks that don't tile 1..totalWeeks, " +
         "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), " +
-        "phantom baseline values (≤0), day overrides outside the plan range, duplicate planned hikes on a date, " +
+        "phantom baseline values (≤0, excluding signed metrics like Toe Touch Reach), day overrides outside the plan range, duplicate planned hikes on a date, " +
         "hike-outside-plan (planned hike before startedOn or past plan window), " +
         "multiple-hikes-one-week (>1 planned hike per rotation week — informational), " +
         "pre-hike-leg-load (hike the day after a lower/lower-power rotation day), and " +
         "retest-on-hike-day (baseline retest due on a date with a planned hike). " +
         "Each finding has severity 'error' (structural invariant broken — apply_plan_revision will refuse), " +
         "'warning' (worth fixing, non-blocking), or 'info' (advisory — may be intentional). " +
+        "Intentional findings acknowledged via acknowledge_lint_finding move to the `suppressed` list instead of cluttering active findings. " +
         "Read-only — fix via apply_plan_revision (template), update_plan_metadata (drift), " +
-        "update_baseline/delete_baseline (phantoms), delete_hike (dup hikes), or apply_day_override (hike conflicts).",
+        "update_baseline/delete_baseline (phantoms), delete_hike (dup hikes), or apply_day_override (hike conflicts). " +
+        "To suppress a deliberate exception: acknowledge_lint_finding. To undo: clear_lint_acknowledgement.",
       inputSchema: {},
     },
     async () =>
       safe(async () => {
         const { planId, findings } = await lintActivePlan();
         if (planId === null) {
-          return { ok: true, findings: [], message: "No active plan to lint." };
+          return { ok: true, findings: [], suppressed: [], counts: { errors: 0, warnings: 0, info: 0, suppressed: 0 }, message: "No active plan to lint." };
         }
-        const errors  = findings.filter((f) => f.severity === "error");
-        const warnings = findings.filter((f) => f.severity === "warning");
+        const active     = findings.filter((f) => !f.suppressed);
+        const suppressed = findings.filter((f) => f.suppressed);
+        const errors     = active.filter((f) => f.severity === "error");
+        const warnings   = active.filter((f) => f.severity === "warning");
         // D-2: "info" severity added for advisory findings (multiple-hikes-one-week, etc.)
-        const infos   = findings.filter((f) => f.severity === "info");
+        const infos      = active.filter((f) => f.severity === "info");
         return {
           ok: errors.length === 0,
           planId,
-          errorCount: errors.length,
-          warningCount: warnings.length,
-          infoCount: infos.length,
-          findings,
+          findings: active,
+          suppressed,
+          counts: {
+            errors: errors.length,
+            warnings: warnings.length,
+            info: infos.length,
+            suppressed: suppressed.length,
+          },
           message:
-            findings.length === 0
+            active.length === 0 && suppressed.length === 0
               ? "Plan is clean — no lint findings."
-              : [
-                  errors.length > 0 ? `${errors.length} error${errors.length === 1 ? "" : "s"}` : "",
-                  warnings.length > 0 ? `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : "",
-                  infos.length > 0 ? `${infos.length} info` : "",
-                ]
-                  .filter(Boolean)
-                  .join(", ") + ".",
+              : active.length === 0
+                ? `Plan is clean — ${suppressed.length} acknowledged finding${suppressed.length === 1 ? "" : "s"} suppressed.`
+                : [
+                    errors.length > 0 ? `${errors.length} error${errors.length === 1 ? "" : "s"}` : "",
+                    warnings.length > 0 ? `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : "",
+                    infos.length > 0 ? `${infos.length} info` : "",
+                    suppressed.length > 0 ? `${suppressed.length} suppressed` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(", ") + ".",
         };
       }),
   );
@@ -3377,6 +3388,102 @@ function registerWriteTools(server: McpServer) {
           applied: results.length,
           results,
           message: `Batch logged ${results.length} note${results.length === 1 ? "" : "s"} atomically.`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "acknowledge_lint_finding",
+    {
+      title: "Acknowledge a lint finding as intentional",
+      description:
+        "Acknowledge a lint finding as intentional so it moves to lint_plan's `suppressed` list instead of cluttering active findings. " +
+        "Use the finding's `rule` (e.g. 'goal-date-vs-plan-end'). " +
+        "NOT for fixing a real problem — only for deliberate, reviewed exceptions (e.g. Longs Peak buffer where Goal.targetDate intentionally precedes plan end). " +
+        "Reverse with clear_lint_acknowledgement.",
+      inputSchema: {
+        rule: z
+          .string()
+          .describe("The lint rule to acknowledge, exactly as it appears in the finding (e.g. 'goal-date-vs-plan-end')."),
+        note: z
+          .string()
+          .min(1)
+          .describe("Why this finding is intentional, e.g. 'Longs Peak buffer — goal date intentionally precedes plan end'."),
+        contextKey: z
+          .string()
+          .optional()
+          .describe("Only for rules that recur per-entity; omit for singletons like goal-date-vs-plan-end."),
+      },
+    },
+    async ({ rule, note, contextKey }) =>
+      safe(async () => {
+        const plan = await prisma.plan.findFirst({
+          where: { active: true },
+          orderBy: { updatedAt: "desc" },
+        });
+        if (!plan) throw new Error("No active plan found.");
+        const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
+          ? (plan.lintAcknowledgements as LintAcknowledgement[])
+          : [];
+        const ack: LintAcknowledgement = {
+          rule,
+          note,
+          at: new Date().toISOString(),
+          ...(contextKey !== undefined ? { contextKey } : {}),
+        };
+        const updated = [...existing, ack];
+        await prisma.plan.update({
+          where: { id: plan.id },
+          data: { lintAcknowledgements: updated },
+        });
+        return {
+          planId: plan.id,
+          message: `Acknowledged lint finding '${rule}' — it will appear in lint_plan's suppressed list.`,
+          acknowledgementCount: updated.length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "clear_lint_acknowledgement",
+    {
+      title: "Remove a lint acknowledgement",
+      description:
+        "Remove a previously stored lint acknowledgement so the finding resurfaces in lint_plan's active findings. " +
+        "Pass the same `rule` (and `contextKey` if one was set) that was used in acknowledge_lint_finding.",
+      inputSchema: {
+        rule: z.string().describe("The lint rule to un-acknowledge."),
+        contextKey: z
+          .string()
+          .optional()
+          .describe("The contextKey used when the acknowledgement was created; omit for singleton rules."),
+      },
+    },
+    async ({ rule, contextKey }) =>
+      safe(async () => {
+        const plan = await prisma.plan.findFirst({
+          where: { active: true },
+          orderBy: { updatedAt: "desc" },
+        });
+        if (!plan) throw new Error("No active plan found.");
+        const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
+          ? (plan.lintAcknowledgements as LintAcknowledgement[])
+          : [];
+        const filtered = existing.filter(
+          (ack) => !(ack.rule === rule && ack.contextKey === contextKey),
+        );
+        const removed = existing.length - filtered.length;
+        await prisma.plan.update({
+          where: { id: plan.id },
+          data: { lintAcknowledgements: filtered },
+        });
+        return {
+          planId: plan.id,
+          message:
+            removed > 0
+              ? `Removed ${removed} acknowledgement${removed === 1 ? "" : "s"} for rule '${rule}'.`
+              : `No matching acknowledgement found for rule '${rule}'${contextKey !== undefined ? ` / contextKey '${contextKey}'` : ""}.`,
+          removed,
         };
       }),
   );
