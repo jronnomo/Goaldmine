@@ -20,6 +20,8 @@ import {
   startOfDay,
   startOfWeekMonday,
   templateForRotationDay,
+  weekConflicts,
+  type WeekConflict,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
@@ -559,7 +561,10 @@ function registerReadTools(server: McpServer) {
     {
       title: "Get today's plan",
       description:
-        "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context. Also surfaces all active standing_rule notes (with lastAcknowledgedAt freshness) under `standingRules` so the coach sees persistent guidance at session start. Call acknowledge_standing_rule when you reference one in a turn so the freshness timestamp stays current.",
+        "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context. Also surfaces all active standing_rule notes (with lastAcknowledgedAt freshness) under `standingRules` so the coach sees persistent guidance at session start. Call acknowledge_standing_rule when you reference one in a turn so the freshness timestamp stays current. " +
+        "Now also surfaces plannedHikeToday (hike detail if planned today), " +
+        "workoutDeferredForHike (advisory — hike likely the day's work), and " +
+        "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week).",
     },
     async () =>
       safe(async () => {
@@ -601,13 +606,73 @@ function registerReadTools(server: McpServer) {
     {
       title: "Get any day's plan",
       description:
-        "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date.",
+        "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date. " +
+        "Now also surfaces plannedHikeToday (hike detail if planned on that date), " +
+        "workoutDeferredForHike (advisory — hike likely the day's work), and " +
+        "longEffortConflict (if the date is the Day-6 slot and a hike is elsewhere that week).",
       inputSchema: { date: DateKeyShape },
     },
     async ({ date }) =>
       safe(async () => {
         const r = await resolveDay(parseDateKey(date));
         return r;
+      }),
+  );
+
+  server.registerTool(
+    "get_week",
+    {
+      title: "Get all 7 days of a rotation week",
+      description:
+        "Resolve all 7 days of the rotation week containing the given date. " +
+        "Returns weekIndex, startDate/endDate of the rotation week, totalWeeks, and a days[] array. " +
+        "Each day includes the full ResolvedDay (workoutTemplate, overrides, plannedHikeToday, " +
+        "workoutDeferredForHike, longEffortConflict, baselinesDue, etc.). " +
+        "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
+        "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
+        "NOTE: v1 loops resolveDay × 7 (~42–49 DB queries per call); acceptable for on-demand scans.",
+      inputSchema: {
+        startDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
+          .optional()
+          .describe(
+            "Any date within the target rotation week (yyyy-mm-dd, USER_TZ). " +
+            "Defaults to the current week. The tool snaps to the rotation week " +
+            "that contains this date — it is NOT necessarily the calendar Mon–Sun week.",
+          ),
+      },
+    },
+    async ({ startDate }) =>
+      safe(async () => {
+        const baseDate = startDate ? parseDateInput(startDate) : new Date();
+        const program = await getActiveProgram();
+        if (!program) return { error: "No active program" };
+
+        const startMid = startOfDay(program.startedOn);
+        const baseDayStart = startOfDay(baseDate);
+        const daysDelta = Math.floor(
+          (baseDayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
+        );
+
+        if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) {
+          return { error: "Date is outside the active plan window" };
+        }
+
+        const wi = Math.floor(daysDelta / 7) + 1;
+        const weekStart = addDays(startMid, (wi - 1) * 7);
+
+        const days = await Promise.all(
+          [0, 1, 2, 3, 4, 5, 6].map((i) => resolveDay(addDays(weekStart, i))),
+        );
+
+        return {
+          weekIndex: wi,
+          startDate: toDateKey(weekStart),
+          endDate: toDateKey(addDays(weekStart, 6)),
+          totalWeeks: program.template.totalWeeks,
+          days,
+        };
       }),
   );
 
@@ -1027,11 +1092,13 @@ function registerReadTools(server: McpServer) {
         "One-call cold-start catch-up for a NEW coaching conversation — today's date, active goal + days-to-go, " +
         "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
         "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
-        "the latest review, and unresolved open items. " +
+        "the latest review, unresolved open items, and any scheduling conflicts for the current rotation week " +
+        "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions). " +
         "Call this FIRST in a fresh chat instead of stitching together get_today_plan + recent_history + get_goal. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
         "for a wide activity lookback use recent_history; " +
-        "for all-time PRs use get_records_summary.",
+        "for all-time PRs use get_records_summary; " +
+        "for per-day conflict detail use get_week.",
     },
     async () =>
       safe(async () => {
@@ -1225,6 +1292,15 @@ function registerReadTools(server: McpServer) {
             }
           : null;
 
+        // --- currentWeekConflicts ---
+        // Compact WeekConflict[] for the current rotation week. Lets the coach
+        // catch long-effort phantom + retest-on-hike collisions on cold start
+        // without parsing 7 per-day resolved results. Call get_week for detail.
+        const currentWeekConflicts: WeekConflict[] =
+          program && resolved.isInPlan && resolved.weekIndex !== null
+            ? await weekConflicts(program, resolved.weekIndex)
+            : [];
+
         return {
           today: toDateKey(now),
           goal,
@@ -1234,6 +1310,7 @@ function registerReadTools(server: McpServer) {
           standingRules: standingRulesOut,
           latestReview,
           openItems,
+          currentWeekConflicts,
         };
       }),
   );
@@ -1474,9 +1551,15 @@ function registerReadTools(server: McpServer) {
         "Call this when reviewing a long plan, before proposing a revision, or when something on the calendar looks off. " +
         "Checks: unanchored retests (a retest with no initial collected), retest/initial weeks past the plan horizon, a retest at or before its initial week, phase weeks that don't tile 1..totalWeeks, " +
         "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), " +
-        "phantom baseline values (≤0), day overrides outside the plan range, and duplicate planned hikes on a date. " +
-        "Each finding has severity 'error' (a structural invariant is broken — apply_plan_revision will refuse to write it) or 'warning' (worth fixing, non-blocking). " +
-        "Read-only — fix findings via apply_plan_revision (template), update_plan_metadata (drift), update_baseline/delete_baseline (phantoms), or delete_hike (dup hikes).",
+        "phantom baseline values (≤0), day overrides outside the plan range, duplicate planned hikes on a date, " +
+        "hike-outside-plan (planned hike before startedOn or past plan window), " +
+        "multiple-hikes-one-week (>1 planned hike per rotation week — informational), " +
+        "pre-hike-leg-load (hike the day after a lower/lower-power rotation day), and " +
+        "retest-on-hike-day (baseline retest due on a date with a planned hike). " +
+        "Each finding has severity 'error' (structural invariant broken — apply_plan_revision will refuse), " +
+        "'warning' (worth fixing, non-blocking), or 'info' (advisory — may be intentional). " +
+        "Read-only — fix via apply_plan_revision (template), update_plan_metadata (drift), " +
+        "update_baseline/delete_baseline (phantoms), delete_hike (dup hikes), or apply_day_override (hike conflicts).",
       inputSchema: {},
     },
     async () =>
@@ -1485,18 +1568,27 @@ function registerReadTools(server: McpServer) {
         if (planId === null) {
           return { ok: true, findings: [], message: "No active plan to lint." };
         }
-        const errors = findings.filter((f) => f.severity === "error");
+        const errors  = findings.filter((f) => f.severity === "error");
         const warnings = findings.filter((f) => f.severity === "warning");
+        // D-2: "info" severity added for advisory findings (multiple-hikes-one-week, etc.)
+        const infos   = findings.filter((f) => f.severity === "info");
         return {
           ok: errors.length === 0,
           planId,
           errorCount: errors.length,
           warningCount: warnings.length,
+          infoCount: infos.length,
           findings,
           message:
             findings.length === 0
               ? "Plan is clean — no lint findings."
-              : `${errors.length} error${errors.length === 1 ? "" : "s"}, ${warnings.length} warning${warnings.length === 1 ? "" : "s"}.`,
+              : [
+                  errors.length > 0 ? `${errors.length} error${errors.length === 1 ? "" : "s"}` : "",
+                  warnings.length > 0 ? `${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : "",
+                  infos.length > 0 ? `${infos.length} info` : "",
+                ]
+                  .filter(Boolean)
+                  .join(", ") + ".",
         };
       }),
   );
@@ -2188,6 +2280,9 @@ function registerWriteTools(server: McpServer) {
           );
         }
         const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+        // Note: "info" findings (e.g. multiple-hikes-one-week from lintActivePlan) are
+        // intentionally excluded here — lintTemplate never produces info findings, and
+        // advisory info items must not block revisions.
 
         // Metadata drift / Phase-5 cascade.
         const totalWeeks = template.totalWeeks;

@@ -1,0 +1,12 @@
+{
+  "feature": "Long-Effort (Hike) Reconciliation — Track 1 (backend)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-long-effort-reconciliation.md",
+  "design_spec": "docs/design/long-effort-reconciliation.md",
+  "prd_issue": null,
+  "ux_research": "skipped — pure backend; visual covered by docs/ux-research/plan-confidence-calendar.md",
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
+  "agents": [],
+  "iteration": 1,
+  "status": "architecting"
+}

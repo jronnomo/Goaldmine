@@ -13,13 +13,15 @@
 //    overrides + planned hikes and runs every rule. Backs the lint_plan MCP
 //    tool so the coach can self-check on demand.
 
-import { addDays, startOfDay } from "@/lib/calendar";
+import { addDays, startOfDay, weekConflicts } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
 import { getBaselineSchedule } from "@/lib/records";
 import type { ProgramTemplate } from "@/lib/program-template";
 
-export type LintSeverity = "error" | "warning";
+// D-2: "info" added for multiple-hikes-one-week and similar advisory findings
+// that are genuinely informational rather than actionable warnings.
+export type LintSeverity = "error" | "warning" | "info";
 
 export type LintFinding = {
   rule: string;
@@ -147,8 +149,8 @@ export function lintTemplate(template: ProgramTemplate, meta: PlanMeta): LintFin
 /**
  * Full lint over the active plan: template rules + the persisted-data rules
  * that need DB access (unanchored retests, legacy phantom values, orphaned
- * overrides, duplicate planned hikes). Returns [] with a sentinel finding if no
- * active plan exists.
+ * overrides, duplicate planned hikes, hike scheduling checks). Returns [] with
+ * a sentinel finding if no active plan exists.
  */
 export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   planId: string | null;
@@ -260,6 +262,101 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
         message: `${rows.length} planned hikes on ${day} (${rows.map((r) => r.route).join(", ")}). Keep one; delete the rest.`,
         context: { date: day, hikeIds: rows.map((r) => r.id) },
       });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Hike scheduling rules (REQ-006)
+  // -------------------------------------------------------------------------
+
+  // Rule: planned hike outside the plan window (before startedOn or past
+  // totalWeeks*7). The resolver silently ignores it; this makes it visible.
+  // Use the same daysDelta math as resolveDay. (warning)
+  for (const h of plannedHikes) {
+    const hikeDaysDelta = Math.floor(
+      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
+    );
+    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) {
+      findings.push({
+        rule: "hike-outside-plan",
+        severity: "warning",
+        message: `Planned hike "${h.route}" on ${startOfDay(h.date).toISOString().slice(0, 10)} is outside the plan's ${template.totalWeeks}-week window — it won't appear in reconciliation or get_day.`,
+        context: { hikeId: h.id, route: h.route, date: h.date, daysDelta: hikeDaysDelta },
+      });
+    }
+  }
+
+  // Rule: >1 planned hike in a single rotation week. May be intentional
+  // (training camp week), but worth flagging so the coach can confirm. (info)
+  // Group by rotation weekIndex using the same daysDelta math (rotation anchor =
+  // program.startedOn, NOT calendar Monday).
+  const hikesByWeek = new Map<number, typeof plannedHikes>();
+  for (const h of plannedHikes) {
+    const hikeDaysDelta = Math.floor(
+      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
+    );
+    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) continue; // already flagged above
+    const wi = Math.floor(hikeDaysDelta / 7) + 1;
+    const arr = hikesByWeek.get(wi) ?? [];
+    arr.push(h);
+    hikesByWeek.set(wi, arr);
+  }
+  for (const [wi, rows] of hikesByWeek) {
+    if (rows.length > 1) {
+      findings.push({
+        rule: "multiple-hikes-one-week",
+        severity: "info",
+        message: `${rows.length} planned hikes in rotation week ${wi} (${rows.map((r) => `${r.route} on ${startOfDay(r.date).toISOString().slice(0, 10)}`).join(", ")}). Confirm this is intentional (e.g. training camp).`,
+        context: { weekIndex: wi, hikeIds: rows.map((r) => r.id) },
+      });
+    }
+  }
+
+  // Rule: planned hike the day after a heavy-leg rotation day (Day 2 = "lower"
+  // or Day 5 = "lower-power"). Pre-fatigued legs increase injury risk on a hike.
+  // Checks rotation day of hike.date - 1. (warning)
+  for (const h of plannedHikes) {
+    const hikeDaysDelta = Math.floor(
+      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
+    );
+    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) continue;
+    if (hikeDaysDelta === 0) continue; // no day before plan start
+    const prevDaysDelta = hikeDaysDelta - 1;
+    const prevRotationDay = (((prevDaysDelta % 7) + 7) % 7) + 1;
+    const prevTmpl = template.weeklySplit.find((d) => d.dayOfWeek === prevRotationDay);
+    if (prevTmpl?.category === "lower" || prevTmpl?.category === "lower-power") {
+      findings.push({
+        rule: "pre-hike-leg-load",
+        severity: "warning",
+        message: `Planned hike "${h.route}" on ${startOfDay(h.date).toISOString().slice(0, 10)} follows a ${prevTmpl.category} day (rotation Day ${prevRotationDay}). Pre-fatigued legs elevate injury risk — consider swapping or moving the hike.`,
+        context: {
+          hikeId: h.id,
+          route: h.route,
+          hikeDate: h.date,
+          prevRotationDay,
+          prevCategory: prevTmpl.category,
+        },
+      });
+    }
+  }
+
+  // Rule: retest-on-hike-day — a baseline test is due on a date that also has a
+  // planned hike. Testing at max effort and a long hike on one day is a real
+  // conflict. This is a thin caller of weekConflicts (single source of truth).
+  // Only queries weeks that have at least one planned hike to minimize overhead.
+  // (warning)
+  const weeksWithHikes = new Set(hikesByWeek.keys());
+  for (const wi of weeksWithHikes) {
+    const conflicts = await weekConflicts(program, wi);
+    for (const c of conflicts) {
+      if (c.kind === "retest-on-hike") {
+        findings.push({
+          rule: "retest-on-hike-day",
+          severity: "warning",
+          message: `A baseline retest is scheduled on ${c.dateKey}, which also has a planned hike. Max-effort testing and a long hike on the same day is a conflict — move the test or the hike.`,
+          context: { dateKey: c.dateKey, weekIndex: wi, withDates: c.withDates },
+        });
+      }
     }
   }
 
