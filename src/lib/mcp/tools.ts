@@ -57,6 +57,11 @@ import {
   applyNutritionLogOps,
   parseStoredItems,
 } from "@/lib/nutrition-log-ops";
+import {
+  BaselineOpSchema,
+  applyBaselineOps,
+  summarizeBaselineChanges,
+} from "@/lib/baseline-ops";
 
 const DateKeyShape = z
   .string()
@@ -2659,6 +2664,116 @@ function registerWriteTools(server: McpServer) {
           goalId: plan.goalId,
           updated: changed,
           message: `Plan metadata updated (${changed.join(", ")})`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "baseline_ops",
+    {
+      title: "Edit baseline tests (patch)",
+      description:
+        "Surgically add / update / remove baseline tests in the plan's baselineWeek without re-emitting the whole ProgramTemplate. This is the safe path for a one-line baseline change — apply_plan_revision forces a full-snapshot rewrite where a transcription slip can silently corrupt unrelated fields the lint waves through; baseline_ops only touches the tests you name. " +
+        "Each op targets a baseline day (dayOfWeek 1-7 or a title substring) and, for update/remove, a test (testName substring or — with a day — a 0-based index). Ops apply sequentially; the first one that can't be applied aborts the whole batch (nothing is written). " +
+        "Like apply_plan_revision, the patched template is linted before write (structural errors — a retest week past totalWeeks, an initialWeek out of range, a retest at/before its initial — REJECT the write; warnings ride along in the response) and the change is recorded as a PlanRevision so it's auditable and revertible. " +
+        "Baseline tests are template-level — the schedule derives checkpoints from initialWeek/retestWeeks — so writing the patched planJson fully takes effect with no calendar cascade (unlike date overrides). Still propose the change and get approval before calling.",
+      inputSchema: {
+        planId: z.string(),
+        ops: z.array(BaselineOpSchema).min(1),
+        summary: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Audit summary for the PlanRevision. Auto-generated from the ops when omitted."),
+        reasoning: z.string().min(1).optional().describe("Why this change — stored on the PlanRevision."),
+        triggerNoteId: z.string().optional(),
+        triggerSource: z.enum(["note", "claude", "manual"]).default("claude"),
+        resolvedNoteIds: z
+          .array(z.string())
+          .optional()
+          .describe("Notes addressed by this edit — marked resolved in the same transaction."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+
+        // The live snapshot should already be valid (apply_plan_revision gates
+        // every write), but assert before patching so a malformed planJson fails
+        // loudly here rather than producing a half-typed result.
+        const current: unknown = plan.planJson;
+        assertValidProgramTemplate(current);
+        const tpl = current as ProgramTemplate;
+
+        const { baselineWeek, changes } = applyBaselineOps(tpl.baselineWeek, input.ops);
+        const next: ProgramTemplate = { ...tpl, baselineWeek };
+        assertValidProgramTemplate(next);
+
+        // Same lint gate as apply_plan_revision: errors block, warnings ride along.
+        const lintFindings: LintFinding[] = lintTemplate(next, {
+          weeks: plan.weeks,
+          endsOn: plan.endsOn,
+          startedOn: plan.startedOn,
+          goalTargetDate: plan.endsOn,
+        });
+        const lintErrors = lintFindings.filter((f) => f.severity === "error");
+        if (lintErrors.length > 0) {
+          throw new Error(
+            `Refusing to apply: the patched baseline has ${lintErrors.length} structural error(s). ` +
+              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+              " Adjust the ops and retry.",
+          );
+        }
+        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+
+        const summary = input.summary ?? summarizeBaselineChanges(changes);
+        const reasoning = input.reasoning ?? "Baseline test edit via baseline_ops.";
+        const resolveIds = [
+          ...new Set([
+            ...(input.resolvedNoteIds ?? []),
+            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+          ]),
+        ];
+
+        const { rev, resolvedCount } = await prisma.$transaction(async (tx) => {
+          const r = await tx.planRevision.create({
+            data: {
+              planId: plan.id,
+              triggerNoteId: input.triggerNoteId ?? null,
+              triggerSource: input.triggerSource,
+              summary,
+              reasoning,
+              snapshotJson: next as Prisma.InputJsonValue,
+            },
+          });
+          await tx.plan.update({
+            where: { id: plan.id },
+            data: { planJson: next as Prisma.InputJsonValue },
+          });
+          let resolvedCount = 0;
+          if (resolveIds.length > 0) {
+            const update = await tx.note.updateMany({
+              where: { id: { in: resolveIds }, resolvedAt: null },
+              data: {
+                resolvedAt: r.createdAt,
+                resolvedReason: `applied via revision ${r.id}`,
+              },
+            });
+            resolvedCount = update.count;
+          }
+          return { rev: r, resolvedCount };
+        });
+
+        return {
+          revisionId: rev.id,
+          changes,
+          resolvedNoteCount: resolvedCount,
+          warnings: lintWarnings,
+          message:
+            `${changes.length} baseline edit(s) applied via revision ${rev.id}.` +
+            (resolvedCount > 0 ? ` Resolved ${resolvedCount} note(s).` : "") +
+            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
         };
       }),
   );
