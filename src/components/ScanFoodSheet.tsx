@@ -83,6 +83,21 @@ function scaledMacros(food: LibraryFood, servings: number): FoodMacros {
  * When `initialFood` is provided (chip tap), opens directly at confirm.
  * Camera (BarcodeScanner) is active ONLY in the scan phase.
  *
+ * Batch mode (no initialFood):
+ *   "Add" fires onAdd and returns to scan phase — sheet stays open for the
+ *   next item. A "Done" button (≥44px) closes the sheet. The session tally
+ *   (items + ~cal) is displayed once ≥1 items have been added.
+ *   Camera restart is handled by the `active={open && phase === "scan"}` guard:
+ *   when phase transitions confirm→scan, active goes false→true, which triggers
+ *   BarcodeScanner's useEffect to call startCamera() with a fresh H-1 generation.
+ *
+ * Chip mode (initialFood provided):
+ *   "Add to meal" fires onAdd AND onClose — the quick path, chip session concept.
+ *
+ * Camera stop is guaranteed on all close paths by `open &&` in the active prop:
+ *   Esc / X / backdrop / Done → onClose() → parent sets open=false → active=false
+ *   → BarcodeScanner.useEffect([active]) calls stopTracks() immediately.
+ *
  * Designed for `next/dynamic ssr:false` consumption by the parent form:
  *   import dynamic from "next/dynamic";
  *   const ScanFoodSheet = dynamic(
@@ -100,6 +115,14 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   const [manualError, setManualError] = useState<string | null>(null);
   const [retryCode, setRetryCode] = useState<string | null>(null);
 
+  // Session tally — tracks items + approx calories added this sheet session.
+  // Reset every time the sheet opens fresh. Displayed once ≥1 items added.
+  const [sessionTally, setSessionTally] = useState({ items: 0, calories: 0 });
+
+  // isChipMode: opened via chip tap (initialFood provided) → quick-add + close.
+  // Batch mode (no initialFood): camera session — add + keep scanning.
+  const isChipMode = initialFood !== undefined;
+
   // ── Reset state on open/close ─────────────────────────────────────────────
   // On open: full reset to correct initial phase (scan or confirm).
   // On close: reset phase to "scan" so the next open always starts from a
@@ -107,12 +130,15 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   //   before the next showModal(). Batched inside startTransition (non-urgent).
   useEffect(() => {
     if (!open) {
-      // Reset phase on close — ensures active={open && phase === "scan"} is
-      // false while the sheet is closed, and the next open starts cleanly.
-      startTransition(() => setPhase("scan"));
+      // Reset phase and tally on close.
+      startTransition(() => {
+        setPhase("scan");
+        setSessionTally({ items: 0, calories: 0 });
+      });
       return;
     }
     startTransition(() => {
+      setSessionTally({ items: 0, calories: 0 }); // always reset tally on fresh open
       if (initialFood) {
         setPhase("confirm");
         setFood(initialFood);
@@ -163,6 +189,38 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
     }
   }
 
+  // ── Add handler ───────────────────────────────────────────────────────────
+
+  function handleAdd() {
+    if (!food) return;
+    const scaledCal = preview?.calories ?? null;
+    onAdd({
+      food,
+      servings,
+      // chipSource: true when initialFood was provided (chip tap path).
+      // LogNutritionForm MUST call recordFoodUse fire-and-forget when chipSource=true.
+      // Scan path (chipSource=false): lookupBarcode already bumped usageCount.
+      chipSource: isChipMode,
+    });
+    if (isChipMode) {
+      // Quick path: close immediately (chip session concept).
+      onClose();
+    } else {
+      // Batch path: increment session tally, return to scan for next item.
+      // Camera restart: setting phase to "scan" makes active={open && "scan" === "scan"}
+      // = true, which triggers BarcodeScanner's useEffect([active]) → startCamera()
+      // with a fresh H-1 generation counter. The previous confirm-phase active=false
+      // ensures stopTracks() ran before the restart.
+      setSessionTally((t) => ({
+        items: t.items + 1,
+        calories: t.calories + (scaledCal ?? 0),
+      }));
+      setPhase("scan");
+      setFood(null);
+      setServings(1);
+    }
+  }
+
   // ── Sheet title by phase ──────────────────────────────────────────────────
 
   const sheetTitle =
@@ -171,6 +229,15 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   // ── Scaled preview (confirm phase) ────────────────────────────────────────
 
   const preview = food ? scaledMacros(food, servings) : null;
+
+  // ── Session tally line (batch mode, ≥1 items) ─────────────────────────────
+
+  const tallyLine =
+    !isChipMode && sessionTally.items >= 1
+      ? `Added ${sessionTally.items} item${sessionTally.items !== 1 ? "s" : ""}${
+          sessionTally.calories > 0 ? ` · ~${sessionTally.calories} cal` : ""
+        }`
+      : null;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -185,12 +252,23 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
     >
       <div className="flex flex-col gap-4 px-4 pt-3 pb-6">
 
+        {/* Session tally — batch mode only; visible in scan + confirm phases once ≥1 added */}
+        {tallyLine && (
+          <p
+            data-testid="session-tally"
+            className="text-xs text-center text-[var(--muted)]"
+            aria-live="polite"
+          >
+            {tallyLine}
+          </p>
+        )}
+
         {/* ── SCAN PHASE ───────────────────────────────────────────────── */}
         {(phase === "scan" || phase === "not_found" || phase === "error") && (
           <>
             {/* BarcodeScanner — active only while sheet is open AND in scan phase.
                 The `open &&` guard ensures camera stops immediately on any close
-                path (Esc, backdrop, X button) even if phase hasn't reset yet. */}
+                path (Esc, backdrop, X button, Done) even if phase hasn't reset yet. */}
             <BarcodeScanner
               active={open && phase === "scan"}
               onDetected={(code) => handleLookup(code)}
@@ -207,7 +285,7 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
                   onClick={() => setPhase("scan")}
                   className="text-sm text-[var(--accent)] underline underline-offset-2"
                 >
-                  Scan again
+                  Scan next
                 </button>
               </div>
             )}
@@ -217,13 +295,22 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
                 <p className="text-sm text-[var(--foreground)]">
                   Network error — check your connection
                 </p>
-                <button
-                  type="button"
-                  onClick={() => retryCode && handleLookup(retryCode)}
-                  className="text-sm text-[var(--accent)] underline underline-offset-2"
-                >
-                  Retry
-                </button>
+                <div className="flex items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() => retryCode && handleLookup(retryCode)}
+                    className="text-sm text-[var(--accent)] underline underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPhase("scan")}
+                    className="text-sm text-[var(--accent)] underline underline-offset-2"
+                  >
+                    Scan next
+                  </button>
+                </div>
               </div>
             )}
 
@@ -269,6 +356,18 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
               <p className="text-xs text-[var(--danger,#A82A1F)]" role="alert">
                 {manualError}
               </p>
+            )}
+
+            {/* Done — batch mode only; closes the scanning session */}
+            {!isChipMode && (
+              <button
+                type="button"
+                data-testid="scan-done-btn"
+                onClick={onClose}
+                className="w-full rounded-lg border border-[var(--border)] text-[var(--foreground)] py-3 text-base font-medium min-h-[44px]"
+              >
+                Done
+              </button>
             )}
           </>
         )}
@@ -377,25 +476,27 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
               </div>
             )}
 
-            {/* Add to meal CTA */}
+            {/* Add / Add to meal CTA */}
             <button
               type="button"
               data-testid="add-to-meal-btn"
-              onClick={() => {
-                onAdd({
-                  food: food,
-                  servings,
-                  // chipSource: true when initialFood was provided (chip tap path).
-                  // LogNutritionForm MUST call recordFoodUse fire-and-forget when chipSource=true.
-                  // Scan path (chipSource=false): lookupBarcode already bumped usageCount.
-                  chipSource: initialFood !== undefined,
-                });
-                onClose();
-              }}
+              onClick={handleAdd}
               className="w-full rounded-lg bg-[var(--accent)] text-[var(--accent-fg)] py-3 text-base font-medium min-h-[44px]"
             >
-              Add to meal
+              {isChipMode ? "Add to meal" : "Add"}
             </button>
+
+            {/* Done — batch mode only; finishes the scanning session */}
+            {!isChipMode && (
+              <button
+                type="button"
+                data-testid="confirm-done-btn"
+                onClick={onClose}
+                className="w-full rounded-lg border border-[var(--border)] text-[var(--foreground)] py-3 text-base font-medium min-h-[44px]"
+              >
+                Done
+              </button>
+            )}
           </>
         )}
       </div>
