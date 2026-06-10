@@ -337,7 +337,10 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
                   if (manualError) setManualError(null);
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleLookup(manualCode);
+                  if (e.key === "Enter") {
+                    e.preventDefault(); // must NOT submit the outer form
+                    if (/^\d{8,14}$/.test(manualCode.trim())) handleLookup(manualCode);
+                  }
                 }}
                 className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base min-h-[44px]"
               />
