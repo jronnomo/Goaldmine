@@ -25,7 +25,7 @@ export const FIXTURE_GAME_STATE: GameState = {
     //   600 <= 720 < 900 → L5 ✓; 720-600=120 ✓; 60*5=300 ✓
     { id: "MOB", label: "Mobility",     level: 5, xp:  630, xpIntoLevel:  30, xpToNext: 300, progress: 0.10 },
     //   600 <= 630 < 900 → L5 ✓; 630-600=30 ✓; 60*5=300 ✓
-    { id: "CON", label: "Constitution", level: 7, xp: 1350, xpIntoLevel:  90, xpToNext: 420, progress: 0.214 },
+    { id: "CON", label: "Consistency",  level: 7, xp: 1350, xpIntoLevel:  90, xpToNext: 420, progress: 0.214 },
     //   1260 <= 1350 < 1680 → L7 ✓; 1350-1260=90 ✓; 60*7=420 ✓
   ],
   // Sum of attr xp: 1800+720+630+1350=4500 = overall xp (no unattributed in fixture) ✓

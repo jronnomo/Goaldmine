@@ -26,8 +26,8 @@ const FITNESS_ATTRIBUTES: AttributeDef[] = [
   },
   {
     id: "CON",
-    label: "Constitution",
-    feedsText: "Plan adherence, nutrition, baselines, streak milestones",
+    label: "Consistency",
+    feedsText: "Streaks, plan adherence, logging habits, weekly reviews",
   },
 ];
 

@@ -77,8 +77,12 @@ export const FITNESS_XP = {
   BASELINE_LOGGED: 20,
   BASELINE_ON_TIME: 10, // bonus: logged within ±7 days of scheduled checkpoint
 
-  // Hike XP (per completed hike, no cap)
-  HIKE_COMPLETED: 60,
+  // Hike XP (elevation-scaled, no cap)
+  // Formula: base + min(floor(elevationFt/1000)*HIKE_PER_1000FT, HIKE_ELEVATION_BONUS_CAP) + pack bonus
+  HIKE_BASE: 30,
+  HIKE_PER_1000FT: 10,
+  HIKE_ELEVATION_BONUS_CAP: 60,  // max elevation bonus regardless of gain
+  HIKE_PACK_BONUS: 10,           // bonus when packWeightLb >= HIKE_PACK_THRESHOLD_LB
 
   // Mobility (1/day via MobilityCheckin or zone2-mobility workout)
   MOBILITY_SESSION: 15,
@@ -87,11 +91,32 @@ export const FITNESS_XP = {
   NUTRITION_DAY: 5,
 
   // Weekly review (per review note)
-  REVIEW_WEEKLY: 20,
+  REVIEW_WEEKLY: 25,
 
   // Plan adherence (1/day; rest days = automatic success)
   ADHERENCE_DAY: 10,
 } as const;
+
+// Pack weight threshold for the hike pack bonus (lb).
+// Kept outside FITNESS_XP so it can be referenced as a plain number in runtime logic.
+export const HIKE_PACK_THRESHOLD_LB = 20;
+
+/**
+ * Compute XP for a completed hike.
+ * Formula (PRD §4.8):
+ *   base(30) + min(floor(elevationFt/1000) × 10, 60) + (packWeightLb >= 20 ? 10 : 0)
+ */
+export function hikeXp(elevationFt: number, packWeightLb: number | null): number {
+  const elevationBonus = Math.min(
+    Math.floor(elevationFt / 1000) * FITNESS_XP.HIKE_PER_1000FT,
+    FITNESS_XP.HIKE_ELEVATION_BONUS_CAP,
+  );
+  const packBonus =
+    packWeightLb !== null && packWeightLb >= HIKE_PACK_THRESHOLD_LB
+      ? FITNESS_XP.HIKE_PACK_BONUS
+      : 0;
+  return FITNESS_XP.HIKE_BASE + elevationBonus + packBonus;
+}
 
 // ─────────────────────────────────────────────────────────
 // Streak milestone table
@@ -180,7 +205,7 @@ export const BASELINE_ATTRIBUTE_MAP: Record<string, AttributeId> = {
   "Pull-Up Max Reps": "STR",
   "Push-Up Max Reps": "STR",
   "DB Shoulder Press 8-rep Max": "STR",
-  "Plank Max Hold": "CON",
+  "Plank Max Hold": "STR",
   "Dead Hang": "STR",
 
   // Lower Strength (Day 2)

@@ -15,7 +15,7 @@ export type XpEvent = {
 
 export type AttributeState = {
   id: AttributeId;
-  label: string;          // "Strength" | "Endurance" | "Mobility" | "Constitution"
+  label: string;          // "Strength" | "Endurance" | "Mobility" | "Consistency"
   level: number;
   xp: number;             // cumulative XP for this attribute
   xpIntoLevel: number;    // progress within current level
