@@ -198,14 +198,18 @@ export function LogNutritionForm({
   const [localAdditions, setLocalAdditions] = useState<LibraryFood[]>([]);
 
   // Derive quickPick: server prop (highest authority) or lazyFoods, with
-  // localAdditions prepended and deduped. Avoids setState-in-effect for prop sync
-  // (the lint-safe pattern: derive from props directly via useMemo).
+  // localAdditions prepended and winning over base for any shared id.
+  // Avoids setState-in-effect for prop sync (the lint-safe pattern: derive from
+  // props directly via useMemo).
+  //
+  // Merge strategy: localAdditions always wins over base for a given id so that
+  // a mid-session rescan that heals macros is reflected immediately in the chip,
+  // without waiting for the next full page load.
   const quickPick = useMemo(() => {
     const base = quickPickFoods ?? lazyFoods;
-    const newItems = localAdditions.filter(
-      (a) => !base.some((b) => b.id === a.id)
-    );
-    return [...newItems, ...base].slice(0, 8);
+    const localIds = new Set(localAdditions.map((a) => a.id));
+    const baseFiltered = base.filter((b) => !localIds.has(b.id));
+    return [...localAdditions, ...baseFiltered].slice(0, 8);
   }, [quickPickFoods, lazyFoods, localAdditions]);
 
   // Scan sheet state
@@ -251,13 +255,14 @@ export function LogNutritionForm({
       recordFoodUse(food.id).catch(() => {});
     }
 
-    // 4. Optimistic chip prepend (scan path only)
-    // After a scan adds a food not yet in the visible chips, prepend immediately.
+    // 4. Optimistic chip upsert (scan path only)
+    // After a scan adds (or rescans with healed macros) a food, upsert to front
+    // of localAdditions so the chip immediately carries the freshest data.
     // Uses localAdditions (merged into quickPick via useMemo) — no direct quickPick mutation.
     if (!chipSource) {
       setLocalAdditions((prev) => {
-        if (prev.some((f) => f.id === food.id)) return prev;
-        return [food, ...prev];
+        const without = prev.filter((f) => f.id !== food.id);
+        return [food, ...without];
       });
     }
   }
@@ -288,6 +293,16 @@ export function LogNutritionForm({
     );
     setItemsText(merged.itemsText);
     setMacros(merged.macroValues);
+
+    // Upsert the resolved library food to front of localAdditions so the chip
+    // carries fresh macros (important when a builtin/USDA row was just cached
+    // or a library row was re-resolved with updated data during this session).
+    const food = estimateResult.food;
+    setLocalAdditions((prev) => {
+      const without = prev.filter((f) => f.id !== food.id);
+      return [food, ...without];
+    });
+
     setEstimateInput("");
     setEstimateResult(null);
   }
