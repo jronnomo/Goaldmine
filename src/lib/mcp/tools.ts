@@ -3470,7 +3470,7 @@ function registerWriteTools(server: McpServer) {
         "Append a reference (URL, trail report, route guide, article, pasted doc snippet) to a goal so it persists across coaching turns. " +
         "Use when the user shares a link about their goal — Mt. Elbert trail conditions, a training article, a race course PDF, equipment guides. " +
         "Optional claudeSummary captures the key takeaway from the reference so future turns don't have to re-fetch. " +
-        "Read existing references via get_goal.",
+        "Read existing references via get_goal. Update an existing reference's summary via update_goal_reference.",
       inputSchema: {
         goalId: z.string(),
         kind: z.enum(["url", "doc"]),
@@ -4118,6 +4118,84 @@ function registerWriteTools(server: McpServer) {
             `${revisionCount} revision(s), ${overrideCount} day override(s), ` +
             `${scheduledItems} scheduled item(s), ${logEntries} log entry/entries. ` +
             "Workouts, measurements, hikes, nutrition logs, notes, and baselines were NOT deleted.",
+        };
+      }),
+  );
+
+  server.registerTool(
+    "update_goal_reference",
+    {
+      title: "Write back an ingested summary (or updated label) onto a goal reference",
+      description:
+        "Write back the distilled takeaway after reading/ingesting a goal reference (URL or doc) the user attached. " +
+        "Use after fetching the link's content: store the method/key insights as claudeSummary so future sessions don't re-fetch. " +
+        "Read references (and their ids) via get_goal. " +
+        "At least one of claudeSummary or label must be supplied — passing neither returns an error.",
+      inputSchema: {
+        goalId: z.string(),
+        referenceId: z
+          .string()
+          .describe("Reference id from get_goal's references[]"),
+        claudeSummary: z
+          .string()
+          .min(1)
+          .max(2000)
+          .optional()
+          .describe(
+            "Distilled takeaway from ingesting the reference — persists across coaching sessions and renders in the app",
+          ),
+        label: z
+          .string()
+          .max(120)
+          .optional()
+          .describe("Optional friendlier display label"),
+      },
+    },
+    async ({ goalId, referenceId, claudeSummary, label }) =>
+      safe(async () => {
+        if (!claudeSummary && !label) {
+          throw new Error("At least one of claudeSummary or label must be provided.");
+        }
+
+        const goal = await prisma.goal.findUnique({ where: { id: goalId } });
+        if (!goal) throw new Error(`Goal not found: ${goalId}`);
+
+        const refs = (
+          Array.isArray(goal.references) ? goal.references : []
+        ) as Array<Record<string, unknown>>;
+
+        const idx = refs.findIndex((r) => r.id === referenceId);
+        if (idx === -1) {
+          const available = refs
+            .map((r) => `${r.id} (${r.label ?? r.value})`)
+            .join(", ");
+          throw new Error(
+            `Reference id "${referenceId}" not found on goal "${goalId}". ` +
+              `Available ids: ${available || "none"}`,
+          );
+        }
+
+        const updated = { ...refs[idx] };
+        if (claudeSummary !== undefined) updated.claudeSummary = claudeSummary;
+        if (label !== undefined) updated.label = label;
+
+        const next = [...refs];
+        next[idx] = updated;
+
+        await prisma.goal.update({
+          where: { id: goalId },
+          data: { references: next as unknown as Prisma.InputJsonValue },
+        });
+
+        return {
+          id: referenceId,
+          message: "Reference updated",
+          reference: {
+            id: updated.id,
+            kind: updated.kind,
+            label: updated.label,
+            claudeSummary: updated.claudeSummary,
+          },
         };
       }),
   );

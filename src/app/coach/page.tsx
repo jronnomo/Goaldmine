@@ -57,6 +57,12 @@ const PROMPTS = [
     prompt:
       "Pull my pending notes. For each, decide: fold into a plan revision, or acknowledge as no-change-needed. Walk me through each before applying.",
   },
+  {
+    title: "Ingest goal references",
+    when: "Goal has references without a saved summary",
+    prompt:
+      "Call get_goal for my active goal and check references[]. For each reference that has no claudeSummary yet, fetch its content (web fetch the URL, or read the doc text), distill the method and key takeaways that are relevant to coaching my training, and write each summary back via update_goal_reference. When done, tell me what you learned from each source and how it will influence programming.",
+  },
 ];
 
 export default function CoachPage() {
