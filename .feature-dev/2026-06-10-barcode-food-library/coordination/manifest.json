@@ -1,0 +1,39 @@
+{
+  "feature": "Barcode Scan \u2192 OpenFoodFacts Macros + Personal Food Library",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-barcode-food-library.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/66",
+  "ux_research": {
+    "status": "complete; ledger 22 shipped / 1 dropped",
+    "report_path": "docs/ux-research/barcode-food-library.md",
+    "ledger_path": "docs/ux-research/barcode-food-library-ledger.md"
+  },
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004",
+    "REQ-005",
+    "REQ-006",
+    "REQ-007",
+    "REQ-008",
+    "REQ-009"
+  ],
+  "agents": [
+    "explore",
+    "plan",
+    "ux-research",
+    "research",
+    "architect v1+v2",
+    "devils-advocate",
+    "step0",
+    "stream-a",
+    "stream-b",
+    "stream-c",
+    "integration",
+    "fix",
+    "qa"
+  ],
+  "iteration": 2,
+  "status": "complete"
+}
