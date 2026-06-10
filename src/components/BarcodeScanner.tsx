@@ -294,9 +294,25 @@ export function BarcodeScanner({ active, onDetected }: BarcodeScannerProps) {
 
   // ── Effect 2: visibilitychange (iOS background/foreground) ───────────────
 
+  // TEMP-DIAG: append visibility-state transitions to a rolling breadcrumb in
+  // localStorage so we can see whether the camera causes a hidden→visible flip
+  // that correlates with the Log-sheet-close bug. Remove after repro confirmed.
+  function appendVisBreadcrumb(state: string) {
+    try {
+      const raw = localStorage.getItem("goaldmine.diag.vis");
+      const crumbs: Array<{ state: string; at: string }> = raw ? JSON.parse(raw) : [];
+      crumbs.push({ state, at: new Date().toISOString() });
+      // Keep last 10 entries
+      localStorage.setItem("goaldmine.diag.vis", JSON.stringify(crumbs.slice(-10)));
+    } catch { /* noop */ }
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!active) return;
     const handler = () => {
+      // TEMP-DIAG: record visibility transition
+      appendVisBreadcrumb(document.hidden ? "hidden" : "visible");
       if (document.hidden) {
         stopCamera();
         setScannerState("starting"); // will restart when visible
