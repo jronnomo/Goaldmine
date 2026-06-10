@@ -3,7 +3,7 @@ import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { prisma } from "@/lib/db";
-import { setFocusGoal } from "@/lib/goal-actions";
+import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -74,19 +74,25 @@ export default async function GoalsPage() {
               const pct = goalProgress(g, now);
               const isFocused = g.id === focusedId;
               const setFocus = setFocusGoal.bind(null, g.id);
+              const trackAction = setGoalTracked.bind(null, g.id, true);
+              const untrackAction = setGoalTracked.bind(null, g.id, false);
               const rowBody = (
                 <div className="flex items-start gap-2 min-w-0 flex-1 text-left">
+                  {/* [UXR-62-12] glyph may use opacity (non-text, AA-safe); never row-level opacity */}
                   <Bullseye
                     size={20}
                     progress={pct}
                     aria-label={`${g.objective}: ${Math.round(pct * 100)}% progress`}
-                    className="shrink-0 mt-0.5"
+                    className={`shrink-0 mt-0.5${!g.active && !isFocused ? " opacity-55" : ""}`}
                   />
                   <div className="min-w-0">
-                    <p className="font-medium truncate">
+                    {/* [UXR-62-12] dim untracked objective text by recolor (not row opacity) */}
+                    <p className={`font-medium truncate${!g.active && !isFocused ? " text-[var(--muted)]" : ""}`}>
                       {g.objective}
                       {isFocused && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle">
+                        // [UXR-62-11] filled Bullseye size=14 (component min for red center ring) + Focus label
+                        <span className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle">
+                          <Bullseye size={14} progress={1} aria-hidden={true} />
                           Focus
                         </span>
                       )}
@@ -126,9 +132,26 @@ export default async function GoalsPage() {
                         {days < 0 ? `${-days}d ago` : `${days}d`}
                       </span>
                     ) : (
-                      <span className="text-xs rounded-full px-2 py-0.5 border border-[var(--muted)]/40 text-[var(--muted)]">
+                      // [UXR-62-15] Someday chip: neutral border/muted text, no urgency color
+                      <span className="text-xs rounded-full px-2 py-0.5 border border-[var(--border)] text-[var(--muted)]">
                         Someday
                       </span>
+                    )}
+                    {!isFocused && (
+                      // [UXR-62-12] Track/Untrack pill — hidden on focus row (server-guarded + hidden)
+                      // Tracked style: accent-soft bg + accent border; Untracked: border/muted outline
+                      <form action={g.active ? untrackAction : trackAction}>
+                        <button
+                          type="submit"
+                          className={`text-xs rounded-full border px-2 py-0.5 min-h-[44px] ${
+                            g.active
+                              ? "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
+                              : "border-[var(--border)] text-[var(--muted)]"
+                          }`}
+                        >
+                          {g.active ? "Untrack" : "Track"}
+                        </button>
+                      </form>
                     )}
                     <Link
                       href={`/goals/${g.id}`}

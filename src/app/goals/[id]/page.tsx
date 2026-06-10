@@ -106,11 +106,17 @@ export default async function GoalDetail({
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight mt-1">{goal.objective}</h1>
         <p className="text-sm text-[var(--muted)]">
-          {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : "Someday"}{" "}
-          {days !== null
-            ? `· ${days < 0 ? `${-days} days past` : `${days} days out`} `
-            : ""}
-          · {goal.status}
+          {goal.targetDate ? (
+            <>
+              {new Date(goal.targetDate).toLocaleDateString()}
+              {days !== null && ` · ${days < 0 ? `${-days} days past` : `${days} days out`} `}
+            </>
+          ) : (
+            <span className="inline-flex items-center rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)] mr-1">
+              Someday
+            </span>
+          )}
+          {" "}· {goal.status}
         </p>
       </header>
 

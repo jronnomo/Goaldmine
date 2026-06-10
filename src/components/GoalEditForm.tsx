@@ -59,7 +59,7 @@ export function GoalEditForm({
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Target date <span className="text-[var(--muted)] font-normal">(optional — clear for a someday goal)</span></span>
+        <span className="text-sm font-medium">Target date <span className="text-[var(--muted)] font-normal">(optional — leave blank for a someday goal)</span></span>
         <input
           type="date"
           name="targetDate"
