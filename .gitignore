@@ -47,3 +47,6 @@ next-env.d.ts
 
 # local tooling-migration backups
 *.pre-v2.bak
+
+# zxing wasm — copied from node_modules by postinstall; never committed
+public/zxing/
