@@ -3,6 +3,7 @@ import { Card } from "@/components/Card";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { addDays, dateKey, startOfDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
+import { getQuickPickFoods } from "@/lib/food-actions-stub-c"; // INTEGRATION: swap to @/lib/food-actions
 
 export const dynamic = "force-dynamic";
 
@@ -32,11 +33,14 @@ function asItems(raw: unknown): Item[] {
 export default async function NutritionPage() {
   const since = startOfDay(addDays(new Date(), -30));
 
-  const logs = await prisma.nutritionLog.findMany({
-    where: { date: { gte: since } },
-    orderBy: { date: "desc" },
-    take: 200,
-  });
+  const [logs, quickPickFoods] = await Promise.all([
+    prisma.nutritionLog.findMany({
+      where: { date: { gte: since } },
+      orderBy: { date: "desc" },
+      take: 200,
+    }),
+    getQuickPickFoods(),
+  ]);
 
   const groups = new Map<string, typeof logs>();
   for (const log of logs) {
@@ -56,7 +60,7 @@ export default async function NutritionPage() {
       </header>
 
       <Card title="Log a meal">
-        <LogNutritionForm />
+        <LogNutritionForm quickPickFoods={quickPickFoods} />
       </Card>
 
       {groups.size === 0 ? (
