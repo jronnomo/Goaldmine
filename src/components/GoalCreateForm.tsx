@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { TargetsBuilder } from "@/components/TargetsBuilder";
 import { createGoal } from "@/lib/goal-actions";
 import { FLAVOR_GROUPS, FLAVOR_PRESETS, type GoalFlavorKey } from "@/lib/goal-flavors";
 
@@ -14,9 +15,7 @@ export type CopySource = {
 export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [copyFromGoalId, setCopyFromGoalId] = useState<string>(
-    copySources[0]?.id ?? "",
-  );
+  const [copyFromGoalId, setCopyFromGoalId] = useState<string>("");
   const [flavor, setFlavor] = useState<GoalFlavorKey>("hike");
   const flavorPreset = FLAVOR_PRESETS[flavor];
 
@@ -99,16 +98,23 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
         />
       </label>
 
-      {copySources.length > 0 ? (
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">Use previous readiness targets</span>
+      {/* Targets builder — when rows are empty the hidden input is omitted,
+          allowing the copyFromGoalId path below to kick in on the server. */}
+      <TargetsBuilder />
+
+      {copySources.length > 0 && (
+        <div className="rounded-lg border border-dashed border-[var(--border)] p-3 space-y-2">
+          <p className="text-sm font-medium">Or import from a previous goal</p>
+          <p className="text-xs text-[var(--muted)]">
+            If the builder above is empty, targets will be copied verbatim from the selected goal. You can adjust on the detail page afterward.
+          </p>
           <select
             name="copyFromGoalId"
             value={copyFromGoalId}
             onChange={(e) => setCopyFromGoalId(e.target.value)}
-            className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
           >
-            <option value="">— Start with no targets —</option>
+            <option value="">— No import —</option>
             {copySources.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.objective} ({g.targetCount} target{g.targetCount === 1 ? "" : "s"}, due{" "}
@@ -116,14 +122,7 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
               </option>
             ))}
           </select>
-          <span className="text-xs text-[var(--muted)]">
-            Copies the targets array verbatim. You can edit weights, swap metrics, and adjust rationale on the new goal&apos;s detail page.
-          </span>
-        </label>
-      ) : (
-        <p className="text-xs text-[var(--muted)] border border-dashed border-[var(--border)] rounded-lg px-3 py-2">
-          No previous goals yet — this one will start with no targets. Add metrics on the detail page after creating it, or attach references and let Claude propose targets via the MCP tools.
-        </p>
+        </div>
       )}
 
       {error && (

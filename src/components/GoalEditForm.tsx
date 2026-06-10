@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { TargetsBuilder } from "@/components/TargetsBuilder";
 import { copyTargetsFromGoal, deleteGoal, updateGoal } from "@/lib/goal-actions";
 
 type Defaults = {
@@ -93,9 +94,9 @@ export function GoalEditForm({
 
       {copySources.length > 0 && (
         <div className="rounded-lg border border-[var(--border)] p-3 space-y-2">
-          <p className="text-sm font-medium">Use previous readiness targets</p>
+          <p className="text-sm font-medium">Import targets from another goal</p>
           <p className="text-xs text-[var(--muted)]">
-            Copy targets from another goal. Replaces this goal&apos;s targets — your unsaved JSON edits below will be lost. You can adjust afterward.
+            Replaces the builder rows above with a copy of another goal&apos;s targets. Reload the page to see the updated rows.
           </p>
           <div className="flex gap-2">
             <select
@@ -131,18 +132,11 @@ export function GoalEditForm({
         </div>
       )}
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Targets (JSON)</span>
-        <textarea
-          name="targets"
-          rows={10}
-          defaultValue={defaultValues.targets}
-          className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-xs font-mono resize-y"
-        />
-        <span className="text-xs text-[var(--muted)]">
-          Array of <code>{`{ metric, label, target, weight, units, direction, rationale? }`}</code>. Weights should sum to ~1.
-        </span>
-      </label>
+      {/* Friendly targets builder — renders a hidden <input name="targets"> in sync */}
+      <TargetsBuilder
+        defaultTargetsJson={defaultValues.targets}
+        alwaysEmit
+      />
 
       {error && (
         <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">

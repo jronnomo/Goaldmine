@@ -125,6 +125,10 @@ export default async function GoalDetail({
         />
       </Card>
 
+      <Card title="References">
+        <GoalReferences goalId={goal.id} references={references} />
+      </Card>
+
       {readiness && (
         <Card title="Readiness">
           <div className="flex items-baseline justify-between mb-2">
@@ -179,10 +183,6 @@ export default async function GoalDetail({
           <PlanChangelog entries={changelog} goalId={goal.id} />
         </Card>
       )}
-
-      <Card title="References">
-        <GoalReferences goalId={goal.id} references={references} />
-      </Card>
 
       {goal.notes && (
         <Card title="Notes">
