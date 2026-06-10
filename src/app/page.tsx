@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
+import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
 import { NutritionToday } from "@/components/NutritionToday";
 import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
-import { dateKey, startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
+import { addDays, dateKey, startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { computeGameState } from "@/lib/game/engine";
+import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 
@@ -35,7 +37,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -49,6 +51,10 @@ export default async function HomePage() {
         orderBy: { date: "asc" },
       }),
       computeGameState(),
+      // REQ-106: 7-day lookahead for OtherGoalsStrip (today through today+6).
+      // resolveDay already provides today's otherGoalEvents/crossGoalConflicts;
+      // this call adds the week-ahead window. All date math via @/lib/calendar.
+      getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
     ]);
 
   // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
@@ -125,6 +131,15 @@ export default async function HomePage() {
       {gameState.goalKind !== null && (
         <CharacterHeader state={gameState} />
       )}
+
+      {/* REQ-106: Other-goals strip — between CharacterHeader and hero.
+          UXR-62-05: PRD-fixed placement honored. Server component renders null
+          when no non-focus events exist within the 7-day window. */}
+      <OtherGoalsStrip
+        events={weekGoalEvents}
+        conflicts={resolved.crossGoalConflicts}
+        todayKey={todayDateKey}
+      />
 
       {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
       <section

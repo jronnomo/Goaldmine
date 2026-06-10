@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MarkerIcon } from "@/components/MarkerIcon";
+import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
@@ -17,7 +17,7 @@ export default async function CalendarPage({
   const year = y ? Number(y) : now.getFullYear();
   const month = m ? Number(m) : now.getMonth();
 
-  const { cells, monthStart, goal, program } = await getCalendarMonth({ year, month });
+  const { cells, monthStart, goal, program, otherGoals } = await getCalendarMonth({ year, month });
   const legend = resolveLegend(goal);
 
   const prevYear = month === 0 ? year - 1 : year;
@@ -87,6 +87,32 @@ export default async function CalendarPage({
             </LegendRow>
           ))}
         </ul>
+
+        {/* REQ-106: "Other goals" section — teaches the claim-ring encoding.
+            UXR-62-14: divider + uppercase header + claim-ringed icon per non-focus goal.
+            Renders nothing when no other active goals exist. */}
+        {otherGoals.length > 0 && (
+          <div data-testid="legend-other-goals" className="mt-3 pt-3 border-t border-[var(--border)]">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--muted)] mb-2">
+              Other goals
+            </p>
+            <ul className="space-y-2 text-sm">
+              {otherGoals.map((og) => (
+                <LegendRow
+                  key={og.id}
+                  label={`${og.goalDateLabel} — ${og.objective}`}
+                >
+                  {/* UXR-62-01/02: claim-ring icon teaches the foreign-marker encoding */}
+                  <ForeignGoalMarker
+                    icon={og.goalDateIcon}
+                    label={og.goalDateLabel}
+                    size={15}
+                  />
+                </LegendRow>
+              ))}
+            </ul>
+          </div>
+        )}
       </Card>
 
       <Card title="This month">

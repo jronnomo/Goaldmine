@@ -17,14 +17,25 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { MarkerIcon } from "@/components/MarkerIcon";
+import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
 import { WeekRail } from "@/components/WeekRail";
 import type { CalendarDayCell } from "@/lib/calendar";
 import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// UXR-62-03: focus-first ordering, cap 2–3 total markers before +N chip.
+// 3 chosen: worst-case race-week cell has 1 focus + 2 foreign glyphs before chip.
+const MARKER_CAP = 3;
+
 type Marker = { entry: LegendEntry; count: number };
+
+// Cross-goal conflict kinds — these carry a human-readable .label for display.
+const CROSS_GOAL_KINDS = new Set([
+  "event-on-hard-day",
+  "key-events-same-week",
+  "event-near-long-effort",
+]);
 
 // Resolve which markers a day shows. A kind absent from the goal's legend is
 // suppressed — a cell only ever shows what the legend can explain.
@@ -187,9 +198,17 @@ function DayCell({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const markers = markersFor(cell, legend);
+  const focusMarkers = markersFor(cell, legend);
+  const foreignEvents = cell.otherGoalEvents;
+
+  // UXR-62-03: focus-first, cap at MARKER_CAP total, remainder → +N chip
+  const shownFocus = focusMarkers.slice(0, MARKER_CAP);
+  const foreignSlots = Math.max(0, MARKER_CAP - shownFocus.length);
+  const shownForeign = foreignEvents.slice(0, foreignSlots);
+  const overflow = (focusMarkers.length - shownFocus.length) + (foreignEvents.length - shownForeign.length);
+
   const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
-  const isQuietPast = cell.isPast && cell.isInPlan && markers.length === 0;
+  const isQuietPast = cell.isPast && cell.isInPlan && focusMarkers.length === 0 && foreignEvents.length === 0;
 
   // Every day carries a slim border for separation; out-of-month days get a
   // fainter one so the current month still reads as the focus.
@@ -226,12 +245,17 @@ function DayCell({
       ? "opacity-[0.62] border-t border-dashed border-t-[var(--muted)]"
       : "";
 
-  // REQ-006 / a11y: extend aria-label with confidence + conflict info.
+  // REQ-006 / a11y: extend aria-label with confidence, other-goal events, + conflict.
   const ariaLabel = [
     cell.dateKey,
     cell.dayTitle ? `— ${cell.dayTitle}` : "",
     cell.confidence && cell.confidence !== "past" ? `· ${cell.confidence}` : "",
-    cell.conflict ? `· conflict: ${cell.conflict.kind}` : "",
+    // REQ-106: append foreign goal event labels for screen readers
+    ...cell.otherGoalEvents.map((e) => `· ${e.label} — ${e.goalObjective}`),
+    // REQ-106: use human label for cross-goal conflicts, kind for same-goal conflicts
+    cell.conflict
+      ? `· conflict: ${cell.conflict.label ?? cell.conflict.kind}`
+      : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -248,10 +272,30 @@ function DayCell({
       className={`relative min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass} ${confidenceClass}`}
     >
       <span className={numClass}>{cell.date.getDate()}</span>
+      {/* Focus markers first, then foreign goal markers, capped at MARKER_CAP total.
+          UXR-62-01/02: foreign markers get claim-ring via ForeignGoalMarker.
+          UXR-62-03: overflow collapsed to +N chip. */}
       <span className="flex flex-wrap items-center justify-center gap-0.5">
-        {markers.map((m) => (
+        {shownFocus.map((m) => (
           <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
         ))}
+        {shownForeign.map((e, idx) => (
+          <ForeignGoalMarker
+            key={`${e.goalId}-${e.type}-${idx}`}
+            icon={e.icon}
+            label={`${e.label} — ${e.goalObjective}`}
+            size={13}
+          />
+        ))}
+        {/* UXR-62-04: +N chip — 9px muted text on accent-soft */}
+        {overflow > 0 && (
+          <span
+            data-testid="cal-marker-overflow"
+            className="rounded-full bg-[var(--accent-soft)] px-1 leading-[1.6] text-[9px] text-[var(--muted)]"
+          >
+            +{overflow}
+          </span>
+        )}
       </span>
 
       {/* REQ-006 / D-2: conflict corner wedge.
@@ -285,6 +329,9 @@ function DayDetail({
     month: "long",
     day: "numeric",
   });
+
+  // REQ-106: is this a cross-goal conflict (carries a human label)?
+  const isCrossGoalConflict = cell.conflict != null && CROSS_GOAL_KINDS.has(cell.conflict.kind);
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 space-y-2">
@@ -327,6 +374,35 @@ function DayDetail({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* REQ-106: other-goal events — full uncapped list in DayDetail (progressive disclosure).
+          UXR-62-01/02: claim-ring on foreign icons; {icon} {label} — {objective} format. */}
+      {cell.otherGoalEvents.length > 0 && (
+        <ul className="space-y-1">
+          {cell.otherGoalEvents.map((e, idx) => (
+            <li
+              key={`${e.goalId}-${e.type}-${idx}`}
+              className="flex items-center gap-1.5 text-xs text-[var(--muted)]"
+            >
+              <ForeignGoalMarker icon={e.icon} label={e.label} size={13} />
+              <span>
+                <span className="text-[var(--foreground)]">{e.label}</span>
+                {" — "}
+                {e.goalObjective}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* REQ-106: cross-goal conflict label in var(--warning); same-goal conflicts show kind only.
+          UXR-62-09 principle: label surfaced verbatim, copy in foreground, --warning for glyph. */}
+      {isCrossGoalConflict && cell.conflict?.label && (
+        <p className="text-xs flex items-baseline gap-1">
+          <span className="text-[var(--warning)]" aria-hidden>◣</span>
+          <span className="text-[var(--foreground)]">{cell.conflict.label}</span>
+        </p>
       )}
 
       <Link

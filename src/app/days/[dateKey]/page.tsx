@@ -42,8 +42,52 @@ export default async function DayDetail({
       ),
   );
 
+  // REQ-106: separate target-date events (banner) from other types (inline header lines).
+  const targetDateEvents = r.otherGoalEvents.filter((e) => e.type === "target-date");
+  const secondaryEvents = r.otherGoalEvents.filter((e) => e.type !== "target-date");
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
+      {/* REQ-106: target-date banner ABOVE header — UXR-62-08.
+          border var(--target) + low-alpha wash; body copy in --foreground for AA. */}
+      {targetDateEvents.length > 0 && (
+        <div
+          data-testid="day-race-banner"
+          className="rounded-2xl border border-[var(--target)] p-4 space-y-1"
+          style={{ backgroundColor: "color-mix(in srgb, var(--target) 12%, var(--card))" }}
+        >
+          {targetDateEvents.map((e) => (
+            <p key={`${e.goalId}-${e.type}`} className="font-medium text-[var(--foreground)]">
+              {e.icon} {e.label} — {e.goalObjective}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* REQ-106: cross-goal conflict banner ABOVE header — UXR-62-09.
+          3px var(--warning) left rail + warning wash; body copy in --foreground for AA;
+          leading ◣ glyph in --warning; coach CTA in --accent. No resolve/dismiss button
+          (resolution is conversational in claude.ai — this banner starts that conversation). */}
+      {r.crossGoalConflicts.length > 0 && (
+        <div
+          data-testid="day-conflict-banner"
+          className="rounded-2xl border border-[var(--warning)] border-l-[3px] p-4 space-y-2"
+          style={{ backgroundColor: "color-mix(in srgb, var(--warning) 8%, var(--card))" }}
+        >
+          {r.crossGoalConflicts.map((c) => (
+            <div key={`${c.dateKey}-${c.kind}`}>
+              <p className="text-sm flex items-baseline gap-1.5">
+                <span className="text-[var(--warning)]" aria-hidden>◣</span>
+                <span className="text-[var(--foreground)]">{c.label}</span>
+              </p>
+              <p className="text-xs text-[var(--accent)] mt-1">
+                Ask your coach to sort the week →
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
       <header className="pt-2">
         <Link href="/calendar" className="text-sm text-[var(--accent)]">
           ← Calendar
@@ -51,6 +95,13 @@ export default async function DayDetail({
         <h1 className="text-2xl font-semibold tracking-tight mt-1">{dateLabel}</h1>
         <p className="text-sm text-[var(--muted)]">
           {r.isGoalDate && <span className="text-[var(--accent)]">🏔️ Goal target — {r.goalObjective} · </span>}
+          {/* REQ-106: secondary other-goal events as muted inline lines.
+              UXR-62-16: {icon} {label} — {objective} matching the isGoalDate idiom. */}
+          {secondaryEvents.map((e) => (
+            <span key={`${e.goalId}-${e.type}`} className="text-[var(--muted)]">
+              {e.icon} {e.label} — {e.goalObjective} ·{" "}
+            </span>
+          ))}
           {r.isInPlan && r.rotationDay
             ? `Week ${r.weekIndex} · Day ${r.rotationDay}${r.workoutTemplate ? ` · ${r.workoutTemplate.title}` : ""}`
             : "Outside the active plan window"}
