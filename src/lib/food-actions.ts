@@ -269,6 +269,47 @@ function countNonNullMacros(macros: FoodMacros): number {
   ].filter((v) => v != null).length;
 }
 
+// ── deleteLibraryFood ─────────────────────────────────────────────────────────
+
+/**
+ * Delete a FoodLibrary row by id.
+ * Uses deleteMany so a missing id is a no-op, not a throw.
+ */
+export async function deleteLibraryFood(id: string): Promise<void> {
+  await prisma.foodLibrary.deleteMany({ where: { id } });
+  safeRevalidate("/nutrition");
+  safeRevalidate("/");
+}
+
+// ── listLibraryFoods ──────────────────────────────────────────────────────────
+
+/**
+ * A FoodLibrary row enriched with usage stats.
+ * lastUsedAt is a preformatted display label (server-rendered, no client Date math).
+ */
+export type LibraryFoodRow = LibraryFood & {
+  usageCount: number;
+  /** Short date label, e.g. "Jun 9" — null when the food has never been used. */
+  lastUsedAt: string | null;
+};
+
+/**
+ * Top 50 FoodLibrary rows ordered by usage desc, then recency desc.
+ * Intended for the Food Library Manager UI; richer than getQuickPickFoods.
+ */
+export async function listLibraryFoods(): Promise<LibraryFoodRow[]> {
+  const rows = await prisma.foodLibrary.findMany({
+    orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
+    take: 50,
+  });
+  const fmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+  return rows.map((row) => ({
+    ...toLibraryFood(row),
+    usageCount: row.usageCount,
+    lastUsedAt: row.lastUsedAt ? fmt.format(row.lastUsedAt) : null,
+  }));
+}
+
 // ── getQuickPickFoods ─────────────────────────────────────────────────────────
 
 /**
