@@ -67,6 +67,19 @@ One file per tool under `src/lib/mcp/tools/*` conceptually, all registered in `s
 
 ---
 
+## E. RPG game engine gotchas (dev)
+
+### 1. XP is fully derived and retroactive — rule changes shift ALL historical XP
+`computeGameState()` recomputes from scratch on every call — no persisted XP counters. This means editing a constant in `rules.ts` (e.g. `WORKOUT_COMPLETED`, `PR_SET`) shifts every user's XP and level retroactively. Milestone thresholds, badge unlock dateKeys, and streak counts all recompute from full history. This is intentional ("no cold start" invariant) but means: (a) don't change constants casually without understanding the retroactive impact; (b) never use "current XP" as a decision gate in code — it will change; (c) the `/character` page shows a retroactivity footnote for user transparency. Coach bonuses (`GameBonusXp` rows) are the only persistent XP source — everything else is derived.
+
+### 2. Baseline mirror workouts: `source="baseline"` prevents double-count for workout.completed but PR replay still fires
+When `log_baseline` is called and a baseline test beats a prior best, `appendBaselineToDayWorkout` creates a mirror `Workout` row with `source: "baseline"`, `status: "completed"`. The engine includes these mirrors in PR replay (via `canonicalExerciseName` — e.g. "Plank Max Hold" → "Plank"), so a new baseline max CAN generate a `pr.set` XP event in addition to `baseline.logged` XP. Both XP types are intentional and coexist. The 1/day `workout.completed` cap prevents the mirror from also earning a second `workout.completed` event on a day with a regular workout. The guard to remember: `workout.completed` 1/day cap is the only double-count guard for baseline mirrors — PR replay sees ALL completed workouts including mirrors.
+
+### 3. Adding new exercises or spelling variants to the alias map re-fragments PRs AND XP retroactively
+The alias map in `src/lib/records.ts` → `EXERCISE_ALIAS_GROUPS` canonicalizes exercise names for `recordsSetInWorkout`, `getExerciseSummaries`, and the engine's PR replay. When a new baseline test or Strong-app spelling variant is added to `EXERCISE_ALIAS_GROUPS`, the engine's historical PR replay re-walks all workouts with the new canonical grouping. This means: a previously separate "Plank Max Hold" bucket and "Plank" bucket now merge → the PR count may change, XP amounts shift, and badge unlock dateKeys can move. Similarly, if a test is intentionally kept separate (e.g. "Pull-Up Total Across 5 Sets" is a different metric from "Pull-Up Max Reps"), adding it to the alias map would wrongly suppress single-set PRs. Always verify the metric is the same type (single-set max vs sum/AMRAP) before merging.
+
+---
+
 ## C. Deploy & the claude.ai connector cache
 
 - **Deploy** = push to `main` on `github.com/jronnomo/goaldmine`; Vercel auto-builds (no `vercel.json`, no CLI). Run `npm run build` locally first. Prod endpoint: `https://workout-planner-gold-three.vercel.app/api/mcp`.
