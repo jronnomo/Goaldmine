@@ -179,29 +179,56 @@ export async function getBaselineHistory(testName: string) {
 }
 
 /**
- * Resolve scheduled baselines from the active Plan's template, fold in DB
- * results, and compute status (initial + each retest checkpoint).
+ * Pure: derive all baseline checkpoint dates from a plan template + startedOn.
+ * Returns { testName, targetDate, label } for every initial/retest checkpoint.
  *
- * Initial test is week 1; retests are at template-defined retestWeeks. A
- * checkpoint is "done" if a Baseline row exists on or after its target
- * date for the same testName.
+ * Uses the module-local addDays (end-of-day bounds) for consistency with
+ * getBaselineSchedule's window semantics. This intentionally differs from
+ * the calendar.ts export which returns midnight.
+ *
+ * Called by getGoalEvents to surface baseline-retest events on the calendar.
+ * No DB — pure function safe to call without await.
  */
-export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
+export function baselineCheckpointDates(
+  template: ProgramTemplate,
+  startedOn: Date,
+): Array<{ testName: string; targetDate: Date; label: "initial" | "retest" }> {
+  const result: Array<{ testName: string; targetDate: Date; label: "initial" | "retest" }> = [];
+  for (const day of template.baselineWeek ?? []) {
+    for (const test of day.tests) {
+      const initialWeek = test.initialWeek ?? 1;
+      result.push({
+        testName: test.testName,
+        targetDate: addDays(startedOn, initialWeek * 7),
+        label: "initial",
+      });
+      for (const w of (test.retestWeeks ?? []).filter((w) => w > initialWeek)) {
+        result.push({
+          testName: test.testName,
+          targetDate: addDays(startedOn, w * 7),
+          label: "retest",
+        });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Compute the baseline schedule for a given plan (plan object already fetched).
+ * Extracted from getBaselineSchedule so callers can pass a specific plan without
+ * a global active-plan lookup.
+ */
+export async function getBaselineScheduleForPlan(
+  plan: { planJson: unknown; startedOn: Date; weeks: number },
+  opts?: { now?: Date },
+): Promise<{
   startedOn: Date | null;
   totalWeeks: number | null;
   scheduled: ScheduledBaseline[];
   unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
 }> {
   const now = opts?.now ?? new Date();
-  const plan = await prisma.plan.findFirst({
-    where: { active: true },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  if (!plan) {
-    return { startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] };
-  }
-
   const template = plan.planJson as unknown as ProgramTemplate;
   const startedOn = plan.startedOn;
 
@@ -301,6 +328,33 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
     scheduled,
     unscheduledExtras,
   };
+}
+
+/**
+ * Resolve scheduled baselines from the active Plan's template, fold in DB
+ * results, and compute status (initial + each retest checkpoint).
+ *
+ * Initial test is week 1; retests are at template-defined retestWeeks. A
+ * checkpoint is "done" if a Baseline row exists on or after its target
+ * date for the same testName.
+ */
+export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
+  startedOn: Date | null;
+  totalWeeks: number | null;
+  scheduled: ScheduledBaseline[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+}> {
+  // Focus-strict: only return the focus goal's active plan (DC-6 + CRIT-2 fix).
+  // When the focus goal has no active plan, return the empty shape rather than
+  // silently showing another goal's baseline schedule on baselines/new.
+  const plan = await prisma.plan.findFirst({
+    where: { active: true, goal: { isFocus: true } },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!plan) {
+    return { startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] };
+  }
+  return getBaselineScheduleForPlan(plan, opts);
 }
 
 // USER_TZ-aware end-of-day shifted by n days.
