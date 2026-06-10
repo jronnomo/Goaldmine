@@ -17,7 +17,7 @@ model Workout {
   week      Int?
   dayIndex  Int?
   status    String   @default("completed") // planned | completed | skipped
-  source    String? // manual | strong.app | claude | imported
+  source    String? // manual | strong.app | claude | imported | baseline
   sourceUrl String?
   notes     String?
   createdAt DateTime @default(now())
@@ -327,4 +327,16 @@ model Program {
   planJson  Json // 12-week template: phases -> days -> exercises
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model GameBonusXp {
+  id        String   @id @default(cuid())
+  date      DateTime // USER_TZ midnight via parseDateInput
+  amount    Int
+  reason    String
+  attribute String?  // attribute id valid for active goal kind; null = overall-only
+  source    String   @default("coach")
+  createdAt DateTime @default(now())
+
+  @@index([date])
 }
