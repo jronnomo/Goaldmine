@@ -14,6 +14,14 @@ type NavRow = {
   icon: React.ReactNode;
 };
 
+const GoalsIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="10" cy="10" r="3.5" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="10" cy="10" r="0.75" fill="currentColor" />
+  </svg>
+);
+
 const CoachIcon = () => (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
     <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.5" />
@@ -52,6 +60,12 @@ const ThemeIcon = () => (
 );
 
 const navRows: NavRow[] = [
+  {
+    href: "/goals",
+    label: "Goals",
+    sub: "View goals or create a new one",
+    icon: <GoalsIcon />,
+  },
   {
     href: "/coach",
     label: "Coach prompts",
