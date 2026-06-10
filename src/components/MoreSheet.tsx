@@ -59,7 +59,29 @@ const ThemeIcon = () => (
   </svg>
 );
 
+// Character icon — bust silhouette (head + shoulders), 20px / stroke 1.5, house style.
+// Reads as "RPG character sheet" at a glance alongside the other line icons.
+const CharacterIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    {/* Head */}
+    <circle cx="10" cy="7" r="3" stroke="currentColor" strokeWidth="1.5" />
+    {/* Shoulders — rounded arc that reads as a bust / character card */}
+    <path
+      d="M4 17c0-3.314 2.686-6 6-6s6 2.686 6 6"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 const navRows: NavRow[] = [
+  {
+    href: "/character",
+    label: "Character",
+    sub: "RPG stats, badges, and XP history",
+    icon: <CharacterIcon />,
+  },
   {
     href: "/goals",
     label: "Goals",
