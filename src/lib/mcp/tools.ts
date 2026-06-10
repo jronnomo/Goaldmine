@@ -64,8 +64,7 @@ import {
   applyBaselineOps,
   summarizeBaselineChanges,
 } from "@/lib/baseline-ops";
-// INTEGRATION: swap to "@/lib/game/engine" once Stream A ships engine.ts.
-import { computeGameState } from "@/lib/game/engine-stub";
+import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 
 const DateKeyShape = z

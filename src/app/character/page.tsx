@@ -2,9 +2,6 @@
 // /character — RPG character sheet.
 // Order per UX §8: portrait → streak → attribute cards → badge wall → XP log → footnote.
 // Server component. force-dynamic so XP updates appear on every open.
-//
-// INTEGRATION: swap FIXTURE_GAME_STATE import to computeGameState() from @/lib/game/engine
-// when REQ-009 (integration stream) wires the real engine.
 
 import { Card } from "@/components/Card";
 import { LevelMedallion } from "@/components/game/LevelMedallion";
@@ -14,7 +11,7 @@ import { AttributeBar } from "@/components/game/AttributeBar";
 import { StreakFlame } from "@/components/game/StreakFlame";
 import { BadgeWall } from "@/components/game/BadgeWall";
 import { XpEventList } from "@/components/game/XpEventList";
-import { FIXTURE_GAME_STATE } from "@/lib/game/fixture";
+import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +23,7 @@ function nextStreakMilestone(current: number): number | null {
 }
 
 export default async function CharacterPage() {
-  // INTEGRATION: replace the line below with `const state = await computeGameState();`
-  const state = FIXTURE_GAME_STATE;
+  const state = await computeGameState();
 
   // Hide gamification if no active program
   if (!state.goalKind) {

@@ -2,9 +2,11 @@ import Link from "next/link";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { NutritionToday } from "@/components/NutritionToday";
-import { TodayCelebration } from "@/components/TodayCelebration";
+import { CharacterHeader } from "@/components/game/CharacterHeader";
+import { QuestCard } from "@/components/game/QuestCard";
 import { dateKey, startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
+import { computeGameState } from "@/lib/game/engine";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 
@@ -33,7 +35,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -46,6 +48,7 @@ export default async function HomePage() {
         where: { date: { gte: todayStart, lte: todayEnd } },
         orderBy: { date: "asc" },
       }),
+      computeGameState(),
     ]);
 
   // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
@@ -118,6 +121,11 @@ export default async function HomePage() {
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
+      {/* ── RPG Character Header — above hero; hidden when no active program ── */}
+      {gameState.goalKind !== null && (
+        <CharacterHeader state={gameState} />
+      )}
+
       {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
       <section
         className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
@@ -149,24 +157,14 @@ export default async function HomePage() {
           {resolved.isOverride ? " · day overridden" : ""}
         </p>
 
-        {/* Completion / state indicator */}
-        <div className="flex items-center gap-2 overflow-visible">
-          {/* overflow-visible ensures the bullseye-pop scale(1.08) is not clipped */}
-          <div className="overflow-visible">
-            <TodayCelebration completed={completed} dateKey={todayDateKey} />
-          </div>
-          <span
-            className={`text-sm font-medium ${
-              completed
-                ? "text-[var(--success)]"
-                : isRestDay
-                  ? "text-[var(--muted)]"
-                  : "text-[var(--foreground)]"
-            }`}
-          >
-            {stateLabel}
-          </span>
-        </div>
+        {/* Quest ribbon — replaces standalone TodayCelebration (THE FOLD, REQ-009) */}
+        {/* QuestCard hosts TodayCelebration internally; exactly one completion moment. */}
+        <QuestCard
+          questToday={gameState.questToday}
+          completed={completed}
+          todayDateKey={todayDateKey}
+          stateLabel={stateLabel}
+        />
 
         {/* Rest-day hike-prep tip */}
         {isRestDay && (
