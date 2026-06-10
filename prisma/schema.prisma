@@ -340,3 +340,25 @@ model GameBonusXp {
 
   @@index([date])
 }
+
+model FoodLibrary {
+  id          String    @id @default(cuid())
+  barcode     String?   @unique
+  name        String
+  brand       String?
+  servingSize String?
+  basis       String    @default("serving") // "serving" | "100g"
+  calories    Float?
+  proteinG    Float?
+  carbsG      Float?
+  fatG        Float?
+  fiberG      Float?
+  sodiumMg    Float?
+  source      String    @default("openfoodfacts")
+  usageCount  Int       @default(0)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([usageCount(sort: Desc), lastUsedAt(sort: Desc)])
+}
