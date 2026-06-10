@@ -14,6 +14,7 @@ import {
 import {
   crossGoalConflicts as computeCrossGoalConflicts,
   type CrossGoalConflict,
+  CROSS_GOAL_RULES,
 } from "@/lib/goal-conflicts";
 
 export type CalendarDayCell = {
@@ -533,7 +534,7 @@ export type ResolvedDay = {
  *
  * When absent, resolveDay fetches events internally:
  *   - in-plan dates: rotation week window (same window as plannedHikesThisWeek)
- *   - out-of-plan dates: calendar-week ± 2 days (raceProximityDays) so
+ *   - out-of-plan dates: calendar-week ± raceProximityDays days so
  *     same-week and proximity conflict kinds can still fire (DC-2 fix).
  * Query budget delta when ctx absent: +3 (getGoalEventsResult internals) per call.
  */
@@ -633,7 +634,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     // Query budget delta when ctx absent: +3 (getGoalEventsResult internals).
     //   ctx present          → 0 extra queries (use pre-assembled events)
     //   in-plan (weekWindow) → getGoalEventsResult for the rotation week
-    //   out-of-plan          → getGoalEventsResult for calendar-week ±2 days (DC-2 fix)
+    //   out-of-plan          → getGoalEventsResult for calendar-week ±raceProximityDays days (DC-2 fix)
     //     so same-week and proximity conflict kinds fire for get_day calls outside
     //     the focus plan window (e.g. a race date beyond plan.totalWeeks*7).
     // Always resolves to GoalEventsResult for uniform downstream handling.
@@ -646,8 +647,8 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       : weekWindow
         ? getGoalEventsResult({ start: weekWindow.start, end: weekWindow.end })
         : getGoalEventsResult({
-            start: addDays(startOfWeekMonday(date), -2),
-            end: addDays(endOfWeekSunday(date), 2),
+            start: addDays(startOfWeekMonday(date), -CROSS_GOAL_RULES.raceProximityDays),
+            end: addDays(endOfWeekSunday(date), CROSS_GOAL_RULES.raceProximityDays),
           }),
   ]);
 

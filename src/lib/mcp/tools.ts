@@ -2297,6 +2297,13 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         // Resolve the goal id this hike should be attributed to.
         // null means "focus goal at read time" (standard attribution).
+        // Fetch the focus goal id once so both attribution paths and the
+        // idempotency check can reference it without an extra round-trip.
+        const focusGoal = await prisma.goal.findFirst({
+          where: { isFocus: true },
+          select: { id: true },
+        });
+        const focusGoalId = focusGoal?.id ?? null;
         let resolvedGoalId: string | null = null;
         if (input.goalId) {
           const targetGoal = await prisma.goal.findUnique({
@@ -2311,11 +2318,7 @@ function registerWriteTools(server: McpServer) {
           }
           resolvedGoalId = input.goalId;
         } else {
-          const focusGoal = await prisma.goal.findFirst({
-            where: { isFocus: true },
-            select: { id: true },
-          });
-          resolvedGoalId = focusGoal?.id ?? null;
+          resolvedGoalId = focusGoalId;
         }
 
         if (input.replacesPlannedHikeId !== undefined) {
@@ -2370,14 +2373,25 @@ function registerWriteTools(server: McpServer) {
         // CAN each plan a hike on the same day (intentional multi-goal support).
         // Completed/skipped hikes can legitimately repeat on a date, so this only
         // applies to status='planned'.
+        //
+        // Legacy rows may have goalId=null (focus-goal attribution at write time).
+        // When the resolved goal IS the focus goal, also match null-attributed rows
+        // so a re-schedule deduplicates instead of creating a duplicate day entry.
         if (input.status === "planned") {
+          // matchesNullAttribution: resolvedGoalId is non-null and equals the focus
+          // goal, so null-goalId rows are the same logical hike as this one.
+          const matchesNullAttribution =
+            resolvedGoalId !== null && resolvedGoalId === focusGoalId;
           const existingPlanned = await prisma.hike.findFirst({
             where: {
               status: "planned",
               date: { gte: startOfDay(hikeDate), lte: endOfDay(hikeDate) },
               // Scope idempotency to the resolved goalId so two goals can each plan
-              // a hike on the same day (null = focus-goal attribution).
-              goalId: resolvedGoalId,
+              // a hike on the same day. Also catch legacy null-attributed rows when
+              // the resolved goal is the current focus goal.
+              ...(matchesNullAttribution
+                ? { OR: [{ goalId: resolvedGoalId }, { goalId: null }] }
+                : { goalId: resolvedGoalId }),
             },
             orderBy: { date: "asc" },
           });

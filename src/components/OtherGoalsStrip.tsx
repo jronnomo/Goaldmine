@@ -46,7 +46,7 @@ export function OtherGoalsStrip({
     .filter((e) => e.type === "target-date")
     .map((e) => {
       const d = parseDateKey(e.dateKey);
-      return Math.floor((d.getTime() - todayDate.getTime()) / (24 * 3600 * 1000));
+      return Math.round((d.getTime() - todayDate.getTime()) / (24 * 3600 * 1000));
     })
     .filter((d) => d >= 0)
     .sort((a, b) => a - b)[0];
