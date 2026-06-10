@@ -4,6 +4,7 @@ Personal workout-tracker + coaching app. The user (single user) follows a 90-day
 
 See: `/Users/ggronnii/.claude/plans/research-and-vet-out-cached-sloth.md` for the full plan.
 See: `/Users/ggronnii/.claude/projects/-Users-ggronnii-Development/memory/fitness-profile.md` for the user's fitness context.
+See: `docs/project-gotchas.md` for the non-obvious scenarios that have bitten us (planJson vs override-aware reads, baseline_ops vs full-snapshot rewrite, records/PR canonicalization, deploy/connector cache). Read it before touching plan writes, records, or the MCP tool surface.
 
 ## Architecture
 

@@ -2,6 +2,8 @@
 
 This is the Phase 5 cheat sheet — what to put in claude.ai's project instructions, prompts that work well, and when to use each. Re-pin this when you start a new project.
 
+> Also attach [`project-gotchas.md`](project-gotchas.md) to the Project — it briefs a fresh conversation on the tricky scenarios (planJson is not per-date truth, `baseline_ops` for baseline edits, records canonicalization, the three-layer cascade, connector cache after deploys).
+
 ## 1. Project instructions
 
 Create a Project in claude.ai for the workout coach (Settings → Projects → New). Paste the text below as the project's instructions, then attach the workout-planner connector to it. Every chat in that project starts with this context.
