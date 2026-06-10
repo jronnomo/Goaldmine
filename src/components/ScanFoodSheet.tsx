@@ -100,12 +100,18 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   const [manualError, setManualError] = useState<string | null>(null);
   const [retryCode, setRetryCode] = useState<string | null>(null);
 
-  // ── Reset state on every open ─────────────────────────────────────────────
-  // Batched inside startTransition so they are non-urgent updates (avoids
-  // cascading high-priority renders on sheet open; satisfies the
-  // react-hooks/set-state-in-effect lint requirement).
+  // ── Reset state on open/close ─────────────────────────────────────────────
+  // On open: full reset to correct initial phase (scan or confirm).
+  // On close: reset phase to "scan" so the next open always starts from a
+  //   deterministic state and the BarcodeScanner active prop evaluates false
+  //   before the next showModal(). Batched inside startTransition (non-urgent).
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      // Reset phase on close — ensures active={open && phase === "scan"} is
+      // false while the sheet is closed, and the next open starts cleanly.
+      startTransition(() => setPhase("scan"));
+      return;
+    }
     startTransition(() => {
       if (initialFood) {
         setPhase("confirm");
@@ -182,9 +188,11 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
         {/* ── SCAN PHASE ───────────────────────────────────────────────── */}
         {(phase === "scan" || phase === "not_found" || phase === "error") && (
           <>
-            {/* BarcodeScanner — active only in scan phase */}
+            {/* BarcodeScanner — active only while sheet is open AND in scan phase.
+                The `open &&` guard ensures camera stops immediately on any close
+                path (Esc, backdrop, X button) even if phase hasn't reset yet. */}
             <BarcodeScanner
-              active={phase === "scan"}
+              active={open && phase === "scan"}
               onDetected={(code) => handleLookup(code)}
             />
 

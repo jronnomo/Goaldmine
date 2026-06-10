@@ -28,6 +28,12 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
   const titleId = useId();
 
   // Keep the native dialog in sync with the `open` prop.
+  // Cleanup (blueprint v2 §7.2): close the dialog on unmount or open→false
+  // transition. The guard `dialog.open` prevents a double-close: the cleanup
+  // runs first, closes the dialog (which fires the native close event →
+  // onClose once), then the new effect body sees `!dialog.open` → skips its
+  // own close call. Net result: onClose fires exactly once per close cycle,
+  // same as without the cleanup — but we gain a defensive guard on unmount.
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -36,6 +42,9 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
     } else if (!open && dialog.open) {
       dialog.close();
     }
+    return () => {
+      if (dialog.open) dialog.close();
+    };
   }, [open]);
 
   // Lock body scroll while the sheet is open.
