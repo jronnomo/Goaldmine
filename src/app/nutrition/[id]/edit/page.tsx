@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { EditNutritionForm } from "@/components/EditNutritionForm";
 import { prisma } from "@/lib/db";
+import { getQuickPickFoods } from "@/lib/food-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,10 @@ export default async function EditNutritionPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const row = await prisma.nutritionLog.findUnique({ where: { id } });
+  const [row, quickPickFoods] = await Promise.all([
+    prisma.nutritionLog.findUnique({ where: { id } }),
+    getQuickPickFoods(),
+  ]);
   if (!row) notFound();
 
   return (
@@ -61,6 +65,7 @@ export default async function EditNutritionPage({
       <Card>
         <EditNutritionForm
           id={row.id}
+          quickPickFoods={quickPickFoods}
           defaults={{
             mealType: row.mealType,
             itemsText: itemsToText(asItems(row.items)),
