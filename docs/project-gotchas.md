@@ -43,6 +43,9 @@ Never call a write tool silently. Show summary + reasoning + cascade, wait for e
 ### 9. Nutrition logs are food *items*, not macros (rule 10)
 No calorie/protein fields — estimate from item names + qty, compare against the phase's `NutritionGuidance`. One-off day → `apply_day_override(nutritionText=…)`; systemic → `apply_plan_revision` editing `Phase.nutrition.habits`.
 
+### 10. Readiness credits off-schedule PRs immediately — call `compute_readiness` to see it
+Readiness resolves each baseline/measurement target to the **latest value as of end-of-(user-tz)-day**, and an `increase` target reads as met once `current ≥ target` (`decrease` once `≤`). So an off-schedule PR counts toward readiness right away — you do **not** wait for the formal week-N retest checkpoint (that's only for the baseline *schedule* display). Use `compute_readiness` (omit `goalId` → active goal) to see the overall score + per-target breakdown (current/start/progress) + `missing` targets; it's the read tool to reach for when "did my PR move the needle?" comes up. (A June 2026 bug excluded same-day evening-stamped results via an exact-timestamp compare — fixed by the end-of-day cutoff.)
+
 ---
 
 ## B. Architecture & maintenance gotchas (dev)

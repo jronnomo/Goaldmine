@@ -863,7 +863,10 @@ function registerReadTools(server: McpServer) {
         "Each baseline/measurement target resolves to the LATEST value on or before end-of-(user-tz)-day, so a result logged today counts today — including off-schedule PRs, which are eligible immediately (you do NOT have to wait for the formal retest checkpoint). direction=increase reads as met once current ≥ target; decrease once current ≤ target. " +
         "Read-only — never writes. To change the targets/weights themselves, use update_goal_targets.",
       inputSchema: {
-        goalId: z.string().describe("Goal id; use list_goals to discover"),
+        goalId: z
+          .string()
+          .optional()
+          .describe("Goal id (use list_goals to discover). Omit to use the currently active goal."),
         asOf: DateKeyShape.optional().describe(
           "Compute as of this date (yyyy-mm-dd), end-of-day in the user's timezone. Defaults to today — pass a past date to inspect an earlier point.",
         ),
@@ -871,12 +874,17 @@ function registerReadTools(server: McpServer) {
     },
     async ({ goalId, asOf }) =>
       safe(async () => {
-        const goal = await prisma.goal.findUniqueOrThrow({ where: { id: goalId } });
+        const goal = goalId
+          ? await prisma.goal.findUniqueOrThrow({ where: { id: goalId } })
+          : await prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: "desc" } });
+        if (!goal) {
+          throw new Error("No active goal found — pass goalId, or activate a goal first.");
+        }
         const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
         const asOfDate = asOf ? parseDateKey(asOf) : new Date();
         if (targets.length === 0) {
           return {
-            goalId,
+            goalId: goal.id,
             objective: goal.objective,
             asOf: toDateKey(asOfDate),
             score: null,
@@ -886,7 +894,7 @@ function registerReadTools(server: McpServer) {
           };
         }
         const snap = await computeReadiness(targets, asOfDate, goal.id);
-        return { goalId, objective: goal.objective, asOf: toDateKey(asOfDate), ...snap };
+        return { goalId: goal.id, objective: goal.objective, asOf: toDateKey(asOfDate), ...snap };
       }),
   );
 

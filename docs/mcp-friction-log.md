@@ -120,6 +120,15 @@ Verification afterward surfaced two follow-up nits (ordering put nulls first, `l
 
 ---
 
+### #11 — Readiness score didn't reflect an off-schedule baseline PR
+**Reported:** 2026-06-09. Severity: Medium (readiness understated; relies on the user noticing the number didn't move).
+
+> The data's definitely in — both points are on record: the 120s initial from 5/8 and tonight's 180s. The name matches the target's metric key (baseline:Deep Squat Hold) exactly, units are right, value equals target. So storage isn't the problem; whatever's not reflecting is in how the readiness score computes, and that's on the app side, where I can see the data but not the scoring code. I can't run the score calculation myself — there's no readiness-score endpoint exposed in the MCP toolset for me to query.
+
+**Shipped:** commit `487070e` (+ zero-arg active-goal default same session). Root cause: `resolveMetricValue` filtered `date <= asOf` with `asOf = new Date()` — an exact-timestamp compare. The 180s baseline was stored dated 9:30pm Mountain (`2026-06-10T03:30:00Z`) but read at `03:22Z`, so its `date` sat ~minutes in the *future* of now and was excluded; readiness resolved the older 120 and scored Deep Squat Hold 0. It would have silently "self-healed" once the wall clock passed 03:30Z. Fix: cap the cutoff at end-of-(user-tz)-day in `resolveMetricValue`, so anything dated *today* counts today while future days stay out — applied to every metric (weight, baselines, hikes, workout count, log entries). Also shipped the `compute_readiness` MCP read tool — the coach had no way to *see* the score (diagnosing this required reading the code); it returns the overall score + per-target breakdown (current/start/progress) + `missing`, and defaults to the active goal when `goalId` is omitted. Verified live: Deep Squat Hold now `current 180, progress 1`; overall Elbert readiness 57.
+
+---
+
 ## Out of scope
 
 Friction that's real but can't be fixed inside this codebase. Recorded so the next reporter doesn't repeat the investigation and so the closest available mitigation is documented.
