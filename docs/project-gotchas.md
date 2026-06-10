@@ -65,6 +65,25 @@ One file per tool under `src/lib/mcp/tools/*` conceptually, all registered in `s
 ### 5. FoodLibrary rows snapshot OFF at first scan — manual edit path is deferred
 `lookupBarcode` upserts OFF data on each new scan (re-normalizes on re-scan of the same barcode). But chip-tap re-adds do not refresh data. If a manufacturer reformulates, the library entry stays stale until the user re-scans the barcode. This is accepted for v1. Manual library edit (correct macros, delete entry) is deferred to a future feature. Workaround: re-scan the barcode to force a fresh OFF lookup.
 
+**Barcode column namespacing for estimate-sourced rows.**
+The `barcode` column in `FoodLibrary` now holds two distinct key types:
+
+| Pattern | Meaning |
+|---|---|
+| `\d{8,14}` (digits only) | Real product barcode (EAN-8 / UPC-A / EAN-13). Used by `lookupBarcode`. |
+| `builtin:<slug>` | Cached entry from the curated builtin reference table (`src/lib/food-builtins.ts`). |
+| `usda:<fdcId>` | Cached entry from USDA FoodData Central. |
+
+`lookupBarcode` validates with `/^\d{8,14}$/` before any DB query, so namespaced keys are **never** accidentally matched by the barcode-scan path. The estimate path (`estimateFood` in `food-actions.ts`) uses exact `barcode` equality for upserts and name-based `findFirst` for lookups — the two code paths are fully disjoint.
+
+**Estimate rows are reference snapshots, not gospel.**
+Builtin macros come from USDA FoodData Central reference data (curated in `src/lib/food-builtins.ts`). USDA-sourced rows are fetched fresh on first lookup, then cached. Both sources reflect nutritional data at the time of first use and are not automatically refreshed. Treat them as good-faith estimates — small discrepancies vs. a specific product brand are expected.
+
+**FoodLibrary `source` column values (extended):**
+- `"openfoodfacts"` — real barcode scan via OFF API (original path)
+- `"builtin"` — resolved from the curated builtin table
+- `"usda"` — resolved from USDA FoodData Central
+
 ### 6. Operating rules live in THREE places — change them together
 `docs/server-instructions/goaldmine-rules.md` ↔ `COACH_INSTRUCTIONS` in `src/app/api/mcp/[token]/route.ts` ↔ the deployed connector text. Edit all in the same PR or they drift.
 
