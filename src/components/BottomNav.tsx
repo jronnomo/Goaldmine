@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Bullseye } from "@/components/Bullseye";
@@ -72,31 +72,6 @@ export function BottomNav() {
   const [logOpen, setLogOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
 
-  // TEMP-DIAG ─────────────────────────────────────────────────────────────
-  // Track logOpen in a ref so the pathname-change effect can read the value
-  // that was current at the time the effect fired without adding logOpen to
-  // the dependency array (which would change the effect's semantics).
-  // useLayoutEffect runs before useEffect, so the ref is current when the
-  // pathname effect reads it.
-  const logOpenRef = useRef(logOpen);
-  useLayoutEffect(() => { logOpenRef.current = logOpen; });
-  // diagWrittenRef: first-fires-wins — multiple BottomSheet paths can fire
-  // for a single close cycle; we only want to record the first causal event.
-  const diagWrittenRef = useRef(false);
-
-  /** Write the first-fires-wins diagnostic to localStorage. */
-  function writeDiag(reason: string, p = pathname ?? "") {
-    if (diagWrittenRef.current) return;
-    diagWrittenRef.current = true;
-    try {
-      localStorage.setItem(
-        "goaldmine.diag.logclose",
-        JSON.stringify({ reason, at: new Date().toISOString(), pathname: p }),
-      );
-    } catch { /* noop — Private Browsing may block writes */ }
-  }
-  // ────────────────────────────────────────────────────────────────────────
-
   // Close any open sheet on route change to avoid stuck backdrop on browser-back.
   // setState-in-effect is intentional here: pathname is an external signal (the
   // browser URL), not a piece of React state we own. Clearing the sheet-open
@@ -104,14 +79,9 @@ export function BottomNav() {
   // (analogous to "subscribe to an external system and call setState in the
   // callback"). The cascading render cost is negligible — two booleans → false.
   useEffect(() => {
-    // TEMP-DIAG: if the Log sheet was open when the route changed, record it
-    if (logOpenRef.current) {
-      writeDiag("pathname-change", pathname ?? "");
-    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLogOpen(false);
     setMoreOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
   return (
@@ -154,8 +124,6 @@ export function BottomNav() {
                   type="button"
                   onClick={() => {
                     if (isLog) {
-                      // TEMP-DIAG: reset per-close-cycle flag when sheet opens
-                      if (!logOpen) diagWrittenRef.current = false;
                       setLogOpen((prev) => !prev);
                       setMoreOpen(false);
                     } else {
@@ -189,7 +157,6 @@ export function BottomNav() {
         open={logOpen}
         onClose={() => setLogOpen(false)}
         title="Log"
-        onCloseReason={writeDiag} /* TEMP-DIAG */
       >
         <LogLauncher latestWeight={null} onClose={() => setLogOpen(false)} />
       </BottomSheet>

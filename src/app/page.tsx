@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
-import { LogCloseDiag } from "@/components/LogCloseDiag"; // TEMP-DIAG
 import { NutritionToday } from "@/components/NutritionToday";
 import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
@@ -122,9 +121,6 @@ export default async function HomePage() {
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
-      {/* TEMP-DIAG: shows last Log-sheet close reason after reproducing the bug */}
-      <LogCloseDiag />
-
       {/* ── RPG Character Header — above hero; hidden when no active program ── */}
       {gameState.goalKind !== null && (
         <CharacterHeader state={gameState} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 
 export type BottomSheetProps = {
@@ -9,12 +9,6 @@ export type BottomSheetProps = {
   title: string;
   children: React.ReactNode;
   "data-testid"?: string;
-  // TEMP-DIAG ─────────────────────────────────────────────────────────────
-  // Called just before each close path fires so callers can identify which
-  // event triggered the close. Remove together with LogCloseDiag.tsx and
-  // the BottomNav / BarcodeScanner TEMP-DIAG blocks after repro is confirmed.
-  onCloseReason?: (reason: string) => void;
-  // ────────────────────────────────────────────────────────────────────────
 };
 
 /**
@@ -47,16 +41,9 @@ export type BottomSheetProps = {
  * transitions correctly. This avoids calling setState inside an effect, which
  * is flagged by the project's react-hooks/set-state-in-effect lint rule.
  */
-export function BottomSheet({ open, onClose, title, children, "data-testid": testId, onCloseReason }: BottomSheetProps) {
+export function BottomSheet({ open, onClose, title, children, "data-testid": testId }: BottomSheetProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-
-  // TEMP-DIAG: keep onCloseReason in a ref so the open-effect (which only
-  // re-runs on [open]) can always call the latest prop without going stale.
-  // useLayoutEffect runs before useEffect cleanup, so the ref is always
-  // current when the effect reads it.
-  const onCloseReasonRef = useRef(onCloseReason);
-  useLayoutEffect(() => { onCloseReasonRef.current = onCloseReason; });
 
   // Keep the native dialog in sync with the `open` prop.
   // Cleanup (blueprint v2 §7.2): close the dialog on unmount or open→false
@@ -71,16 +58,10 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
     if (open && !dialog.open) {
       dialog.showModal();
     } else if (!open && dialog.open) {
-      // TEMP-DIAG: effect body closed dialog because open prop flipped false
-      onCloseReasonRef.current?.("open-prop-false");
       dialog.close();
     }
     return () => {
-      // TEMP-DIAG: effect cleanup closed dialog (normal open→false path)
-      if (dialog.open) {
-        onCloseReasonRef.current?.("effect-cleanup");
-        dialog.close();
-      }
+      if (dialog.open) dialog.close();
     };
   }, [open]);
 
@@ -109,20 +90,13 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
       // and route through React state so `open` stays the source of truth.
       onCancel={(e) => {
         e.preventDefault();
-        onCloseReason?.("cancel"); // TEMP-DIAG
         onClose();
       }}
       // Fires when the dialog actually closes (incl. our own close() call).
-      onClose={() => {
-        onCloseReason?.("close-event"); // TEMP-DIAG
-        onClose();
-      }}
+      onClose={onClose}
       // Click on the backdrop (the dialog element itself, not the panel) closes.
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          onCloseReason?.("backdrop"); // TEMP-DIAG
-          onClose();
-        }
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div className="bottom-sheet-panel">
@@ -133,7 +107,7 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
           </h2>
           <button
             type="button"
-            onClick={() => { onCloseReason?.("x-button"); onClose(); }} // TEMP-DIAG
+            onClick={onClose}
             aria-label="Close"
             className="inline-flex items-center justify-center w-9 h-9 rounded-full text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--border)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
