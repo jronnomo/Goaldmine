@@ -7,6 +7,7 @@
 // re-tuned later (often after Claude reads attached references in claude.ai).
 
 import type { PrismaClient } from "@/generated/prisma/client";
+import { endOfDay } from "@/lib/calendar";
 
 export type Direction = "increase" | "decrease";
 
@@ -251,9 +252,16 @@ export async function resolveMetricValue(
   asOf: Date = new Date(),
   goalId: string,
 ): Promise<number | null> {
+  // Bucket by user-tz day, not exact timestamp. A result logged earlier today
+  // with an evening wall-clock time stores a `date` a few hours ahead of
+  // `new Date()`, which a raw `date <= asOf` filter would wrongly exclude until
+  // the clock catches up (this hid an off-schedule baseline PR until 9:30pm).
+  // Cap at end-of-day so anything dated today counts today; future days stay out.
+  const cutoff = endOfDay(asOf);
+
   if (metric === "weightLb") {
     const m = await prisma.measurement.findFirst({
-      where: { date: { lte: asOf }, weightLb: { not: null } },
+      where: { date: { lte: cutoff }, weightLb: { not: null } },
       orderBy: { date: "desc" },
     });
     return m?.weightLb ?? null;
@@ -262,7 +270,7 @@ export async function resolveMetricValue(
   if (metric.startsWith("baseline:")) {
     const testName = metric.slice("baseline:".length);
     const b = await prisma.baseline.findFirst({
-      where: { testName, date: { lte: asOf } },
+      where: { testName, date: { lte: cutoff } },
       orderBy: { date: "desc" },
     });
     return b?.value ?? null;
@@ -271,7 +279,7 @@ export async function resolveMetricValue(
   if (metric === "hike:prep_completion") {
     return prisma.hike.count({
       where: {
-        date: { lte: asOf },
+        date: { lte: cutoff },
         status: "completed",
         distanceMi: { gte: 5 },
         elevationFt: { gte: 2000 },
@@ -282,7 +290,7 @@ export async function resolveMetricValue(
   if (metric === "hike:max_elevation_single") {
     const r = await prisma.hike.aggregate({
       _max: { elevationFt: true },
-      where: { date: { lte: asOf }, status: "completed" },
+      where: { date: { lte: cutoff }, status: "completed" },
     });
     return r._max.elevationFt ?? 0;
   }
@@ -290,7 +298,7 @@ export async function resolveMetricValue(
   if (metric === "hike:total_elevation_ft") {
     const r = await prisma.hike.aggregate({
       _sum: { elevationFt: true },
-      where: { date: { lte: asOf }, status: "completed" },
+      where: { date: { lte: cutoff }, status: "completed" },
     });
     return r._sum.elevationFt ?? 0;
   }
@@ -298,14 +306,14 @@ export async function resolveMetricValue(
   if (metric === "hike:total_distance_mi") {
     const r = await prisma.hike.aggregate({
       _sum: { distanceMi: true },
-      where: { date: { lte: asOf }, status: "completed" },
+      where: { date: { lte: cutoff }, status: "completed" },
     });
     return r._sum.distanceMi ?? 0;
   }
 
   if (metric === "workout:count") {
     return prisma.workout.count({
-      where: { startedAt: { lte: asOf }, status: "completed" },
+      where: { startedAt: { lte: cutoff }, status: "completed" },
     });
   }
 
@@ -315,7 +323,7 @@ export async function resolveMetricValue(
       where: {
         goalId,
         metric: key,
-        date: { lte: asOf },
+        date: { lte: cutoff },
         value: { not: null },
       },
       orderBy: { date: "desc" },

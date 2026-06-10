@@ -26,6 +26,8 @@ import {
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore } from "@/lib/goal-core";
+import { computeReadiness } from "@/lib/readiness";
+import type { GoalTarget } from "@/lib/goal-targets";
 import { LegendSchema } from "@/lib/legend";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import {
@@ -848,6 +850,43 @@ function registerReadTools(server: McpServer) {
         }
 
         return { ...goal, upcomingOverrides };
+      }),
+  );
+
+  server.registerTool(
+    "compute_readiness",
+    {
+      title: "Compute a goal's readiness score + per-target breakdown",
+      description:
+        "Live readiness for a goal: an overall 0-100 score, a per-target breakdown (each target's current value, start, and 0..1 progress), and the targets with no data yet (excluded from the score). " +
+        "Use it to answer 'how ready am I for the goal', 'did that PR move the needle', or to sanity-check whether a logged result is actually being credited. " +
+        "Each baseline/measurement target resolves to the LATEST value on or before end-of-(user-tz)-day, so a result logged today counts today — including off-schedule PRs, which are eligible immediately (you do NOT have to wait for the formal retest checkpoint). direction=increase reads as met once current ≥ target; decrease once current ≤ target. " +
+        "Read-only — never writes. To change the targets/weights themselves, use update_goal_targets.",
+      inputSchema: {
+        goalId: z.string().describe("Goal id; use list_goals to discover"),
+        asOf: DateKeyShape.optional().describe(
+          "Compute as of this date (yyyy-mm-dd), end-of-day in the user's timezone. Defaults to today — pass a past date to inspect an earlier point.",
+        ),
+      },
+    },
+    async ({ goalId, asOf }) =>
+      safe(async () => {
+        const goal = await prisma.goal.findUniqueOrThrow({ where: { id: goalId } });
+        const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
+        const asOfDate = asOf ? parseDateKey(asOf) : new Date();
+        if (targets.length === 0) {
+          return {
+            goalId,
+            objective: goal.objective,
+            asOf: toDateKey(asOfDate),
+            score: null,
+            breakdown: [],
+            missing: [],
+            message: "This goal has no readiness targets. Set them with update_goal_targets.",
+          };
+        }
+        const snap = await computeReadiness(targets, asOfDate, goal.id);
+        return { goalId, objective: goal.objective, asOf: toDateKey(asOfDate), ...snap };
       }),
   );
 
