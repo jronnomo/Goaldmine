@@ -230,6 +230,20 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
 
   const preview = food ? scaledMacros(food, servings) : null;
 
+  // ── Sparse-data hint (F4) ─────────────────────────────────────────────────
+  // Show a muted note when ≥3 of the 6 macros are null in the confirm card.
+  const nullMacroCount = food
+    ? [
+        food.perServing.calories,
+        food.perServing.proteinG,
+        food.perServing.carbsG,
+        food.perServing.fatG,
+        food.perServing.fiberG,
+        food.perServing.sodiumMg,
+      ].filter((v) => v == null).length
+    : 0;
+  const showSparseHint = nullMacroCount >= 3;
+
   // ── Session tally line (batch mode, ≥1 items) ─────────────────────────────
 
   const tallyLine =
@@ -477,6 +491,13 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
                   );
                 })}
               </div>
+            )}
+
+            {/* Sparse-data hint — shown when ≥3 macros are null */}
+            {showSparseHint && (
+              <p className="text-xs text-[var(--muted)] text-center">
+                Limited data for this product — you can edit macros after adding.
+              </p>
             )}
 
             {/* Add / Add to meal CTA */}

@@ -52,6 +52,18 @@ type UsdaSearchFood = {
   foodNutrients: UsdaFoodNutrient[];
   /** Optional — present for Foundation / SR Legacy foods */
   foodMeasures?: UsdaFoodMeasure[];
+  /** GS1 barcode (GTIN/UPC) — present for Branded foods, often 13-digit zero-padded. */
+  gtinUpc?: string;
+  /** Brand owner string — present for Branded foods. */
+  brandOwner?: string;
+  /** Brand name string — fallback when brandOwner is absent. */
+  brandName?: string;
+  /** Numeric serving size (e.g. 31.0 for "31 g"). */
+  servingSize?: number;
+  /** Unit for servingSize: "g" | "ml" | etc. */
+  servingSizeUnit?: string;
+  /** Human-readable serving label, e.g. "1 Scoop". */
+  householdServingFullText?: string;
 };
 
 type UsdaSearchResponse = {
@@ -69,6 +81,24 @@ export type NormalizedUsdaFood = {
   per100g: FoodMacros;
   /** Portion measures from the search response (may be empty). */
   measures: UsdaFoodMeasure[];
+};
+
+/**
+ * Normalized result from a FDC Branded barcode lookup.
+ * Unlike NormalizedUsdaFood (per-100g), macros here are per-serving
+ * (derived from per-100g × servingSize/100 when unit is "g" or "ml").
+ */
+export type NormalizedUsdaBrandedFood = {
+  fdcId: number;
+  /** FDC description string. */
+  description: string;
+  /** Brand string (pipe-sanitized), or null if absent. */
+  brand: string | null;
+  /** Display label for the serving, e.g. "1 Scoop (31g)" or "31 g". Null when no gram-based serving. */
+  servingSize: string | null;
+  basis: "serving";
+  /** Per-serving macros (null = absent/non-finite in source). */
+  macros: FoodMacros;
 };
 
 // ---------------------------------------------------------------------------
@@ -276,6 +306,122 @@ export async function searchUsdaFood(
     };
   } catch {
     // Network failure, timeout (AbortError), JSON parse error → null
+    return null;
+  }
+}
+
+/**
+ * Look up a barcode in USDA FoodData Central's Branded food database.
+ *
+ * Uses the FDC /foods/search endpoint with dataType=Branded.  Matches the
+ * returned gtinUpc against the barcode under three normalized forms:
+ *   - raw (as supplied)
+ *   - 12-digit UPC-A → "0"-padded EAN-13
+ *   - 13-digit EAN-13 starting with "0" → stripped 12-digit UPC-A
+ *
+ * Nutrients in Branded results are per 100 g.  Per-serving macros are derived
+ * as  value_100g × servingSize / 100  when servingSizeUnit is "g" or "ml".
+ *
+ * Returns null on no match, HTTP error, network failure, timeout, or when the
+ * serving unit is not gram/ml (making per-serving derivation unreliable).
+ * Never throws.
+ *
+ * API key: process.env.FDC_API_KEY, falls back to "DEMO_KEY" (rate-limited).
+ */
+export async function searchUsdaByBarcode(
+  barcode: string,
+): Promise<NormalizedUsdaBrandedFood | null> {
+  const apiKey = process.env.FDC_API_KEY ?? "DEMO_KEY";
+
+  // Build the set of normalized barcode forms to match against gtinUpc
+  const padded = barcode.length === 12 ? "0" + barcode : null;
+  const stripped =
+    barcode.length === 13 && barcode.startsWith("0") ? barcode.slice(1) : null;
+  const barcodeSet = new Set(
+    [barcode, padded, stripped].filter((f): f is string => f !== null),
+  );
+
+  try {
+    const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
+    url.searchParams.set("query", barcode);
+    url.searchParams.append("dataType", "Branded");
+    url.searchParams.set("pageSize", "5");
+    url.searchParams.set("api_key", apiKey);
+
+    const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as UsdaSearchResponse;
+    const foods = json.foods ?? [];
+
+    // Find the food whose gtinUpc matches any of our barcode forms
+    const match = foods.find(
+      (f) => f.gtinUpc != null && barcodeSet.has(f.gtinUpc),
+    );
+    if (!match) return null;
+
+    // Only derive per-serving macros when servingSize is in grams or ml
+    const servingSizeNum = match.servingSize;
+    const unit = (match.servingSizeUnit ?? "").toLowerCase();
+    const hasGrams =
+      (unit === "g" || unit === "ml") &&
+      servingSizeNum != null &&
+      Number.isFinite(servingSizeNum) &&
+      servingSizeNum > 0;
+
+    if (!hasGrams || servingSizeNum == null) return null;
+
+    const scale = servingSizeNum / 100;
+    const n = match.foodNutrients;
+
+    // Per-100g values via shared helpers
+    const cal100g = getEnergyKcal(n);
+    const prot100g = getNutrientValue(n, NID_PROTEIN);
+    const carb100g = getNutrientValue(n, NID_CARBS);
+    const fat100g = getNutrientValue(n, NID_FAT);
+    const fib100g = getNutrientValue(n, NID_FIBER);
+    const sod100g = getNutrientValue(n, NID_SODIUM); // mg per 100 g in FDC
+
+    // Scale to per-serving; apply same rounding discipline as searchUsdaFood
+    function scaledInt(v: number | null): number | null {
+      if (v == null) return null;
+      return Math.round(v * scale);
+    }
+    function scaled1dp(v: number | null): number | null {
+      if (v == null) return null;
+      return Math.round(v * scale * 10) / 10;
+    }
+
+    const macros: FoodMacros = {
+      calories: scaledInt(cal100g),
+      proteinG: scaled1dp(prot100g != null ? gram1dp(prot100g) : null),
+      carbsG: scaled1dp(carb100g != null ? gram1dp(carb100g) : null),
+      fatG: scaled1dp(fat100g != null ? gram1dp(fat100g) : null),
+      fiberG: scaled1dp(fib100g != null ? gram1dp(fib100g) : null),
+      sodiumMg: scaledInt(sod100g),
+    };
+
+    // Serving size display label: "1 Scoop (31g)" or "31 g"
+    const household = match.householdServingFullText?.trim();
+    const servingSize = household
+      ? `${household} (${servingSizeNum}g)`
+      : `${servingSizeNum} g`;
+
+    // Brand: prefer brandOwner, fall back to brandName; sanitize pipes
+    const brandRaw = (match.brandOwner || match.brandName)?.trim() ?? null;
+    const brand = brandRaw ? brandRaw.replace(/\|/g, "-") : null;
+
+    return {
+      fdcId: match.fdcId,
+      description: match.description,
+      brand,
+      servingSize,
+      basis: "serving",
+      macros,
+    };
+  } catch {
     return null;
   }
 }

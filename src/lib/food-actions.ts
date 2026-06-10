@@ -9,7 +9,8 @@ import {
   findBuiltin,
   resolveBuiltinGrams,
 } from "@/lib/food-builtins";
-import { searchUsdaFood } from "@/lib/usda";
+import { searchUsdaFood, searchUsdaByBarcode } from "@/lib/usda";
+import type { NormalizedUsdaBrandedFood } from "@/lib/usda";
 import type { BarcodeLookupResult, LibraryFood, FoodMacros } from "@/lib/food-types";
 import type { OffProduct } from "@/lib/openfoodfacts";
 
@@ -17,7 +18,7 @@ import type { OffProduct } from "@/lib/openfoodfacts";
 
 /**
  * Look up a barcode in the personal food library, or fetch it from
- * OpenFoodFacts and upsert it into the library.
+ * OpenFoodFacts (and optionally USDA FDC Branded) and upsert it.
  *
  * Multi-form barcode match rules (EAN-8 / UPC-A / EAN-13 interop):
  *   • EAN-8  (8 digits):                 looked up as-is — do NOT zero-pad to 13
@@ -26,6 +27,17 @@ import type { OffProduct } from "@/lib/openfoodfacts";
  *   • Any other length:                  raw form only
  *
  * Canonical storage key for upserts = padded EAN-13 for UPC-A input; raw otherwise.
+ *
+ * Cache-quality guard (F3 self-heal):
+ *   Library hits with <3 non-null macros are treated as cache-misses and
+ *   re-fetched through the full OFF → FDC chain.  The row is refreshed only
+ *   when the re-fetch produces strictly more non-null macros than the stored row.
+ *
+ * FDC Branded fallback (F2):
+ *   If OFF returns not_found OR fewer than 3 non-null macros, searchUsdaByBarcode
+ *   is called.  If FDC yields more non-null macros than OFF, FDC data is used
+ *   (source: "usda-branded").
+ *
  * Never throws to the caller — errors surface as { status: "error" }.
  */
 export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
@@ -50,52 +62,176 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
     where: { barcode: { in: forms } },
   });
 
-  if (existing) {
+  const existingFood = existing ? toLibraryFood(existing) : null;
+  const existingNonNull = existingFood ? countNonNullMacros(existingFood.perServing) : 0;
+
+  // Good cache hit: ≥3 non-null macros → no network call needed
+  if (existing && existingNonNull >= 3) {
     await prisma.foodLibrary.update({
       where: { id: existing.id },
       data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
     });
-    return { status: "found", food: toLibraryFood(existing), fromLibrary: true };
+    return { status: "found", food: existingFood!, fromLibrary: true };
   }
 
-  // ── OFF fetch (only on library miss) ─────────────────────────────────────
+  // ── OFF fetch (only on cache miss or sparse cache) ────────────────────────
   // For 12-digit UPC-A: first try the raw 12-digit form, then retry with "0" + barcode.
-  let result = await fetchOff(barcode, canonicalKey);
-  if (result.status === "not_found" && barcode.length === 12) {
-    result = await fetchOff("0" + barcode, "0" + barcode);
+  let offResult = await fetchOffNormalized(barcode);
+  if (offResult.status === "not_found" && barcode.length === 12) {
+    offResult = await fetchOffNormalized("0" + barcode);
   }
-  return result;
+
+  const offNonNull =
+    offResult.status === "found" ? countNonNullMacros(offResult.normalized.macros) : 0;
+
+  // OFF transient error with no existing row → propagate error
+  if (offResult.status === "error" && !existing) {
+    return { status: "error", message: offResult.message };
+  }
+
+  // ── FDC Branded fallback (when OFF absent or sparse) ─────────────────────
+  let fdcResult: NormalizedUsdaBrandedFood | null = null;
+  let fdcNonNull = 0;
+  if (offResult.status === "not_found" || offNonNull < 3) {
+    fdcResult = await searchUsdaByBarcode(barcode);
+    if (fdcResult) fdcNonNull = countNonNullMacros(fdcResult.macros);
+  }
+
+  // ── Pick winner ───────────────────────────────────────────────────────────
+  const hasOffWinner = offResult.status === "found" && offNonNull > 0;
+  const hasFdcWinner = fdcResult != null && fdcNonNull > 0;
+  const useFdc = hasFdcWinner && fdcNonNull > offNonNull;
+  const winnerNonNull = useFdc ? fdcNonNull : offNonNull;
+
+  // No useful data from any source
+  if (!hasOffWinner && !hasFdcWinner) {
+    if (existing) {
+      // Keep sparse existing row — just bump count
+      await prisma.foodLibrary.update({
+        where: { id: existing.id },
+        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+      });
+      return { status: "found", food: existingFood!, fromLibrary: true };
+    }
+    if (offResult.status === "error") {
+      return { status: "error", message: offResult.message };
+    }
+    return { status: "not_found" };
+  }
+
+  // Winner isn't strictly better than existing row → bump count only
+  if (existing && winnerNonNull <= existingNonNull) {
+    await prisma.foodLibrary.update({
+      where: { id: existing.id },
+      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+    });
+    return { status: "found", food: existingFood!, fromLibrary: true };
+  }
+
+  // ── Commit winner to DB ───────────────────────────────────────────────────
+  // Use update-by-id when refreshing an existing (sparse) row; upsert for new rows.
+  type FLRow = Parameters<typeof toLibraryFood>[0];
+  let row: FLRow;
+
+  if (useFdc && fdcResult) {
+    const base = {
+      name: fdcResult.description.replace(/\|/g, "-"),
+      brand: fdcResult.brand,
+      servingSize: fdcResult.servingSize,
+      basis: fdcResult.basis as string,
+      ...fdcResult.macros,
+      source: "usda-branded",
+      lastUsedAt: new Date(),
+    };
+    if (existing) {
+      row = await prisma.foodLibrary.update({
+        where: { id: existing.id },
+        data: { ...base, usageCount: { increment: 1 } },
+      });
+    } else {
+      row = await prisma.foodLibrary.upsert({
+        where: { barcode: canonicalKey },
+        create: { barcode: canonicalKey, ...base, usageCount: 1 },
+        update: { ...base, usageCount: { increment: 1 } },
+      });
+    }
+  } else {
+    // OFF is winner
+    const norm = (
+      offResult as Extract<typeof offResult, { status: "found" }>
+    ).normalized;
+    const base = {
+      name: norm.name,
+      brand: norm.brand,
+      servingSize: norm.servingSize,
+      basis: norm.basis as string,
+      ...norm.macros,
+      source: "openfoodfacts",
+      lastUsedAt: new Date(),
+    };
+    if (existing) {
+      row = await prisma.foodLibrary.update({
+        where: { id: existing.id },
+        data: { ...base, usageCount: { increment: 1 } },
+      });
+    } else {
+      row = await prisma.foodLibrary.upsert({
+        where: { barcode: canonicalKey },
+        create: { barcode: canonicalKey, ...base, usageCount: 1 },
+        update: { ...base, usageCount: { increment: 1 } },
+      });
+    }
+  }
+
+  // Invalidate the RSC router cache so NutritionPage re-renders with fresh
+  // quickPickFoods. Client component state (itemsText, macros, etc.) survives
+  // intact — React preserves client instances across RSC payload refreshes.
+  revalidatePath("/nutrition");
+
+  return { status: "found", food: toLibraryFood(row), fromLibrary: false };
 }
 
 // ── OFF HTTP layer ────────────────────────────────────────────────────────────
 
 const OFF_UA = "Goaldmine/1.0 (github.com/jronnomo/goaldmine)";
+
+/**
+ * OFF fields to request.
+ *
+ * IMPORTANT: Do NOT include the top-level energy shortcut fields
+ * (energy-kcal_serving, energy_serving, energy-kcal_100g, energy_100g) here.
+ * When those fields appear alongside "nutriments" in a ?fields= request, the
+ * OFF v2 API silently drops the nutriments object — causing all protein/carbs/
+ * fat/fiber macros to come back null.  The normalizer reads energy values from
+ * within nutriments (with top-level fallback for legacy objects).
+ */
 const OFF_FIELDS = [
   "product_name",
   "brands",
   "serving_size",
-  "energy-kcal_serving",
-  "energy_serving",
-  "energy-kcal_100g",
-  "energy_100g",
+  "serving_quantity",
   "nutriments",
 ].join(",");
 
 /**
+ * Fetch a single product from OFF and normalize it; no DB writes.
+ *
  * OFF HTTP response discipline:
  *   HTTP 200 + json.status === 1 + json.product present → found
  *   HTTP 200 + json.status === 0                         → not_found (incomplete OFF record)
  *   HTTP 404                                             → not_found (product absent from OFF)
  *   Any other non-2xx (429, 500, etc.)                  → error (retryable — OFF may be down)
  *   Network failure / timeout (AbortError)              → error (retryable)
- *
- * Only "not_found" writes nothing to the DB.
- * "error" returns a Retry affordance; never silently swallowed as not_found.
  */
-async function fetchOff(
-  code: string,
-  canonicalKey: string,
-): Promise<BarcodeLookupResult> {
+type OffNormalizedResult =
+  | { status: "not_found" }
+  | { status: "error"; message: string }
+  | {
+      status: "found";
+      normalized: ReturnType<typeof normalizeOffProduct>;
+    };
+
+async function fetchOffNormalized(code: string): Promise<OffNormalizedResult> {
   const url = `https://world.openfoodfacts.org/api/v2/product/${code}?fields=${OFF_FIELDS}`;
   try {
     const res = await fetch(url, {
@@ -104,51 +240,33 @@ async function fetchOff(
     });
 
     if (!res.ok) {
-      // 404 = product not in OFF. Any other non-2xx = transient failure.
       return res.status === 404
         ? { status: "not_found" }
         : { status: "error", message: "OpenFoodFacts unavailable — try again" };
     }
 
     const json = (await res.json()) as { status: number; product?: unknown };
-    // 200 + status:1 = found. 200 + status:0 = not_found (incomplete record).
     if (json.status !== 1 || !json.product) return { status: "not_found" };
 
     const normalized = normalizeOffProduct(json.product as OffProduct, code);
-
-    const upserted = await prisma.foodLibrary.upsert({
-      where: { barcode: canonicalKey },
-      create: {
-        barcode: canonicalKey,
-        name: normalized.name,
-        brand: normalized.brand,
-        servingSize: normalized.servingSize,
-        basis: normalized.basis,
-        ...normalized.macros,
-        usageCount: 1,
-        lastUsedAt: new Date(),
-      },
-      update: {
-        // Re-normalize on re-encounter: OFF data can improve over time
-        name: normalized.name,
-        brand: normalized.brand,
-        servingSize: normalized.servingSize,
-        basis: normalized.basis,
-        ...normalized.macros,
-        usageCount: { increment: 1 },
-        lastUsedAt: new Date(),
-      },
-    });
-
-    // Invalidate the RSC router cache so NutritionPage re-renders with fresh
-    // quickPickFoods. Client component state (itemsText, macros, etc.) survives
-    // intact — React preserves client instances across RSC payload refreshes.
-    revalidatePath("/nutrition");
-
-    return { status: "found", food: toLibraryFood(upserted), fromLibrary: false };
+    return { status: "found", normalized };
   } catch {
     return { status: "error", message: "Network error — try again" };
   }
+}
+
+// ── countNonNullMacros (module-private) ───────────────────────────────────────
+
+/** Count how many of the six macro fields are non-null in a FoodMacros snapshot. */
+function countNonNullMacros(macros: FoodMacros): number {
+  return [
+    macros.calories,
+    macros.proteinG,
+    macros.carbsG,
+    macros.fatG,
+    macros.fiberG,
+    macros.sodiumMg,
+  ].filter((v) => v != null).length;
 }
 
 // ── getQuickPickFoods ─────────────────────────────────────────────────────────
