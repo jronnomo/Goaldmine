@@ -7,6 +7,7 @@ export type BottomSheetProps = {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  "data-testid"?: string;
 };
 
 /**
@@ -22,7 +23,7 @@ export type BottomSheetProps = {
  * @starting-style support the sheet simply appears instantly — still fully
  * functional. Reduced-motion users get no transition.
  */
-export function BottomSheet({ open, onClose, title, children }: BottomSheetProps) {
+export function BottomSheet({ open, onClose, title, children, "data-testid": testId }: BottomSheetProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -52,6 +53,7 @@ export function BottomSheet({ open, onClose, title, children }: BottomSheetProps
       ref={dialogRef}
       className="bottom-sheet"
       aria-labelledby={titleId}
+      data-testid={testId}
       // Esc key: the browser fires `cancel`; prevent the default instant close
       // and route through React state so `open` stays the source of truth.
       onCancel={(e) => {
