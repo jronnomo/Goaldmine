@@ -247,6 +247,7 @@ export async function deleteNutrition(id: string) {
   await prisma.nutritionLog.delete({ where: { id } });
   revalidatePath("/");
   revalidatePath("/nutrition");
+  redirect("/nutrition");
 }
 
 export async function importStrongWorkout(form: FormData) {
