@@ -46,6 +46,12 @@ const PROMPTS = [
     prompt: "Did the [test name] today: [value] [units]. Log it.",
   },
   {
+    title: "Log a meal from a photo",
+    when: "Ate something you can't easily itemize (restaurant, mixed plate)",
+    prompt:
+      "Here's a photo of my meal — [attach photo]. Identify what's on the plate, estimate the portions and macros, and log it via log_nutrition.\n\nTreat every value as an estimate, not exact. If anything is ambiguous — cooking oil, sauces, portion size — state your assumption and flag it. For reference: [add any portion cues you have, e.g. 'the chicken was ~6 oz', 'light on the dressing', 'used olive oil not butter'].",
+  },
+  {
     title: "Dry-run a revision",
     when: "Considering a change, want to see the cascade first",
     prompt:
