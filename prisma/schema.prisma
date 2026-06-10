@@ -124,9 +124,12 @@ model Hike {
   rpe          Float? // 1-10 perceived exertion (post-hike)
   notes        String?
   createdAt    DateTime @default(now())
+  goalId       String?
+  goal         Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
 
   @@index([date])
   @@index([status])
+  @@index([goalId])
 }
 
 model NutritionLog {
@@ -164,12 +167,13 @@ model MobilityCheckin {
 }
 
 model Goal {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   objective           String
-  targetDate          DateTime
+  targetDate          DateTime? // nullable — null = someday goal (no calendar pin)
   notes               String?
-  status              String   @default("active") // active | achieved | abandoned
-  active              Boolean  @default(true)
+  status              String    @default("active") // active | achieved | abandoned
+  active              Boolean   @default(true)
+  isFocus             Boolean   @default(false) // exactly one true; drives the daily prescription
   // Optional readiness targets — array of { metric, label, target, start?, weight, units, direction }
   targets             Json?
   // Optional references — array of { id, kind: 'url' | 'doc', value, label?, addedAt, claudeSummary? }
@@ -180,18 +184,20 @@ model Goal {
   // Drives both the calendar legend AND which icons render in cells. Null
   // = use the default Mt. Elbert-flavored legend in src/lib/legend.ts.
   legend              Json?
-  kind                String   @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
+  kind                String    @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
   githubRepo          String? // "owner/repo" for project goals; null otherwise
   githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   plans          Plan[]
   scheduledItems ScheduledItem[]
   logEntries     LogEntry[]
+  hikes          Hike[]
 
   @@index([active])
   @@index([targetDate])
+  @@index([isFocus])
   @@index([kind])
 }
 

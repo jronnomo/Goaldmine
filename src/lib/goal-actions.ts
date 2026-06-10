@@ -39,7 +39,7 @@ export async function createGoal(form: FormData) {
 
   // UI-friendly guards (kept). Core re-checks defensively.
   if (!objective) throw new Error("Objective is required");
-  if (!targetDateStr) throw new Error("Target date is required");
+  // targetDate is now optional — omitting it creates a someday goal.
 
   // v2 — Concern D: align with MCP path; both routes store USER_TZ midnight
   // via the calendar helper instead of `new Date(yyyy-mm-dd)` (which yields
@@ -47,8 +47,8 @@ export async function createGoal(form: FormData) {
   // <input type="date"> returns yyyy-mm-dd; parseDateKey accepts that.
   // parseDateKey itself does NOT validate the format (it Number-coerces the
   // split parts), so the NaN guard below is retained to catch malformed input.
-  const targetDate = parseDateKey(targetDateStr);
-  if (Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
+  const targetDate = targetDateStr ? parseDateKey(targetDateStr) : null;
+  if (targetDate !== null && Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
 
   const targets = parseTargetsField(form.get("targets"));
 
@@ -67,6 +67,7 @@ export async function createGoal(form: FormData) {
     legend: legend ?? undefined,
   });
 
+  revalidatePath("/");
   revalidatePath("/goals");
   revalidatePath("/stats");
   redirect(`/goals/${goal.id}`);
@@ -91,18 +92,18 @@ export async function updateGoal(id: string, form: FormData) {
   const targets = parseTargetsField(form.get("targets"));
 
   if (!objective) throw new Error("Objective is required");
-  if (!targetDateStr) throw new Error("Target date is required");
+  // targetDate is now optional — blank clears it (makes goal a someday goal).
 
   // v2 — Mirror createGoal: parseDateKey yields USER_TZ midnight, whereas
   // `new Date(yyyy-mm-dd)` yields UTC midnight which shifts one calendar cell
   // early in MT. parseDateKey doesn't validate format, so the NaN guard below
   // catches malformed input from a bugged or tampered form submission.
-  const targetDate = parseDateKey(targetDateStr);
-  if (Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
+  const targetDate = targetDateStr ? parseDateKey(targetDateStr) : null;
+  if (targetDate !== null && Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
 
   // status (active/achieved/abandoned) is lifecycle metadata. Goal.active is
-  // the focus flag (which goal drives Today/Calendar). They are independent —
-  // use setActiveGoal to change focus.
+  // the tracking flag; Goal.isFocus is which goal drives Today/Calendar.
+  // They are independent — use setFocusGoal to change focus.
   await prisma.goal.update({
     where: { id },
     data: {
@@ -119,18 +120,25 @@ export async function updateGoal(id: string, form: FormData) {
   revalidatePath("/stats");
 }
 
-export async function setActiveGoal(id: string) {
+export async function setFocusGoal(id: string) {
+  // Fetch old focus id before transaction so we can revalidate its detail page.
+  const oldFocus = await prisma.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
+  const oldFocusId = oldFocus?.id ?? null;
+
   await prisma.$transaction(async (tx) => {
     const target = await tx.goal.findUnique({ where: { id }, select: { id: true } });
     if (!target) throw new Error("Goal not found");
 
-    await tx.goal.updateMany({ where: { id: { not: id } }, data: { active: false } });
-    await tx.goal.update({ where: { id }, data: { active: true } });
+    // 1. Clear isFocus on all goals.
+    await tx.goal.updateMany({ data: { isFocus: false } });
 
-    // Plans: deactivate every plan that doesn't belong to the chosen goal, and
-    // activate the chosen goal's most-recent plan (older plans on the same
-    // goal stay inactive — only one is "live").
-    await tx.plan.updateMany({ where: { goalId: { not: id } }, data: { active: false } });
+    // 2. Set isFocus + ensure active on the target goal.
+    //    (A previously untracked goal that receives focus becomes tracked again.)
+    await tx.goal.update({ where: { id }, data: { isFocus: true, active: true } });
+
+    // 3. Ensure target goal has exactly one active plan (the latest).
+    //    OTHER goals' plans are NOT touched — they stay active.
+    //    NOTE: NO global goal/plan deactivation — this is the core invariant change.
     const latest = await tx.plan.findFirst({
       where: { goalId: id },
       orderBy: { createdAt: "desc" },
@@ -149,11 +157,37 @@ export async function setActiveGoal(id: string) {
   revalidatePath("/calendar");
   revalidatePath("/goals");
   revalidatePath(`/goals/${id}`);
+  if (oldFocusId && oldFocusId !== id) revalidatePath(`/goals/${oldFocusId}`);
   revalidatePath("/stats");
 
   // Land the user on the calendar so the focus switch is visible immediately
   // (this matches the workflow of "select a goal, see its calendar").
   redirect("/calendar");
+}
+
+/** @deprecated Use setFocusGoal instead */
+export const setActiveGoal = setFocusGoal;
+
+export async function setGoalTracked(id: string, tracked: boolean) {
+  await prisma.$transaction(async (tx) => {
+    const goal = await tx.goal.findUnique({
+      where: { id },
+      select: { id: true, isFocus: true },
+    });
+    if (!goal) throw new Error("Goal not found");
+    if (!tracked && goal.isFocus) {
+      throw new Error(
+        "Cannot untrack the focus goal — switch focus to another goal first.",
+      );
+    }
+    await tx.goal.update({ where: { id }, data: { active: tracked } });
+  });
+
+  revalidatePath("/");
+  revalidatePath("/calendar");
+  revalidatePath("/goals");
+  revalidatePath("/stats");
+  // No redirect — stays on /goals (pill action)
 }
 
 export async function deleteGoal(id: string) {

@@ -15,7 +15,7 @@ export default async function ProgressPage() {
     prisma.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
     prisma.goal.findMany({
       where: { active: true },
-      orderBy: { targetDate: "asc" },
+      orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
     }),
   ]);
 
@@ -108,14 +108,14 @@ export default async function ProgressPage() {
                     <span className="text-base text-[var(--muted)]">/100</span>
                   </p>
                   <p className="text-xs text-[var(--muted)] text-right">
-                    by {new Date(goal.targetDate).toLocaleDateString()}
+                    {goal.targetDate ? `by ${new Date(goal.targetDate).toLocaleDateString()}` : "Someday goal"}
                     <br />
                     best-effort estimate
                   </p>
                 </div>
                 {series.length > 1 ? (
                   <div aria-label={readinessAriaLabel}>
-                    <ReadinessChart data={series} targetDate={goal.targetDate.toISOString()} />
+                    <ReadinessChart data={series} targetDate={goal.targetDate?.toISOString()} />
                   </div>
                 ) : (
                   <p className="text-xs text-[var(--muted)] mb-3">

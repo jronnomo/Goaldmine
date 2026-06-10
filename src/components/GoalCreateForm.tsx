@@ -46,11 +46,10 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Target date</span>
+        <span className="text-sm font-medium">Target date <span className="text-[var(--muted)] font-normal">(optional — leave blank for a someday goal)</span></span>
         <input
           type="date"
           name="targetDate"
-          required
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
       </label>

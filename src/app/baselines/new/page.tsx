@@ -15,7 +15,7 @@ export default async function LogBaselinePage({
   const presetName = testName ? decodeURIComponent(testName) : null;
 
   const plan = await prisma.plan.findFirst({
-    where: { active: true },
+    where: { active: true, goal: { isFocus: true } },
     orderBy: { updatedAt: "desc" },
   });
   const template = (plan?.planJson as unknown as ProgramTemplate | undefined) ?? null;

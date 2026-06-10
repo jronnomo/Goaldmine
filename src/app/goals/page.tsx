@@ -3,16 +3,17 @@ import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { prisma } from "@/lib/db";
-import { setActiveGoal } from "@/lib/goal-actions";
+import { setFocusGoal } from "@/lib/goal-actions";
 
 export const dynamic = "force-dynamic";
 
 function goalProgress(
-  g: { createdAt: Date; targetDate: Date; status: string },
+  g: { createdAt: Date; targetDate: Date | null; status: string },
   now: number,
 ): number {
   if (g.status === "achieved") return 1;
   if (g.status === "abandoned") return 0;
+  if (!g.targetDate) return 0; // someday goal — no progress bar
   const total = g.targetDate.getTime() - g.createdAt.getTime();
   if (total <= 0) return 0;
   const elapsed = now - g.createdAt.getTime();
@@ -20,21 +21,24 @@ function goalProgress(
 }
 
 export default async function GoalsPage() {
-  // Order matches the focus-resolution rule in calendar.ts and program.ts:
-  // active=true first, then most-recently-updated. The first row is the
-  // single "focused" goal — even if multiple rows still have active=true
-  // from pre-setActiveGoal legacy state, only this one is treated as live.
+  // Focus goal first (isFocus=true), then tracked (active=true), then by target date
+  // (nulls last = someday goals at the bottom), then most-recently-updated.
   const goals = await prisma.goal.findMany({
-    orderBy: [{ active: "desc" }, { updatedAt: "desc" }],
+    orderBy: [
+      { isFocus: "desc" },
+      { active: "desc" },
+      { targetDate: { sort: "asc", nulls: "last" } },
+      { updatedAt: "desc" },
+    ],
   });
-  const focusedId = goals[0]?.active ? goals[0].id : null;
+  const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
 
   const copySources: CopySource[] = goals
     .filter((g) => Array.isArray(g.targets) && (g.targets as unknown[]).length > 0)
     .map((g) => ({
       id: g.id,
       objective: g.objective,
-      targetDate: g.targetDate.toISOString(),
+      targetDate: g.targetDate?.toISOString() ?? "",
       targetCount: (g.targets as unknown[]).length,
     }));
 
@@ -64,12 +68,12 @@ export default async function GoalsPage() {
         ) : (
           <ul className="divide-y divide-[var(--border)]">
             {goals.map((g) => {
-              const days = Math.ceil(
-                (new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24),
-              );
+              const days = g.targetDate
+                ? Math.ceil((new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24))
+                : null;
               const pct = goalProgress(g, now);
               const isFocused = g.id === focusedId;
-              const setActive = setActiveGoal.bind(null, g.id);
+              const setFocus = setFocusGoal.bind(null, g.id);
               const rowBody = (
                 <div className="flex items-start gap-2 min-w-0 flex-1 text-left">
                   <Bullseye
@@ -83,12 +87,12 @@ export default async function GoalsPage() {
                       {g.objective}
                       {isFocused && (
                         <span className="ml-2 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle">
-                          Active
+                          Focus
                         </span>
                       )}
                     </p>
                     <p className="text-xs text-[var(--muted)]">
-                      {new Date(g.targetDate).toLocaleDateString()}
+                      {g.targetDate ? new Date(g.targetDate).toLocaleDateString() : "Someday"}
                       {g.status !== "active" ? ` · ${g.status}` : ""}
                     </p>
                   </div>
@@ -99,7 +103,7 @@ export default async function GoalsPage() {
                   {isFocused ? (
                     rowBody
                   ) : (
-                    <form action={setActive} className="flex-1 min-w-0">
+                    <form action={setFocus} className="flex-1 min-w-0">
                       <button
                         type="submit"
                         className="w-full flex items-start gap-2 hover:opacity-80"
@@ -109,17 +113,23 @@ export default async function GoalsPage() {
                     </form>
                   )}
                   <div className="shrink-0 flex flex-col items-end gap-1.5">
-                    <span
-                      className={`text-xs rounded-full px-2 py-0.5 border ${
-                        days < 0
-                          ? "border-[var(--danger)]/40 text-[var(--danger)]"
-                          : days <= 14
-                            ? "border-[var(--warning)]/40 text-[var(--warning)]"
-                            : "border-[var(--border)] text-[var(--muted)]"
-                      }`}
-                    >
-                      {days < 0 ? `${-days}d ago` : `${days}d`}
-                    </span>
+                    {days !== null ? (
+                      <span
+                        className={`text-xs rounded-full px-2 py-0.5 border ${
+                          days < 0
+                            ? "border-[var(--danger)]/40 text-[var(--danger)]"
+                            : days <= 14
+                              ? "border-[var(--warning)]/40 text-[var(--warning)]"
+                              : "border-[var(--border)] text-[var(--muted)]"
+                        }`}
+                      >
+                        {days < 0 ? `${-days}d ago` : `${days}d`}
+                      </span>
+                    ) : (
+                      <span className="text-xs rounded-full px-2 py-0.5 border border-[var(--muted)]/40 text-[var(--muted)]">
+                        Someday
+                      </span>
+                    )}
                     <Link
                       href={`/goals/${g.id}`}
                       className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]"

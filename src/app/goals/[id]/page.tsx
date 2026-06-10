@@ -88,15 +88,15 @@ export default async function GoalDetail({
     .map((g) => ({
       id: g.id,
       objective: g.objective,
-      targetDate: g.targetDate.toISOString(),
+      targetDate: g.targetDate?.toISOString() ?? "",
       targetCount: (g.targets as unknown[]).length,
     }));
 
   // Server component: new Date() is safe here — rendered once per request, never re-renders.
   const nowMs = new Date().getTime();
-  const days = Math.ceil(
-    (new Date(goal.targetDate).getTime() - nowMs) / (1000 * 60 * 60 * 24),
-  );
+  const days = goal.targetDate
+    ? Math.ceil((new Date(goal.targetDate).getTime() - nowMs) / (1000 * 60 * 60 * 24))
+    : null;
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -106,8 +106,11 @@ export default async function GoalDetail({
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight mt-1">{goal.objective}</h1>
         <p className="text-sm text-[var(--muted)]">
-          {new Date(goal.targetDate).toLocaleDateString()} ·{" "}
-          {days < 0 ? `${-days} days past` : `${days} days out`} · {goal.status}
+          {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : "Someday"}{" "}
+          {days !== null
+            ? `· ${days < 0 ? `${-days} days past` : `${days} days out`} `
+            : ""}
+          · {goal.status}
         </p>
       </header>
 
@@ -117,7 +120,7 @@ export default async function GoalDetail({
           copySources={copySources}
           defaultValues={{
             objective: goal.objective,
-            targetDate: new Date(goal.targetDate).toISOString().slice(0, 10),
+            targetDate: goal.targetDate ? new Date(goal.targetDate).toISOString().slice(0, 10) : "",
             notes: goal.notes ?? "",
             status: goal.status,
             targets: JSON.stringify(targets, null, 2),

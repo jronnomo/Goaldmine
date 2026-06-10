@@ -75,10 +75,9 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
         })
       : Promise.resolve([] as never[]),
     prisma.goal.findFirst({
-      where: { active: true },
-      // Matches Plan resolution in src/lib/program.ts — most-recently-updated
-      // active goal wins. If multiple goals are stuck at active=true (legacy
-      // state pre-setActiveGoal), this picks one deterministically.
+      where: { isFocus: true },
+      // Deterministically picks the most-recently-updated if multiple are
+      // stuck isFocus=true (bad state).
       orderBy: { updatedAt: "desc" },
       select: { id: true, targetDate: true, objective: true, legend: true },
     }),
@@ -129,7 +128,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const cells: CalendarDayCell[] = [];
   const now = new Date();
   const todayKey = dateKey(now);
-  const goalKey = goal ? dateKey(goal.targetDate) : null;
+  const goalKey = goal?.targetDate ? dateKey(goal.targetDate) : null;
 
   // Walk the grid by adding days in USER_TZ so DST transitions don't shear
   // the column alignment.
@@ -468,9 +467,9 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
       orderBy: { date: "desc" },
     }),
     prisma.goal.findFirst({
-      where: { active: true },
+      where: { isFocus: true },
       orderBy: { updatedAt: "desc" },
-      select: { targetDate: true, objective: true },
+      select: { id: true, targetDate: true, objective: true },
     }),
     prisma.nutritionLog.findMany({
       where: { date: { gte: dayStart, lte: dayEnd } },
@@ -599,7 +598,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     }));
   }
 
-  const isGoalDate = !!goal && dateKey(goal.targetDate) === dateKey(date);
+  const isGoalDate = !!goal && !!goal.targetDate && dateKey(goal.targetDate) === dateKey(date);
 
   // On a test day the benchmark replaces the prescribed session. Only defer a
   // real session (not rest, not a user's explicit workout override).
@@ -734,7 +733,7 @@ export function rotationBaselineNamesForDate(
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
   const [plan, count] = await Promise.all([
     prisma.plan.findFirst({
-      where: { active: true },
+      where: { active: true, goal: { isFocus: true } },
       orderBy: { updatedAt: "desc" },
       include: { goal: { select: { id: true } } },
     }),

@@ -927,9 +927,9 @@ async function _computeGameState(): Promise<GameState> {
     overridesRaw,
     bonusRaw,
   ] = await Promise.all([
-    // 1. Active goal
+    // 1. Focus goal (isFocus=true drives the daily prescription + XP attribute pack)
     prisma.goal.findFirst({
-      where: { active: true },
+      where: { isFocus: true },
       orderBy: { updatedAt: "desc" },
       select: { id: true, kind: true },
     }),

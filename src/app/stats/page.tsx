@@ -17,7 +17,7 @@ export default async function StatsPage() {
     prisma.hike.count(),
     prisma.goal.findMany({
       where: { active: true },
-      orderBy: { targetDate: "asc" },
+      orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
     }),
   ]);
 
@@ -91,13 +91,13 @@ export default async function StatsPage() {
                   <span className="text-base text-[var(--muted)]">/100</span>
                 </p>
                 <p className="text-xs text-[var(--muted)] text-right">
-                  by {new Date(goal.targetDate).toLocaleDateString()}
+                  {goal.targetDate ? `by ${new Date(goal.targetDate).toLocaleDateString()}` : "Someday goal"}
                   <br />
                   best-effort estimate
                 </p>
               </div>
               {series.length > 1 ? (
-                <ReadinessChart data={series} targetDate={goal.targetDate.toISOString()} />
+                <ReadinessChart data={series} targetDate={goal.targetDate?.toISOString()} />
               ) : (
                 <p className="text-xs text-[var(--muted)] mb-3">
                   Trend appears once you have at least two weeks of data.

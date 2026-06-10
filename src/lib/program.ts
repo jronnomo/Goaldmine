@@ -22,11 +22,14 @@ export type TodayContext = {
 };
 
 export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
-  // Prefer the most recently updated active Plan (goal-scoped, includes
-  // any revisions). Fall back to the global seeded Program for new users.
+  // Prefer the focus goal's active Plan first (isFocus desc), then fall back
+  // to any active plan (transition-safe). This ensures the focus goal's plan
+  // drives the daily prescription while remaining resilient during the transition
+  // period when some goals may not yet have isFocus set.
+  // Falls back further to the global seeded Program for new users.
   const plan = await prisma.plan.findFirst({
     where: { active: true },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
   });
   if (plan) {
     return {

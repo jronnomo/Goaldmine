@@ -13,11 +13,12 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { Legend } from "@/lib/legend";
+import { addDays } from "@/lib/calendar";
 import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
 
 export interface CreateGoalCoreInput {
   objective: string;
-  targetDate: Date;
+  targetDate: Date | null; // null = someday goal (no calendar pin); defaults to 12-week plan
   notes?: string | null;
   kind?: "fitness" | "project";
   copyFromGoalId?: string | null;
@@ -38,7 +39,7 @@ export async function createGoalCore(
   // v2 — Concern A: defensive guards inside core. Form callers also pre-check
   // for UI-friendly messages; this is the contract boundary for any caller.
   if (!objective.trim()) throw new Error("objective required");
-  if (Number.isNaN(targetDate.getTime())) throw new Error("invalid targetDate");
+  if (targetDate !== null && Number.isNaN(targetDate.getTime())) throw new Error("invalid targetDate");
 
   // v2 — Concern K: normalize notes to null when blank. Form already does
   // this; MCP callers may pass "" which would otherwise round-trip as empty
@@ -54,7 +55,9 @@ export async function createGoalCore(
   }
 
   const now = new Date();
-  const weeks = weeksBetween(now, targetDate);
+  // null targetDate = someday goal; default to 12 weeks (84 days).
+  const weeks = targetDate ? weeksBetween(now, targetDate) : 12;
+  const endsOn = targetDate ?? addDays(now, 84);
 
   // v2 — Concern H audit (recorded in PR notes): scaffoldPlanFromTemplate(1)
   // does NOT throw; weeksBetween clamps weeks to a minimum of 1, and
@@ -73,12 +76,13 @@ export async function createGoalCore(
         ? Prisma.JsonNull
         : (input.legend as unknown as Prisma.InputJsonValue);
 
-  // A new goal takes over focus: prior goals and their plans are deactivated
-  // in the same transaction so Today/Calendar (which read active=true) start
-  // reflecting the new goal immediately. Use setActiveGoal to switch back.
+  // A new goal becomes active (tracked) and becomes the focus ONLY when no
+  // other goal already has isFocus=true. This prevents stealing focus from an
+  // existing focused goal. Use setFocusGoal to explicitly switch focus.
+  // (Replaces the old behavior of deactivating all other goals + plans globally.)
   const created = await prisma.$transaction(async (tx) => {
-    await tx.goal.updateMany({ data: { active: false } });
-    await tx.plan.updateMany({ data: { active: false } });
+    const existingFocusCount = await tx.goal.count({ where: { isFocus: true } });
+    const shouldBecomeFocus = existingFocusCount === 0;
     return tx.goal.create({
       data: {
         objective,
@@ -86,12 +90,14 @@ export async function createGoalCore(
         notes: normalizedNotes,
         targets: targets ?? undefined,
         kind: input.kind ?? "fitness",
+        active: true,
+        isFocus: shouldBecomeFocus,
         ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
         plans: {
           create: {
             name: `${objective} — ${weeks}-week plan`,
             startedOn: now,
-            endsOn: targetDate,
+            endsOn,
             weeks,
             active: true,
             planJson: planTemplate as unknown as object,

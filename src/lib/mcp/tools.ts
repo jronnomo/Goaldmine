@@ -599,7 +599,7 @@ function registerReadTools(server: McpServer) {
             },
           }),
           prisma.goal.findFirst({
-            where: { active: true },
+            where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
             select: { id: true, kind: true, objective: true, githubRepo: true },
           }),
@@ -760,13 +760,18 @@ function registerReadTools(server: McpServer) {
     async () =>
       safe(async () => {
         const goals = await prisma.goal.findMany({
-          orderBy: [{ active: "desc" }, { targetDate: "asc" }],
+          orderBy: [
+            { isFocus: "desc" },
+            { active: "desc" },
+            { targetDate: { sort: "asc", nulls: "last" } },
+          ],
           include: { plans: { where: { active: true }, select: { id: true, weeks: true } } },
         });
         return goals.map((g) => ({
           id: g.id,
           objective: g.objective,
           targetDate: g.targetDate,
+          isFocus: g.isFocus,
           status: g.status,
           active: g.active,
           kind: g.kind,
@@ -878,9 +883,9 @@ function registerReadTools(server: McpServer) {
       safe(async () => {
         const goal = goalId
           ? await prisma.goal.findUniqueOrThrow({ where: { id: goalId } })
-          : await prisma.goal.findFirst({ where: { active: true }, orderBy: { updatedAt: "desc" } });
+          : await prisma.goal.findFirst({ where: { isFocus: true }, orderBy: { updatedAt: "desc" } });
         if (!goal) {
-          throw new Error("No active goal found — pass goalId, or activate a goal first.");
+          throw new Error("No focused goal found — pass goalId, or set a goal to focus first.");
         }
         const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
         const asOfDate = asOf ? parseDateKey(asOf) : new Date();
@@ -910,7 +915,7 @@ function registerReadTools(server: McpServer) {
     async () =>
       safe(async () => {
         const plan = await prisma.plan.findFirst({
-          where: { active: true },
+          where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
         const notes = await prisma.note.findMany({
@@ -1183,7 +1188,7 @@ function registerReadTools(server: McpServer) {
           resolveDay(now),
           getActiveProgram(),
           prisma.goal.findFirst({
-            where: { active: true },
+            where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
             select: { id: true, objective: true, targetDate: true, kind: true },
           }),
@@ -3601,10 +3606,12 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Create a new goal (with optional legend)",
       description:
-        "Create a new Goal and scaffold its Plan + initial PlanRevision in one nested write. Use when the user names a new training goal that should drive coaching going forward. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` must be a yyyy-mm-dd string (USER_TZ midnight); resolve relative dates ('tomorrow', 'next Friday') yourself before calling. `copyFromGoalId` copies the targets array from any existing goal regardless of status. If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal and scaffold its Plan + initial PlanRevision in one nested write. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use setFocusGoal from the app UI to explicitly switch focus. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan end date; defaults to a 12-week plan). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
-        targetDate: DateKeyShape,
+        targetDate: DateKeyShape.optional().describe(
+          "Goal target date (yyyy-mm-dd, USER_TZ midnight). Omit to create a someday goal with no calendar pin.",
+        ),
         notes: z.string().optional(),
         kind: z.enum(["fitness", "project"]).default("fitness").describe(
           "Goal domain; determines which tool pack Claude uses. fitness = workout/hike/baseline tools; project = schedule_item/log_metric/GitHub tools.",
@@ -3620,7 +3627,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ objective, targetDate, notes, kind, copyFromGoalId, legend }) =>
       safe(async () => {
-        const parsedDate = parseDateInput(targetDate);
+        const parsedDate = targetDate ? parseDateInput(targetDate) : null;
         const { goal, planId } = await createGoalCore({
           objective,
           targetDate: parsedDate,
@@ -3823,10 +3830,10 @@ function registerWriteTools(server: McpServer) {
         }
 
         const plan = await prisma.plan.findFirst({
-          where: { active: true },
+          where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
-        if (!plan) throw new Error("No active plan found.");
+        if (!plan) throw new Error("No active plan found for the focus goal.");
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -3877,10 +3884,10 @@ function registerWriteTools(server: McpServer) {
           throw new Error("Provide at least one of `rule` or `fingerprint`.");
         }
         const plan = await prisma.plan.findFirst({
-          where: { active: true },
+          where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
-        if (!plan) throw new Error("No active plan found.");
+        if (!plan) throw new Error("No active plan found for the focus goal.");
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -3943,9 +3950,9 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        // 1. Resolve active goal for attribute validation
+        // 1. Resolve focus goal for attribute validation
         const goal = await prisma.goal.findFirst({
-          where: { active: true },
+          where: { isFocus: true },
           orderBy: { updatedAt: "desc" },
           select: { id: true, kind: true },
         });
@@ -4049,9 +4056,10 @@ function registerWriteTools(server: McpServer) {
         targetDate: z
           .string()
           .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
+          .nullable()
           .optional()
           .describe(
-            "New goal target date in yyyy-mm-dd (USER_TZ midnight). This is the goal-date pin; " +
+            "New goal target date in yyyy-mm-dd (USER_TZ midnight), null to clear (make this a someday goal), or omit to leave unchanged. This is the goal-date pin; " +
               "plan length / endsOn cascades go through update_plan_metadata.",
           ),
         status: z
@@ -4075,7 +4083,7 @@ function registerWriteTools(server: McpServer) {
 
         const data: Record<string, unknown> = {};
         if (input.objective !== undefined) data.objective = input.objective;
-        if (input.targetDate !== undefined) data.targetDate = parseDateInput(input.targetDate);
+        if (input.targetDate !== undefined) data.targetDate = input.targetDate ? parseDateInput(input.targetDate) : null;
         if (input.status !== undefined) data.status = input.status;
         if (input.notes !== undefined) data.notes = input.notes;
 
@@ -4085,7 +4093,7 @@ function registerWriteTools(server: McpServer) {
             message: "No fields provided — nothing changed.",
             goal: {
               objective: goal.objective,
-              targetDate: toDateKey(goal.targetDate),
+              targetDate: goal.targetDate ? toDateKey(goal.targetDate) : null,
               status: goal.status,
             },
           };
@@ -4102,7 +4110,7 @@ function registerWriteTools(server: McpServer) {
           message: `Goal updated: ${updated.objective}`,
           goal: {
             objective: updated.objective,
-            targetDate: toDateKey(updated.targetDate),
+            targetDate: updated.targetDate ? toDateKey(updated.targetDate) : null,
             status: updated.status,
           },
         };

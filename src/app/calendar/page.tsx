@@ -100,7 +100,8 @@ export default async function CalendarPage({
 
       {goal && (
         <p className="text-xs text-[var(--muted)] text-center">
-          🏔️ {goal.objective} — {new Date(goal.targetDate).toLocaleDateString()}
+          🏔️ {goal.objective}
+          {goal.targetDate ? ` — ${new Date(goal.targetDate).toLocaleDateString()}` : ""}
         </p>
       )}
       {!program && (

@@ -15,14 +15,16 @@ async function main() {
       continue;
     }
     const now = new Date();
-    const weeks = weeksBetween(now, goal.targetDate);
+    // targetDate is now nullable (someday goals). Use 12-week default when absent.
+    const endsOn = goal.targetDate ?? new Date(now.getTime() + 84 * 24 * 60 * 60 * 1000);
+    const weeks = goal.targetDate ? weeksBetween(now, goal.targetDate) : 12;
     const planTemplate = scaffoldPlanFromTemplate(weeks);
     await prisma.plan.create({
       data: {
         goalId: goal.id,
         name: `${goal.objective} — ${weeks}-week plan`,
         startedOn: now,
-        endsOn: goal.targetDate,
+        endsOn,
         weeks,
         active: true,
         planJson: planTemplate as unknown as object,

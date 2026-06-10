@@ -218,7 +218,7 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   }
 
   const plan = await prisma.plan.findFirst({
-    where: { active: true },
+    where: { active: true, goal: { isFocus: true } },
     orderBy: { updatedAt: "desc" },
   });
   if (!plan) return { planId: null, findings: [] };
@@ -239,7 +239,8 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   );
 
   // Rule: goal target date drift vs plan end. (warning)
-  if (goal && startOfDay(goal.targetDate).getTime() !== startOfDay(plan.endsOn).getTime()) {
+  // Skipped when targetDate is null (someday goal — no calendar pin to drift against).
+  if (goal && goal.targetDate && startOfDay(goal.targetDate).getTime() !== startOfDay(plan.endsOn).getTime()) {
     findings.push({
       rule: "goal-date-vs-plan-end",
       severity: "warning",
