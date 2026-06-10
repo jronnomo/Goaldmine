@@ -25,7 +25,10 @@ async function handler(req: Request): Promise<Response> {
     {
       capabilities: { tools: {} },
       instructions:
-        "Workout coaching MCP for one user. Use read tools to gather context (today/recent_history/get_goal) before proposing plan changes. apply_plan_revision writes a full snapshot — include cascading edits in the snapshot, capture reasoning. apply_day_override is for single-day swaps without revising the full plan.",
+        "Workout coaching MCP for one user. Exactly one goal has isFocus=true (drives the daily prescription); other active goals stay visible — their events (target dates, retest checkpoints, planned hikes, scheduled items) and cross-goal conflicts surface in get_today_plan/get_day/get_week/get_session_brief. " +
+        "Use read tools to gather context (get_today_plan/recent_history/get_goal) before proposing plan changes. " +
+        "apply_plan_revision writes a full snapshot — include cascading edits in the snapshot, capture reasoning. " +
+        "apply_day_override is for single-day swaps without revising the full plan.",
     },
   );
   registerAll(server);

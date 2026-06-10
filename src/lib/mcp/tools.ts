@@ -22,7 +22,10 @@ import {
   templateForRotationDay,
   weekConflicts,
   type WeekConflict,
+  type ResolveDayCtx,
 } from "@/lib/calendar";
+import { getGoalEventsResult } from "@/lib/goal-events";
+import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore } from "@/lib/goal-core";
@@ -577,9 +580,11 @@ function registerReadTools(server: McpServer) {
       title: "Get today's plan",
       description:
         "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context. Also surfaces all active standing_rule notes (with lastAcknowledgedAt freshness) under `standingRules` so the coach sees persistent guidance at session start. Call acknowledge_standing_rule when you reference one in a turn so the freshness timestamp stays current. " +
-        "Now also surfaces plannedHikeToday (hike detail if planned today), " +
+        "Also surfaces plannedHikeToday (hike detail if planned today), " +
         "workoutDeferredForHike (advisory — hike likely the day's work), and " +
-        "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week).",
+        "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
+        "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
+        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today.",
     },
     async () =>
       safe(async () => {
@@ -612,7 +617,7 @@ function registerReadTools(server: McpServer) {
               githubRepo: activeGoalRow.githubRepo,
             }
           : null;
-        return { ...r, standingRules, activeGoal };
+        return { ...r, standingRules, focusGoal: activeGoal, activeGoal }; // activeGoal: saved-prompt compat, remove next release
       }),
   );
 
@@ -622,9 +627,8 @@ function registerReadTools(server: McpServer) {
       title: "Get any day's plan",
       description:
         "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date. " +
-        "Now also surfaces plannedHikeToday (hike detail if planned on that date), " +
-        "workoutDeferredForHike (advisory — hike likely the day's work), and " +
-        "longEffortConflict (if the date is the Day-6 slot and a hike is elsewhere that week).",
+        "Also surfaces plannedHikeToday, workoutDeferredForHike, and longEffortConflict. " +
+        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date.",
       inputSchema: { date: DateKeyShape },
     },
     async ({ date }) =>
@@ -642,10 +646,11 @@ function registerReadTools(server: McpServer) {
         "Resolve all 7 days of the rotation week containing the given date. " +
         "Returns weekIndex, startDate/endDate of the rotation week, totalWeeks, and a days[] array. " +
         "Each day includes the full ResolvedDay (workoutTemplate, overrides, plannedHikeToday, " +
-        "workoutDeferredForHike, longEffortConflict, baselinesDue, etc.). " +
+        "workoutDeferredForHike, longEffortConflict, baselinesDue, otherGoalEvents, crossGoalConflicts, etc.). " +
+        "Top-level otherGoalEvents (non-focus goals' events for the whole week) and crossGoalConflicts are also returned for coach convenience. " +
         "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
         "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
-        "NOTE: v1 loops resolveDay × 7 (~42–49 DB queries per call); acceptable for on-demand scans.",
+        "Goal events assembled once for the week (~3 extra queries total) and passed to each resolveDay via ctx (zero extra queries per day).",
       inputSchema: {
         startDate: z
           .string()
@@ -676,17 +681,44 @@ function registerReadTools(server: McpServer) {
 
         const wi = Math.floor(daysDelta / 7) + 1;
         const weekStart = addDays(startMid, (wi - 1) * 7);
+        const weekEnd = addDays(weekStart, 6);
+
+        // Pre-assemble goal events + cross-goal conflicts for the whole week
+        // and pass as ctx to resolveDay — each of the 7 calls performs zero
+        // extra goal-event queries (DC-3 pattern from REQ-104 architecture).
+        // MR-3 ACCEPTED: overrideDateKeys omitted — saves 1 extra DB round-trip.
+        // Conflicts near overridden days may still appear (advisory, not structural).
+        const eventsResult = await getGoalEventsResult({ start: weekStart, end: endOfDay(weekEnd) });
+        const plannedHikeDks = eventsResult.events
+          .filter((e) => e.type === "planned-hike")
+          .map((e) => e.dateKey);
+        const weekCrossConflicts = computeCrossGoalConflicts({
+          events: eventsResult.events,
+          focusGoalId: eventsResult.focusGoalId,
+          focusProgram: program,
+          plannedHikeDateKeys: plannedHikeDks,
+          overrideDateKeys: [],
+          range: { start: weekStart, end: weekEnd },
+        });
+        const ctx: ResolveDayCtx = {
+          goalEvents: eventsResult.events,
+          crossGoalConflicts: weekCrossConflicts,
+          focusGoalId: eventsResult.focusGoalId,
+        };
 
         const days = await Promise.all(
-          [0, 1, 2, 3, 4, 5, 6].map((i) => resolveDay(addDays(weekStart, i))),
+          [0, 1, 2, 3, 4, 5, 6].map((i) => resolveDay(addDays(weekStart, i), ctx)),
         );
 
         return {
           weekIndex: wi,
           startDate: toDateKey(weekStart),
-          endDate: toDateKey(addDays(weekStart, 6)),
+          endDate: toDateKey(weekEnd),
           totalWeeks: program.template.totalWeeks,
           days,
+          // Top-level arrays for coach convenience (non-focus events + conflicts for the week).
+          otherGoalEvents: eventsResult.events.filter((e) => !e.isFocusGoal),
+          crossGoalConflicts: weekCrossConflicts,
         };
       }),
   );
@@ -753,8 +785,10 @@ function registerReadTools(server: McpServer) {
     {
       title: "List all training goals",
       description:
-        "Show every training goal — active and inactive — with active flag, target date / race day / event date, status, and target count. " +
-        "Use to find the active goal id, see past or paused goals, or surface what the user is training toward. " +
+        "Show every training goal — active and inactive — with focus flag, tracking status, target date, status, and target count. " +
+        "active=true means the goal is tracked and contributes events to the calendar and Today strip; isFocus=true means this goal's plan drives the daily prescription (exactly one should be true at a time). " +
+        "targetDate=null indicates a someday goal (no calendar pin, no countdown). " +
+        "Use to discover which goal is in focus, list all tracked goals with their target dates, or find someday goals. " +
         "Pair with get_goal for full detail on one goal.",
     },
     async () =>
@@ -788,6 +822,7 @@ function registerReadTools(server: McpServer) {
       description:
         "Full goal with targets, references, the active plan (with planJson — the ROTATION TEMPLATE, not the resolved per-date prescription), the most recent plan revisions, and an upcomingOverrides summary so you can see which dates diverge from the template. " +
         "Important: planJson tells you 'Mondays do this' — it does NOT include per-date overrides. To answer 'what's actually prescribed on date X', call get_day(X), not get_goal. To answer 'what's exercise Y prescribed at on its next occurrences', call find_exercise_in_plan. " +
+        "isFocus=true means this goal's plan drives the daily prescription; other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
         "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision.",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
@@ -873,7 +908,7 @@ function registerReadTools(server: McpServer) {
         goalId: z
           .string()
           .optional()
-          .describe("Goal id (use list_goals to discover). Omit to use the currently active goal."),
+          .describe("Goal id (use list_goals to discover). Omit to use the current focus goal."),
         asOf: DateKeyShape.optional().describe(
           "Compute as of this date (yyyy-mm-dd), end-of-day in the user's timezone. Defaults to today — pass a past date to inspect an earlier point.",
         ),
@@ -1154,11 +1189,13 @@ function registerReadTools(server: McpServer) {
     {
       title: "Cold-start coaching catch-up (one call)",
       description:
-        "One-call cold-start catch-up for a NEW coaching conversation — today's date, active goal + days-to-go, " +
+        "One-call cold-start catch-up for a NEW coaching conversation — today's date, focus goal + days-to-go, " +
         "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
         "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
         "the latest review, unresolved open items, and any scheduling conflicts for the current rotation week " +
-        "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions). " +
+        "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions + cross-goal conflict kinds: " +
+        "event-on-hard-day, key-events-same-week, event-near-long-effort). " +
+        "otherActiveGoals: non-focus active goals with their next event in a 30-day window. " +
         "Call this FIRST in a fresh chat instead of stitching together get_today_plan + recent_history + get_goal. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
         "for a wide activity lookback use recent_history; " +
@@ -1174,6 +1211,7 @@ function registerReadTools(server: McpServer) {
         // Parallel fetch everything — resolveDay + getActiveProgram both call
         // getActiveProgram internally but since they're separate awaits the
         // overhead is one extra DB round-trip (acceptable for a cold-start tool).
+        const thirtyDayEnd = addDays(startOfDay(now), 30);
         const [
           resolved,
           program,
@@ -1184,6 +1222,7 @@ function registerReadTools(server: McpServer) {
           latestReviewNote,
           openItems,
           measurements,
+          otherGoalsResult,
         ] = await Promise.all([
           resolveDay(now),
           getActiveProgram(),
@@ -1230,6 +1269,8 @@ function registerReadTools(server: McpServer) {
             orderBy: { date: "asc" },
             select: { date: true, weightLb: true },
           }),
+          // 30-day window for other active goals' next events.
+          getGoalEventsResult({ start: now, end: thirtyDayEnd }),
         ]);
 
         // --- goal ---
@@ -1357,14 +1398,62 @@ function registerReadTools(server: McpServer) {
             }
           : null;
 
+        // --- otherActiveGoals (30-day next-event window) ---
+        // Non-focus active goals with their soonest event in the 30-day window.
+        // The otherGoalsMeta is derived from the same getGoalEventsResult query
+        // (no extra DB round-trip). nextEvent = first event per non-focus goal.
+        const otherActiveGoals = otherGoalsResult.otherGoalsMeta.map((meta) => {
+          const nextEvent =
+            otherGoalsResult.events
+              .filter((e) => e.goalId === meta.id)
+              .sort((a, b) => a.dateKey.localeCompare(b.dateKey))[0] ?? null;
+          const daysToGo = meta.targetDate
+            ? Math.round(
+                (startOfDay(meta.targetDate).getTime() - startOfDay(now).getTime()) / MS_PER_DAY,
+              )
+            : null;
+          return {
+            id: meta.id,
+            objective: meta.objective,
+            targetDate: meta.targetDate ? toDateKey(meta.targetDate) : null,
+            daysToGo,
+            nextEvent: nextEvent
+              ? { dateKey: nextEvent.dateKey, type: nextEvent.type, label: nextEvent.label }
+              : null,
+          };
+        });
+
         // --- currentWeekConflicts ---
-        // Compact WeekConflict[] for the current rotation week. Lets the coach
-        // catch long-effort phantom + retest-on-hike collisions on cold start
-        // without parsing 7 per-day resolved results. Call get_week for detail.
-        const currentWeekConflicts: WeekConflict[] =
+        // Compact WeekConflict[] for the current rotation week. Merges same-goal
+        // conflicts (long-effort phantom + retest-on-hike) with cross-goal conflicts
+        // (event-on-hard-day, key-events-same-week, event-near-long-effort).
+        // CRIT-4: filter the 30-day events to the current rotation week's dateKeys
+        // before calling computeCrossGoalConflicts — avoids false cross-week hits.
+        const sameGoalWeekConflicts: WeekConflict[] =
           program && resolved.isInPlan && resolved.weekIndex !== null
             ? await weekConflicts(program, resolved.weekIndex)
             : [];
+
+        const weekCgConflicts: WeekConflict[] = (() => {
+          if (!program || !resolved.isInPlan || resolved.weekIndex === null) return [];
+          const weekStart = addDays(startOfDay(program.startedOn), (resolved.weekIndex - 1) * 7);
+          const weekEnd = addDays(weekStart, 6);
+          const weekStartDk = toDateKey(weekStart);
+          const weekEndDk = toDateKey(weekEnd);
+          const weekEvents = otherGoalsResult.events.filter(
+            (e) => e.dateKey >= weekStartDk && e.dateKey <= weekEndDk,
+          );
+          if (weekEvents.length === 0) return [];
+          return computeCrossGoalConflicts({
+            events: weekEvents,
+            focusGoalId: otherGoalsResult.focusGoalId,
+            focusProgram: program,
+            plannedHikeDateKeys: [],
+            range: { start: weekStart, end: weekEnd },
+          });
+        })();
+
+        const currentWeekConflicts: WeekConflict[] = [...sameGoalWeekConflicts, ...weekCgConflicts];
 
         return {
           today: toDateKey(now),
@@ -1375,6 +1464,7 @@ function registerReadTools(server: McpServer) {
           standingRules: standingRulesOut,
           latestReview,
           openItems,
+          otherActiveGoals,
           currentWeekConflicts,
         };
       }),
@@ -1617,6 +1707,7 @@ function registerReadTools(server: McpServer) {
         "Return every Hike row with status='planned' — the upcoming hikes on the calendar (the faded boot icons): training hikes, the Mt. Elbert build-up, backpacking trips. " +
         "This is THE tool to call when you need to see or move planned hikes — 'what hikes are scheduled', 'list all planned hikes', 'which Saturdays have a hike between now and date X', 'reschedule/shift the planned hikes'. " +
         "Do NOT poll get_day per Saturday and do NOT read planJson — planned hikes are Hike rows, returned here directly with their ids so you can then finalize (log_hike.replacesPlannedHikeId), delete (delete_hike), or reschedule them. " +
+        "Each hike includes goalId (which goal it trains) and goalObjective; null goalId means the hike is attributed to the focus goal at read time. " +
         "Defaults to all future planned hikes (today onward); pass from/to (yyyy-mm-dd) to bound the window, or includePast=true to also surface stale/overdue planned rows. " +
         "Note: one-off special days inserted as day OVERRIDES (races, vacation, sick swaps) are not Hike rows — those show up in get_goal.upcomingOverrides instead.",
       inputSchema: {
@@ -1646,7 +1737,33 @@ function registerReadTools(server: McpServer) {
             ...(dateFilter.gte || dateFilter.lte ? { date: dateFilter } : {}),
           },
           orderBy: { date: "asc" },
+          select: {
+            id: true,
+            date: true,
+            route: true,
+            distanceMi: true,
+            elevationFt: true,
+            packWeightLb: true,
+            durationMin: true,
+            notes: true,
+            goalId: true,
+          },
         });
+
+        // Batch-fetch goal objectives for non-null goalIds (at most 1 extra query).
+        const goalIds = [...new Set(rows.map((h) => h.goalId).filter((id): id is string => id !== null))];
+        const goalsById: Record<string, string> =
+          goalIds.length > 0
+            ? Object.fromEntries(
+                (
+                  await prisma.goal.findMany({
+                    where: { id: { in: goalIds } },
+                    select: { id: true, objective: true },
+                  })
+                ).map((g) => [g.id, g.objective]),
+              )
+            : {};
+
         return {
           count: rows.length,
           hikes: rows.map((h) => ({
@@ -1658,6 +1775,9 @@ function registerReadTools(server: McpServer) {
             packWeightLb: h.packWeightLb,
             durationMin: h.durationMin,
             notes: h.notes,
+            // goalId null = attributed to focus goal at read time
+            goalId: h.goalId ?? null,
+            goalObjective: h.goalId ? (goalsById[h.goalId] ?? null) : "focus goal (attribution at read time)",
           })),
           message:
             rows.length === 0
@@ -2141,7 +2261,9 @@ function registerWriteTools(server: McpServer) {
         "Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. " +
         "Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar " +
         "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression. " +
-        "Scheduling is idempotent per day: calling with status='planned' for a date that already has a planned hike updates that row in place (no duplicate). " +
+        "Pass goalId to attribute the hike to a specific goal (use list_goals to find ids); omit to attribute to the current focus goal. " +
+        "Scheduling is idempotent per day per goal: calling with status='planned' for a date + goal that already has a planned hike updates that row in place. " +
+        "Two different goals may each plan a hike on the same day — idempotency is scoped per-goal. " +
         "To finalize a previously-planned hike (the user did the hike that was on the calendar), pass replacesPlannedHikeId — the existing planned row " +
         "is updated in place with the actual route/distance/elevation/duration/pack/rpe/notes and status flips to 'completed' (or 'skipped' if you pass that). " +
         "The original Hike id is preserved, so any downstream references stay intact. Avoids the duplicate-row trap where you'd otherwise have a " +
@@ -2163,10 +2285,39 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Hike id of a previously-planned hike (status='planned') to finalize in place instead of creating a new row. The row's date, route, distance, etc. are all updated to the values passed in this call. Errors if the id doesn't exist or the row isn't status='planned'.",
           ),
+        goalId: z
+          .string()
+          .optional()
+          .describe(
+            "Which goal this hike trains (use list_goals to find goal ids). Omit to attribute to the current focus goal. Stored permanently on the hike row — affects calendar markers and goal-level readiness.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
+        // Resolve the goal id this hike should be attributed to.
+        // null means "focus goal at read time" (standard attribution).
+        let resolvedGoalId: string | null = null;
+        if (input.goalId) {
+          const targetGoal = await prisma.goal.findUnique({
+            where: { id: input.goalId },
+            select: { id: true, active: true },
+          });
+          if (!targetGoal) throw new Error(`Goal "${input.goalId}" not found.`);
+          if (!targetGoal.active) {
+            throw new Error(
+              `Goal "${input.goalId}" is not tracked (active=false). Activate it before logging hikes against it.`,
+            );
+          }
+          resolvedGoalId = input.goalId;
+        } else {
+          const focusGoal = await prisma.goal.findFirst({
+            where: { isFocus: true },
+            select: { id: true },
+          });
+          resolvedGoalId = focusGoal?.id ?? null;
+        }
+
         if (input.replacesPlannedHikeId !== undefined) {
           // Finalize-in-place path. Verify the named row exists and is still
           // in 'planned' state before updating — protects against accidental
@@ -2213,16 +2364,20 @@ function registerWriteTools(server: McpServer) {
 
         const hikeDate = parseDateInput(input.date);
 
-        // Idempotent scheduling: at most one *planned* hike per calendar day.
-        // A repeat schedule call for the same day updates the existing planned
-        // row in place instead of stacking a duplicate boot icon (the two-hikes-
-        // same-Saturday bug). Completed/skipped hikes can legitimately repeat on
-        // a date, so this only applies to status='planned'.
+        // Idempotent scheduling: at most one *planned* hike per calendar day PER GOAL.
+        // A repeat schedule call for the same day + goal updates the existing planned
+        // row in place instead of stacking a duplicate boot icon. Two different goals
+        // CAN each plan a hike on the same day (intentional multi-goal support).
+        // Completed/skipped hikes can legitimately repeat on a date, so this only
+        // applies to status='planned'.
         if (input.status === "planned") {
           const existingPlanned = await prisma.hike.findFirst({
             where: {
               status: "planned",
               date: { gte: startOfDay(hikeDate), lte: endOfDay(hikeDate) },
+              // Scope idempotency to the resolved goalId so two goals can each plan
+              // a hike on the same day (null = focus-goal attribution).
+              goalId: resolvedGoalId,
             },
             orderBy: { date: "asc" },
           });
@@ -2264,6 +2419,8 @@ function registerWriteTools(server: McpServer) {
             rpe: input.rpe ?? null,
             status: input.status,
             notes: input.notes ?? null,
+            // null = focus-goal attribution at read time (Hike.goalId nullable FK)
+            goalId: resolvedGoalId,
           },
         });
         return { id: h.id, finalized: false, deduped: false, message: "Hike logged" };
@@ -4044,7 +4201,7 @@ function registerWriteTools(server: McpServer) {
         "targetDate here is the GOAL pin shown on the calendar (e.g. summit day). " +
         "To shift the plan length / endsOn / plan metadata, follow up with update_plan_metadata after this call. " +
         "Per operating rules: propose the change and get explicit approval before calling. " +
-        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setActiveGoal from the app UI.",
+        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setFocusGoal from the app UI.",
       inputSchema: {
         goalId: z.string().describe("The goal id to update"),
         objective: z
@@ -4126,6 +4283,7 @@ function registerWriteTools(server: McpServer) {
         "PERMANENT and irreversible. Cascades: deletes all Plans, PlanRevisions, PlanDayOverrides, " +
         "ScheduledItems, and LogEntries linked to this goal. " +
         "Workouts, measurements, hikes, nutrition logs, notes, and baselines are NOT goal-linked and survive deletion. " +
+        "Hikes logged against this goal (goalId = this goal's id) also survive — their goalId is nulled out by the database (onDelete: SetNull) and they are re-attributed to the focus goal at read time. " +
         "Per operating rules: propose the deletion to the user, describe what will be cascaded, " +
         "and get their explicit approval in chat BEFORE calling this tool. " +
         "Pass confirm:true only after the user has approved.",
