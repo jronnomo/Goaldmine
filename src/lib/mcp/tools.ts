@@ -1468,7 +1468,69 @@ function registerReadTools(server: McpServer) {
 
         // Map preserves insertion order; rows are date-desc, so byDay is newest-first.
         const byDay = Array.from(byDayMap.values());
-        return { since, days, mealType: mealType ?? null, entryCount: rows.length, byDay };
+
+        // frequentFoods — top-5 by usageCount for coach macro estimates.
+        // Independent try/catch: FoodLibrary failure degrades to [] without
+        // breaking nutrition history (migration may not be applied yet, or
+        // the table may have a transient query error).
+        let frequentFoods: Array<{
+          name: string;
+          brand: string | null;
+          servingSize: string | null;
+          basis: string;
+          perServing: {
+            calories: number | null;
+            proteinG: number | null;
+            carbsG: number | null;
+            fatG: number | null;
+            fiberG: number | null;
+            sodiumMg: number | null;
+          };
+        }> = [];
+        try {
+          const frequentFoodRows = await prisma.foodLibrary.findMany({
+            orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
+            take: 5,
+            select: {
+              name: true,
+              brand: true,
+              servingSize: true,
+              basis: true,
+              calories: true,
+              proteinG: true,
+              carbsG: true,
+              fatG: true,
+              fiberG: true,
+              sodiumMg: true,
+            },
+          });
+          frequentFoods = frequentFoodRows.map((f) => ({
+            name: f.name,
+            brand: f.brand,
+            servingSize: f.servingSize,
+            basis: f.basis,
+            perServing: {
+              calories: f.calories,
+              proteinG: f.proteinG,
+              carbsG: f.carbsG,
+              fatG: f.fatG,
+              fiberG: f.fiberG,
+              sodiumMg: f.sodiumMg,
+            },
+          }));
+        } catch {
+          // FoodLibrary migration not yet applied, or query error.
+          // Return empty array; byDay data is unaffected.
+        }
+
+        return {
+          since,
+          days,
+          mealType: mealType ?? null,
+          entryCount: rows.length,
+          frequentFoods,
+          byDay,
+        };
       }),
   );
 

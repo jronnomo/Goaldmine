@@ -62,6 +62,9 @@ One file per tool under `src/lib/mcp/tools/*` conceptually, all registered in `s
 ### 4. Plan edits are lint-gated
 `lintTemplate()` runs on any proposed template before write (structural errors reject — phase weeks not tiling 1..totalWeeks, retest past totalWeeks, initialWeek out of range, retest at/before initial; warnings ride along). `lintActivePlan()` adds DB-backed checks (phantom baseline values, unanchored retests, calendar conflicts). Reuse this tail for any new plan-writing tool.
 
+### 6. FoodLibrary rows snapshot OFF at first scan — manual edit path is deferred
+`lookupBarcode` upserts OFF data on each new scan (re-normalizes on re-scan of the same barcode). But chip-tap re-adds do not refresh data. If a manufacturer reformulates, the library entry stays stale until the user re-scans the barcode. This is accepted for v1. Manual library edit (correct macros, delete entry) is deferred to a future feature. Workaround: re-scan the barcode to force a fresh OFF lookup.
+
 ### 5. Operating rules live in THREE places — change them together
 `docs/server-instructions/goaldmine-rules.md` ↔ `COACH_INSTRUCTIONS` in `src/app/api/mcp/[token]/route.ts` ↔ the deployed connector text. Edit all in the same PR or they drift.
 
