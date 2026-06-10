@@ -323,6 +323,7 @@ export function LogNutritionForm({
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <form
       ref={formRef}
       onSubmit={(e) => {
@@ -628,16 +629,21 @@ export function LogNutritionForm({
         {pending ? "Saving…" : "Log meal"}
       </button>
 
-      {/* ScanFoodSheet — lazy-loaded (ssr:false), browser-only */}
-      <ScanFoodSheet
-        open={scanOpen}
-        onClose={() => {
-          setScanOpen(false);
-          setScanFoodInitial(undefined);
-        }}
-        onAdd={handleAdd}
-        initialFood={scanFoodInitial}
-      />
     </form>
+
+    {/* ScanFoodSheet — lazy-loaded (ssr:false), browser-only.
+        Rendered as a SIBLING of <form>, not a descendant: its buttons can never
+        submit the meal form even if a type attribute regresses in the future.
+        Uses fixed-inset-0 overlay so position outside the form is visually transparent. */}
+    <ScanFoodSheet
+      open={scanOpen}
+      onClose={() => {
+        setScanOpen(false);
+        setScanFoodInitial(undefined);
+      }}
+      onAdd={handleAdd}
+      initialFood={scanFoodInitial}
+    />
+    </>
   );
 }
