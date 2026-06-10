@@ -5,8 +5,8 @@
 import type { XpEvent, QuestProjection } from "@/lib/game/types";
 import {
   FITNESS_XP,
-  CATEGORY_ATTRIBUTE_MAP,
-  DEFAULT_WORKOUT_ATTRIBUTE,
+  CATEGORY_ATTRIBUTE_FALLBACK,
+  categoryToAttribute,
   baselineAttributeForTest,
   hikeXp,
 } from "@/lib/game/rules";
@@ -88,10 +88,7 @@ export function projectQuestXp(
 
   if (!input.isRestDay && input.workoutTemplate) {
     const cat = input.workoutTemplate.category ?? null;
-    const attr =
-      cat && CATEGORY_ATTRIBUTE_MAP[cat] !== undefined && CATEGORY_ATTRIBUTE_MAP[cat] !== "CON"
-        ? CATEGORY_ATTRIBUTE_MAP[cat]
-        : DEFAULT_WORKOUT_ATTRIBUTE;
+    const attr = categoryToAttribute(cat) ?? CATEGORY_ATTRIBUTE_FALLBACK;
     bonusHints.push(`PR chance +${FITNESS_XP.PR_SET} ${attr}`);
   }
 

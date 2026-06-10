@@ -133,6 +133,11 @@ export type EngineContext = {
   retestCheckpoints: { weekIndex: number; testNames: string[] }[];
   // Sorted dateKeys where ≥2 NutritionLog rows exist (for Clean Week badge).
   nutritionQualDays: string[];
+  // Per-workout set counts and tonnage — keyed by workout id.
+  // Kept on context so Set Centurion / Hundred-Ton Hauler badge predicates
+  // can compute running totals in O(n) without re-scanning all exercises.
+  setCountByWorkoutId: Map<string, number>;
+  tonnageByWorkoutId: Map<string, number>;
 };
 
 // Attribute definition inside a rule pack

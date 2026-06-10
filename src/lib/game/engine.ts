@@ -25,8 +25,8 @@ import {
   FITNESS_XP,
   MILESTONE_THRESHOLDS,
   MILESTONE_XP,
-  CATEGORY_ATTRIBUTE_MAP,
-  DEFAULT_WORKOUT_ATTRIBUTE,
+  CATEGORY_ATTRIBUTE_FALLBACK,
+  categoryToAttribute,
   prAttributeForExercise,
   baselineAttributeForTest,
   hikeXp,
@@ -468,9 +468,7 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
       const cat = workout.category;
       // category may be null (off-plan fallback) or "rest" (rest days don't earn workout.completed)
       if (cat !== "rest") {
-        const attr = cat && CATEGORY_ATTRIBUTE_MAP[cat] !== undefined
-          ? CATEGORY_ATTRIBUTE_MAP[cat]!
-          : DEFAULT_WORKOUT_ATTRIBUTE;
+        const attr = categoryToAttribute(cat);
         const label = cat
           ? (cat === "upper" ? "Upper workout"
            : cat === "lower" ? "Lower workout"
@@ -886,9 +884,7 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
     const bonusHints: string[] = [];
     if (!todayLedgerEntry.isRestDay) {
       const cat = todayLedgerEntry.completedWorkouts[0]?.category ?? null;
-      const attr = cat && CATEGORY_ATTRIBUTE_MAP[cat] !== undefined && CATEGORY_ATTRIBUTE_MAP[cat] !== "CON"
-        ? CATEGORY_ATTRIBUTE_MAP[cat]!
-        : DEFAULT_WORKOUT_ATTRIBUTE;
+      const attr = categoryToAttribute(cat) ?? CATEGORY_ATTRIBUTE_FALLBACK;
       bonusHints.push(`PR chance +${FITNESS_XP.PR_SET} ${attr}`);
     }
 
