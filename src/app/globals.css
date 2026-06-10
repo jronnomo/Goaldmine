@@ -118,6 +118,34 @@ input, textarea, select, button {
   }
 }
 
+/* Level-up ring burst — CSS-only, tokens only, reduced-motion safe.
+   Applied imperatively via LevelUpCelebration's refs (classList.add).
+   Rings are positioned absolutely inside the medallion's relative wrapper (36×36).
+   Shares bullseye-pop's easing family so the two celebrations feel native. */
+@keyframes level-up-burst {
+  0%   { transform: scale(0.8); opacity: 0.65; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+.level-up-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid var(--accent);
+  animation: level-up-burst 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: none;
+}
+
+.level-up-ring.delayed {
+  animation-delay: 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .level-up-ring {
+    display: none;
+  }
+}
+
 /* Week-confirm pop — reuses the same keyframe + timing as TodayCelebration.
    Applied imperatively via ref to the WeekRail cap wrapper (REQ-007).
    A second class name avoids collisions in case cap + today refs overlap. */
