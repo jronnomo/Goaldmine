@@ -5,6 +5,16 @@ import { prisma } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import type { BaselineDay, BaselineTest, DayTemplate } from "@/lib/program-template";
 import { type NutritionPlan, parseStoredNutritionPlan } from "@/lib/nutrition-plan";
+import {
+  getGoalEventsResult,
+  eventsByDateKey,
+  otherGoalEvents as filterOtherGoalEvents,
+  type GoalEvent,
+} from "@/lib/goal-events";
+import {
+  crossGoalConflicts as computeCrossGoalConflicts,
+  type CrossGoalConflict,
+} from "@/lib/goal-conflicts";
 
 export type CalendarDayCell = {
   date: Date;
@@ -49,6 +59,8 @@ export type CalendarDayCell = {
   //   "confirmed" := isInPlan && !isPast && confirmedThroughDate >= cell date
   //   "provisional":= isInPlan && (isFuture || isToday) && (no mark OR date > mark)
   confidence: "past" | "confirmed" | "provisional" | null;
+  /** Non-focus active goals' events for this date. Empty when none exist. */
+  otherGoalEvents: GoalEvent[];
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -90,7 +102,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  const [workouts, hikes, overrides, goal] = await Promise.all([
+  const [workouts, hikes, overrides, goal, goalEventsResult] = await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
       select: { id: true, startedAt: true, status: true, title: true },
@@ -113,6 +125,9 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       orderBy: { updatedAt: "desc" },
       select: { id: true, targetDate: true, objective: true, legend: true },
     }),
+    // REQ-104: cross-goal events for the full grid (3 queries).
+    // +3 query budget for getCalendarMonth (getGoalEventsResult internals).
+    getGoalEventsResult({ start: gridStart, end: gridEnd }),
   ]);
 
   // Bucket workouts by date key.
@@ -157,6 +172,34 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     }
   }
 
+  // REQ-104: cross-goal event + conflict data for cell building.
+  const { events: allGoalEvents, focusGoalId, otherGoalsMeta } = goalEventsResult;
+  const eventsByKey = eventsByDateKey(allGoalEvents);
+
+  // Planned hike dateKeys for event-near-long-effort detection.
+  const plannedHikeDateKeys = hikes
+    .filter((h) => h.status === "planned")
+    .map((h) => dateKey(h.date));
+
+  // Override dateKeys (dates with workoutJson overrides) — suppresses event-on-hard-day.
+  const overrideDateKeys = [...overridesByKey.entries()]
+    .filter(([, o]) => o.workoutJson != null)
+    .map(([k]) => k);
+
+  // Compute cross-goal conflicts once for the whole grid; deduplicated per dateKey.
+  const crossGoalConflictList = computeCrossGoalConflicts({
+    events: allGoalEvents,
+    focusGoalId,
+    focusProgram: program,
+    plannedHikeDateKeys,
+    overrideDateKeys,
+    range: { start: gridStart, end: gridEnd },
+  });
+  const crossGoalConflictsByKey = new Map<string, CrossGoalConflict>();
+  for (const c of crossGoalConflictList) {
+    if (!crossGoalConflictsByKey.has(c.dateKey)) crossGoalConflictsByKey.set(c.dateKey, c);
+  }
+
   const cells: CalendarDayCell[] = [];
   const now = new Date();
   const todayKey = dateKey(now);
@@ -165,6 +208,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // Walk the grid by adding days in USER_TZ so DST transitions don't shear
   // the column alignment.
   for (let cursor = gridStart; cursor.getTime() <= gridEnd.getTime(); cursor = addDays(cursor, 1)) {
+    const cursorKey = dateKey(cursor);
     const cell = buildCell({
       date: cursor,
       todayKey,
@@ -175,6 +219,11 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       plannedHikesByKey,
       overridesByKey,
       plannedHikesByWeek,
+      otherGoalEventsForDate: filterOtherGoalEvents(
+        eventsByKey.get(cursorKey) ?? [],
+        focusGoalId,
+      ),
+      crossGoalConflictForDate: crossGoalConflictsByKey.get(cursorKey) ?? null,
     });
     cells.push(cell);
   }
@@ -185,6 +234,8 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     cells,
     program,
     goal,
+    /** Non-focus active goals — for the legend card (REQ-106). */
+    otherGoals: otherGoalsMeta,
   };
 }
 
@@ -223,6 +274,10 @@ function buildCell(args: {
   plannedHikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
   overridesByKey: Map<string, { workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
   plannedHikesByWeek: Map<number, { id: string; date: Date; status: string }[]>;
+  /** REQ-104: non-focus events for this specific date (pre-filtered by caller). */
+  otherGoalEventsForDate: GoalEvent[];
+  /** REQ-104: cross-goal conflict for this date, if any (pre-computed by caller). */
+  crossGoalConflictForDate: CrossGoalConflict | null;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -320,6 +375,19 @@ function buildCell(args: {
 
   const confidence = deriveConfidence(args.date, isInPlan, isPast, args.program);
 
+  // Same-goal conflicts take precedence (legacy rule).
+  // Cross-goal conflict fills cell.conflict ONLY when no same-goal conflict exists.
+  const resolvedConflict: CalendarDayCell["conflict"] =
+    conflict ??
+    (args.crossGoalConflictForDate
+      ? {
+          kind: args.crossGoalConflictForDate.kind,
+          withDates: args.crossGoalConflictForDate.withDates,
+          goalId: args.crossGoalConflictForDate.goalId,
+          label: args.crossGoalConflictForDate.label,
+        }
+      : null);
+
   return {
     date: new Date(args.date),
     dateKey: k,
@@ -336,8 +404,9 @@ function buildCell(args: {
     plannedHikeCount,
     hasOverride,
     baselinesDue,
-    conflict,
+    conflict: resolvedConflict,
     confidence,
+    otherGoalEvents: args.otherGoalEventsForDate,
   };
 }
 
@@ -449,9 +518,39 @@ export type ResolvedDay = {
     mobilityText?: string;
     notes?: string;
   } | null;
+  /** REQ-104: Non-focus active goals' events for this date. Default []. */
+  otherGoalEvents: GoalEvent[];
+  /** REQ-104: Cross-goal conflicts touching this date. Default []. */
+  crossGoalConflicts: CrossGoalConflict[];
 };
 
-export async function resolveDay(date: Date): Promise<ResolvedDay> {
+/**
+ * Optional pre-assembled context for resolveDay.
+ *
+ * When provided, resolveDay performs zero extra goal-event DB queries (useful
+ * when the caller (get_week, Today page) has already fetched events for the
+ * whole week and wants to avoid redundant round-trips).
+ *
+ * When absent, resolveDay fetches events internally:
+ *   - in-plan dates: rotation week window (same window as plannedHikesThisWeek)
+ *   - out-of-plan dates: calendar-week ± 2 days (raceProximityDays) so
+ *     same-week and proximity conflict kinds can still fire (DC-2 fix).
+ * Query budget delta when ctx absent: +3 (getGoalEventsResult internals) per call.
+ */
+export type ResolveDayCtx = {
+  /** Pre-fetched events for the range. resolveDay filters to this date's events. */
+  goalEvents: GoalEvent[];
+  /**
+   * Pre-computed cross-goal conflicts for the range.
+   * When present, resolveDay filters to this date's conflicts (zero extra computation).
+   * When absent, resolveDay computes them inline (pure, no DB).
+   */
+  crossGoalConflicts?: CrossGoalConflict[];
+  /** The focus goal's id (from GoalEventsResult.focusGoalId). */
+  focusGoalId: string | null;
+};
+
+export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
   const program = await getActiveProgram();
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
@@ -477,7 +576,7 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
     }
   }
 
-  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek] = await Promise.all([
+  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents] = await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: dayStart, lte: dayEnd } },
       include: { exercises: { select: { id: true } } },
@@ -530,7 +629,50 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
           id: string; route: string; distanceMi: number; elevationFt: number;
           packWeightLb: number | null; durationMin: number; date: Date;
         }[]),
+    // REQ-104 (7th item): goal events for cross-goal conflict detection.
+    // Query budget delta when ctx absent: +3 (getGoalEventsResult internals).
+    //   ctx present          → 0 extra queries (use pre-assembled events)
+    //   in-plan (weekWindow) → getGoalEventsResult for the rotation week
+    //   out-of-plan          → getGoalEventsResult for calendar-week ±2 days (DC-2 fix)
+    //     so same-week and proximity conflict kinds fire for get_day calls outside
+    //     the focus plan window (e.g. a race date beyond plan.totalWeeks*7).
+    // Always resolves to GoalEventsResult for uniform downstream handling.
+    ctx
+      ? Promise.resolve<import("@/lib/goal-events").GoalEventsResult>({
+          events: ctx.goalEvents,
+          focusGoalId: ctx.focusGoalId,
+          otherGoalsMeta: [],
+        })
+      : weekWindow
+        ? getGoalEventsResult({ start: weekWindow.start, end: weekWindow.end })
+        : getGoalEventsResult({
+            start: addDays(startOfWeekMonday(date), -2),
+            end: addDays(endOfWeekSunday(date), 2),
+          }),
   ]);
+
+  // REQ-104: cross-goal event + conflict computation.
+  // preloadedGoalEvents is always a GoalEventsResult (ctx branch wraps into one).
+  const { events: goalEventsForRange, focusGoalId } = preloadedGoalEvents;
+  const thisDk = dateKey(date);
+
+  const otherEventsForDate = filterOtherGoalEvents(
+    eventsByDateKey(goalEventsForRange).get(thisDk) ?? [],
+    focusGoalId,
+  );
+
+  // Use pre-computed conflicts from ctx when available; otherwise compute inline (pure, no DB).
+  const cgConflicts: CrossGoalConflict[] =
+    ctx?.crossGoalConflicts !== undefined
+      ? ctx.crossGoalConflicts.filter((c) => c.dateKey === thisDk)
+      : computeCrossGoalConflicts({
+          events: goalEventsForRange,
+          focusGoalId,
+          focusProgram: program,
+          plannedHikeDateKeys: plannedHikesThisWeek.map((h) => dateKey(h.date)),
+          overrideDateKeys: override?.workoutJson ? [thisDk] : [],
+          range: weekWindow ?? { start: dayStart, end: dayEnd },
+        }).filter((c) => c.dateKey === thisDk);
 
   // workoutTemplate and isOverride depend on the post-Promise.all `override` value.
   // D-1: declare alongside workoutTemplate/isOverride so the single return always sees them.
@@ -705,6 +847,9 @@ export async function resolveDay(date: Date): Promise<ResolvedDay> {
           ...(override.notes != null && { notes: override.notes }),
         }
       : null,
+    // REQ-104: cross-goal fields.
+    otherGoalEvents: otherEventsForDate,
+    crossGoalConflicts: cgConflicts,
   };
 }
 
