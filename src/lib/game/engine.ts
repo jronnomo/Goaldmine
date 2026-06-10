@@ -25,7 +25,6 @@ import {
   FITNESS_XP,
   MILESTONE_THRESHOLDS,
   MILESTONE_XP,
-  CATEGORY_ATTRIBUTE_FALLBACK,
   categoryToAttribute,
   prAttributeForExercise,
   baselineAttributeForTest,
@@ -34,6 +33,7 @@ import {
 } from "@/lib/game/rules";
 import { BADGE_CATALOG, evaluateBadges } from "@/lib/game/badges";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
+import { projectQuestXp, type QuestDayInput } from "@/lib/game/quest";
 import type {
   GameState,
   XpEvent,
@@ -856,47 +856,33 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
     .slice(0, 30);
 
   // ── Quest today ────────────────────────────────────────────────────────────
-  // Engine builds questToday from its own in-memory ledger entry for today.
-  // The page's resolveDay call is separate; quest.ts projectQuestXp is used
-  // for page-level quest projection. Here we populate from the engine's events.
-  const todayEvents = allEvents.filter((e) => e.dateKey === todayDk);
-  const earnedXp = todayEvents.reduce((s, e) => s + e.xp, 0);
+  // Delegates entirely to projectQuestXp (quest.ts) — single source of quest math.
+  // Engine constructs QuestDayInput from its in-memory ledger and hikesByDay map,
+  // then passes allEvents for earnedTodayXp filtering inside quest.ts.
   const todayLedgerEntry = ledger.find((e) => e.dateKey === todayDk);
 
   let questToday: GameState["questToday"] = null;
   if (todayLedgerEntry) {
-    // Projected XP for today (deterministic rules only)
-    let projectedXp = FITNESS_XP.ADHERENCE_DAY;
-    if (!todayLedgerEntry.isRestDay && todayLedgerEntry.completedWorkouts.length > 0) {
-      projectedXp += FITNESS_XP.WORKOUT_COMPLETED;
-    } else if (!todayLedgerEntry.isRestDay) {
-      projectedXp += FITNESS_XP.WORKOUT_COMPLETED; // pre-training projection
-    }
-    projectedXp +=
-      todayLedgerEntry.dueBaselineNames.length *
-      (FITNESS_XP.BASELINE_LOGGED + FITNESS_XP.BASELINE_ON_TIME);
-    const todayNutritionCount = nutritionCountByDay.get(todayDk) ?? 0;
-    if (todayNutritionCount < 2) {
-      projectedXp += FITNESS_XP.NUTRITION_DAY;
-    }
+    // Resolve planned hike for today (elevationFt/packWeightLb needed for hikeXp())
+    const plannedHike =
+      (hikesByDay.get(todayDk) ?? []).find((h) => h.status === "planned") ?? null;
 
-    // Bonus hints
-    const bonusHints: string[] = [];
-    if (!todayLedgerEntry.isRestDay) {
-      const cat = todayLedgerEntry.completedWorkouts[0]?.category ?? null;
-      const attr = categoryToAttribute(cat) ?? CATEGORY_ATTRIBUTE_FALLBACK;
-      bonusHints.push(`PR chance +${FITNESS_XP.PR_SET} ${attr}`);
-    }
-
-    const complete = earnedXp >= projectedXp && todayEvents.length > 0;
-
-    questToday = {
-      projectedXp,
-      earnedXp,
-      earnedEvents: todayEvents,
-      complete,
-      bonusHints,
+    const questDayInput: QuestDayInput = {
+      dateKey: todayDk,
+      isRestDay: todayLedgerEntry.isRestDay,
+      // Non-rest plan days always have a workout template; category may be null
+      // pre-training (falls back to CATEGORY_ATTRIBUTE_FALLBACK inside quest.ts).
+      workoutTemplate: !todayLedgerEntry.isRestDay
+        ? { category: todayLedgerEntry.completedWorkouts[0]?.category ?? null }
+        : null,
+      baselinesDue: todayLedgerEntry.dueBaselineNames,
+      plannedHikeToday: plannedHike
+        ? { elevationFt: plannedHike.elevationFt, packWeightLb: plannedHike.packWeightLb }
+        : null,
+      nutritionLogCount: nutritionCountByDay.get(todayDk) ?? 0,
     };
+
+    questToday = projectQuestXp(questDayInput, allEvents);
   }
 
   return {

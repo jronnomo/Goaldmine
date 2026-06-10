@@ -43,11 +43,12 @@ export function CharacterHeader({ state }: CharacterHeaderProps) {
           <LevelUpCelebration level={state.level} />
         </div>
 
-        {/* Overall XP bar — fills remaining width */}
+        {/* Overall XP bar — fills remaining width; label shows xpIntoLevel / xpToNext */}
         <div className="flex-1 min-w-0">
           <XpBar
             value={state.xpIntoLevel}
             max={state.xpToNext}
+            label={`${state.xpIntoLevel} / ${state.xpToNext}`}
             data-testid="xp-bar-overall"
           />
         </div>
