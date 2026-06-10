@@ -93,6 +93,13 @@ export async function updateGoal(id: string, form: FormData) {
   if (!objective) throw new Error("Objective is required");
   if (!targetDateStr) throw new Error("Target date is required");
 
+  // v2 — Mirror createGoal: parseDateKey yields USER_TZ midnight, whereas
+  // `new Date(yyyy-mm-dd)` yields UTC midnight which shifts one calendar cell
+  // early in MT. parseDateKey doesn't validate format, so the NaN guard below
+  // catches malformed input from a bugged or tampered form submission.
+  const targetDate = parseDateKey(targetDateStr);
+  if (Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
+
   // status (active/achieved/abandoned) is lifecycle metadata. Goal.active is
   // the focus flag (which goal drives Today/Calendar). They are independent —
   // use setActiveGoal to change focus.
@@ -100,7 +107,7 @@ export async function updateGoal(id: string, form: FormData) {
     where: { id },
     data: {
       objective,
-      targetDate: new Date(targetDateStr),
+      targetDate,
       notes,
       status,
       targets: targets ?? undefined,

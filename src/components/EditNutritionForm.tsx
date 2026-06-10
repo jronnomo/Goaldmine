@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { deleteNutrition, updateNutrition } from "@/lib/workout-actions";
 import { MacroInputs, type MacroDefaults } from "@/components/MacroInputs";
 
@@ -107,11 +108,12 @@ export function EditNutritionForm({
         >
           {pending ? "Saving…" : "Save"}
         </button>
-        <button
-          type="button"
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Delete meal · confirm"
           disabled={pending}
-          onClick={() => {
-            if (!confirm("Delete this meal log? This cannot be undone.")) return;
+          variant="danger"
+          onConfirm={() =>
             startTransition(async () => {
               try {
                 await deleteNutrition(id);
@@ -119,12 +121,10 @@ export function EditNutritionForm({
                 if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
                 setError(e instanceof Error ? e.message : String(e));
               }
-            });
-          }}
+            })
+          }
           className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2 text-sm"
-        >
-          Delete
-        </button>
+        />
       </div>
     </form>
   );

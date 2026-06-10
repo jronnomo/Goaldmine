@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { resolveAllPendingNotes, resolveNote } from "@/lib/note-actions";
 
 export type PendingNote = {
@@ -34,17 +35,14 @@ export function PendingNotes({
         <p className="text-xs text-[var(--muted)]">
           Have Claude fold them into a revision, or mark resolved if no plan change is needed.
         </p>
-        <button
-          type="button"
+        <ConfirmButton
+          label="Resolve all"
+          confirmLabel="Resolve all · confirm"
           disabled={pending}
-          onClick={() => {
-            if (!confirm(`Resolve all ${notes.length} pending notes?`)) return;
-            startTransition(() => resolveAllPendingNotes());
-          }}
+          variant="accent"
+          onConfirm={() => startTransition(() => resolveAllPendingNotes())}
           className="text-xs rounded-full border border-[var(--border)] px-2 py-1 hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] disabled:opacity-50 shrink-0"
-        >
-          Resolve all
-        </button>
+        />
       </div>
       <ul className="space-y-2">
         {notes.map((n) => (

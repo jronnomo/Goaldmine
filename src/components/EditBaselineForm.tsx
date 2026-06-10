@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { deleteBaselineRow, updateBaseline } from "@/lib/workout-actions";
 
 export function EditBaselineForm({
@@ -93,11 +94,12 @@ export function EditBaselineForm({
         >
           {pending ? "Saving…" : "Save"}
         </button>
-        <button
-          type="button"
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Delete result · confirm"
           disabled={pending}
-          onClick={() => {
-            if (!confirm("Delete this result? This cannot be undone.")) return;
+          variant="danger"
+          onConfirm={() =>
             startTransition(async () => {
               try {
                 await deleteBaselineRow(id);
@@ -105,12 +107,10 @@ export function EditBaselineForm({
                 if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
                 setError(e instanceof Error ? e.message : String(e));
               }
-            });
-          }}
+            })
+          }
           className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2 text-sm"
-        >
-          Delete
-        </button>
+        />
       </div>
     </form>
   );

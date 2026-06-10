@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { clearDayOverride, upsertDayOverrideFromForm } from "@/lib/day-actions";
 
 export function DayOverrideForm({
@@ -87,23 +88,22 @@ export function DayOverrideForm({
           {pending ? "Saving…" : hasOverride ? "Update override" : "Save override"}
         </button>
         {hasOverride && (
-          <button
-            type="button"
+          <ConfirmButton
+            label="Clear"
+            confirmLabel="Clear override · confirm"
             disabled={pending}
-            onClick={() => {
-              if (!confirm("Remove this day's override and revert to the rotation?")) return;
+            variant="danger"
+            onConfirm={() =>
               startTransition(async () => {
                 try {
                   await clearDayOverride(dateKey);
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e));
                 }
-              });
-            }}
+              })
+            }
             className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2 text-sm"
-          >
-            Clear
-          </button>
+          />
         )}
       </div>
     </form>

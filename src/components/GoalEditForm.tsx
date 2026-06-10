@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { copyTargetsFromGoal, deleteGoal, updateGoal } from "@/lib/goal-actions";
 
 type Defaults = {
@@ -109,17 +110,12 @@ export function GoalEditForm({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
+            <ConfirmButton
+              label="Apply"
+              confirmLabel="Replace targets · confirm"
               disabled={pending || !copyFromGoalId}
-              onClick={() => {
-                if (
-                  !confirm(
-                    "Replace this goal's targets with the selected goal's targets? Unsaved edits below will be lost.",
-                  )
-                ) {
-                  return;
-                }
+              variant="accent"
+              onConfirm={() =>
                 startTransition(async () => {
                   try {
                     await copyTargetsFromGoal(id, copyFromGoalId);
@@ -127,12 +123,10 @@ export function GoalEditForm({
                   } catch (e) {
                     setError(e instanceof Error ? e.message : String(e));
                   }
-                });
-              }}
+                })
+              }
               className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition disabled:opacity-50"
-            >
-              Apply
-            </button>
+            />
           </div>
         </div>
       )}
@@ -164,25 +158,23 @@ export function GoalEditForm({
         >
           {pending ? "Saving…" : "Save"}
         </button>
-        <button
-          type="button"
+        <ConfirmButton
+          label="Delete"
+          confirmLabel="Delete goal · confirm"
           disabled={pending}
-          onClick={() => {
-            if (confirm("Delete this goal? This cannot be undone.")) {
-              startTransition(async () => {
-                try {
-                  await deleteGoal(id);
-                } catch (e) {
-                  if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
-                  setError(e instanceof Error ? e.message : String(e));
-                }
-              });
-            }
-          }}
+          variant="danger"
+          onConfirm={() =>
+            startTransition(async () => {
+              try {
+                await deleteGoal(id);
+              } catch (e) {
+                if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
+                setError(e instanceof Error ? e.message : String(e));
+              }
+            })
+          }
           className="rounded-lg border border-[var(--danger)]/40 text-[var(--danger)] px-3 py-2 text-sm"
-        >
-          Delete
-        </button>
+        />
       </div>
     </form>
   );

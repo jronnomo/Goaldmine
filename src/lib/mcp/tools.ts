@@ -3964,4 +3964,161 @@ function registerWriteTools(server: McpServer) {
         };
       }),
   );
+
+  // ── update_goal ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    "update_goal",
+    {
+      title: "Update a goal's objective, target date, or status",
+      description:
+        "Partial update — only the fields you pass are changed; omit anything you want to leave unchanged. " +
+        "targetDate here is the GOAL pin shown on the calendar (e.g. summit day). " +
+        "To shift the plan length / endsOn / plan metadata, follow up with update_plan_metadata after this call. " +
+        "Per operating rules: propose the change and get explicit approval before calling. " +
+        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setActiveGoal from the app UI.",
+      inputSchema: {
+        goalId: z.string().describe("The goal id to update"),
+        objective: z
+          .string()
+          .min(3)
+          .max(200)
+          .optional()
+          .describe("New objective text (min 3 chars)"),
+        targetDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
+          .optional()
+          .describe(
+            "New goal target date in yyyy-mm-dd (USER_TZ midnight). This is the goal-date pin; " +
+              "plan length / endsOn cascades go through update_plan_metadata.",
+          ),
+        status: z
+          .enum(["active", "achieved", "abandoned"])
+          .optional()
+          .describe("Goal lifecycle status"),
+        notes: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Free-form goal notes; pass null to clear"),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const goal = await prisma.goal.findUnique({
+          where: { id: input.goalId },
+          select: { id: true, objective: true, targetDate: true, status: true, notes: true },
+        });
+        if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
+
+        const data: Record<string, unknown> = {};
+        if (input.objective !== undefined) data.objective = input.objective;
+        if (input.targetDate !== undefined) data.targetDate = parseDateInput(input.targetDate);
+        if (input.status !== undefined) data.status = input.status;
+        if (input.notes !== undefined) data.notes = input.notes;
+
+        if (Object.keys(data).length === 0) {
+          return {
+            id: goal.id,
+            message: "No fields provided — nothing changed.",
+            goal: {
+              objective: goal.objective,
+              targetDate: toDateKey(goal.targetDate),
+              status: goal.status,
+            },
+          };
+        }
+
+        const updated = await prisma.goal.update({
+          where: { id: input.goalId },
+          data,
+          select: { id: true, objective: true, targetDate: true, status: true },
+        });
+
+        return {
+          id: updated.id,
+          message: `Goal updated: ${updated.objective}`,
+          goal: {
+            objective: updated.objective,
+            targetDate: toDateKey(updated.targetDate),
+            status: updated.status,
+          },
+        };
+      }),
+  );
+
+  // ── delete_goal ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    "delete_goal",
+    {
+      title: "Permanently delete a goal and cascade its plan tree",
+      description:
+        "PERMANENT and irreversible. Cascades: deletes all Plans, PlanRevisions, PlanDayOverrides, " +
+        "ScheduledItems, and LogEntries linked to this goal. " +
+        "Workouts, measurements, hikes, nutrition logs, notes, and baselines are NOT goal-linked and survive deletion. " +
+        "Per operating rules: propose the deletion to the user, describe what will be cascaded, " +
+        "and get their explicit approval in chat BEFORE calling this tool. " +
+        "Pass confirm:true only after the user has approved.",
+      inputSchema: {
+        goalId: z.string().describe("The goal id to delete"),
+        confirm: z
+          .boolean()
+          .describe(
+            "Must be true. Propose the deletion and get the user's explicit approval in chat first. " +
+              "Never pass true without user confirmation.",
+          ),
+      },
+    },
+    async ({ goalId, confirm }) =>
+      safe(async () => {
+        if (confirm !== true) {
+          throw new Error(
+            "confirm must be true. Propose the deletion to the user first — explain what will be cascaded — " +
+              "and get their explicit approval before retrying with confirm:true.",
+          );
+        }
+
+        const goal = await prisma.goal.findUnique({
+          where: { id: goalId },
+          select: { id: true, objective: true },
+        });
+        if (!goal) throw new Error(`Goal not found: ${goalId}`);
+
+        // Collect cascade counts before delete so the response is informative.
+        const [plans, scheduledItems, logEntries] = await Promise.all([
+          prisma.plan.findMany({
+            where: { goalId },
+            select: {
+              id: true,
+              _count: { select: { revisions: true, overrides: true } },
+            },
+          }),
+          prisma.scheduledItem.count({ where: { goalId } }),
+          prisma.logEntry.count({ where: { goalId } }),
+        ]);
+
+        const planCount = plans.length;
+        const revisionCount = plans.reduce((sum, p) => sum + p._count.revisions, 0);
+        const overrideCount = plans.reduce((sum, p) => sum + p._count.overrides, 0);
+
+        // Prisma cascades (onDelete: Cascade) handle the children automatically.
+        await prisma.goal.delete({ where: { id: goalId } });
+
+        return {
+          deleted: { id: goal.id, objective: goal.objective },
+          cascaded: {
+            plans: planCount,
+            revisions: revisionCount,
+            overrides: overrideCount,
+            scheduledItems,
+            logEntries,
+          },
+          message:
+            `Goal "${goal.objective}" deleted. Cascaded: ${planCount} plan(s), ` +
+            `${revisionCount} revision(s), ${overrideCount} day override(s), ` +
+            `${scheduledItems} scheduled item(s), ${logEntries} log entry/entries. ` +
+            "Workouts, measurements, hikes, nutrition logs, notes, and baselines were NOT deleted.",
+        };
+      }),
+  );
 }

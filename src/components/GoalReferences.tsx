@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { addGoalReference, removeGoalReference, type GoalReference } from "@/lib/goal-actions";
 
 export function GoalReferences({
@@ -58,17 +59,14 @@ export function GoalReferences({
                     </p>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!confirm("Remove this reference?")) return;
-                    startTransition(() => removeGoalReference(goalId, r.id));
-                  }}
+                <ConfirmButton
+                  label="✕"
+                  confirmLabel="Remove · confirm"
+                  variant="danger"
+                  onConfirm={() => startTransition(() => removeGoalReference(goalId, r.id))}
                   className="text-xs text-[var(--muted)] hover:text-[var(--danger)] px-2"
                   aria-label="Remove reference"
-                >
-                  ✕
-                </button>
+                />
               </div>
             </li>
           ))}

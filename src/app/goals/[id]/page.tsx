@@ -111,6 +111,20 @@ export default async function GoalDetail({
         </p>
       </header>
 
+      <Card title="Edit">
+        <GoalEditForm
+          id={goal.id}
+          copySources={copySources}
+          defaultValues={{
+            objective: goal.objective,
+            targetDate: new Date(goal.targetDate).toISOString().slice(0, 10),
+            notes: goal.notes ?? "",
+            status: goal.status,
+            targets: JSON.stringify(targets, null, 2),
+          }}
+        />
+      </Card>
+
       {readiness && (
         <Card title="Readiness">
           <div className="flex items-baseline justify-between mb-2">
@@ -175,20 +189,6 @@ export default async function GoalDetail({
           <p className="text-sm whitespace-pre-wrap">{goal.notes}</p>
         </Card>
       )}
-
-      <Card title="Edit">
-        <GoalEditForm
-          id={goal.id}
-          copySources={copySources}
-          defaultValues={{
-            objective: goal.objective,
-            targetDate: new Date(goal.targetDate).toISOString().slice(0, 10),
-            notes: goal.notes ?? "",
-            status: goal.status,
-            targets: JSON.stringify(targets, null, 2),
-          }}
-        />
-      </Card>
     </div>
   );
 }
