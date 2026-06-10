@@ -194,6 +194,8 @@ export async function setGoalTracked(id: string, tracked: boolean) {
 
 export async function deleteGoal(id: string) {
   await prisma.goal.delete({ where: { id } });
+  revalidatePath("/");
+  revalidatePath("/calendar");
   revalidatePath("/goals");
   revalidatePath("/stats");
   redirect("/goals");
