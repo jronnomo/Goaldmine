@@ -64,6 +64,9 @@ import {
   applyBaselineOps,
   summarizeBaselineChanges,
 } from "@/lib/baseline-ops";
+// INTEGRATION: swap to "@/lib/game/engine" once Stream A ships engine.ts.
+import { computeGameState } from "@/lib/game/engine-stub";
+import { rulePackForGoal } from "@/lib/game/attributes-registry";
 
 const DateKeyShape = z
   .string()
@@ -1709,6 +1712,59 @@ function registerReadTools(server: McpServer) {
           format as ExportFormat,
         );
         return { workoutId, format, text };
+      }),
+  );
+
+  // ── get_game_state ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "get_game_state",
+    {
+      title: "Get RPG character state",
+      description:
+        "Returns the derived game state: overall level + XP, per-attribute levels and progress, " +
+        "plan-adherence streak, last 10 unlocked badges, 20 recent XP events, and today's quest " +
+        "projection (projected vs earned XP). Recomputed from full history on every call — " +
+        "fully retroactive. Use to give progress feedback, identify which stat to target, frame " +
+        "today's quest, or check whether a bonus landed.",
+    },
+    async () =>
+      safe(async () => {
+        const state = await computeGameState();
+        if (!state.goalKind) {
+          return { goalKind: null, message: "No active program" };
+        }
+        const unlockedBadges = state.badges.filter((b) => b.dateKey !== null);
+        return {
+          goalKind: state.goalKind,
+          level: state.level,
+          xp: state.xp,
+          xpIntoLevel: state.xpIntoLevel,
+          xpToNext: state.xpToNext,
+          attributes: state.attributes.map((a) => ({
+            id: a.id,
+            label: a.label,
+            level: a.level,
+            xp: a.xp,
+            intoLevel: a.xpIntoLevel,
+            toNext: a.xpToNext,
+          })),
+          streak: state.streak,
+          badges: unlockedBadges.slice(-10).map((b) => ({
+            id: b.def.id,
+            name: b.def.name,
+            dateKey: b.dateKey,
+          })),
+          lockedBadgeCount: state.badges.filter((b) => b.dateKey === null).length,
+          recentEvents: state.recentEvents.slice(0, 20),
+          questToday: state.questToday
+            ? {
+                projectedXp: state.questToday.projectedXp,
+                earnedXp: state.questToday.earnedXp,
+                complete: state.questToday.complete,
+                bonusHints: state.questToday.bonusHints,
+              }
+            : null,
+        };
       }),
   );
 }
@@ -3785,6 +3841,127 @@ function registerWriteTools(server: McpServer) {
               ? `Removed ${removed} acknowledgement${removed === 1 ? "" : "s"} for ${label}.`
               : `No matching acknowledgement found for ${label}.`,
           removed,
+        };
+      }),
+  );
+
+  // ── grant_bonus_xp ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "grant_bonus_xp",
+    {
+      title: "Grant coach bonus XP",
+      description:
+        "Award XP for effort the plan doesn't automatically capture — e.g. 'Pushed through on 4h sleep'. " +
+        "Appears in the app's XP log (✦ marked). reason is shown verbatim in the app. " +
+        "Attribute must be a valid id for the active goal kind (STR|END|MOB|CON for fitness); " +
+        "omit for overall-only XP. Amount capped 1–500. " +
+        "Per operating rules: propose before applying — share the XP amount, reason, and attribute with " +
+        "the user before calling this tool. " +
+        "Idempotent on (date, amount, reason): retrying a failed call returns alreadyGranted:true " +
+        "with the existing row instead of inserting a duplicate.",
+      inputSchema: {
+        amount: z.number().int().min(1).max(500).describe("XP to grant (1–500)"),
+        reason: z
+          .string()
+          .min(3)
+          .max(300)
+          .describe("Why — shown verbatim in the app's XP log"),
+        attribute: z
+          .string()
+          .optional()
+          .describe(
+            "Attribute id for the active goal kind (e.g. STR|END|MOB|CON for fitness). " +
+              "Omit for overall-only XP.",
+          ),
+        date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional()
+          .describe("Defaults to today (user TZ). Format: yyyy-mm-dd"),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        // 1. Resolve active goal for attribute validation
+        const goal = await prisma.goal.findFirst({
+          where: { active: true },
+          orderBy: { updatedAt: "desc" },
+          select: { id: true, kind: true },
+        });
+        const pack = rulePackForGoal(goal?.kind ?? "fitness");
+        const validIds = pack.attributes.map((a) => a.id);
+
+        if (input.attribute !== undefined) {
+          if (!validIds.includes(input.attribute)) {
+            throw new Error(
+              `Invalid attribute "${input.attribute}" for goal kind "${pack.goalKind}". ` +
+                `Valid ids: ${validIds.join(", ")}`,
+            );
+          }
+          if (!goal) {
+            throw new Error(
+              "No active goal — omit the attribute field to grant overall-only XP.",
+            );
+          }
+        }
+
+        // 2. Parse date — bare yyyy-mm-dd treated as USER_TZ midnight
+        const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
+
+        // 3. Idempotency check: return existing row rather than inserting a duplicate.
+        //    Keyed on (date, amount, reason) — covers the retry case where the coach
+        //    re-sends the same bonus on the same day for the same reason.
+        const existing = await prisma.gameBonusXp.findFirst({
+          where: { date, amount: input.amount, reason: input.reason },
+          select: { id: true, amount: true, reason: true, attribute: true, date: true },
+        });
+        if (existing) {
+          const existingState = await computeGameState();
+          return {
+            granted: {
+              id: existing.id,
+              amount: existing.amount,
+              reason: existing.reason,
+              attribute: existing.attribute,
+              dateKey: toDateKey(existing.date),
+            },
+            newState: {
+              level: existingState.level,
+              xp: existingState.xp,
+              attributes: existingState.attributes.map((a) => ({ id: a.id, level: a.level })),
+            },
+            alreadyGranted: true,
+          };
+        }
+
+        // 4. Persist
+        const row = await prisma.gameBonusXp.create({
+          data: {
+            date,
+            amount: input.amount,
+            reason: input.reason,
+            attribute: input.attribute ?? null,
+            source: "coach",
+          },
+        });
+
+        // 5. Return condensed new state
+        const newState = await computeGameState();
+
+        return {
+          granted: {
+            id: row.id,
+            amount: row.amount,
+            reason: row.reason,
+            attribute: row.attribute,
+            dateKey: toDateKey(row.date),
+          },
+          newState: {
+            level: newState.level,
+            xp: newState.xp,
+            attributes: newState.attributes.map((a) => ({ id: a.id, level: a.level })),
+          },
+          alreadyGranted: false,
         };
       }),
   );
