@@ -1,0 +1,89 @@
+{
+  "feature": "Multi-goal Phase 1: cross-goal awareness",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-multigoal-phase1-awareness.md",
+  "prd_issue": "https://github.com/jronnomo/workout-planner/issues/62",
+  "requirements": [
+    "REQ-101",
+    "REQ-102",
+    "REQ-103",
+    "REQ-104",
+    "REQ-105",
+    "REQ-106",
+    "REQ-107"
+  ],
+  "agents": [
+    {
+      "role": "ux-research",
+      "status": "done",
+      "output": "docs/ux-research/multigoal-phase1-awareness.md (+ ledger UXR-62-01..16, all 'proposed')"
+    },
+    {
+      "role": "research",
+      "status": "done",
+      "output": "agents/research-output.md"
+    },
+    {
+      "role": "architect",
+      "status": "done (v2 after critique)",
+      "output": "agents/architecture-blueprint.md"
+    },
+    {
+      "role": "devils-advocate",
+      "status": "done \u2014 NEEDS REVISION verdict, all crit/high fixed in v2",
+      "output": "agents/architecture-critique.md"
+    },
+    {
+      "role": "dev-alpha REQ-101",
+      "status": "merged",
+      "commit": "44631e5",
+      "note": "final report glitched; work verified by orchestrator; records.ts gap folded into Beta"
+    },
+    {
+      "role": "dev-beta REQ-102",
+      "status": "merged",
+      "commit": "74bca8a/fc42828"
+    },
+    {
+      "role": "dev-gamma REQ-105",
+      "status": "merged",
+      "commit": "9475024"
+    },
+    {
+      "role": "dev-delta REQ-103",
+      "status": "merged",
+      "commit": "b193ae9",
+      "note": "9/9 self-checks incl. CRIT-1/CRIT-3 cases"
+    },
+    {
+      "role": "dev-epsilon REQ-104",
+      "status": "merged",
+      "commit": "1e2a885",
+      "note": "QA nit: out-of-plan window hardcodes \u00b12 instead of CROSS_GOAL_RULES.raceProximityDays"
+    },
+    {
+      "role": "dev-zeta REQ-106",
+      "status": "merged"
+    },
+    {
+      "role": "dev-eta REQ-107",
+      "status": "merged"
+    },
+    {
+      "role": "qa",
+      "status": "done \u2014 MINOR FIXES"
+    },
+    {
+      "role": "fix-iter2",
+      "status": "merged",
+      "commit": "b40adc7"
+    }
+  ],
+  "wave_plan": "101 done -> {102 Beta, 105 Gamma} running -> 103 Delta -> 104 Epsilon -> {106 Zeta, 107 Eta} -> QA",
+  "main_head_after_wave1": "44631e576b71a0ebf7fb0be875e13f20ee6b84b8",
+  "migration": "multigoal_phase1 APPLIED to Neon, backfill verified (1 focus goal: Elbert)",
+  "push_policy": "local commits per wave; push to origin only after QA gates in Phase 7",
+  "iteration": 2,
+  "status": "complete",
+  "main_head": "b40adc7"
+}

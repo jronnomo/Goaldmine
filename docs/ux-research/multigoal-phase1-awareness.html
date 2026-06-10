@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goaldmine · Multi-goal Phase 1 — UX mockup (chosen direction: Claim-ring)</title>
+<style>
+  /* ============================================================
+     GALLERY CHROME (outside the mockup). Hex only lives in :root
+     and the .light/.dark var declarations — never in body markup.
+     ============================================================ */
+  * { box-sizing: border-box; }
+  :root { --page-bg:#23201b; --page-fg:#d9cfbf; --page-panel:#2e2a23; }
+  body.lightsurround { --page-bg:#e7ddc9; --page-fg:#2a2114; --page-panel:#f1e9d6; }
+
+  body {
+    margin:0;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background:var(--page-bg);
+    color:var(--page-fg);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---- THEME TOKEN SETS (the only place raw color literals live) ---- */
+  .light {
+    --background:#FAF3E3; --foreground:#1F1408; --muted:#7A5E3A; --card:#FFFBF0;
+    --border:#D9C8A2; --accent:#8A6212; --accent-fg:#FFFBF0; --accent-soft:rgba(138,98,18,0.14);
+    --target:#A82A1F; --target-fg:#FFFBF0; --warning:#A8511A; --success:#4E6B36; --danger:#A82A1F;
+    /* derived low-alpha washes (declared here only, used via var in body) */
+    --target-soft:rgba(168,42,31,0.10); --warning-soft:rgba(168,81,26,0.10);
+    --shadow:0 1px 2px rgba(31,20,8,0.08);
+  }
+  .dark {
+    --background:#0F0B07; --foreground:#F4E9D4; --muted:#9C8866; --card:#1A130C;
+    --border:#3A2E1F; --accent:#D4A437; --accent-fg:#0F0B07; --accent-soft:rgba(212,164,55,0.12);
+    --target:#C0392B; --target-fg:#FFFFFF; --warning:#E0915C; --success:#7FA45C; --danger:#C0392B;
+    --target-soft:rgba(192,57,43,0.16); --warning-soft:rgba(224,145,92,0.14);
+    --shadow:0 1px 2px rgba(0,0,0,0.45);
+  }
+
+  /* ---- page header ---- */
+  header.page { padding:26px 24px 4px; text-align:center; }
+  h1.title {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-size:22px; font-weight:700; margin:0 0 4px; letter-spacing:0.01em;
+  }
+  .subtitle { font-size:13px; opacity:0.82; margin:0 0 14px; }
+  .toggle {
+    font:inherit; font-size:12px; cursor:pointer;
+    background:var(--page-panel); color:var(--page-fg);
+    border:1px solid rgba(128,128,128,0.4); border-radius:9999px; padding:6px 14px;
+  }
+
+  /* ---- two-column gallery ---- */
+  .gallery {
+    display:flex; gap:30px; padding:24px; flex-wrap:wrap;
+    align-items:flex-start; justify-content:center;
+  }
+
+  /* ============================================================
+     PHONE FRAME
+     ============================================================ */
+  .phone {
+    width:390px; flex:0 0 390px;
+    background:var(--background); color:var(--foreground);
+    border:1px solid var(--border); border-radius:28px;
+    padding:14px 10px 24px; overflow:hidden;
+    box-shadow:0 14px 40px rgba(0,0,0,0.38);
+  }
+  .phone-label {
+    font-size:11px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--muted); text-align:center; padding:2px 0 8px;
+  }
+  .surf-label {
+    font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.09em;
+    color:var(--muted); margin:16px 8px 7px;
+  }
+  .surface { margin:0 6px 6px; }
+  .surface + .surface { margin-top:2px; }
+
+  /* ---- card recipe ---- */
+  .card {
+    border-radius:1rem; border:1px solid var(--border); background:var(--card);
+    padding:1rem; box-shadow:var(--shadow);
+  }
+  .card.tight { padding:0.75rem; }
+  .card + .card { margin-top:10px; }
+
+  .cap { font-size:10px; font-style:italic; color:var(--muted); margin:6px 4px 0; }
+
+  /* ============================================================
+     MARKERS — focus bullseye + foreign claim-ring + wedge
+     ============================================================ */
+  .bull {
+    width:13px; height:13px; border-radius:50%; background:var(--target);
+    display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto;
+  }
+  .bull-gap {
+    width:8px; height:8px; border-radius:50%; background:var(--card);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .bull-dot { width:4px; height:4px; border-radius:50%; background:var(--target); }
+  .bull.lg { width:20px; height:20px; }
+  .bull.lg .bull-gap { width:13px; height:13px; }
+  .bull.lg .bull-dot { width:7px; height:7px; }
+  .bull.sm { width:12px; height:12px; }
+  .bull.sm .bull-gap { width:7px; height:7px; }
+  .bull.sm .bull-dot { width:3px; height:3px; }
+
+  /* plain focus emoji (full opacity, no ring) */
+  .focus-glyph { font-size:13px; line-height:1; flex:0 0 auto; }
+
+  /* FOREIGN marker — claim-ring (reinforced: outline + opacity) */
+  .foreign {
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:12px; line-height:1; flex:0 0 auto;
+    width:14px; height:14px;
+    opacity:0.7;
+    outline:1px solid var(--muted); outline-offset:1px;
+    border-radius:9999px;
+  }
+  .foreign.md { width:18px; height:18px; font-size:14px; }
+
+  /* conflict corner wedge (top-right CSS triangle) */
+  .wedge {
+    position:absolute; top:0; right:0; width:0; height:0;
+    border-top:11px solid var(--warning);
+    border-left:11px solid transparent;
+  }
+
+  /* overflow chip */
+  .plus-chip {
+    font-size:10px; line-height:1; color:var(--muted);
+    background:var(--accent-soft); border-radius:9999px; padding:2px 4px;
+  }
+
+  /* ============================================================
+     CALENDAR
+     ============================================================ */
+  .cal-grid { display:flex; }
+  .cal-rail {
+    width:16px; flex:0 0 16px; border-right:1px solid var(--border);
+    display:flex; align-items:flex-start; justify-content:center;
+    font-size:8px; color:var(--muted); padding-top:4px;
+  }
+  .cal-body { flex:1; }
+  .cal-dow-row, .cal-cell-row { display:flex; }
+  .dow {
+    flex:1 1 0; text-align:center; font-size:9px; text-transform:uppercase;
+    color:var(--muted); padding:0 0 3px; letter-spacing:0.03em;
+  }
+  /* each cell ~47.7px (flex-fills the 326px body / 7) × 60px tall */
+  .cal-cell {
+    flex:1 1 0; height:60px; position:relative;
+    border-top:1px solid var(--border); border-left:1px solid var(--border);
+    padding:4px 0 0; text-align:center;
+  }
+  .cal-cell:last-child { border-right:1px solid var(--border); }
+  .cal-cell-row { border-bottom:1px solid var(--border); }
+  .cal-date { font-size:12px; font-weight:600; color:var(--foreground); }
+  .cal-markers {
+    display:flex; gap:3px; justify-content:center; align-items:center;
+    margin-top:7px; height:16px;
+  }
+
+  /* legend */
+  .leg-row { display:flex; align-items:center; gap:8px; font-size:12px; padding:3px 0; color:var(--foreground); }
+  .leg-obj { color:var(--muted); }
+  .divider { border-top:1px solid var(--border); margin:9px 0; }
+  .other-head { font-size:10px; text-transform:uppercase; letter-spacing:0.09em; color:var(--muted); margin:0 0 5px; }
+
+  /* ============================================================
+     TODAY — OtherGoalsStrip (quiet + loud) + hero
+     ============================================================ */
+  .strip-quiet {
+    display:flex; align-items:center; gap:7px;
+    font-size:13px; color:var(--muted);
+    background:var(--card); border:1px solid var(--border); border-radius:0.75rem;
+    padding:9px 12px; box-shadow:var(--shadow);
+  }
+  .strip-quiet .chev { margin-left:auto; color:var(--muted); }
+  .strip-loud {
+    background:var(--accent-soft); border-left:2px solid var(--target);
+    border-radius:0.5rem; padding:10px 12px; margin-top:8px;
+  }
+  .strip-loud .t {
+    display:flex; align-items:center; gap:7px;
+    font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--target);
+  }
+  .strip-loud .s { font-size:12px; color:var(--muted); margin-top:3px; }
+
+  .mini-head { font-size:10px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin:0 4px 5px; }
+
+  .card-title { font-size:14px; font-weight:700; color:var(--foreground); }
+  .card-kicker { font-size:10px; text-transform:uppercase; letter-spacing:0.07em; color:var(--accent); margin-bottom:3px; }
+  .card-sub { font-size:12px; color:var(--muted); margin-top:6px; line-height:1.5; }
+
+  /* ============================================================
+     DAY — banner stack
+     ============================================================ */
+  .banner-race {
+    border:1.5px solid var(--target); background:var(--target-soft);
+    border-radius:0.75rem; padding:11px 13px;
+    display:flex; align-items:center; gap:8px;
+    color:var(--foreground); font-size:13px; font-weight:600;
+  }
+  .banner-conflict {
+    border-left:3px solid var(--warning); background:var(--warning-soft);
+    border-radius:0.5rem; padding:11px 13px; margin-top:9px;
+    display:flex; gap:9px;
+  }
+  .banner-conflict .glyph { color:var(--warning); font-size:14px; line-height:1.35; flex:0 0 auto; }
+  .banner-conflict .body { font-size:13px; color:var(--foreground); line-height:1.45; }
+  .banner-conflict .cta { display:block; font-size:12px; font-weight:600; color:var(--accent); margin-top:5px; }
+  .sec-header { font-size:13px; margin:11px 2px 0; line-height:1.4; }
+  .sec-header .lbl { color:var(--accent); font-weight:600; }
+  .sec-header .rest { color:var(--muted); }
+
+  /* ============================================================
+     GOALS — 3-row list
+     ============================================================ */
+  .grow {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 2px; border-bottom:1px solid var(--border);
+  }
+  .grow:last-child { border-bottom:0; }
+  .gname { font-size:14px; font-weight:600; color:var(--foreground); }
+  .gname.dim { color:var(--muted); }
+  .spacer { flex:1 1 auto; }
+
+  .badge-focus {
+    display:inline-flex; align-items:center; gap:4px;
+    font-size:10px; text-transform:uppercase; letter-spacing:0.04em;
+    border:1px solid var(--accent); color:var(--accent); border-radius:9999px; padding:2px 6px;
+  }
+  .pill-days {
+    font-size:11px; color:var(--accent); background:var(--accent-soft);
+    border-radius:9999px; padding:3px 9px; white-space:nowrap;
+  }
+  .pill-untrack {
+    display:inline-flex; align-items:center; min-height:44px; padding:0 13px;
+    background:var(--accent-soft); color:var(--accent); border:1px solid var(--accent);
+    border-radius:9999px; font-size:12px; font-weight:600; white-space:nowrap;
+  }
+  .pill-track {
+    display:inline-flex; align-items:center; padding:7px 13px;
+    border:1px solid var(--border); color:var(--muted);
+    border-radius:9999px; font-size:12px; white-space:nowrap;
+  }
+  .chip-someday {
+    font-size:11px; color:var(--muted); border:1px solid var(--border);
+    border-radius:9999px; padding:3px 9px; white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+  <header class="page">
+    <h1 class="title">Goaldmine · Multi-goal Phase 1 — UX mockup</h1>
+    <p class="subtitle">Chosen direction: <strong>Claim-ring (figure/ground), reinforced</strong> · both themes shown statically</p>
+    <button class="toggle" onclick="document.body.classList.toggle('lightsurround')">Toggle gallery surround</button>
+  </header>
+
+  <div class="gallery">
+
+    <!-- ============================================================== -->
+    <!-- ============================  LIGHT  ========================== -->
+    <!-- ============================================================== -->
+    <div class="phone light">
+      <div class="phone-label">Light theme</div>
+
+      <!-- ---------------- CALENDAR ---------------- -->
+      <div class="surf-label">Calendar</div>
+      <div class="surface">
+        <div class="card tight">
+          <div class="cal-grid">
+            <div class="cal-rail">Jun</div>
+            <div class="cal-body">
+              <div class="cal-dow-row">
+                <div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div>
+                <div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div><div class="dow">Sun</div>
+              </div>
+              <div class="cal-cell-row">
+                <div class="cal-cell">
+                  <div class="cal-date">9</div>
+                  <div class="cal-markers"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">10</div>
+                  <div class="cal-markers"><span class="focus-glyph">🥾</span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">11</div>
+                  <div class="cal-markers"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="wedge"></div>
+                  <div class="cal-date">12</div>
+                  <div class="cal-markers">
+                    <span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+                    <span class="foreign">🥇</span>
+                  </div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">13</div>
+                  <div class="cal-markers"></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">14</div>
+                  <div class="cal-markers">
+                    <span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+                    <span class="foreign">🥇</span>
+                    <span class="plus-chip">+2</span>
+                  </div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">15</div>
+                  <div class="cal-markers"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="cap">⚠ verify at 13px on real device — claim-ring on foreign 🥇 markers</div>
+        </div>
+
+        <!-- legend card -->
+        <div class="card tight">
+          <div class="leg-row"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span> Trained</div>
+          <div class="leg-row"><span class="focus-glyph">🥾</span> Outdoor</div>
+          <div class="leg-row"><span class="focus-glyph">🏔️</span> Goal date</div>
+          <div class="divider"></div>
+          <div class="other-head">Other goals</div>
+          <div class="leg-row"><span class="foreign">🥇</span> Race day <span class="leg-obj">· Sub-25 5k</span></div>
+        </div>
+      </div>
+
+      <!-- ---------------- TODAY ---------------- -->
+      <div class="surf-label">Today</div>
+      <div class="surface">
+        <div class="mini-head">Quiet — ordinary day</div>
+        <div class="strip-quiet">
+          <span class="foreign">🥇</span>
+          <span>Sub-25 5k · next: Race day in 5 wks</span>
+          <span class="chev">›</span>
+        </div>
+
+        <div class="mini-head" style="margin-top:12px;">Loud — race week</div>
+        <div class="strip-loud">
+          <div class="t"><span class="foreign">🥇</span> Race week · Sub-25 5k</div>
+          <div class="s">Saturday is race day. Keep legs fresh.</div>
+        </div>
+        <div class="cap">⚠ low-alpha tint — verify on cream (accent-soft wash + 2px target rail)</div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-kicker">Hero workout</div>
+          <div class="card-title">Today · Capacity — StairMaster intervals</div>
+          <div class="card-sub">6 × 3 min @ Z4 · 90s recovery between<br/>Cap RPE at 8 — strip subordinate to this on ordinary days.</div>
+        </div>
+      </div>
+
+      <!-- ---------------- DAY ---------------- -->
+      <div class="surf-label">Day</div>
+      <div class="surface">
+        <div class="banner-race"><span>🥇</span><span>Race day — Run a sub-25 5k</span></div>
+
+        <div class="banner-conflict">
+          <span class="glyph">◣</span>
+          <span class="body">
+            Race day lands on a hard capacity block — two goals want the same legs.
+            <span class="cta">Ask your coach to sort the week →</span>
+          </span>
+        </div>
+        <div class="cap">⚠ low-alpha tint — verify on cream (warning wash); body is foreground, not warning, for AA</div>
+
+        <div class="sec-header"><span class="lbl">🏔️ Goal target</span><span class="rest"> — Summit Mt. Elbert</span></div>
+
+        <div class="card" style="margin-top:11px;">
+          <div class="card-kicker">Prescription</div>
+          <div class="card-title">D4 · Capacity — StairMaster intervals</div>
+          <div class="card-sub">6 × 3 min @ Z4 · 90s recovery · 5 min cooldown<br/>Pre-race week: hold intensity, trim volume.</div>
+        </div>
+      </div>
+
+      <!-- ---------------- GOALS ---------------- -->
+      <div class="surf-label">Goals</div>
+      <div class="surface">
+        <div class="card">
+          <div class="grow">
+            <span class="bull lg"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+            <span class="gname">Summit Mt. Elbert</span>
+            <span class="badge-focus"><span class="bull sm"><span class="bull-gap"><span class="bull-dot"></span></span></span> Focus</span>
+            <span class="spacer"></span>
+            <span class="pill-days">41 days</span>
+          </div>
+          <div class="grow">
+            <span class="foreign md">🥇</span>
+            <span class="gname">Sub-25 5k</span>
+            <span class="spacer"></span>
+            <span class="pill-untrack">Untrack</span>
+            <span class="pill-days">33 days</span>
+          </div>
+          <div class="grow">
+            <span class="foreign md">⛏️</span>
+            <span class="gname dim">Backpack Maroon Bells</span>
+            <span class="spacer"></span>
+            <span class="pill-track">Track</span>
+            <span class="chip-someday">Someday</span>
+          </div>
+        </div>
+        <div class="cap">⚠ verify at 13px on real device — claim-ring on tracked / someday glyphs</div>
+      </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- ============================  DARK  =========================== -->
+    <!-- ============================================================== -->
+    <div class="phone dark">
+      <div class="phone-label">Dark theme</div>
+
+      <!-- ---------------- CALENDAR ---------------- -->
+      <div class="surf-label">Calendar</div>
+      <div class="surface">
+        <div class="card tight">
+          <div class="cal-grid">
+            <div class="cal-rail">Jun</div>
+            <div class="cal-body">
+              <div class="cal-dow-row">
+                <div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div>
+                <div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div><div class="dow">Sun</div>
+              </div>
+              <div class="cal-cell-row">
+                <div class="cal-cell">
+                  <div class="cal-date">9</div>
+                  <div class="cal-markers"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">10</div>
+                  <div class="cal-markers"><span class="focus-glyph">🥾</span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">11</div>
+                  <div class="cal-markers"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="wedge"></div>
+                  <div class="cal-date">12</div>
+                  <div class="cal-markers">
+                    <span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+                    <span class="foreign">🥇</span>
+                  </div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">13</div>
+                  <div class="cal-markers"></div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">14</div>
+                  <div class="cal-markers">
+                    <span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+                    <span class="foreign">🥇</span>
+                    <span class="plus-chip">+2</span>
+                  </div>
+                </div>
+                <div class="cal-cell">
+                  <div class="cal-date">15</div>
+                  <div class="cal-markers"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="cap">⚠ verify at 13px on real device — claim-ring on foreign 🥇 markers</div>
+        </div>
+
+        <div class="card tight">
+          <div class="leg-row"><span class="bull"><span class="bull-gap"><span class="bull-dot"></span></span></span> Trained</div>
+          <div class="leg-row"><span class="focus-glyph">🥾</span> Outdoor</div>
+          <div class="leg-row"><span class="focus-glyph">🏔️</span> Goal date</div>
+          <div class="divider"></div>
+          <div class="other-head">Other goals</div>
+          <div class="leg-row"><span class="foreign">🥇</span> Race day <span class="leg-obj">· Sub-25 5k</span></div>
+        </div>
+      </div>
+
+      <!-- ---------------- TODAY ---------------- -->
+      <div class="surf-label">Today</div>
+      <div class="surface">
+        <div class="mini-head">Quiet — ordinary day</div>
+        <div class="strip-quiet">
+          <span class="foreign">🥇</span>
+          <span>Sub-25 5k · next: Race day in 5 wks</span>
+          <span class="chev">›</span>
+        </div>
+
+        <div class="mini-head" style="margin-top:12px;">Loud — race week</div>
+        <div class="strip-loud">
+          <div class="t"><span class="foreign">🥇</span> Race week · Sub-25 5k</div>
+          <div class="s">Saturday is race day. Keep legs fresh.</div>
+        </div>
+        <div class="cap">⚠ low-alpha tint — verify on cream (accent-soft wash + 2px target rail)</div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-kicker">Hero workout</div>
+          <div class="card-title">Today · Capacity — StairMaster intervals</div>
+          <div class="card-sub">6 × 3 min @ Z4 · 90s recovery between<br/>Cap RPE at 8 — strip subordinate to this on ordinary days.</div>
+        </div>
+      </div>
+
+      <!-- ---------------- DAY ---------------- -->
+      <div class="surf-label">Day</div>
+      <div class="surface">
+        <div class="banner-race"><span>🥇</span><span>Race day — Run a sub-25 5k</span></div>
+
+        <div class="banner-conflict">
+          <span class="glyph">◣</span>
+          <span class="body">
+            Race day lands on a hard capacity block — two goals want the same legs.
+            <span class="cta">Ask your coach to sort the week →</span>
+          </span>
+        </div>
+        <div class="cap">⚠ low-alpha tint — verify on cream (warning wash); body is foreground, not warning, for AA</div>
+
+        <div class="sec-header"><span class="lbl">🏔️ Goal target</span><span class="rest"> — Summit Mt. Elbert</span></div>
+
+        <div class="card" style="margin-top:11px;">
+          <div class="card-kicker">Prescription</div>
+          <div class="card-title">D4 · Capacity — StairMaster intervals</div>
+          <div class="card-sub">6 × 3 min @ Z4 · 90s recovery · 5 min cooldown<br/>Pre-race week: hold intensity, trim volume.</div>
+        </div>
+      </div>
+
+      <!-- ---------------- GOALS ---------------- -->
+      <div class="surf-label">Goals</div>
+      <div class="surface">
+        <div class="card">
+          <div class="grow">
+            <span class="bull lg"><span class="bull-gap"><span class="bull-dot"></span></span></span>
+            <span class="gname">Summit Mt. Elbert</span>
+            <span class="badge-focus"><span class="bull sm"><span class="bull-gap"><span class="bull-dot"></span></span></span> Focus</span>
+            <span class="spacer"></span>
+            <span class="pill-days">41 days</span>
+          </div>
+          <div class="grow">
+            <span class="foreign md">🥇</span>
+            <span class="gname">Sub-25 5k</span>
+            <span class="spacer"></span>
+            <span class="pill-untrack">Untrack</span>
+            <span class="pill-days">33 days</span>
+          </div>
+          <div class="grow">
+            <span class="foreign md">⛏️</span>
+            <span class="gname dim">Backpack Maroon Bells</span>
+            <span class="spacer"></span>
+            <span class="pill-track">Track</span>
+            <span class="chip-someday">Someday</span>
+          </div>
+        </div>
+        <div class="cap">⚠ verify at 13px on real device — claim-ring on tracked / someday glyphs</div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
