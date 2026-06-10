@@ -579,13 +579,18 @@ function scaleMacros(per100g: FoodMacros, servings: number): FoodMacros {
  * Build the items-textarea line.
  * Name is guaranteed pipe-free (normalizer contract); strips any stray pipes defensively.
  * Format:
- *   count=1: "Banana | medium (118 g)"
- *   count>1: "Banana | 2 × medium (118 g)"
+ *   count=1:   "Banana | medium (118 g)"
+ *   count≠1:   "Banana | 2 × medium (118 g)"  (integers)
+ *              "Banana | 0.5 × medium (62 g)"  (fractions — 4 sig-fig decimal)
  */
 function buildLine(name: string, portionLabel: string, count: number): string {
   const safeName = name.replace(/\|/g, "-");
-  const portion = count > 1 ? `${count} × ${portionLabel}` : portionLabel;
-  return `${safeName} | ${portion}`;
+  if (count === 1) {
+    return `${safeName} | ${portionLabel}`;
+  }
+  // Round to 4 decimal places to avoid ugly repeating decimals (e.g. 0.3333333…)
+  const displayCount = parseFloat(count.toFixed(4));
+  return `${safeName} | ${displayCount} × ${portionLabel}`;
 }
 
 /**
