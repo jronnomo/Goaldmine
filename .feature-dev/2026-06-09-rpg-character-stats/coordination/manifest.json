@@ -1,15 +1,40 @@
 {
-  "feature": "RPG Character Stats — Gamified Engagement Layer",
+  "feature": "RPG Character Stats \u2014 Gamified Engagement Layer",
   "branch": "main",
   "prd_path": "docs/prds/PRD-rpg-character-stats.md",
   "prd_issue": null,
   "ux_research": {
-    "status": "running",
+    "status": "complete; ledger 27 shipped",
     "report_path": "docs/ux-research/rpg-character-stats.md",
     "ledger_path": "docs/ux-research/rpg-character-stats-ledger.md"
   },
-  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009", "REQ-010"],
-  "agents": [],
-  "iteration": 1,
-  "status": "research"
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004",
+    "REQ-005",
+    "REQ-006",
+    "REQ-007",
+    "REQ-008",
+    "REQ-009",
+    "REQ-010"
+  ],
+  "agents": [
+    "explore x2",
+    "plan",
+    "ux-research",
+    "research",
+    "architect v1+v2",
+    "devils-advocate",
+    "phase0",
+    "stream-a",
+    "stream-b",
+    "stream-c",
+    "integration",
+    "fix x3",
+    "qa"
+  ],
+  "iteration": 2,
+  "status": "complete"
 }
