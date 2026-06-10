@@ -6,7 +6,8 @@
  *
  * Design constraints:
  *   - Never throws to the caller — returns null on any miss or error.
- *   - Single HTTP request only (the search response) — no secondary detail fetch.
+ *   - Two HTTP requests at most: first with requireAllWords=true, then a retry
+ *     without if no results. Each request has its own 6 s timeout.
  *   - Nutrient values follow the same null discipline as openfoodfacts.ts:
  *       null  = value absent or non-finite in source data (not fabricated).
  *       0     = measured zero.
@@ -18,7 +19,10 @@ import type { FoodMacros } from "@/lib/food-types";
 // ---------------------------------------------------------------------------
 // USDA FDC Nutrient IDs (standard)
 // ---------------------------------------------------------------------------
-const NID_ENERGY = 1008; // Energy, kcal per 100 g
+const NID_ENERGY_KCAL = 1008; // Energy, kcal per 100 g
+const NID_ENERGY_ATWATER_G = 2047; // Energy, Atwater General Factors, kcal (Foundation)
+const NID_ENERGY_ATWATER_S = 2048; // Energy, Atwater Specific Factors, kcal (Foundation)
+const NID_ENERGY_KJ = 1062; // Energy, kJ per 100 g
 const NID_PROTEIN = 1003; // Protein, g per 100 g
 const NID_CARBS = 1005; // Carbohydrate, by difference, g per 100 g
 const NID_FAT = 1004; // Total lipid (fat), g per 100 g
@@ -30,6 +34,8 @@ const NID_SODIUM = 1093; // Sodium, mg per 100 g
 // ---------------------------------------------------------------------------
 type UsdaFoodNutrient = {
   nutrientId: number;
+  /** "KCAL", "kJ", "G", "MG", etc. */
+  unitName?: string;
   value?: number;
 };
 
@@ -69,6 +75,51 @@ export type NormalizedUsdaFood = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Extract calorie (kcal) value from the foodNutrients array using a three-tier
+ * fallback chain, because Foundation-type foods often lack nutrient 1008 and
+ * instead carry Atwater energies.
+ *
+ * Precedence:
+ *   1. nutrientId 1008, unitName "KCAL"  → use directly
+ *   2. nutrientId 2047 (Atwater General) or 2048 (Atwater Specific), "KCAL" → use
+ *   3. nutrientId 1062 (kJ) → divide by 4.184, round to nearest int
+ *
+ * Returns null if none present or value is non-finite / negative.
+ */
+function getEnergyKcal(nutrients: UsdaFoodNutrient[]): number | null {
+  // Helper: validate a raw value
+  function valid(v: number | undefined): v is number {
+    return v != null && Number.isFinite(v) && v >= 0;
+  }
+
+  // 1. Standard kcal (NID 1008, unit KCAL)
+  const kcal1008 = nutrients.find(
+    (n) =>
+      n.nutrientId === NID_ENERGY_KCAL &&
+      n.unitName?.toUpperCase() === "KCAL",
+  );
+  if (kcal1008 && valid(kcal1008.value)) return Math.round(kcal1008.value!);
+
+  // 2. Atwater General (2047) then Specific (2048), unit KCAL
+  const atwater = nutrients.find(
+    (n) =>
+      (n.nutrientId === NID_ENERGY_ATWATER_G ||
+        n.nutrientId === NID_ENERGY_ATWATER_S) &&
+      n.unitName?.toUpperCase() === "KCAL",
+  );
+  if (atwater && valid(atwater.value)) return Math.round(atwater.value!);
+
+  // 3. kJ → ÷ 4.184
+  const kj = nutrients.find(
+    (n) =>
+      n.nutrientId === NID_ENERGY_KJ && n.unitName?.toUpperCase() === "KJ",
+  );
+  if (kj && valid(kj.value)) return Math.round(kj.value! / 4.184);
+
+  return null;
+}
+
 /** Extract a nutrient value from the foodNutrients array; returns null if absent/invalid. */
 function getNutrientValue(
   nutrients: UsdaFoodNutrient[],
@@ -87,17 +138,43 @@ function gram1dp(v: number | null): number | null {
 }
 
 /**
- * Score a search result for relevance:
- *   +2  description starts with the search term (case-insensitive)
- *   +1  description contains "raw" (prefer raw / unprocessed reference values)
- *   +1  dataType is "Foundation" (over "SR Legacy")
+ * Token-score a search result for relevance to the query.
+ *
+ * Algorithm:
+ *   base  = fraction of query tokens present in description (word-start match)
+ *   bonus = +0.15 if description contains "raw"
+ *         + +0.10 if dataType is "Foundation"
+ *         + -desc.length/10000 for tie-breaking (prefer shorter descriptions)
+ *
+ * Token matching uses a word-start boundary regex (/\btoken/i) so that, e.g.,
+ * the query token "banana" matches "Bananas" (plural) but "oil" must appear as
+ * a word start in the description.
+ *
+ * The description-length penalty ensures a result with exactly fraction=0.5
+ * and no bonuses always scores strictly below 0.5, which our reject threshold
+ * catches (see searchUsdaFood).
  */
-function scoreFood(food: UsdaSearchFood, termLower: string): number {
-  let score = 0;
+function tokenScoreFood(food: UsdaSearchFood, tokens: string[]): number {
+  if (tokens.length === 0) return 0;
+
   const desc = food.description.toLowerCase();
-  if (desc.startsWith(termLower)) score += 2;
-  if (desc.includes("raw")) score += 1;
-  if (food.dataType === "Foundation") score += 1;
+
+  let matchedCount = 0;
+  for (const token of tokens) {
+    // Escape regex special chars in the token before building the pattern
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp("\\b" + escaped, "i");
+    if (re.test(desc)) matchedCount++;
+  }
+
+  const fraction = matchedCount / tokens.length;
+
+  let score = fraction;
+  if (desc.includes("raw")) score += 0.15;
+  if (food.dataType === "Foundation") score += 0.1;
+  // Tie-break: slightly prefer shorter descriptions
+  score -= food.description.length / 10000;
+
   return score;
 }
 
@@ -108,8 +185,14 @@ function scoreFood(food: UsdaSearchFood, termLower: string): number {
 /**
  * Search USDA FoodData Central for a food by name.
  *
- * Returns null on any miss, HTTP error, network failure, or timeout.
+ * Returns null on any miss, HTTP error, network failure, timeout, or when
+ * token-scoring determines the best result is too loosely matched (score ≤ 0.5).
  * Never throws.
+ *
+ * Search strategy:
+ *   1. Try with requireAllWords=true (tighter recall, avoids "banana plain" → croutons).
+ *   2. If that returns zero results, retry without requireAllWords.
+ *   3. Apply token-scored selection; reject (return null) if best score ≤ 0.5.
  *
  * API key: process.env.FDC_API_KEY, falls back to "DEMO_KEY" (rate-limited).
  */
@@ -118,36 +201,56 @@ export async function searchUsdaFood(
 ): Promise<NormalizedUsdaFood | null> {
   const apiKey = process.env.FDC_API_KEY ?? "DEMO_KEY";
 
-  const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
-  url.searchParams.set("query", term);
-  // Multiple data types: Foundation = curated reference; SR Legacy = SR28 reference
-  url.searchParams.append("dataType", "Foundation");
-  url.searchParams.append("dataType", "SR Legacy");
-  url.searchParams.set("pageSize", "6");
-  url.searchParams.set("api_key", apiKey);
+  const termLower = term.trim().toLowerCase();
+  const tokens = termLower.split(/\s+/).filter((t) => t.length > 0);
 
-  try {
-    const res = await fetch(url.toString(), {
+  function buildUrl(requireAllWords: boolean): string {
+    const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
+    url.searchParams.set("query", term);
+    url.searchParams.append("dataType", "Foundation");
+    url.searchParams.append("dataType", "SR Legacy");
+    url.searchParams.set("pageSize", "6");
+    url.searchParams.set("api_key", apiKey);
+    if (requireAllWords) url.searchParams.set("requireAllWords", "true");
+    return url.toString();
+  }
+
+  async function fetchFoods(requireAllWords: boolean): Promise<UsdaSearchFood[]> {
+    const res = await fetch(buildUrl(requireAllWords), {
       signal: AbortSignal.timeout(6000),
     });
-
-    if (!res.ok) return null;
-
+    if (!res.ok) throw new Error(`FDC HTTP ${res.status}`);
     const json = (await res.json()) as UsdaSearchResponse;
-    if (!json.foods?.length) return null;
+    return json.foods ?? [];
+  }
 
-    // Pick the best matching food
-    const termLower = term.trim().toLowerCase();
-    const best = json.foods.reduce((a, b) =>
-      scoreFood(a, termLower) >= scoreFood(b, termLower) ? a : b,
-    );
+  try {
+    // First attempt: require all query words in the result
+    let foods = await fetchFoods(true);
+
+    // Retry without the restriction if no results
+    if (foods.length === 0) {
+      foods = await fetchFoods(false);
+    }
+
+    if (foods.length === 0) return null;
+
+    // Pick the best-scoring food
+    const scored = foods.map((f) => ({ food: f, score: tokenScoreFood(f, tokens) }));
+    const best = scored.reduce((a, b) => (a.score >= b.score ? a : b));
+
+    // Reject results that are too loosely matched — a null estimate is better
+    // than a completely irrelevant food (e.g. "banana plain" → croutons).
+    // The ≤0.5 threshold catches any result where fewer than half the query
+    // tokens matched (the description-length penalty ensures exact-0.5 fraction
+    // results also fall below the threshold).
+    if (best.score <= 0.5) return null;
 
     // Map nutrient array → FoodMacros (per 100 g)
-    const n = best.foodNutrients;
+    const food = best.food;
+    const n = food.foodNutrients;
 
-    const energyRaw = getNutrientValue(n, NID_ENERGY);
-    const calories = energyRaw != null ? Math.round(energyRaw) : null;
-
+    const calories = getEnergyKcal(n);
     const proteinG = gram1dp(getNutrientValue(n, NID_PROTEIN));
     const carbsG = gram1dp(getNutrientValue(n, NID_CARBS));
     const fatG = gram1dp(getNutrientValue(n, NID_FAT));
@@ -166,10 +269,10 @@ export async function searchUsdaFood(
     };
 
     return {
-      fdcId: best.fdcId,
-      description: best.description,
+      fdcId: food.fdcId,
+      description: food.description,
       per100g,
-      measures: best.foodMeasures ?? [],
+      measures: food.foodMeasures ?? [],
     };
   } catch {
     // Network failure, timeout (AbortError), JSON parse error → null
