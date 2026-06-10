@@ -10,13 +10,12 @@ import type { LibraryFood, AddFoodPayload } from "@/lib/food-types";
 import {
   getQuickPickFoods,
   recordFoodUse,
-} from "@/lib/food-actions-stub-c"; // INTEGRATION: swap to @/lib/food-actions
+} from "@/lib/food-actions";
 
 // Dynamic import: ScanFoodSheet + zxing-wasm are browser-only.
-// INTEGRATION: swap stub path to @/components/ScanFoodSheet
 const ScanFoodSheet = dynamic(
   () =>
-    import("@/components/ScanFoodSheet-stub").then((m) => m.ScanFoodSheet), // INTEGRATION: swap to @/components/ScanFoodSheet
+    import("@/components/ScanFoodSheet").then((m) => m.ScanFoodSheet),
   { ssr: false }
 );
 

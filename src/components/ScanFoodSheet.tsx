@@ -10,8 +10,7 @@ import type {
   AddFoodPayload,
   BarcodeLookupResult,
 } from "@/lib/food-types";
-// INTEGRATION: swap to "@/lib/food-actions" when Stream A lands
-import { lookupBarcode } from "@/lib/food-actions-stub";
+import { lookupBarcode } from "@/lib/food-actions";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Props

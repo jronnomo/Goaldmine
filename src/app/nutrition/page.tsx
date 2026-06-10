@@ -3,7 +3,7 @@ import { Card } from "@/components/Card";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { addDays, dateKey, startOfDay } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
-import { getQuickPickFoods } from "@/lib/food-actions-stub-c"; // INTEGRATION: swap to @/lib/food-actions
+import { getQuickPickFoods } from "@/lib/food-actions";
 
 export const dynamic = "force-dynamic";
 
