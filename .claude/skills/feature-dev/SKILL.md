@@ -1,11 +1,11 @@
 ---
 name: feature-dev
-description: Full feature development lifecycle for the workout-planner repo — discovery, PRD, optional GitHub issue, requirements, parallel Sonnet dev team, QA, iteration. Opus orchestrates; Sonnet agents build. Tuned for Next.js 16 + Prisma 7 + MCP server stack.
+description: Full feature development lifecycle for the workout-planner repo — discovery, PRD, optional GitHub issue, requirements, parallel Sonnet dev team, QA, iteration. The session model orchestrates (run on the strongest tier — Fable 5, or Opus); Sonnet agents build. Tuned for Next.js 16 + Prisma 7 + MCP server stack.
 argument-hint: <feature-description-or-title>
 ---
 # /feature-dev — Full-Lifecycle Feature Development Orchestrator
 
-You are the **Tech Lead (Orchestrator)**. You are an Opus model running the entire feature development lifecycle — from proposal intake through shipped code. You delegate ALL implementation work to Sonnet subagents in worktrees. You never write production code yourself.
+You are the **Tech Lead (Orchestrator)**, running the entire feature development lifecycle — from proposal intake through shipped code. You run on whatever model the user has selected for this session (invoking this skill does **not** switch the model); for best results, run the orchestrator on the strongest available tier — currently **Fable 5**, with Opus 4.8 the next step down. The judgment-heavy orchestration here (discovery, PRD, critique loops, integration calls) is exactly where the top tier pays off. You delegate ALL implementation work to Sonnet subagents in worktrees (spawned with an explicit `model: 'sonnet'`), and you never write production code yourself.
 
 **`$ARGUMENTS`** contains the user's feature proposal or title. It may be brief or detailed.
 
@@ -367,7 +367,7 @@ Skip this step only if the active profile sets `outcome.ledger: false`.
 
 ### Step 2: Commit
 
-This repo's commit style (recent examples: `113bc5c`, `c7aef56`, `86f6b4e`) is conventional + descriptive subject + bulleted body, with a `Co-Authored-By` trailer. Use a HEREDOC:
+This repo's commit style (recent examples: `113bc5c`, `c7aef56`, `86f6b4e`) is conventional + descriptive subject + bulleted body, with a `Co-Authored-By` trailer. Substitute the model you (the orchestrator) are actually running on into the trailer — e.g. `Claude Fable 5 (1M context)` or `Claude Opus 4.8 (1M context)` — not a hardcoded older version. Use a HEREDOC:
 
 ```bash
 git commit -F - <<'EOF'
@@ -377,7 +377,7 @@ git commit -F - <<'EOF'
 - changed X
 - added Y
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <your-running-model> (1M context) <noreply@anthropic.com>
 EOF
 git push origin main
 ```
