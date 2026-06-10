@@ -288,6 +288,14 @@ export function LogNutritionForm({
     );
     setItemsText(merged.itemsText);
     setMacros(merged.macroValues);
+    // Optimistic chip prepend — mirrors the scan handleAdd !chipSource path.
+    // Ensures a newly cached builtin/USDA/library food appears as a chip
+    // immediately without needing a server revalidate.
+    const addedFood = estimateResult.food;
+    setLocalAdditions((prev) => {
+      if (prev.some((f) => f.id === addedFood.id)) return prev;
+      return [addedFood, ...prev];
+    });
     setEstimateInput("");
     setEstimateResult(null);
   }

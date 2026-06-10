@@ -183,11 +183,6 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
     }
   }
 
-  // Invalidate the RSC router cache so NutritionPage re-renders with fresh
-  // quickPickFoods. Client component state (itemsText, macros, etc.) survives
-  // intact — React preserves client instances across RSC payload refreshes.
-  revalidatePath("/nutrition");
-
   return { status: "found", food: toLibraryFood(row), fromLibrary: false };
 }
 
@@ -336,7 +331,6 @@ export async function recordFoodUse(id: string): Promise<void> {
     where: { id },
     data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
   });
-  revalidatePath("/nutrition");
 }
 
 // ── toLibraryFood (module-private) ───────────────────────────────────────────
@@ -489,15 +483,13 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
       const defaultPortion = builtin.portions.find((p) => p.key === builtin.defaultPortionKey);
       const servingSizeLabel = defaultPortion?.label ?? "100 g";
 
-      const { food, isNew } = await upsertEstimateRow({
+      const { food } = await upsertEstimateRow({
         barcode,
         name: displayName,
         servingSize: servingSizeLabel,
         macros: builtin.per100g,
         source: "builtin",
       });
-
-      if (isNew) safeRevalidate("/nutrition");
 
       const line = buildLine(displayName, portionLabel, count);
       return { status: "ok", line, grams: resolvedGrams, macros, source: "builtin", food, servings };
@@ -524,15 +516,13 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
         ? `${firstMeasure.disseminationText} (${firstMeasure.gramWeight} g)`
         : "100 g";
 
-      const { food, isNew } = await upsertEstimateRow({
+      const { food } = await upsertEstimateRow({
         barcode,
         name: displayName,
         servingSize: servingSizeLabel,
         macros: usda.per100g,
         source: "usda",
       });
-
-      if (isNew) safeRevalidate("/nutrition");
 
       const line = buildLine(displayName, portionLabel, count);
       return { status: "ok", line, grams: resolvedGrams, macros, source: "usda", food, servings };
