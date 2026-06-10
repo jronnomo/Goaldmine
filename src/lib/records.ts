@@ -100,6 +100,52 @@ export function epley1RM(weightLb: number, reps: number): number {
   return weightLb * (1 + reps / 30);
 }
 
+// ----------------------------------------------------------------------------
+// Exercise name canonicalization.
+//
+// One movement gets logged under several names — Strong-export spelling drift
+// ("Pull Up" vs "Pull-Up"), and baseline tests mirror into workouts under their
+// descriptive testName ("Plank Max Hold") rather than the working name
+// ("Plank"). Equipment strings are just as inconsistent for one movement
+// (null / "Bodyweight" / "Dumbbell"). Left unmerged, PR detection and the
+// records summary fragment: a 64s working plank "beats" the 60s working best
+// while the real 252s max sits in a separate "Plank Max Hold" bucket.
+//
+// Fix: group by canonical name ONLY — equipment is descriptive metadata, never
+// a bucket key. The alias map is curated, not pattern-stripped: some baseline
+// tests are a DIFFERENT metric ("Pull-Up Total Across 5 Sets" is a 5-set sum,
+// "2-Min Bodyweight Squat" is a timed AMRAP) and must NOT fold into the
+// movement, or they'd suppress real single-set PRs.
+//
+// canonical → every variant spelling that folds into it.
+const EXERCISE_ALIAS_GROUPS: Record<string, string[]> = {
+  "Pull-Up": ["Pull Up", "Pull-Up Max Reps"],
+  "Push-Up": ["Push Up", "Push-Up Max Reps"],
+  Dip: ["Chest Dip", "Dip (strict, unassisted)", "Dip Max Reps"],
+  Plank: ["Plank Max Hold"],
+  "Hollow Body Hold": ["Hollow Hold"],
+  "DB Shoulder Press": ["Shoulder Press"],
+  "Bent-Over One-Arm DB Row": ["Bent Over One Arm Row"],
+  "Step-Up": ["Step-Ups"],
+  "Stair Climber": ["CLMBR", "Climbr (Stair Climber)"],
+};
+
+// Normalized variant key → canonical. Each canonical also maps to itself so
+// "Pull-Up" and "pull-up" both resolve.
+const EXERCISE_ALIAS_INDEX = new Map<string, string>();
+for (const [canonical, variants] of Object.entries(EXERCISE_ALIAS_GROUPS)) {
+  EXERCISE_ALIAS_INDEX.set(canonical.trim().toLowerCase(), canonical);
+  for (const v of variants) EXERCISE_ALIAS_INDEX.set(v.trim().toLowerCase(), canonical);
+}
+
+/**
+ * Resolve a logged exercise name to its canonical movement name. Unmapped names
+ * pass through trimmed (so they stay their own bucket). Case-insensitive.
+ */
+export function canonicalExerciseName(name: string): string {
+  return EXERCISE_ALIAS_INDEX.get(name.trim().toLowerCase()) ?? name.trim();
+}
+
 export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
   const groups = await prisma.baseline.groupBy({
     by: ["testName"],
@@ -285,17 +331,21 @@ export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
     include: { sets: true, workout: { select: { startedAt: true } } },
   });
 
-  // Group by name+equipment.
-  const byKey = new Map<string, { name: string; equipment: string | null; sessions: Set<string>; sets: typeof exercises[number]["sets"]; bestDate: Date }>();
+  // Group by canonical name — equipment is descriptive, not a bucket boundary.
+  const byKey = new Map<
+    string,
+    { name: string; sessions: Set<string>; sets: typeof exercises[number]["sets"]; source: typeof exercises }
+  >();
   for (const ex of exercises) {
-    const key = `${ex.name}|${ex.equipment ?? ""}`;
+    const key = canonicalExerciseName(ex.name);
     let bucket = byKey.get(key);
     if (!bucket) {
-      bucket = { name: ex.name, equipment: ex.equipment, sessions: new Set(), sets: [], bestDate: ex.workout.startedAt };
+      bucket = { name: key, sessions: new Set(), sets: [], source: [] };
       byKey.set(key, bucket);
     }
     bucket.sessions.add(ex.workoutId);
     bucket.sets.push(...ex.sets);
+    bucket.source.push(ex);
   }
 
   const out: ExerciseSummary[] = [];
@@ -303,20 +353,21 @@ export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
     const summary = bestSetSummary(bucket.sets);
     if (!summary) continue;
 
-    // Determine date of the best set by walking exercises again.
+    // Representative equipment + date = the source exercise holding the best set.
     let bestDate: Date = new Date(0);
-    for (const ex of exercises) {
-      if (ex.name !== bucket.name || (ex.equipment ?? "") !== (bucket.equipment ?? "")) continue;
+    let bestEquipment: string | null = null;
+    for (const ex of bucket.source) {
       for (const s of ex.sets) {
-        if (matchesBest(s, summary)) {
-          if (ex.workout.startedAt > bestDate) bestDate = ex.workout.startedAt;
+        if (matchesBest(s, summary) && ex.workout.startedAt > bestDate) {
+          bestDate = ex.workout.startedAt;
+          bestEquipment = ex.equipment;
         }
       }
     }
 
     out.push({
       name: bucket.name,
-      equipment: bucket.equipment,
+      equipment: bestEquipment,
       sessionCount: bucket.sessions.size,
       totalSets: bucket.sets.length,
       primary: summary.primary,
@@ -328,26 +379,41 @@ export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function getExerciseHistory(name: string, equipment: string | null): Promise<{ summary: ExerciseSummary | null; history: ExerciseHistoryPoint[] }> {
-  const exercises = await prisma.workoutExercise.findMany({
-    where: { name, equipment },
+export async function getExerciseHistory(name: string): Promise<{ summary: ExerciseSummary | null; history: ExerciseHistoryPoint[] }> {
+  // Match every logged spelling that folds into this canonical movement
+  // (equipment is descriptive, not part of identity).
+  const canonical = canonicalExerciseName(name);
+  const all = await prisma.workoutExercise.findMany({
     include: { sets: true, workout: { select: { id: true, startedAt: true, title: true } } },
     orderBy: { workout: { startedAt: "asc" } },
   });
+  const exercises = all.filter((ex) => canonicalExerciseName(ex.name) === canonical);
 
   const allSets = exercises.flatMap((ex) => ex.sets);
   const summary = bestSetSummary(allSets);
   if (!summary) return { summary: null, history: [] };
 
+  // Representative equipment + date = the source exercise holding the best set.
+  let bestDate: Date = new Date(0);
+  let bestEquipment: string | null = null;
+  for (const ex of exercises) {
+    for (const s of ex.sets) {
+      if (matchesBest(s, summary) && ex.workout.startedAt > bestDate) {
+        bestDate = ex.workout.startedAt;
+        bestEquipment = ex.equipment;
+      }
+    }
+  }
+
   const summaryOut: ExerciseSummary = {
-    name,
-    equipment,
-    sessionCount: exercises.length,
+    name: canonical,
+    equipment: bestEquipment,
+    sessionCount: new Set(exercises.map((e) => e.workout.id)).size,
     totalSets: allSets.length,
     primary: summary.primary,
     bestValue: summary.value,
     bestRaw: summary.raw,
-    bestDate: bestDateOf(exercises, summary),
+    bestDate,
   };
 
   const history: ExerciseHistoryPoint[] = exercises
@@ -373,12 +439,17 @@ export async function getExerciseHistory(name: string, equipment: string | null)
 }
 
 /**
- * For each unique name+equipment group in the given workout, compare this
- * session's best against the prior all-time best (excluding this workout).
- * Returns only the exercises where this session strictly beats the prior best.
+ * For each canonical movement in the given workout, compare this session's best
+ * against the prior all-time best (excluding this workout). Returns only the
+ * movements where this session strictly beats the prior best.
+ *
+ * Grouping is by canonicalExerciseName ONLY — equipment is descriptive, not part
+ * of identity. This folds baseline-mirrored exercises ("Plank Max Hold") and
+ * spelling variants ("Pull Up") into the working movement so a low working set
+ * can't announce a false PR over a higher baseline max.
  *
  * Edge cases:
- *  - Brand-new exercise (no prior history) → NOT a PR (no prior to beat).
+ *  - Brand-new movement (no prior history) → NOT a PR (no prior to beat).
  *  - Prior primary type differs from this session's → use this session's primary
  *    to select the prior metric value too (consistent with getExerciseHistory).
  *  - Sets with no metric at all → skipped.
@@ -394,58 +465,55 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
 
   if (exercises.length === 0) return [];
 
-  // 2. Group exercises by name+equipment (same key used everywhere in records.ts).
+  // 2. Group this workout's exercises by canonical name.
   const byKey = new Map<
     string,
-    {
-      name: string;
-      equipment: string | null;
-      sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[];
-    }
+    { name: string; sets: typeof exercises[number]["sets"]; source: typeof exercises }
   >();
   for (const ex of exercises) {
-    const key = `${ex.name}|${ex.equipment ?? ""}`;
+    const key = canonicalExerciseName(ex.name);
     let bucket = byKey.get(key);
     if (!bucket) {
-      bucket = { name: ex.name, equipment: ex.equipment, sets: [] };
+      bucket = { name: key, sets: [], source: [] };
       byKey.set(key, bucket);
     }
     bucket.sets.push(...ex.sets);
+    bucket.source.push(ex);
+  }
+
+  // 3. Prior sets from ALL other workouts, bucketed by canonical name (one query
+  //    instead of one per movement). The id filter keeps the just-logged workout
+  //    out of its own prior baseline.
+  const priorExercises = await prisma.workoutExercise.findMany({
+    where: { workout: { id: { not: workoutId } } },
+    include: { sets: true },
+  });
+  const priorByKey = new Map<string, typeof priorExercises[number]["sets"]>();
+  for (const ex of priorExercises) {
+    const key = canonicalExerciseName(ex.name);
+    const arr = priorByKey.get(key) ?? [];
+    arr.push(...ex.sets);
+    priorByKey.set(key, arr);
   }
 
   const results: RecordSet[] = [];
 
-  for (const [, bucket] of byKey) {
-    // 3. Compute this session's best.
+  for (const [key, bucket] of byKey) {
+    // 4. This session's best.
     const thisSummary = bestSetSummary(bucket.sets);
     if (!thisSummary) continue; // no metric at all — skip
 
-    // 4. Query prior sets for this name+equipment from OTHER workouts.
-    //    Prisma null equality: `equipment: null` → IS NULL in SQL.
-    const priorExercises = await prisma.workoutExercise.findMany({
-      where: {
-        name: bucket.name,
-        equipment: bucket.equipment,
-        workout: { id: { not: workoutId } },
-      },
-      include: { sets: true },
-    });
-
-    const priorSets = priorExercises.flatMap((e) => e.sets);
+    const priorSets = priorByKey.get(key) ?? [];
     const priorSummary = bestSetSummary(priorSets);
 
-    // 5. Brand-new exercise (no prior history) → NOT a PR per PRD §6.
+    // 5. Brand-new movement (no prior history) → NOT a PR per PRD §6.
     if (!priorSummary) continue;
 
     // 6. Use this session's primary to compare apples-to-apples.
-    //    If the metric type hasn't changed, priorSummary.value is already
-    //    on the right metric. If it DID change (rare), re-derive the prior
-    //    value using thisSummary.primary.
     let priorValue: number;
     if (priorSummary.primary === thisSummary.primary) {
       priorValue = priorSummary.value;
     } else {
-      // Re-select the prior best under this session's primary.
       const recomputed = priorSets
         .map((s) => metricValue(s, thisSummary.primary))
         .filter((v): v is number => v !== null);
@@ -456,9 +524,18 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
     // 7. Strict improvement only.
     if (thisSummary.value <= priorValue) continue;
 
+    // Representative equipment = the source exercise holding the best set.
+    let equipment: string | null = null;
+    for (const ex of bucket.source) {
+      if (ex.sets.some((s) => matchesBest(s, thisSummary))) {
+        equipment = ex.equipment;
+        break;
+      }
+    }
+
     results.push({
       name: bucket.name,
-      equipment: bucket.equipment,
+      equipment,
       kind: thisSummary.primary,
       value: thisSummary.value,
       prior: priorValue,
@@ -512,17 +589,3 @@ function matchesBest(s: { weightLb: number | null; reps: number | null; duration
   return Math.abs(v - summary.value) < 0.01;
 }
 
-function bestDateOf(
-  exercises: { sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[]; workout: { startedAt: Date } }[],
-  summary: { primary: "rm" | "reps" | "duration"; value: number },
-): Date {
-  let best: Date = new Date(0);
-  for (const ex of exercises) {
-    for (const s of ex.sets) {
-      if (matchesBest(s, summary)) {
-        if (ex.workout.startedAt > best) best = ex.workout.startedAt;
-      }
-    }
-  }
-  return best;
-}

@@ -1336,11 +1336,9 @@ function registerReadTools(server: McpServer) {
         "For all-time peaks (just the PR row), use get_records_summary instead.",
       inputSchema: {
         name: z.string(),
-        equipment: z.string().optional(),
       },
     },
-    async ({ name, equipment }) =>
-      safe(() => getExerciseHistory(name, equipment ?? null)),
+    async ({ name }) => safe(() => getExerciseHistory(name)),
   );
 
   server.registerTool(

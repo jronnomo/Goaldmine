@@ -96,11 +96,9 @@ export default async function BaselinesPage() {
         ) : (
           <ul className="divide-y divide-[var(--border)]">
             {exercises.map((e) => (
-              <li key={`${e.name}|${e.equipment ?? ""}`}>
+              <li key={e.name}>
                 <Link
-                  href={`/baselines/exercise/${encodeURIComponent(e.name)}${
-                    e.equipment ? `?equipment=${encodeURIComponent(e.equipment)}` : ""
-                  }`}
+                  href={`/baselines/exercise/${encodeURIComponent(e.name)}`}
                   className="flex items-center justify-between py-3 gap-2"
                 >
                   <div className="min-w-0">

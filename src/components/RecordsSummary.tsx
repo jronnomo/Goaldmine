@@ -115,11 +115,9 @@ export async function RecordsSummary({
         ) : (
           <ul className="divide-y divide-[var(--border)]">
             {topExercises.map((e) => (
-              <li key={`${e.name}|${e.equipment ?? ""}`}>
+              <li key={e.name}>
                 <Link
-                  href={`/baselines/exercise/${encodeURIComponent(e.name)}${
-                    e.equipment ? `?equipment=${encodeURIComponent(e.equipment)}` : ""
-                  }`}
+                  href={`/baselines/exercise/${encodeURIComponent(e.name)}`}
                   className="flex items-center justify-between py-3 gap-2 min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                 >
                   <div className="min-w-0">

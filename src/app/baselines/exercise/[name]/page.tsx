@@ -7,15 +7,14 @@ export const dynamic = "force-dynamic";
 
 export default async function ExerciseRecordDetail({
   params,
-  searchParams,
 }: {
   params: Promise<{ name: string }>;
-  searchParams: Promise<{ equipment?: string }>;
 }) {
-  const [{ name: encoded }, { equipment }] = await Promise.all([params, searchParams]);
+  const { name: encoded } = await params;
   const name = decodeURIComponent(encoded);
-  const eq = equipment ? decodeURIComponent(equipment) : null;
-  const { summary, history } = await getExerciseHistory(name, eq);
+  const { summary, history } = await getExerciseHistory(name);
+  // Equipment is descriptive now (not part of identity) — show the best set's.
+  const eq = summary?.equipment ?? null;
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
