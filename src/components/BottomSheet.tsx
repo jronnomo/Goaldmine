@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 
 export type BottomSheetProps = {
   open: boolean;
@@ -11,7 +12,7 @@ export type BottomSheetProps = {
 };
 
 /**
- * BottomSheet — native <dialog>-based bottom sheet.
+ * BottomSheet — native <dialog>-based bottom sheet, portaled to document.body.
  *
  * The native dialog is driven entirely off the `open` prop: showModal() when
  * open, close() when not. This is the canonical, race-free pattern — no custom
@@ -22,6 +23,23 @@ export type BottomSheetProps = {
  * transition + @starting-style on the `[open]` state. On browsers without
  * @starting-style support the sheet simply appears instantly — still fully
  * functional. Reduced-motion users get no transition.
+ *
+ * Portal rationale: the <dialog> is rendered into document.body via
+ * createPortal, making every BottomSheet a direct body child regardless of
+ * where it is used in the component tree. This prevents nested-dialog ancestry
+ * (e.g. ScanFoodSheet rendered inside LogNutritionForm's <form>, itself inside
+ * the Log sheet's <dialog>) from causing iOS to close the outer dialog when the
+ * inner one is dismissed. Both dialogs become body siblings in the DOM — the
+ * native top-layer stacking is unchanged; only DOM ancestry is fixed.
+ *
+ * SSR guard: createPortal requires document, which doesn't exist on the server.
+ * `typeof document === "undefined"` returns null during the server pass and the
+ * initial hydration render. All sheets start closed (open=false), so there is
+ * no visible flash — the dialog is simply absent from server HTML and inserted
+ * on the client immediately after hydration. The existing useEffect([open])
+ * for showModal/close fires after the portal is in the DOM and handles open
+ * transitions correctly. This avoids calling setState inside an effect, which
+ * is flagged by the project's react-hooks/set-state-in-effect lint rule.
  */
 export function BottomSheet({ open, onClose, title, children, "data-testid": testId }: BottomSheetProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -57,7 +75,12 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
     };
   }, [open]);
 
-  return (
+  // SSR guard: document does not exist on the server or during the initial
+  // hydration pass. Return null to skip rendering — all sheets start closed,
+  // so there is no flash. The portal renders on the next client commit.
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <dialog
       ref={dialogRef}
       className="bottom-sheet"
@@ -104,6 +127,7 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
           {children}
         </div>
       </div>
-    </dialog>
+    </dialog>,
+    document.body
   );
 }
