@@ -328,3 +328,15 @@ model Program {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model GameBonusXp {
+  id        String   @id @default(cuid())
+  date      DateTime // USER_TZ midnight via parseDateInput
+  amount    Int
+  reason    String
+  attribute String?  // attribute id valid for active goal kind; null = overall-only
+  source    String   @default("coach")
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
