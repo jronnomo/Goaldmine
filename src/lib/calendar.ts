@@ -26,7 +26,23 @@ export type CalendarDayCell = {
   // Track 2 (plan-confidence-calendar.md). null = no conflict or out-of-plan.
   // If a cell has both kinds (theoretically possible but rare), "retest-on-hike"
   // takes precedence as the more immediately actionable signal.
-  conflict: { kind: "long-effort" | "retest-on-hike"; withDates: string[] } | null;
+  // Cross-goal kinds ("event-on-hard-day", "key-events-same-week",
+  // "event-near-long-effort") are filled in by REQ-104 (getCalendarMonth wiring)
+  // and carry optional goalId + label for display. Existing consumers that only
+  // switch on "long-effort" | "retest-on-hike" are unaffected.
+  conflict: {
+    kind:
+      | "long-effort"
+      | "retest-on-hike"
+      | "event-on-hard-day"
+      | "key-events-same-week"
+      | "event-near-long-effort";
+    withDates: string[];
+    /** Non-focus goalId — present only for cross-goal conflict kinds. */
+    goalId?: string;
+    /** Human-readable label — present only for cross-goal conflict kinds. */
+    label?: string;
+  } | null;
   // Track 2: confidence state for the plan-confidence calendar visual.
   //   null        := !isInPlan (out-of-month padding, before startedOn, after endsOn)
   //   "past"      := isInPlan && isPast
@@ -39,13 +55,29 @@ export type CalendarDayCell = {
 // Consumed by: weekConflicts() async fn, buildCell (sync subset),
 // get_session_brief (current week), plan-lint retest-on-hike-day rule,
 // and (Track 2) the confirm_week guard.
+//
+// REQ-103 type widening (backward-compatible):
+// The kind union gains three cross-goal kinds. Existing consumers that narrow
+// on "long-effort" | "retest-on-hike" continue to compile unchanged — the
+// additional variants are additive. Optional goalId + label carry cross-goal
+// metadata; they are absent (undefined) on same-goal weekConflicts() output.
 export type WeekConflict = {
   dateKey: string; // "yyyy-mm-dd" of the conflicted day
-  kind: "long-effort" | "retest-on-hike";
+  kind:
+    | "long-effort"
+    | "retest-on-hike"
+    | "event-on-hard-day"
+    | "key-events-same-week"
+    | "event-near-long-effort";
   // For "long-effort": the dates of hikes elsewhere in the week displacing the long-endurance day.
   // For "retest-on-hike": withDates[0] === dateKey — the hike and retest co-occur
   // on the same day; consumers should display this as a same-day collision.
-  withDates: string[]; // dateKey(s) of the hike(s) driving the conflict
+  // For cross-goal kinds: see CrossGoalConflict.withDates semantics in goal-conflicts.ts.
+  withDates: string[]; // dateKey(s) of the hike(s) or other-goal event(s) driving the conflict
+  /** Non-focus goalId — present only for cross-goal conflict kinds. */
+  goalId?: string;
+  /** Human-readable label — present only for cross-goal conflict kinds. */
+  label?: string;
 };
 
 export async function getCalendarMonth(opts: { year: number; month: number /* 0-11 */ }) {
