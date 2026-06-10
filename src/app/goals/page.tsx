@@ -124,7 +124,7 @@ export default async function GoalsPage() {
                       href={`/goals/${g.id}`}
                       className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]"
                     >
-                      View →
+                      Manage →
                     </Link>
                   </div>
                 </li>

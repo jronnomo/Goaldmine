@@ -101,7 +101,7 @@ export function GoalEditForm({
             <select
               value={copyFromGoalId}
               onChange={(e) => setCopyFromGoalId(e.target.value)}
-              className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-1.5 text-sm"
+              className="flex-1 min-w-0 rounded-lg border border-[var(--border)] bg-transparent px-3 py-1.5 text-sm"
             >
               <option value="">— Pick a goal —</option>
               {copySources.map((g) => (
@@ -112,7 +112,7 @@ export function GoalEditForm({
             </select>
             <ConfirmButton
               label="Apply"
-              confirmLabel="Replace targets · confirm"
+              confirmLabel="Confirm replace"
               disabled={pending || !copyFromGoalId}
               variant="accent"
               onConfirm={() =>
@@ -125,7 +125,7 @@ export function GoalEditForm({
                   }
                 })
               }
-              className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition disabled:opacity-50"
+              className="shrink-0 whitespace-nowrap rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition disabled:opacity-50"
             />
           </div>
         </div>
