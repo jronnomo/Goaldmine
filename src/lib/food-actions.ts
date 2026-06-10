@@ -65,6 +65,16 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
   const existingFood = existing ? toLibraryFood(existing) : null;
   const existingNonNull = existingFood ? countNonNullMacros(existingFood.perServing) : 0;
 
+  // Manual rows have been user-corrected — never refresh from OFF/FDC regardless of
+  // macro completeness.  Self-heal must not clobber intentional edits.
+  if (existing && existing.source === "manual") {
+    await prisma.foodLibrary.update({
+      where: { id: existing.id },
+      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+    });
+    return { status: "found", food: existingFood!, fromLibrary: true };
+  }
+
   // Good cache hit: ≥3 non-null macros → no network call needed
   if (existing && existingNonNull >= 3) {
     await prisma.foodLibrary.update({
@@ -274,6 +284,116 @@ export async function deleteLibraryFood(id: string): Promise<void> {
   await prisma.foodLibrary.deleteMany({ where: { id } });
   safeRevalidate("/nutrition");
   safeRevalidate("/");
+}
+
+// ── updateLibraryFood ─────────────────────────────────────────────────────────
+
+/**
+ * Patch a FoodLibrary row in place.
+ *
+ * patch fields (all optional):
+ *   name        — trimmed; ignored when empty after trim.
+ *   brand       — null clears; string sets; absent = no change.
+ *   servingSize — null clears; string sets; absent = no change.
+ *   macros      — null clears; finite ≥0 number sets; negative/NaN coerced to null.
+ *
+ * When any macro field is present in the patch, source is set to "manual" so that
+ * subsequent barcode rescans skip the self-heal refresh (manual rows are never
+ * overwritten by OFF / FDC data — see lookupBarcode's source==="manual" guard).
+ *
+ * Never throws — errors surface as { ok: false, message }.
+ */
+export type UpdateLibraryFoodResult =
+  | { ok: true; food: LibraryFood }
+  | { ok: false; message: string };
+
+const MACRO_PATCH_KEYS = [
+  "calories",
+  "proteinG",
+  "carbsG",
+  "fatG",
+  "fiberG",
+  "sodiumMg",
+] as const;
+
+type MacroPatchKey = (typeof MACRO_PATCH_KEYS)[number];
+
+export type UpdateLibraryFoodPatch = {
+  name?: string;
+  brand?: string | null;
+  servingSize?: string | null;
+  calories?: number | null;
+  proteinG?: number | null;
+  carbsG?: number | null;
+  fatG?: number | null;
+  fiberG?: number | null;
+  sodiumMg?: number | null;
+};
+
+export async function updateLibraryFood(
+  id: string,
+  patch: UpdateLibraryFoodPatch,
+): Promise<UpdateLibraryFoodResult> {
+  try {
+    const data: Record<string, unknown> = {};
+
+    // Text fields
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim();
+      if (trimmed.length > 0) data.name = trimmed;
+    }
+    if (patch.brand !== undefined) {
+      data.brand = patch.brand != null ? patch.brand.trim() || null : null;
+    }
+    if (patch.servingSize !== undefined) {
+      data.servingSize =
+        patch.servingSize != null ? patch.servingSize.trim() || null : null;
+    }
+
+    // Macro fields: null clears; finite ≥0 number sets; negative/NaN → null
+    let hasMacroPatch = false;
+    for (const key of MACRO_PATCH_KEYS) {
+      const raw = patch[key as MacroPatchKey];
+      if (raw !== undefined) {
+        if (raw === null) {
+          data[key] = null;
+        } else if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+          data[key] = raw;
+        } else {
+          data[key] = null; // reject negative / NaN → treat as "unknown"
+        }
+        hasMacroPatch = true;
+      }
+    }
+
+    // Mark as user-corrected so self-heal never overwrites it
+    if (hasMacroPatch) {
+      data.source = "manual";
+    }
+
+    if (Object.keys(data).length === 0) {
+      // Nothing to change — return current row as-is
+      const existing = await prisma.foodLibrary.findUnique({ where: { id } });
+      if (!existing) return { ok: false, message: "Food not found" };
+      return { ok: true, food: toLibraryFood(existing) };
+    }
+
+    const row = await prisma.foodLibrary.update({ where: { id }, data });
+    safeRevalidate("/nutrition");
+    safeRevalidate("/");
+    return { ok: true, food: toLibraryFood(row) };
+  } catch (err: unknown) {
+    // P2025: record required but not found (update on missing id)
+    if (
+      err != null &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code: string }).code === "P2025"
+    ) {
+      return { ok: false, message: "Food not found" };
+    }
+    return { ok: false, message: "Failed to update food" };
+  }
 }
 
 // ── listLibraryFoods ──────────────────────────────────────────────────────────
