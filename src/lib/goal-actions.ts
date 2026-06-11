@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db";
 import { createGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
+import { computeStackRarity } from "@/lib/rarity";
 
 export type GoalReference = {
   id: string;
@@ -67,10 +68,18 @@ export async function createGoal(form: FormData) {
     legend: legend ?? undefined,
   });
 
+  // UXR-63-16/PRD §3.1.7: compute stack post-creation and redirect with ?stackWarning
+  // when the new stack tier is epic or legendary. Non-blocking — creation already succeeded.
+  // L10 whitelist: only "epic" | "legendary" trigger the redirect variant.
+  const stack = await computeStackRarity();
+
   revalidatePath("/");
   revalidatePath("/goals");
   revalidatePath("/calendar");
   revalidatePath("/stats");
+  if (stack.tier === "epic" || stack.tier === "legendary") {
+    redirect(`/goals/${goal.id}?stackWarning=${stack.tier}`);
+  }
   redirect(`/goals/${goal.id}`);
 }
 
