@@ -19,7 +19,7 @@ A deterministic feasibility engine: per dated active goal, **required weekly rat
 
 ### 1.3 Success criteria
 - Deterministic: same data ⇒ same tiers; all thresholds/norms in one tunable module with per-value rationales.
-- Bench 135→315 in 12 weeks ⇒ Legendary with zero history (norms basis). Realistic targets ⇒ Common/Uncommon.
+- Bench 135→315 in 12 weeks ⇒ Legendary with zero history (norms basis); when history is present the `exercise:<canonical name>` metric reads from workout history via `getExerciseHistory`. Realistic targets ⇒ Common/Uncommon.
 - `set_goal_feasibility` validates tier, stores rationale, surfaces in app + read tools; computed never hidden.
 - Legendary/Epic stack ⇒ warning banner on /goals and at creation (app + MCP).
 - Coach can manage the stack conversationally (track/untrack, pause/resume).
@@ -97,6 +97,23 @@ Authoritative file-level design: `.feature-dev/2026-06-10-rarity-feasibility-eng
 Gates + self-check script (§5.2) + MCP curl battery (plan §Verification 4) + browser smoke @390px both themes (plan §Verification 5). Live-data sanity: current stack (Elbert dated + 2 someday) ⇒ Elbert rated, stack = Elbert's tier, no bump; temporarily date a skill goal ⇒ stack reflects it.
 
 ---
+
+## Revision log (post-DA)
+
+Applied after the Devil's Advocate review of REQ-63-1/2. All changes are surgical and additive.
+
+| Item | File(s) | Resolution |
+|------|---------|------------|
+| H1 — direction sign normalization | `rarity.ts` `computeGoalFeasibility`, `rarity-core.ts` JSDoc | Normalize slope before passing to `computeTargetFeasibility`: `observedRate = direction==="decrease" ? -rawSlope : rawSlope`; JSDoc asserts the positive-toward-goal convention; test added. |
+| H2 — `exercise:*` metric family | `metrics-registry.ts`, `goal-targets.ts`, `rarity.ts`, `rarity-core.ts`, `test-rarity.ts` | Dynamic `exercise:<canonical>` family added; resolves via `getExerciseHistory`; bench test cases migrated to `exercise:Bench Press` (math unchanged). |
+| H3 — per-family lookback | `rarity-core.ts` (`RARITY_RULES`, `lookbackWeeksFor`), `rarity.ts` | `observedLookbackWeeks` restructured to `{default:6, baseline:16, exercise:16}`; `lookbackWeeksFor(metric)` exported; `computeGoalFeasibility` uses per-target lookback; test added. |
+| M4 — `hike:max_elevation_single` family | `rarity-core.ts` | Separate "hike-max-elevation" family with norm `maxElevationGainFtPerWeek: 500`; "hike-elevation" remains for cumulative total. |
+| M5 — `GoalTargetSchema` | `metrics-registry.ts` | Zod schema exported; client-safe; REQ-63-3 adopts for MCP input validation. |
+| M7 — `setPlanActiveCore` transaction | `goal-core.ts` | Resume branch `findFirst + updateMany + update` wrapped in `prisma.$transaction`. |
+| M8 — extraGoal dedup | `rarity.ts` `computeStackRarity` | `ExtraGoal.id` made optional; when id matches a fetched goal, the fetched copy is removed before injection (enables preview of updated existing goal). |
+| M9 — datedActiveGoalCount filter | `rarity.ts` | Explicit comment added confirming `targetDate !== null` filter; code was already correct. |
+| L11 — someday-override TODO | `rarity.ts` | TODO comment added near `parseCoachFeasibility` noting MCP description should explain the someday-override caveat; deferred to REQ-63-3. |
+| L12 — query-budget comment | `rarity.ts` `observedSeriesFor` | Fixed to "up to 2 per target when the series window is empty". |
 
 ## 7. Appendix
 Discovery: 2026-06-10 session — decisions: norms table for cold start; coach-parity tools in scope; ux-research opted in; someday unrated; non-blocking creation warning; preview tool now. References: Epic #61, #63; plan file ~/.claude/plans/mighty-hopping-raven.md; Phase-1 PRD + run artifacts; memories: plan-is-conversational, exercise-alias-map (canonicalization caveat for matching goal metrics to history).

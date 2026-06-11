@@ -48,8 +48,16 @@ export const RARITY_RULES = {
   weightFloor: 0.1,
   // Someday goals have no deadline; dated goals with expired dates use 1 week as the runway floor
   minWeeksRemaining: 1,
-  // 6-week lookback aligns with the program's mesocycle length — long enough to smooth noise, short enough to be recent
-  observedLookbackWeeks: 6,
+  // Per-family lookback windows: baselines and exercise history recur on multi-week cycles,
+  // so 6 weeks may not reach minObservedPoints — use 16w for those families.
+  observedLookbackWeeks: {
+    // Default: aligns with the program's mesocycle length — long enough to smooth noise, short enough to be recent
+    default: 6,
+    // baseline:* tests repeat on 4-8 week cycles; 16w guarantees ≥3 data points for a serious trainee
+    baseline: 16,
+    // exercise:* PRs also plateau for weeks; 16w captures a full strength phase
+    exercise: 16,
+  },
   // ≥3 weekly data points needed for a reliable slope; fewer → fall back to norm
   minObservedPoints: 3,
   // Plateau/regression: plausible floored at 25% of norm — gives some credit for prior progress without being generous
@@ -87,6 +95,8 @@ export type NormPack = {
     hikesPerWeek: number;
     // Weekly elevation: ~5000 ft/wk matches a progressive Rocky Mountain training block
     elevationFtPerWeek: number;
+    // Single-hike elevation PR: route selection can add ~500 ft/wk of max — beyond that is aggressive
+    maxElevationGainFtPerWeek: number;
     // Weekly distance: 20 mi/wk is a solid hiking base (REI Training Guide)
     distanceMiPerWeek: number;
     // 6 sessions/wk is the max sustainable gym frequency for a single user
@@ -105,6 +115,7 @@ export const FITNESS_NORM_PACK: NormPack = {
     weightGainLbPerWeek: 0.5,
     hikesPerWeek: 1.25,
     elevationFtPerWeek: 5000,
+    maxElevationGainFtPerWeek: 500,
     distanceMiPerWeek: 20,
     workoutsPerWeek: 6,
     /* log:* intentionally NO norm — observed-only */
@@ -131,6 +142,7 @@ export type MetricFamily =
   | "strength-like"
   | "hike-count"
   | "hike-elevation"
+  | "hike-max-elevation"
   | "hike-distance"
   | "workout-count"
   | "log"
@@ -156,8 +168,13 @@ export function metricFamilyFor(
     return "strength-like";
   }
 
+  // exercise:<canonical name> tracks workout history best (est 1RM, max reps, or max duration)
+  if (metric.startsWith("exercise:")) return "strength-like";
+
   if (metric === "hike:prep_completion") return "hike-count";
-  if (metric === "hike:max_elevation_single" || metric === "hike:total_elevation_ft") return "hike-elevation";
+  // hike:max_elevation_single is a PR-style metric (best single effort), not cumulative
+  if (metric === "hike:max_elevation_single") return "hike-max-elevation";
+  if (metric === "hike:total_elevation_ft") return "hike-elevation";
   if (metric === "hike:total_distance_mi") return "hike-distance";
   if (metric === "workout:count") return "workout-count";
   if (metric.startsWith("log:")) return "log";
@@ -300,6 +317,8 @@ function normForFamily(
       return n.hikesPerWeek;
     case "hike-elevation":
       return n.elevationFtPerWeek;
+    case "hike-max-elevation":
+      return n.maxElevationGainFtPerWeek;
     case "hike-distance":
       return n.distanceMiPerWeek;
     case "workout-count":
@@ -325,13 +344,44 @@ function absFloorForUnits(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Per-family lookback
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Return the observation lookback window (in weeks) for a given metric.
+ * baseline:* and exercise:* tests recur on multi-week cycles; use 16w to
+ * guarantee ≥3 data points. All other families default to 6w (mesocycle).
+ */
+export function lookbackWeeksFor(metric: string): number {
+  const lw = RARITY_RULES.observedLookbackWeeks;
+  if (metric.startsWith("baseline:")) return lw.baseline;
+  if (metric.startsWith("exercise:")) return lw.exercise;
+  return lw.default;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-target feasibility
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Compute per-target feasibility.
+ *
+ * Convention: `observedWeeklyRate` MUST be pre-normalized by the caller so that
+ * a POSITIVE value means "moving toward the goal" regardless of direction.
+ * For a "decrease" metric (e.g. body weight), the raw least-squares slope is
+ * negative when the metric is improving; the caller must negate it:
+ *   observedRate = direction === "decrease" ? -rawSlope : rawSlope
+ * rarity.ts performs this normalization at the point where direction and slope
+ * meet (in computeGoalFeasibility). This function asserts the convention via
+ * the check `observedWeeklyRate > 0` — which would silently invert a
+ * non-normalized decrease metric into "regression" and produce a much higher
+ * ratio.
+ */
 export function computeTargetFeasibility(input: {
   target: GoalTarget;
   current: number | null;
   weeksRemaining: number;
+  /** Pre-normalized: positive = improving toward goal. See JSDoc above. */
   observedWeeklyRate: number | null;
   observedPoints: number;
   normPack: NormPack;

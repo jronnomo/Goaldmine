@@ -5,6 +5,8 @@
 // helpers (which DO depend on Prisma). Server-only code imports from
 // goal-targets.ts; client components import from this file.
 
+import { z } from "zod";
+
 export type Direction = "increase" | "decrease";
 
 export type GoalTarget = {
@@ -31,6 +33,31 @@ export type MetricSpec = {
 
 /** Namespace prefix for metrics backed by LogEntry rows. */
 export const LOG_METRIC_PREFIX = "log:" as const;
+
+/**
+ * Namespace prefix for metrics backed by workout history (getExerciseHistory).
+ * Format: "exercise:<canonical exercise name>" — e.g. "exercise:Bench Press".
+ * These are dynamic; individual exercise entries are NOT in METRICS (too numerous).
+ * Resolution lives in goal-targets.ts (resolveMetricValue / resolveMetricStart)
+ * and rarity.ts (observedSeriesFor). metricFamilyFor maps the prefix to "strength-like".
+ */
+export const EXERCISE_METRIC_PREFIX = "exercise:" as const;
+
+/**
+ * Zod schema for GoalTarget — mirrors the GoalTarget type exactly.
+ * Client-safe (zod has no server-only deps). Do NOT import Prisma here.
+ * REQ-63-3 adopts this in MCP tool input validation.
+ */
+export const GoalTargetSchema = z.object({
+  metric: z.string().describe("Metric id (e.g. 'weightLb', 'baseline:Pull-Up Max Reps', 'exercise:Bench Press')"),
+  label: z.string().describe("Human-readable label shown in the UI"),
+  units: z.string().describe("Unit string (e.g. 'lb', 'reps', 'sec', 'ft')"),
+  direction: z.enum(["increase", "decrease"]).describe("Whether a higher value is better (increase) or lower is better (decrease)"),
+  target: z.number().describe("Numeric goal value"),
+  start: z.number().optional().describe("Optional starting value auto-captured at goal creation"),
+  weight: z.number().min(0).max(1).describe("Importance weight 0–1; all targets should sum to ~1"),
+  rationale: z.string().optional().describe("Optional explanation for the user / coach"),
+});
 
 /** Curated registry — keeps the UI to known metrics and avoids typos. */
 export const METRICS: MetricSpec[] = [

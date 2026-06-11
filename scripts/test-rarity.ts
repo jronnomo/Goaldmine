@@ -10,6 +10,7 @@ import {
   tierFromRatio,
   tierIndex,
   weeklySlope,
+  lookbackWeeksFor,
   computeTargetFeasibility,
   aggregateGoalTier,
   concurrentLoadBump,
@@ -73,9 +74,10 @@ check("ratio=99 → legendary", tierFromRatio(99) === "legendary");
 
 // ── 2. Bench 135→315 in 12 weeks → legendary ─────────────────────────────────
 
-console.log("\n2. Bench 135→315 / 12wk → legendary:");
+console.log("\n2. Bench 135→315 / 12wk → legendary (exercise:* family):");
 {
-  const target = makeTarget("baseline:Bench Press", "Bench press", "lb", "increase", 315, 1.0, 135);
+  // H2: bench now uses exercise:* family (workout history basis) rather than baseline:*
+  const target = makeTarget("exercise:Bench Press", "Bench press", "lb", "increase", 315, 1.0, 135);
   const weeksRemaining = 12;
   const current = 135;
   // norm = max(0.015 * 135, 2) = max(2.025, 2) = 2.025
@@ -98,9 +100,10 @@ console.log("\n2. Bench 135→315 / 12wk → legendary:");
 
 // ── 3. Bench 135→160 / 12 weeks → ≤ uncommon ─────────────────────────────────
 
-console.log("\n3. Bench 135→160 / 12wk → ≤ uncommon:");
+console.log("\n3. Bench 135→160 / 12wk → ≤ uncommon (exercise:* family):");
 {
-  const target = makeTarget("baseline:Bench Press", "Bench press", "lb", "increase", 160, 1.0, 135);
+  // H2: exercise:* family — same math as baseline:* (both resolve to strength-like)
+  const target = makeTarget("exercise:Bench Press", "Bench press", "lb", "increase", 160, 1.0, 135);
   const weeksRemaining = 12;
   const current = 135;
   // required = (160 - 135) / 12 ≈ 2.08 lb/wk
@@ -379,6 +382,64 @@ console.log("\n13. All-unknown targets → unrated:");
   };
   const { tier } = aggregateGoalTier([unk]);
   check("all-unknown → tier null", tier === null, `got ${tier}`);
+}
+
+// ── 14. H1 — direction sign normalization (decreasing metric) ─────────────────
+
+console.log("\n14. H1 — direction normalization: 10-pt weekly decreasing weight series:");
+{
+  // Build 10 weekly measurement points: weight drops 1 lb per week (165→156)
+  const wk = 7 * 24 * 3600 * 1000;
+  const t0 = new Date(Date.UTC(2026, 0, 1));
+  const series = Array.from({ length: 10 }, (_, i) => ({
+    date: new Date(t0.getTime() + i * wk),
+    value: 165 - i, // 165, 164, 163, ..., 156
+  }));
+
+  const rawSlope = weeklySlope(series, RARITY_RULES.minObservedPoints);
+  check("raw slope is negative (weight declining)", (rawSlope ?? 0) < 0, `got ${rawSlope}`);
+
+  // Normalize per H1 convention: negate for "decrease" direction so positive = toward goal
+  const direction = "decrease" as const;
+  const normalizedRate = direction === "decrease" ? -(rawSlope ?? 0) : (rawSlope ?? 0);
+  check("normalized rate is positive (≈ +1 lb/wk toward goal)", normalizedRate > 0, `got ${normalizedRate}`);
+
+  // Modest target: from current 156 → 154 lb in 8 weeks (requiredRate = 0.25 lb/wk)
+  // plausibleRate (observed basis) = max(1, 0.25 * 1.5) = 1; ratio ≈ 0.25 → common
+  const target = makeTarget("weightLb", "Body weight", "lb", "decrease", 154, 1.0);
+  const current = 156;
+  const weeksRemaining = 8;
+  const tf = computeTargetFeasibility({
+    target,
+    current,
+    weeksRemaining,
+    observedWeeklyRate: normalizedRate, // caller-normalized: positive = toward goal
+    observedPoints: series.length,      // ≥ minObservedPoints → observed basis
+    normPack: FITNESS_NORM_PACK,
+  });
+  check("rateBasis = observed (≥3 data points)", tf.rateBasis === "observed", `got ${tf.rateBasis}`);
+  check("ratio < 1 (modest decrease target vs healthy observed rate)", (tf.ratio ?? 1) < 1, `got ${tf.ratio?.toFixed(3)}`);
+  check("verdict ≤ uncommon (common or uncommon)", tierIndex(tf.verdict as "common" | "uncommon" | "rare" | "epic" | "legendary") <= tierIndex("uncommon"), `got ${tf.verdict}`);
+}
+
+// ── 15. H3 — per-family lookback dispatch ────────────────────────────────────
+
+console.log("\n15. H3 — lookbackWeeksFor dispatch:");
+{
+  check("weightLb → default 6w", lookbackWeeksFor("weightLb") === RARITY_RULES.observedLookbackWeeks.default,
+    `got ${lookbackWeeksFor("weightLb")}`);
+  check("baseline:1.5 Mile Run → 16w", lookbackWeeksFor("baseline:1.5 Mile Run") === RARITY_RULES.observedLookbackWeeks.baseline,
+    `got ${lookbackWeeksFor("baseline:1.5 Mile Run")}`);
+  check("baseline:Pull-Up Max Reps → 16w", lookbackWeeksFor("baseline:Pull-Up Max Reps") === RARITY_RULES.observedLookbackWeeks.baseline,
+    `got ${lookbackWeeksFor("baseline:Pull-Up Max Reps")}`);
+  check("exercise:Bench Press → 16w", lookbackWeeksFor("exercise:Bench Press") === RARITY_RULES.observedLookbackWeeks.exercise,
+    `got ${lookbackWeeksFor("exercise:Bench Press")}`);
+  check("hike:prep_completion → default 6w", lookbackWeeksFor("hike:prep_completion") === RARITY_RULES.observedLookbackWeeks.default,
+    `got ${lookbackWeeksFor("hike:prep_completion")}`);
+  check("hike:max_elevation_single → default 6w", lookbackWeeksFor("hike:max_elevation_single") === RARITY_RULES.observedLookbackWeeks.default,
+    `got ${lookbackWeeksFor("hike:max_elevation_single")}`);
+  check("log:mrr → default 6w", lookbackWeeksFor("log:mrr") === RARITY_RULES.observedLookbackWeeks.default,
+    `got ${lookbackWeeksFor("log:mrr")}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
