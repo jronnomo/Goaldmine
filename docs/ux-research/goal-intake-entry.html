@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<!--
+  goaldmine — Goal-intake interview entry points
+  UXR-64 pixel mockup
+  Chosen direction: dashed-border "whisper rung" interview banner + 2-row PendingNotes action split
+  + last-trained subline indicator + /coach interview prompt card at slot #1.
+
+  LOAD-BEARING RISKS TO EYEBALL:
+   1. Surface 1 (LIGHT): does the dashed banner's gold "→" read as the single saturated
+      affordance against the surrounding muted text — i.e. clearly clickable but still a whisper?
+   2. Surface 2 (335px): do BOTH accent links ("Apply revision →" / "Promote to goal →")
+      fit on ONE row without wrapping at the real note-card width?
+   3. Surface 3: does "no training logged" read as neutral info, NOT as a nag/error?
+  No animation. Tokens only. Both themes shown side by side.
+-->
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UXR-64 — Goal-intake entry points</title>
+<style>
+  /* ---- chrome (page scaffold) tokens, kept var-only ---- */
+  :root { --page:#E4E0D6; --page-fg:#3A3328; }
+
+  /* ---- app palette: light ---- */
+  [data-theme="light"] {
+    --background:#FAF3E3; --foreground:#1F1408; --muted:#6B5836;
+    --card:#FFFBF0; --border:#D9C8A2; --accent:#8A6212; --accent-fg:#FFFBF0;
+    --accent-soft:rgba(138,98,18,0.14); --target:#A82A1F; --warning:#A8511A;
+  }
+  /* ---- app palette: dark ---- */
+  [data-theme="dark"] {
+    --background:#0F0B07; --foreground:#F4E9D4; --muted:#A89876;
+    --card:#1A130C; --border:#3A2E1F; --accent:#D4A437; --accent-fg:#1A130C;
+    --accent-soft:rgba(212,164,55,0.12); --target:#C0392B; --warning:#C77B3A;
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:24px; background:var(--page); color:var(--page-fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  .stage { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start; }
+  .phone {
+    width:390px; max-width:390px; padding:16px;
+    background:var(--background); color:var(--foreground);
+    border-radius:24px; border:1px solid var(--page-fg);
+  }
+  .theme-tag {
+    font-size:11px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--muted); margin:0 0 12px;
+  }
+  .seclabel {
+    font-size:10px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--muted); margin:20px 0 8px;
+  }
+  .seclabel:first-of-type { margin-top:4px; }
+
+  /* ---- utility-ish classes (every color = var) ---- */
+  .rounded-lg{border-radius:.5rem}
+  .rounded-2xl{border-radius:1rem}
+  .rounded-full{border-radius:9999px}
+  .border{border:1px solid var(--border)}
+  .border-dashed{border-style:dashed}
+  .p-3{padding:.75rem}
+  .p-4{padding:1rem}
+  .px-3{padding-left:.75rem;padding-right:.75rem}
+  .py-2{padding-top:.5rem;padding-bottom:.5rem}
+  .space-y-1 > * + *{margin-top:.25rem}
+  .mt-2{margin-top:.5rem}
+  .mt-3{margin-top:.75rem}
+  .text-sm{font-size:.875rem;line-height:1.3}
+  .text-xs{font-size:.75rem;line-height:1.25}
+  .font-medium{font-weight:600}
+  .font-normal{font-weight:400}
+  .uppercase{text-transform:uppercase;letter-spacing:.06em}
+  .muted{color:var(--muted)}
+  .accent{color:var(--accent)}
+  .fg{color:var(--foreground)}
+  .flex{display:flex}
+  .inline-flex{display:inline-flex}
+  .items-center{align-items:center}
+  .between{justify-content:space-between}
+  .end{justify-content:flex-end}
+  .gap-15{gap:.375rem}
+  .gap-3{gap:.75rem}
+  .flex-wrap{flex-wrap:wrap}
+  .nowrap{flex-wrap:nowrap;white-space:nowrap}
+  .link{text-decoration:none;cursor:pointer}
+  .card{background:var(--card)}
+  .bg-transparent{background:transparent}
+  .bg-background{background:var(--background)}
+  .shadow-sm{box-shadow:0 1px 2px rgba(0,0,0,0.08)}
+  .min-h-44{min-height:44px}
+  .w-full{width:100%}
+  .dim{opacity:.55}
+
+  /* 44px tap-box annotation so spacing is judgeable */
+  .tap{outline:1px dashed var(--muted);outline-offset:-1px}
+
+  .objective-input{
+    width:100%;color:var(--foreground);font-size:.875rem;
+    font-family:inherit;outline:none;
+  }
+  .objective-input::placeholder{color:var(--muted)}
+
+  /* accent-soft Copy pill */
+  .pill{
+    background:var(--accent-soft);color:var(--accent);
+    border:1px solid var(--accent);font-size:.75rem;font-weight:600;
+    font-family:inherit;cursor:pointer;
+  }
+
+  /* monospace 7-step prompt block */
+  .prompt{
+    background:var(--background);color:var(--foreground);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:pre-wrap;margin:.5rem 0 0;overflow-x:auto;
+  }
+
+  /* Reach meter: 5 segments, 3 filled / 2 empty */
+  .meter{display:inline-flex;gap:2px;align-items:flex-end}
+  .seg{width:3px;height:9px;display:inline-block;border-radius:1px}
+  .seg.fill{background:var(--muted)}
+  .seg.empty{border:1px solid var(--border)}
+
+  .bullseye{font-size:13px;line-height:1}
+  .subline{display:flex;align-items:center;gap:.375rem;flex-wrap:wrap;color:var(--muted)}
+  .goal-row{display:flex;align-items:center;gap:.5rem;padding:.5rem 0}
+  .goal-row + .goal-row{border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="stage">
+
+  <!-- ============ LIGHT COLUMN ============ -->
+  <section class="phone" data-theme="light">
+    <p class="theme-tag">Light · prefers-color-scheme</p>
+
+    <!-- SURFACE 1 -->
+    <p class="seclabel">Surface 1 — Interview banner (/goals)</p>
+    <div class="rounded-lg border border-dashed p-3 space-y-1">
+      <p class="text-sm font-medium">Interview your coach first <span class="muted font-normal">(recommended)</span></p>
+      <p class="text-xs muted">A 7-step chat shapes your targets and a plan before you commit the goal.</p>
+      <a class="text-xs accent link min-h-44 tap inline-flex items-center">Interview your coach →</a>
+    </div>
+    <div id="new-goal" class="card rounded-2xl border p-4 shadow-sm mt-3">
+      <p class="text-sm font-medium">New goal</p>
+      <label class="text-xs muted mt-2" style="display:block">Objective</label>
+      <input class="objective-input rounded-lg border bg-transparent px-3 py-2 mt-2" placeholder="Summit Quandary Peak" />
+    </div>
+
+    <!-- SURFACE 2 -->
+    <p class="seclabel">Surface 2 — PendingNotes 3-action row (335px)</p>
+    <div class="rounded-lg border p-3 space-y-1" style="max-width:335px">
+      <div class="flex items-center between">
+        <span class="text-xs muted uppercase">Feedback</span>
+        <span class="text-xs muted">6/9 4:12 PM</span>
+      </div>
+      <p class="text-sm fg">Knee felt tight on the descent; cut volume…</p>
+      <div class="flex gap-3 nowrap mt-2">
+        <a class="text-xs accent link min-h-44 tap inline-flex items-center nowrap">Apply revision →</a>
+        <a class="text-xs accent link min-h-44 tap inline-flex items-center nowrap">Promote to goal →</a>
+      </div>
+      <div class="flex end">
+        <button class="text-xs muted link min-h-44 tap inline-flex items-center" style="background:transparent;border:0;font-family:inherit;cursor:pointer">Mark resolved</button>
+      </div>
+    </div>
+
+    <!-- SURFACE 3 -->
+    <p class="seclabel">Surface 3 — Last-trained subline (/goals index)</p>
+    <div class="card rounded-2xl border p-3 shadow-sm">
+      <div class="goal-row">
+        <span class="meter" aria-hidden="true"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg empty"></i><i class="seg empty"></i></span>
+        <span class="bullseye muted" aria-hidden="true">◎</span>
+        <div>
+          <div class="text-sm fg">Sub-25 5k</div>
+          <div class="subline text-xs"><span>·</span><span>2026-08-01</span><span>·</span><span>trained 3d ago</span></div>
+        </div>
+      </div>
+      <div class="goal-row">
+        <span class="meter" aria-hidden="true"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg empty"></i><i class="seg empty"></i></span>
+        <span class="bullseye muted" aria-hidden="true">◎</span>
+        <div>
+          <div class="text-sm fg">Handstand hold 10s</div>
+          <div class="subline text-xs"><span>·</span><span>Someday</span><span>·</span><span>no training logged</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="text-sm muted mt-2">2026-08-01 · 21 days out · trained 3d ago</p>
+    <p class="text-xs muted" style="margin-top:2px">↑ goal-detail variant</p>
+
+    <!-- SURFACE 4 -->
+    <p class="seclabel">Surface 4 — Interview prompt card, slot #1 (/coach)</p>
+    <div class="card rounded-2xl border p-4 shadow-sm">
+      <div class="flex items-center between">
+        <p class="text-sm font-medium">Interview your coach</p>
+        <button class="pill rounded-full px-3 min-h-44 inline-flex items-center">Copy</button>
+      </div>
+      <p class="text-xs muted mt-2">When: Starting a new goal</p>
+<pre class="prompt rounded-lg border p-3 text-xs">1) Tell me the goal in one line.
+2) When do you want it by?
+3) Let's benchmark where you are today…
+  …(7-step coach interview — full text copied to clipboard)</pre>
+    </div>
+    <div class="card rounded-2xl border p-4 shadow-sm dim mt-3">
+      <p class="text-sm font-medium">Daily check-in</p>
+      <p class="text-xs muted mt-2">How did today go? Log readiness and a note.</p>
+    </div>
+  </section>
+
+  <!-- ============ DARK COLUMN ============ -->
+  <section class="phone" data-theme="dark">
+    <p class="theme-tag">Dark · prefers-color-scheme</p>
+
+    <!-- SURFACE 1 -->
+    <p class="seclabel">Surface 1 — Interview banner (/goals)</p>
+    <div class="rounded-lg border border-dashed p-3 space-y-1">
+      <p class="text-sm font-medium">Interview your coach first <span class="muted font-normal">(recommended)</span></p>
+      <p class="text-xs muted">A 7-step chat shapes your targets and a plan before you commit the goal.</p>
+      <a class="text-xs accent link min-h-44 tap inline-flex items-center">Interview your coach →</a>
+    </div>
+    <div id="new-goal" class="card rounded-2xl border p-4 shadow-sm mt-3">
+      <p class="text-sm font-medium">New goal</p>
+      <label class="text-xs muted mt-2" style="display:block">Objective</label>
+      <input class="objective-input rounded-lg border bg-transparent px-3 py-2 mt-2" placeholder="Summit Quandary Peak" />
+    </div>
+
+    <!-- SURFACE 2 -->
+    <p class="seclabel">Surface 2 — PendingNotes 3-action row (335px)</p>
+    <div class="rounded-lg border p-3 space-y-1" style="max-width:335px">
+      <div class="flex items-center between">
+        <span class="text-xs muted uppercase">Feedback</span>
+        <span class="text-xs muted">6/9 4:12 PM</span>
+      </div>
+      <p class="text-sm fg">Knee felt tight on the descent; cut volume…</p>
+      <div class="flex gap-3 nowrap mt-2">
+        <a class="text-xs accent link min-h-44 tap inline-flex items-center nowrap">Apply revision →</a>
+        <a class="text-xs accent link min-h-44 tap inline-flex items-center nowrap">Promote to goal →</a>
+      </div>
+      <div class="flex end">
+        <button class="text-xs muted link min-h-44 tap inline-flex items-center" style="background:transparent;border:0;font-family:inherit;cursor:pointer">Mark resolved</button>
+      </div>
+    </div>
+
+    <!-- SURFACE 3 -->
+    <p class="seclabel">Surface 3 — Last-trained subline (/goals index)</p>
+    <div class="card rounded-2xl border p-3 shadow-sm">
+      <div class="goal-row">
+        <span class="meter" aria-hidden="true"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg empty"></i><i class="seg empty"></i></span>
+        <span class="bullseye muted" aria-hidden="true">◎</span>
+        <div>
+          <div class="text-sm fg">Sub-25 5k</div>
+          <div class="subline text-xs"><span>·</span><span>2026-08-01</span><span>·</span><span>trained 3d ago</span></div>
+        </div>
+      </div>
+      <div class="goal-row">
+        <span class="meter" aria-hidden="true"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg empty"></i><i class="seg empty"></i></span>
+        <span class="bullseye muted" aria-hidden="true">◎</span>
+        <div>
+          <div class="text-sm fg">Handstand hold 10s</div>
+          <div class="subline text-xs"><span>·</span><span>Someday</span><span>·</span><span>no training logged</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="text-sm muted mt-2">2026-08-01 · 21 days out · trained 3d ago</p>
+    <p class="text-xs muted" style="margin-top:2px">↑ goal-detail variant</p>
+
+    <!-- SURFACE 4 -->
+    <p class="seclabel">Surface 4 — Interview prompt card, slot #1 (/coach)</p>
+    <div class="card rounded-2xl border p-4 shadow-sm">
+      <div class="flex items-center between">
+        <p class="text-sm font-medium">Interview your coach</p>
+        <button class="pill rounded-full px-3 min-h-44 inline-flex items-center">Copy</button>
+      </div>
+      <p class="text-xs muted mt-2">When: Starting a new goal</p>
+<pre class="prompt rounded-lg border p-3 text-xs">1) Tell me the goal in one line.
+2) When do you want it by?
+3) Let's benchmark where you are today…
+  …(7-step coach interview — full text copied to clipboard)</pre>
+    </div>
+    <div class="card rounded-2xl border p-4 shadow-sm dim mt-3">
+      <p class="text-sm font-medium">Daily check-in</p>
+      <p class="text-xs muted mt-2">How did today go? Log readiness and a note.</p>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
