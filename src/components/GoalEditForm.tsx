@@ -32,6 +32,7 @@ export function GoalEditForm({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [copyFromGoalId, setCopyFromGoalId] = useState<string>("");
+  const [targetDate, setTargetDate] = useState(defaultValues.targetDate);
 
   return (
     <form
@@ -63,9 +64,19 @@ export function GoalEditForm({
         <input
           type="date"
           name="targetDate"
-          defaultValue={defaultValues.targetDate}
+          value={targetDate}
+          onChange={(e) => setTargetDate(e.target.value)}
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
+        {targetDate && (
+          <button
+            type="button"
+            onClick={() => setTargetDate("")}
+            className="self-start text-xs text-[var(--accent)] min-h-[44px] px-0"
+          >
+            Clear — make it a someday goal
+          </button>
+        )}
       </label>
 
       <label className="flex flex-col gap-1">
