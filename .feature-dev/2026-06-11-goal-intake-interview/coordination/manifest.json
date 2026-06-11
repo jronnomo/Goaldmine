@@ -1,0 +1,11 @@
+{
+  "feature": "Multi-goal Phase 3: guided goal-intake interview",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-goal-intake-interview.md",
+  "prd_issue": "https://github.com/jronnomo/workout-planner/issues/64",
+  "requirements": ["REQ-64-1 core+data", "REQ-64-2 MCP", "REQ-64-3 goals UI", "REQ-64-4 coach+journal UI"],
+  "waves": "REQ-64-1 + DA + ux-research parallel -> {REQ-64-2, REQ-64-3, REQ-64-4} -> QA/fix -> ship",
+  "contracts": "ensurePlanForGoalCore(goalId,targetDate)->{planId,created}; lastTrainedForGoals(goals)->Map<id,Date|null>; /goals?objective=<text>#new-goal",
+  "iteration": 1,
+  "status": "developing"
+}
