@@ -178,7 +178,7 @@ export default async function GoalDetail({
         <Card
           title="Plan"
           action={
-            <div className="flex items-center gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
               {activePlan && (
                 <>
                   <Link href={`/goals/${goal.id}/plan`} className="text-[var(--accent)]">

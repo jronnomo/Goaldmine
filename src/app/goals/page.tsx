@@ -130,14 +130,9 @@ export default async function GoalsPage() {
                     {isFocused ? (
                       rowBody
                     ) : (
-                      <form action={setFocus} className="flex-1 min-w-0">
-                        <button
-                          type="submit"
-                          className="w-full flex items-start gap-2 hover:opacity-80"
-                        >
-                          {rowBody}
-                        </button>
-                      </form>
+                      <Link href={`/goals/${g.id}`} className="flex-1 min-w-0 hover:opacity-80">
+                        {rowBody}
+                      </Link>
                     )}
                     <div className="shrink-0 flex flex-col items-end gap-1.5">
                       {days !== null ? (
@@ -163,33 +158,39 @@ export default async function GoalsPage() {
                         </span>
                       )}
                       {!isFocused && (
-                        // [UXR-62-12] Track/Untrack pill — hidden on focus row (server-guarded + hidden)
-                        // Tracked style: accent-soft bg + accent border; Untracked: border/muted outline
-                        // UXR-62B-10: title= describes current state (not the action) for desktop hover
-                        <form action={g.active ? untrackAction : trackAction}>
-                          <button
-                            type="submit"
-                            className={`text-xs rounded-full border px-2 py-0.5 min-h-[44px] ${
-                              g.active
-                                ? "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
-                                : "border-[var(--border)] text-[var(--muted)]"
-                            }`}
-                            title={
-                              g.active
-                                ? "Shows on the calendar and to your coach, and counts toward rarity."
-                                : "Parked. Hidden from the calendar, coach, and rarity until you track it again."
-                            }
-                          >
-                            {g.active ? "Untrack" : "Track"}
-                          </button>
-                        </form>
+                        <>
+                          {/* Set focus pill — explicit promote action; row tap navigates instead. */}
+                          <form action={setFocus}>
+                            <button
+                              type="submit"
+                              className="text-xs rounded-full border px-2 py-0.5 min-h-[44px] border-[var(--accent)] text-[var(--accent)]"
+                              title="Drives your daily Today plan. Only one goal holds focus at a time."
+                            >
+                              Set focus
+                            </button>
+                          </form>
+                          {/* [UXR-62-12] Track/Untrack pill — hidden on focus row (server-guarded + hidden)
+                              Tracked style: accent-soft bg + accent border; Untracked: border/muted outline
+                              UXR-62B-10: title= describes current state (not the action) for desktop hover */}
+                          <form action={g.active ? untrackAction : trackAction}>
+                            <button
+                              type="submit"
+                              className={`text-xs rounded-full border px-2 py-0.5 min-h-[44px] ${
+                                g.active
+                                  ? "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
+                                  : "border-[var(--border)] text-[var(--muted)]"
+                              }`}
+                              title={
+                                g.active
+                                  ? "Shows on the calendar and to your coach, and counts toward rarity."
+                                  : "Parked. Hidden from the calendar, coach, and rarity until you track it again."
+                              }
+                            >
+                              {g.active ? "Untrack" : "Track"}
+                            </button>
+                          </form>
+                        </>
                       )}
-                      <Link
-                        href={`/goals/${g.id}`}
-                        className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]"
-                      >
-                        Manage →
-                      </Link>
                     </div>
                   </li>
                 );
