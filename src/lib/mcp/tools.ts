@@ -28,7 +28,9 @@ import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
-import { createGoalCore } from "@/lib/goal-core";
+import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
+import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
+import { lastTrainedForGoals, relativeTrainedLabel } from "@/lib/goal-attribution";
 import { computeReadiness } from "@/lib/readiness";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { LegendSchema } from "@/lib/legend";
@@ -819,7 +821,9 @@ function registerReadTools(server: McpServer) {
         "Use to discover which goal is in focus, list all tracked goals with their target dates, or find someday goals. " +
         "Pair with get_goal for full detail on one goal. " +
         "coachFeasibilityTier is the coach's stored override tier (null when not set). " +
-        "For the computed feasibility tier (and full stack math), call get_rarity.",
+        "For the computed feasibility tier (and full stack math), call get_rarity. " +
+        "attributionHints is the array of canonical exercise names that count as training this goal (null when none set). " +
+        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints — null when the goal has no hints.",
     },
     async () =>
       safe(async () => {
@@ -831,6 +835,7 @@ function registerReadTools(server: McpServer) {
           ],
           include: { plans: { where: { active: true }, select: { id: true, weeks: true } } },
         });
+        const trainedMap = await lastTrainedForGoals(goals);
         return goals.map((g) => ({
           id: g.id,
           objective: g.objective,
@@ -842,6 +847,10 @@ function registerReadTools(server: McpServer) {
           targetCount: Array.isArray(g.targets) ? (g.targets as unknown[]).length : 0,
           activePlanId: g.plans[0]?.id ?? null,
           coachFeasibilityTier: parseCoachFeasibilityLocal(g.coachFeasibility)?.tier ?? null,
+          attributionHints: Array.isArray(g.attributionHints) ? g.attributionHints : null,
+          lastTrained: Array.isArray(g.attributionHints) && (g.attributionHints as unknown[]).length > 0
+            ? relativeTrainedLabel(trainedMap.get(g.id) ?? null)
+            : null,
         }));
       }),
   );
@@ -854,7 +863,10 @@ function registerReadTools(server: McpServer) {
         "Full goal with targets, references, the active plan (with planJson — the ROTATION TEMPLATE, not the resolved per-date prescription), the most recent plan revisions, and an upcomingOverrides summary so you can see which dates diverge from the template. " +
         "Important: planJson tells you 'Mondays do this' — it does NOT include per-date overrides. To answer 'what's actually prescribed on date X', call get_day(X), not get_goal. To answer 'what's exercise Y prescribed at on its next occurrences', call find_exercise_in_plan. " +
         "isFocus=true means this goal's plan drives the daily prescription; other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
-        "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision.",
+        "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision. " +
+        "Plan fields (plans[]) are empty for someday goals (targetDate=null — no plan scaffolded; call update_goal with a targetDate to scaffold one). " +
+        "attributionHints is the array of canonical exercise names that count as training this goal. " +
+        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints.",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
       },
@@ -931,7 +943,12 @@ function registerReadTools(server: McpServer) {
         });
         const coach = parseCoachFeasibilityLocal(goal.coachFeasibility);
 
-        return { ...goal, upcomingOverrides, feasibility: { computed, coach } };
+        const trainedMap = await lastTrainedForGoals([{ id: goal.id, attributionHints: goal.attributionHints }]);
+        const lastTrained = Array.isArray(goal.attributionHints) && (goal.attributionHints as unknown[]).length > 0
+          ? relativeTrainedLabel(trainedMap.get(goal.id) ?? null)
+          : null;
+
+        return { ...goal, upcomingOverrides, feasibility: { computed, coach }, lastTrained };
       }),
   );
 
@@ -1008,15 +1025,26 @@ function registerReadTools(server: McpServer) {
   server.registerTool(
     "list_promotable_notes",
     {
-      title: "Notes that might be standing rules",
+      title: "Notes that might be standing rules or goals",
       description:
-        "Lists feedback-type notes (and optionally existing standing_rule notes) so the coach can review them and propose promotions via promote_note. Use on first session after the standing_rule migration — or any time the user mentions a rule that may not yet be promoted. Returns all matching notes sorted newest first; resolvedAt is included so you can tell pending from folded-in. Pure read — no side effects.",
+        "Lists feedback-type notes (and optionally standing_rule notes and/or audible+journal aspiration candidates) for review. " +
+        "Default (feedback only) covers unpromoted coaching rules → use promote_note to promote to standing_rule. " +
+        "includeAspirations=true widens to audible+journal so you can find someday-goal candidates for promote_note_to_goal. " +
+        "Overlaps with get_pending_notes for unresolved audibles — this tool's advantage is that it also returns RESOLVED notes (resolvedAt is included so you can filter pending vs folded-in). " +
+        "Use on first session after the standing_rule migration, any time the user mentions a rule not yet promoted, or when scanning for aspirations to promote to goals. " +
+        "Returns all matching notes sorted newest first. Pure read — no side effects.",
       inputSchema: {
         includeStandingRules: z
           .boolean()
           .default(false)
           .describe(
-            "When true, also include notes that are already type='standing_rule' (useful for a freshness audit). Default false — only surfaces unpromoted feedback notes.",
+            "When true, also include notes that are already type='standing_rule' (useful for a freshness audit). Default false.",
+          ),
+        includeAspirations: z
+          .boolean()
+          .default(false)
+          .describe(
+            "When true, also include audible and journal notes — widens the result to aspiration candidates for promote_note_to_goal. Default false.",
           ),
         limit: z
           .number()
@@ -1027,11 +1055,11 @@ function registerReadTools(server: McpServer) {
           .describe("Max notes to return. Default 50."),
       },
     },
-    async ({ includeStandingRules, limit }) =>
+    async ({ includeStandingRules, includeAspirations, limit }) =>
       safe(async () => {
-        const types = includeStandingRules
-          ? ["feedback", "standing_rule"]
-          : ["feedback"];
+        const types: string[] = ["feedback"];
+        if (includeStandingRules) types.push("standing_rule");
+        if (includeAspirations) types.push("audible", "journal");
         const notes = await prisma.note.findMany({
           where: { type: { in: types } },
           orderBy: { date: "desc" },
@@ -1140,7 +1168,8 @@ function registerReadTools(server: McpServer) {
       description:
         "Every scheduled baseline test for the active plan with per-checkpoint status: initial collection (week 1) and each retest week. " +
         "Use to answer 'what fitness tests are due', 'what baselines are overdue', 'when's the next retest', or to plan a baseline-collection day. " +
-        "Includes overdue/due flags so the coach can call out missed tests before they drift.",
+        "Includes overdue/due flags so the coach can call out missed tests before they drift. " +
+        "If the focus goal has no plan (someday goal), this tool operates on the next active plan — set a target date on the someday goal to scaffold its plan first.",
     },
     async () => safe(() => getBaselineSchedule()),
   );
@@ -2602,7 +2631,8 @@ function registerWriteTools(server: McpServer) {
         "(long-effort or retest-on-hike) — returns blockedBy listing the conflicts. " +
         "Past weeks are skipped in the conflict guard (stale planned hikes are unresolvable). " +
         "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances. " +
-        "Pass dryRun:true to preview blockedBy and the target mark WITHOUT writing — useful for inspecting conflicts before committing.",
+        "Pass dryRun:true to preview blockedBy and the target mark WITHOUT writing — useful for inspecting conflicts before committing. " +
+        "If the focus goal has no plan (someday goal), this tool operates on the next active plan — set a target date on the someday goal to scaffold its plan first.",
       inputSchema: {
         weekIndex: z
           .number()
@@ -3465,6 +3495,126 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "promote_note_to_goal",
+    {
+      title: "Promote a note to a goal (someday or dated)",
+      description:
+        "Create a goal from an existing note and resolve the note in one operation. " +
+        "Propose before applying — show the user the proposed objective and goal fields before calling. " +
+        "For a full intake interview (benchmarks, feasibility preview, weighted targets) prefer the interview flow ending in create_goal; " +
+        "use this tool when the note is already a well-formed aspiration and you want to resolve it in one step. " +
+        "list_goals before retrying on any unclear response — duplicates are not auto-prevented. " +
+        "Notes: (1) goal creation and note stamping are two separate writes (non-atomic); on an already-resolved note the goal is still created but priorResolved=true is returned and the stamp is skipped. " +
+        "(2) Omit targetDate to create a someday goal — no plan scaffolded, no calendar pin, unrated for rarity; that is a fine default for aspirational notes.",
+      inputSchema: {
+        noteId: z.string().describe("Note id to promote (from list_promotable_notes includeAspirations=true, or get_pending_notes)"),
+        objective: z
+          .string()
+          .min(3)
+          .max(200)
+          .describe("Coach-distilled objective — NOT the raw note body. Rewrite for clarity and brevity."),
+        kind: z.enum(["fitness", "project"]).default("fitness"),
+        flavor: z
+          .string()
+          .optional()
+          .describe(
+            "Goal flavor key (e.g. 'hike', 'strength', 'running', 'snowboard'). Validated against the flavor preset list; drives the calendar legend. Omit to use the default hike legend.",
+          ),
+        targetDate: DateKeyShape.optional().describe(
+          "Goal target date (yyyy-mm-dd). Usually omitted → someday goal (no plan scaffolded, no calendar pin, unrated for rarity).",
+        ),
+        targets: z
+          .array(GoalTargetSchema)
+          .min(1)
+          .optional()
+          .describe("Readiness targets (weights summing ~1). Omit when not yet quantified."),
+        attributionHints: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Canonical exercise names that count as training this goal (exactly as logged — check get_records_summary). Drives the 'trained Nd ago' indicator.",
+          ),
+        notes: z
+          .string()
+          .optional()
+          .describe(
+            "Additional goal notes. Defaults to a provenance line: \"Promoted from <type> note (<date>): \\\"<body slice 140>\\\"\".",
+          ),
+      },
+    },
+    async ({ noteId, objective, kind, flavor, targetDate, targets, attributionHints, notes }) =>
+      safe(async () => {
+        // C2: look up note first — validate BEFORE creating anything
+        const note = await prisma.note.findUniqueOrThrow({ where: { id: noteId } });
+
+        // C2: already promoted → return early without creating a duplicate
+        if (note.resolvedAt && note.resolvedReason?.startsWith("promoted to goal ")) {
+          const existingId = note.resolvedReason.replace("promoted to goal ", "").trim();
+          return {
+            goalId: existingId,
+            priorResolved: true,
+            message: `Note was already promoted to goal ${existingId}`,
+          };
+        }
+
+        // D6: validate flavor key → legend preset
+        let legend: ReturnType<typeof legendForFlavor> | undefined;
+        if (flavor !== undefined) {
+          if (!isFlavorKey(flavor)) {
+            throw new Error(
+              `Unknown flavor key: "${flavor}". Use one of the preset keys (hike, strength, running, snowboard) or omit.`,
+            );
+          }
+          legend = legendForFlavor(flavor) ?? undefined;
+        }
+
+        const parsedDate = targetDate ? parseDateInput(targetDate) : null;
+
+        // Default notes: provenance line quoting the source note body
+        const resolvedNotes =
+          notes ??
+          `Promoted from ${note.type} note (${toDateKey(note.date)}): "${note.body.slice(0, 140)}"`;
+
+        // M1: createGoalCore manages its own transaction — cannot nest.
+        // Order: create goal FIRST, then stamp note AFTER. The two writes are
+        // intentionally non-atomic; a crash between them leaves the note
+        // unresolved (benign — C2 will short-circuit on a retry once the goal
+        // is stamped, or the coach can re-call to stamp manually).
+        const { goal, planId } = await createGoalCore({
+          objective,
+          targetDate: parsedDate,
+          notes: resolvedNotes,
+          kind,
+          legend: legend ?? undefined,
+          targets,
+          attributionHints,
+        });
+
+        // Stamp note resolved (skip if a race already resolved it)
+        let priorResolved = false;
+        if (note.resolvedAt) {
+          priorResolved = true;
+        } else {
+          await prisma.note.update({
+            where: { id: noteId },
+            data: {
+              resolvedAt: new Date(),
+              resolvedReason: `promoted to goal ${goal.id}`,
+            },
+          });
+        }
+
+        return {
+          goalId: goal.id,
+          planId,
+          noteId,
+          ...(priorResolved ? { priorResolved: true } : {}),
+          message: `Goal created from note: ${objective}${planId ? "" : " (someday — no plan scaffolded)"}`,
+        };
+      }),
+  );
+
+  server.registerTool(
     "acknowledge_standing_rule",
     {
       title: "Refresh a standing rule's lastAcknowledgedAt",
@@ -3854,13 +4004,13 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "create_goal",
     {
-      title: "Create a new goal (with optional legend)",
+      title: "Create a new goal (with optional legend, targets, and attribution hints)",
       description:
-        "Create a new Goal and scaffold its Plan + initial PlanRevision in one nested write. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use setFocusGoal from the app UI to explicitly switch focus. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan end date; defaults to a 12-week plan). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use setFocusGoal from the app UI to explicitly switch focus. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape.optional().describe(
-          "Goal target date (yyyy-mm-dd, USER_TZ midnight). Omit to create a someday goal with no calendar pin.",
+          "Goal target date (yyyy-mm-dd, USER_TZ midnight). Omit to create a someday goal with no calendar pin and no plan scaffolded.",
         ),
         notes: z.string().optional(),
         kind: z.enum(["fitness", "project"]).default("fitness").describe(
@@ -3873,9 +4023,35 @@ function registerWriteTools(server: McpServer) {
         legend: LegendSchema.optional().describe(
           "Calendar legend; see update_goal_legend description for preset examples by goal flavor",
         ),
+        targets: z
+          .array(GoalTargetSchema)
+          .min(1)
+          .optional()
+          .describe(
+            "Readiness targets captured during the intake interview (weights summing ~1). " +
+              "Each target drives a per-target progress bar in compute_readiness.",
+          ),
+        coachFeasibility: z
+          .object({
+            tier: z.enum(RARITY_TIERS),
+            rationale: z.string().min(1),
+          })
+          .optional()
+          .describe(
+            "Seed the coach feasibility override from the intake interview. " +
+              "Stored in the exact set_goal_feasibility shape ({tier, rationale, assessedAt, assessedBy:\"coach\"}). " +
+              "Drives the coach-tier badge until the user's numbers override it.",
+          ),
+        attributionHints: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Canonical exercise names that count as training this goal (exactly as logged — check get_records_summary). " +
+              "Drives the 'trained Nd ago' indicator on the goals page and in list_goals/get_goal.",
+          ),
       },
     },
-    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend }) =>
+    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints }) =>
       safe(async () => {
         const parsedDate = targetDate ? parseDateInput(targetDate) : null;
         const { goal, planId } = await createGoalCore({
@@ -3885,6 +4061,9 @@ function registerWriteTools(server: McpServer) {
           kind,
           copyFromGoalId,
           legend,
+          targets,
+          coachFeasibility,
+          attributionHints,
         });
 
         // Non-blocking stack warning — compute after create so the new goal is included.
@@ -3908,10 +4087,15 @@ function registerWriteTools(server: McpServer) {
           // Stack warning is advisory — never let it fail the create.
         }
 
+        const baseMsg = `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`;
+        const message = planId === null
+          ? `${baseMsg} (someday — no plan scaffolded; add a target date later to scaffold one)`
+          : baseMsg;
+
         return {
           goalId: goal.id,
           planId,
-          message: `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`,
+          message,
           stackWarning,
         };
       }),
@@ -4311,13 +4495,15 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "update_goal",
     {
-      title: "Update a goal's objective, target date, or status",
+      title: "Update a goal's objective, target date, status, or attribution hints",
       description:
         "Partial update — only the fields you pass are changed; omit anything you want to leave unchanged. " +
         "targetDate here is the GOAL pin shown on the calendar (e.g. summit day). " +
+        "Setting a targetDate on a goal that has no plan auto-scaffolds a plan from now to that date. " +
         "To shift the plan length / endsOn / plan metadata, follow up with update_plan_metadata after this call. " +
         "Per operating rules: propose the change and get explicit approval before calling. " +
-        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setFocusGoal from the app UI.",
+        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setFocusGoal from the app UI. " +
+        "attributionHints: pass an array to set/replace canonical exercise names; pass null to clear; omit to leave unchanged.",
       inputSchema: {
         goalId: z.string().describe("The goal id to update"),
         objective: z
@@ -4332,8 +4518,9 @@ function registerWriteTools(server: McpServer) {
           .nullable()
           .optional()
           .describe(
-            "New goal target date in yyyy-mm-dd (USER_TZ midnight), null to clear (make this a someday goal), or omit to leave unchanged. This is the goal-date pin; " +
-              "plan length / endsOn cascades go through update_plan_metadata.",
+            "New goal target date in yyyy-mm-dd (USER_TZ midnight), null to clear (make this a someday goal), or omit to leave unchanged. " +
+              "Setting a non-null date on a plan-less goal auto-scaffolds a plan from now to that date. " +
+              "Plan length / endsOn cascades go through update_plan_metadata.",
           ),
         status: z
           .enum(["active", "achieved", "abandoned"])
@@ -4344,6 +4531,15 @@ function registerWriteTools(server: McpServer) {
           .nullable()
           .optional()
           .describe("Free-form goal notes; pass null to clear"),
+        attributionHints: z
+          .array(z.string().min(1))
+          .nullable()
+          .optional()
+          .describe(
+            "Canonical exercise names that count as training this goal (exactly as logged — check get_records_summary). " +
+              "Pass an array to set/replace; pass null to clear; omit to leave unchanged. " +
+              "Values are canonicalized via the exercise alias map on write.",
+          ),
       },
     },
     async (input) =>
@@ -4359,6 +4555,15 @@ function registerWriteTools(server: McpServer) {
         if (input.targetDate !== undefined) data.targetDate = input.targetDate ? parseDateInput(input.targetDate) : null;
         if (input.status !== undefined) data.status = input.status;
         if (input.notes !== undefined) data.notes = input.notes;
+        // D3 attributionHints: nullable-optional — null clears (Prisma.JsonNull), array replaces
+        if (input.attributionHints !== undefined) {
+          data.attributionHints =
+            input.attributionHints === null
+              ? Prisma.JsonNull
+              : input.attributionHints.length === 0
+                ? Prisma.JsonNull
+                : input.attributionHints;
+        }
 
         if (Object.keys(data).length === 0) {
           return {
@@ -4378,9 +4583,27 @@ function registerWriteTools(server: McpServer) {
           select: { id: true, objective: true, targetDate: true, status: true },
         });
 
+        // D2 hook: if a non-null targetDate was set, ensure the goal has a plan
+        let planScaffolded = false;
+        let scaffoldedPlanId: string | null = null;
+        if (input.targetDate) {
+          const parsedDate = parseDateInput(input.targetDate);
+          const ensure = await ensurePlanForGoalCore(input.goalId, parsedDate);
+          planScaffolded = ensure.created;
+          scaffoldedPlanId = ensure.planId;
+        }
+
+        const baseMsg = `Goal updated: ${updated.objective}`;
+        const message =
+          planScaffolded && scaffoldedPlanId
+            ? `${baseMsg} (plan scaffolded → ${updated.targetDate ? toDateKey(updated.targetDate) : ""})`
+            : baseMsg;
+
         return {
           id: updated.id,
-          message: `Goal updated: ${updated.objective}`,
+          message,
+          planScaffolded,
+          planId: scaffoldedPlanId,
           goal: {
             objective: updated.objective,
             targetDate: updated.targetDate ? toDateKey(updated.targetDate) : null,

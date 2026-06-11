@@ -19,6 +19,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { Legend } from "@/lib/legend";
+import { dateKey } from "@/lib/calendar";
 import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
 import type { RarityTier } from "@/lib/rarity-core";
 import { canonicalExerciseName } from "@/lib/records";
@@ -213,6 +214,16 @@ export async function ensurePlanForGoalCore(
   goalId: string,
   targetDate: Date,
 ): Promise<EnsurePlanResult> {
+  // H2 guard (upgrade path only): cannot scaffold a plan for a date already past.
+  // This guards only ensurePlanForGoalCore, not createGoalCore's dated creation path.
+  const nowKey = dateKey(new Date());
+  const targetKey = dateKey(targetDate);
+  if (targetKey <= nowKey) {
+    throw new Error(
+      `targetDate is in the past (${targetKey}) — update the date or leave the goal as someday.`,
+    );
+  }
+
   return prisma.$transaction(async (tx) => {
     const existing = await tx.plan.findFirst({
       where: { goalId },
