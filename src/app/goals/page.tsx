@@ -5,6 +5,7 @@ import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { ReachMeter } from "@/components/ReachMeter";
 import { StackReachCard } from "@/components/StackReachCard";
 import { prisma } from "@/lib/db";
+import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 import { computeStackRarity } from "@/lib/rarity";
 
@@ -23,11 +24,20 @@ function goalProgress(
   return Math.max(0, Math.min(1, elapsed / total));
 }
 
-export default async function GoalsPage() {
+export default async function GoalsPage({
+  searchParams,
+}: {
+  // Follow goals/[id]'s existing searchParams idiom (Next 16: Promise<{}>).
+  searchParams: Promise<{ objective?: string }>;
+}) {
+  const { objective: rawObjective } = await searchParams;
+  const defaultObjective = rawObjective ? rawObjective.slice(0, 200) : undefined;
+
   // Focus goal first (isFocus=true), then tracked (active=true), then by target date
   // (nulls last = someday goals at the bottom), then most-recently-updated.
   // Include most-recent plan per goal (regardless of active status) to detect paused state.
   // One computeStackRarity per request — no re-computation per row (UXR-63-08, PRD §4).
+  // attributionHints is a scalar field — included by default in findMany (no explicit select needed).
   const [goals, stack] = await Promise.all([
     prisma.goal.findMany({
       orderBy: [
@@ -46,6 +56,8 @@ export default async function GoalsPage() {
     }),
     computeStackRarity(),
   ]);
+  // UXR-64-07/09: ONE batched query over all hint variants; runs after goals (depends on hints).
+  const trainedMap = await lastTrainedForGoals(goals);
   const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
 
   // Build per-goal map keyed by goalId for O(1) row lookup (UXR-63-07: no recompute)
@@ -73,9 +85,12 @@ export default async function GoalsPage() {
         </p>
       </header>
 
-      <Card title="New goal">
-        <GoalCreateForm copySources={copySources} />
-      </Card>
+      {/* id="new-goal": deep-link anchor for promote-to-goal path (/goals?objective=...#new-goal) */}
+      <div id="new-goal">
+        <Card title="New goal">
+          <GoalCreateForm copySources={copySources} defaultObjective={defaultObjective} />
+        </Card>
+      </div>
 
       {/* UXR-63-08: StackReachCard above the list; quiet for Common–Rare, escalates for Epic/Legendary */}
       <StackReachCard stack={stack} />
@@ -160,6 +175,13 @@ export default async function GoalsPage() {
                           {isPlanPaused && (
                             <span title="Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact.">
                               {" · Plan paused"}
+                            </span>
+                          )}
+                          {/* UXR-64-07/09: trained indicator joins existing muted subline for hinted goals.
+                              "no training logged" is factual (UXR-64-09); never "never trained". */}
+                          {parseAttributionHints(g.attributionHints).length > 0 && (
+                            <span data-testid="goal-row-trained">
+                              {" · "}{relativeTrainedLabel(trainedMap.get(g.id) ?? null)}
                             </span>
                           )}
                         </span>

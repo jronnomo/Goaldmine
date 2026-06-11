@@ -105,7 +105,7 @@ export async function lastTrainedForGoals(
  * @returns   "trained today" | "trained Nd ago" | "never trained"
  */
 export function relativeTrainedLabel(d: Date | null): string {
-  if (!d) return "never trained";
+  if (!d) return "no training logged";
   const nowSod = startOfDay(new Date());
   const trainedSod = startOfDay(d);
   // Compare via dateKey to avoid raw getDate() which is UTC-only on Vercel
