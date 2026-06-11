@@ -442,6 +442,147 @@ console.log("\n15. H3 — lookbackWeeksFor dispatch:");
     `got ${lookbackWeeksFor("log:mrr")}`);
 }
 
+// ── 16. Unmeasured targets (null current, no start) ─────────────────────────
+
+console.log("\n16. Unmeasured targets — never-measured baseline/exercise ⇒ unknown, countsTowardTier=false:");
+{
+  // (a) Unmeasured baseline target: no current, no start → unknown, not counted
+  const stepUpTarget = makeTarget(
+    "baseline:20 Min Step-Up Reps",
+    "Step-Up Reps",
+    "reps",
+    "increase",
+    1000,
+    0.1,
+    // no start argument — target.start is undefined
+  );
+  const tfUnmeasured = computeTargetFeasibility({
+    target: stepUpTarget,
+    current: null,           // no series data
+    weeksRemaining: 52,
+    observedWeeklyRate: null,
+    observedPoints: 0,
+    normPack: FITNESS_NORM_PACK,
+  });
+  check(
+    "unmeasured baseline: verdict = unknown",
+    tfUnmeasured.verdict === "unknown",
+    `got ${tfUnmeasured.verdict}`,
+  );
+  check(
+    "unmeasured baseline: countsTowardTier = false",
+    tfUnmeasured.countsTowardTier === false,
+    `got ${tfUnmeasured.countsTowardTier}`,
+  );
+  check(
+    "unmeasured baseline: ratio = null",
+    tfUnmeasured.ratio === null,
+    `got ${tfUnmeasured.ratio}`,
+  );
+
+  // Goal tier falls to the next counted target (the unmeasured one is excluded)
+  const unmeasuredTF: TargetFeasibility = {
+    metric: "baseline:20 Min Step-Up Reps",
+    label: "Step-Up Reps",
+    weight: 0.1,
+    requiredRate: null,
+    observedRate: null,
+    plausibleRate: null,
+    rateBasis: "none",
+    ratio: null,
+    verdict: "unknown",
+    countsTowardTier: false,
+  };
+  const measuredCommon: TargetFeasibility = {
+    metric: "weightLb",
+    label: "Weight",
+    weight: 0.5,
+    requiredRate: 0.3,
+    observedRate: null,
+    plausibleRate: 1.5,
+    rateBasis: "norm",
+    ratio: 0.2,
+    verdict: "common",
+    countsTowardTier: true,
+  };
+  const { tier: goalTier } = aggregateGoalTier([unmeasuredTF, measuredCommon]);
+  check(
+    "unmeasured target excluded from goal tier; next counted target wins (common)",
+    goalTier === "common",
+    `got ${goalTier}`,
+  );
+
+  // All-unmeasured → tier null (unrated)
+  const { tier: allUnknown } = aggregateGoalTier([unmeasuredTF]);
+  check(
+    "all-unmeasured targets → goal tier null",
+    allUnknown === null,
+    `got ${allUnknown}`,
+  );
+}
+
+// ── 17. Regression guard: bench 135→315 with explicit start=135 still legendary ─
+
+console.log("\n17. Regression guard: bench 135→315 with explicit start=135 still legendary:");
+{
+  // This tests that the unmeasured guard does NOT fire when target.start is provided.
+  const target = makeTarget("exercise:Bench Press", "Bench press", "lb", "increase", 315, 1.0, 135);
+  const tf = computeTargetFeasibility({
+    target,
+    current: null, // no observed data yet, but start=135 is provided
+    weeksRemaining: 12,
+    observedWeeklyRate: null,
+    observedPoints: 0,
+    normPack: FITNESS_NORM_PACK,
+  });
+  // start=135 → effectiveCurrent=135 → gap=180 → required=15 lb/wk → ratio≈7.4 → legendary
+  check(
+    "bench 315 / start=135 / current=null: verdict = legendary",
+    tf.verdict === "legendary",
+    `got ${tf.verdict}`,
+  );
+  check(
+    "bench 315 / start=135 / current=null: countsTowardTier = true",
+    tf.countsTowardTier === true,
+    `got ${tf.countsTowardTier}`,
+  );
+}
+
+// ── 18. Build-from-zero metric: current=0 ⇒ rated, NOT unmeasured ────────────
+
+console.log("\n18. Build-from-zero (hike:prep_completion) current=0 ⇒ still rated, NOT unknown:");
+{
+  // hike:prep_completion returns current=0 via resolveMetricValue when 0 hikes logged.
+  // The unmeasured guard must NOT fire because current is 0, not null.
+  const target = makeTarget(
+    "hike:prep_completion",
+    "Prep hikes completed",
+    "hikes",
+    "increase",
+    20,
+    1.0,
+    // no start — but current=0 makes it measured
+  );
+  const tf = computeTargetFeasibility({
+    target,
+    current: 0,             // resolveMetricValue returns 0 for 0 hikes
+    weeksRemaining: 12,
+    observedWeeklyRate: null,
+    observedPoints: 0,
+    normPack: FITNESS_NORM_PACK,
+  });
+  check(
+    "hike:prep_completion current=0: NOT unknown (still rated)",
+    tf.verdict !== "unknown",
+    `got ${tf.verdict}`,
+  );
+  check(
+    "hike:prep_completion current=0: countsTowardTier = true",
+    tf.countsTowardTier === true,
+    `got ${tf.countsTowardTier}`,
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Results
 // ─────────────────────────────────────────────────────────────────────────────

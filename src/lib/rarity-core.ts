@@ -392,6 +392,26 @@ export function computeTargetFeasibility(input: {
 
   const family = metricFamilyFor(target.metric, target.units, target.direction);
 
+  // post-merge fix: never-measured targets (null current, no explicit start) are 'unknown'
+  // — mirrors readiness `missing` semantics.
+  // Build-from-zero metrics (hike:*, workout:count, log:*) always have current=0 from
+  // resolveMetricValue, so they are never null here; this guard only fires for
+  // baseline:*, exercise:*, and weightLb when no data has been logged yet.
+  if (current === null && (target.start === undefined || target.start === null)) {
+    return {
+      metric: target.metric,
+      label: target.label,
+      weight: target.weight,
+      requiredRate: null,
+      observedRate: observedWeeklyRate,
+      plausibleRate: null,
+      rateBasis: "none",
+      ratio: null,
+      verdict: "unknown",
+      countsTowardTier: false,
+    };
+  }
+
   // Gap: how far from current to target (always positive when not met)
   const effectiveCurrent = current ?? target.start ?? 0;
   const gap =
