@@ -1,0 +1,15 @@
+{
+  "feature": "Multi-goal Phase 2: rarity/feasibility engine + coach calibration",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-rarity-feasibility-engine.md",
+  "prd_issue": "https://github.com/jronnomo/workout-planner/issues/63",
+  "requirements": ["REQ-63-1", "REQ-63-2", "REQ-63-3", "REQ-63-4"],
+  "base_head": "c527d9d (includes user's own iOS clear fix)",
+  "agents": [
+    { "role": "explore x2 + plan-agent design (plan mode)", "status": "done" },
+    { "role": "ux-research", "status": "running-background", "output": "docs/ux-research/rarity-tiers.md" }
+  ],
+  "iteration": 1,
+  "status": "planning",
+  "notes": "Plan-agent design saved as architecture-blueprint.md; Devil's Advocate runs against it before Wave 1 merges (spawned alongside Wave 1 since REQ-63-1/2 are low-design-risk and DA verdict gates the merge)."
+}
