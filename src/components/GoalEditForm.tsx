@@ -33,6 +33,10 @@ export function GoalEditForm({
   const [error, setError] = useState<string | null>(null);
   const [copyFromGoalId, setCopyFromGoalId] = useState<string>("");
   const [targetDate, setTargetDate] = useState(defaultValues.targetDate);
+  // iOS Safari keeps painting the old date inside input[type=date] after its
+  // value is programmatically set to "" — bump the key to remount a truly
+  // empty input when Clear is tapped.
+  const [dateInputKey, setDateInputKey] = useState(0);
 
   return (
     <form
@@ -59,25 +63,37 @@ export function GoalEditForm({
         />
       </label>
 
-      <label className="flex flex-col gap-1">
-        <span className="text-sm font-medium">Target date <span className="text-[var(--muted)] font-normal">(optional — leave blank for a someday goal)</span></span>
-        <input
-          type="date"
-          name="targetDate"
-          value={targetDate}
-          onChange={(e) => setTargetDate(e.target.value)}
-          className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
-        />
-        {targetDate && (
+      <div className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Target date <span className="text-[var(--muted)] font-normal">(optional — leave blank for a someday goal)</span></span>
+          <input
+            key={dateInputKey}
+            type="date"
+            name="targetDate"
+            value={targetDate}
+            onChange={(e) => setTargetDate(e.target.value)}
+            className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+          />
+        </label>
+        {/* Outside the <label>: a tap that lands on the label instead of the
+            button would focus the date input and pop the iOS picker. */}
+        {targetDate ? (
           <button
             type="button"
-            onClick={() => setTargetDate("")}
+            onClick={() => {
+              setTargetDate("");
+              setDateInputKey((k) => k + 1);
+            }}
             className="self-start text-xs text-[var(--accent)] min-h-[44px] px-0"
           >
             Clear — make it a someday goal
           </button>
-        )}
-      </label>
+        ) : defaultValues.targetDate ? (
+          <p className="text-xs text-[var(--muted)]">
+            Date cleared — tap Save to make this a someday goal.
+          </p>
+        ) : null}
+      </div>
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Status</span>
