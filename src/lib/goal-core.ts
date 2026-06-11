@@ -1,4 +1,4 @@
-// Plain async helper for creating Goal + Plan + initial PlanRevision.
+// Plain async helpers for Goal mutations.
 //
 // IMPORTANT: this module intentionally has NO server-action directive at the
 // top. It is a plain async helper so it can be imported from both server
@@ -8,6 +8,12 @@
 //
 // Validation guards live here as defensive contract checks; the form caller
 // in goal-actions.ts also pre-checks for UI-friendly error messages.
+//
+// Dual-caller contract:
+//   - Server actions (goal-actions.ts) call these cores and then add revalidatePath.
+//   - MCP tools (tools.ts) call these cores directly — no revalidatePath needed
+//     because /goals, /character are force-dynamic and MCP writes don't need
+//     Next.js cache invalidation.
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
@@ -118,4 +124,107 @@ export async function createGoalCore(
 
   const planId = created.plans[0]?.id ?? "";
   return { goal: { id: created.id }, planId };
+}
+
+// ---------------------------------------------------------------------------
+// setGoalTrackedCore
+// ---------------------------------------------------------------------------
+// Toggle a goal's tracked (active) state.
+// Guard: the focus goal cannot be untracked — switch focus to another goal
+// first. Error message is intentionally identical to the goal-actions.ts
+// caller so the MCP surface and the UI surface give the same error text.
+// ---------------------------------------------------------------------------
+
+export interface SetGoalTrackedCoreResult {
+  id: string;
+  active: boolean;
+}
+
+export async function setGoalTrackedCore(
+  id: string,
+  tracked: boolean,
+): Promise<SetGoalTrackedCoreResult> {
+  return prisma.$transaction(async (tx) => {
+    const goal = await tx.goal.findUnique({
+      where: { id },
+      select: { id: true, isFocus: true },
+    });
+    if (!goal) throw new Error("Goal not found");
+    if (!tracked && goal.isFocus) {
+      throw new Error(
+        "Cannot untrack the focus goal — switch focus to another goal first.",
+      );
+    }
+    const updated = await tx.goal.update({
+      where: { id },
+      data: { active: tracked },
+      select: { id: true, active: true },
+    });
+    return { id: updated.id, active: updated.active };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// setPlanActiveCore
+// ---------------------------------------------------------------------------
+// Pause (active=false) or Resume (active=true) the goal's plan.
+// Pause = set the goal's active plan to active=false (silences retest-marker
+//   generation). Resume = re-activate the most-recent plan (mirror
+//   setFocusGoal's latest-plan idiom).
+// Guard: the focus goal's plan cannot be paused — UXR-62B-03.
+// No new schema column: active=false IS the paused state; existing
+//   active:true filters in getActiveGoalsWithPlans + goal-events already
+//   silence a paused plan for free.
+// Returns the planId that was activated/deactivated, or null when there was
+//   no plan to resume (defensive no-op path — UI should not offer Resume then).
+// ---------------------------------------------------------------------------
+
+export interface SetPlanActiveCoreResult {
+  goalId: string;
+  planId: string | null;
+  active: boolean;
+}
+
+export async function setPlanActiveCore(
+  goalId: string,
+  active: boolean,
+): Promise<SetPlanActiveCoreResult> {
+  const goal = await prisma.goal.findUnique({
+    where: { id: goalId },
+    select: { id: true, isFocus: true },
+  });
+  if (!goal) throw new Error("Goal not found");
+  // Guard: cannot pause the focus goal's plan — switch focus first
+  if (!active && goal.isFocus) {
+    throw new Error(
+      "Cannot pause the focus goal's plan — switch focus to another goal first.",
+    );
+  }
+
+  if (!active) {
+    // Pause: deactivate all active plans for this goal
+    await prisma.plan.updateMany({
+      where: { goalId, active: true },
+      data: { active: false },
+    });
+    return { goalId, planId: null, active: false };
+  } else {
+    // Resume: re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom)
+    const latest = await prisma.plan.findFirst({
+      where: { goalId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (!latest) return { goalId, planId: null, active: true }; // No plan at all — defensive no-op; UI should not offer Resume then
+    // Ensure at most one active plan (deactivate others first)
+    await prisma.plan.updateMany({
+      where: { goalId, id: { not: latest.id } },
+      data: { active: false },
+    });
+    await prisma.plan.update({
+      where: { id: latest.id },
+      data: { active: true },
+    });
+    return { goalId, planId: latest.id, active: true };
+  }
 }

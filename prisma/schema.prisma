@@ -184,6 +184,9 @@ model Goal {
   // Drives both the calendar legend AND which icons render in cells. Null
   // = use the default Mt. Elbert-flavored legend in src/lib/legend.ts.
   legend              Json?
+  // Coach calibration of feasibility — { tier, rationale, assessedAt, assessedBy: 'coach' }.
+  // Computed tier is always derived live by src/lib/rarity.ts and shown alongside; this is the override.
+  coachFeasibility    Json?
   kind                String    @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
   githubRepo          String? // "owner/repo" for project goals; null otherwise
   githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise
