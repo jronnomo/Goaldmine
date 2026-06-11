@@ -187,6 +187,9 @@ model Goal {
   // Coach calibration of feasibility — { tier, rationale, assessedAt, assessedBy: 'coach' }.
   // Computed tier is always derived live by src/lib/rarity.ts and shown alongside; this is the override.
   coachFeasibility    Json?
+  // Canonical exercise names that 'count as training' this goal. Drives the last-trained indicator
+  // for someday/aspirational goals. Shape: string[].
+  attributionHints    Json?
   kind                String    @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
   githubRepo          String? // "owner/repo" for project goals; null otherwise
   githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise

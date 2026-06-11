@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
-import { createGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
+import { createGoalCore, ensurePlanForGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeStackRarity } from "@/lib/rarity";
@@ -124,6 +124,12 @@ export async function updateGoal(id: string, form: FormData) {
       targets: targets ?? undefined,
     },
   });
+
+  // D2 dated-upgrade: if a date was set, ensure the goal has a plan.
+  // No-op when a plan already exists (idempotent).
+  if (targetDate !== null) {
+    await ensurePlanForGoalCore(id, targetDate);
+  }
 
   revalidatePath("/goals");
   revalidatePath(`/goals/${id}`);

@@ -146,6 +146,15 @@ export function canonicalExerciseName(name: string): string {
   return EXERCISE_ALIAS_INDEX.get(name.trim().toLowerCase()) ?? name.trim();
 }
 
+/**
+ * Return all known spelling variants for a canonical exercise name, including
+ * the canonical name itself.  Used by goal-attribution.ts to build an IN-list
+ * for the workoutExercise query.
+ */
+export function aliasVariantsFor(canonical: string): string[] {
+  return [canonical, ...(EXERCISE_ALIAS_GROUPS[canonical] ?? [])];
+}
+
 export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
   const groups = await prisma.baseline.groupBy({
     by: ["testName"],

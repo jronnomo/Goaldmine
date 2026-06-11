@@ -19,23 +19,86 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { Legend } from "@/lib/legend";
-import { addDays } from "@/lib/calendar";
 import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
+import type { RarityTier } from "@/lib/rarity-core";
+import { canonicalExerciseName } from "@/lib/records";
 
 export interface CreateGoalCoreInput {
   objective: string;
-  targetDate: Date | null; // null = someday goal (no calendar pin); defaults to 12-week plan
+  targetDate: Date | null; // null = someday goal (no calendar pin, no plan scaffolded)
   notes?: string | null;
   kind?: "fitness" | "project";
   copyFromGoalId?: string | null;
   targets?: GoalTarget[] | null;
   legend?: Legend;
+  /** Seed the coach feasibility override from the intake interview.
+   *  Stored in the exact set_goal_feasibility shape:
+   *  { tier, rationale, assessedAt: ISO, assessedBy: "coach" }
+   */
+  coachFeasibility?: { tier: RarityTier; rationale: string } | null;
+  /** Canonical exercise names that count as training this goal.
+   *  Canonicalized via canonicalExerciseName on write. */
+  attributionHints?: string[] | null;
 }
 
 export interface CreateGoalCoreResult {
   goal: { id: string };
-  planId: string;
+  /** null for someday goals (targetDate === null — no plan scaffolded). */
+  planId: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Private scaffold helper — single code path shared by createGoalCore AND
+// ensurePlanForGoalCore so the two callers can never drift.
+// ---------------------------------------------------------------------------
+
+interface ScaffoldPlanArgs {
+  objective: string;
+  weeks: number;
+  startedOn: Date;
+  endsOn: Date;
+}
+
+interface ScaffoldPlanData {
+  name: string;
+  startedOn: Date;
+  endsOn: Date;
+  weeks: number;
+  active: boolean;
+  planJson: object;
+  revisions: {
+    create: {
+      triggerSource: string;
+      summary: string;
+      reasoning: string;
+      snapshotJson: object;
+    };
+  };
+}
+
+function buildPlanData(args: ScaffoldPlanArgs): ScaffoldPlanData {
+  const planTemplate = scaffoldPlanFromTemplate(args.weeks);
+  return {
+    name: `${args.objective} — ${args.weeks}-week plan`,
+    startedOn: args.startedOn,
+    endsOn: args.endsOn,
+    weeks: args.weeks,
+    active: true,
+    planJson: planTemplate as unknown as object,
+    revisions: {
+      create: {
+        triggerSource: "manual",
+        summary: "Initial plan from program template",
+        reasoning: `Scaffolded from the program template, scaled to ${args.weeks} weeks across ${planTemplate.phases.length} phases.`,
+        snapshotJson: planTemplate as unknown as object,
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// createGoalCore
+// ---------------------------------------------------------------------------
 
 export async function createGoalCore(
   input: CreateGoalCoreInput,
@@ -60,18 +123,26 @@ export async function createGoalCore(
     }
   }
 
-  const now = new Date();
-  // null targetDate = someday goal; default to 12 weeks (84 days).
-  const weeks = targetDate ? weeksBetween(now, targetDate) : 12;
-  const endsOn = targetDate ?? addDays(now, 84);
+  // Canonicalize attributionHints on write
+  const attributionHints: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    input.attributionHints == null
+      ? undefined
+      : input.attributionHints.length === 0
+        ? Prisma.JsonNull
+        : (input.attributionHints.map((h) => canonicalExerciseName(h)) as unknown as Prisma.InputJsonValue);
 
-  // v2 — Concern H audit (recorded in PR notes): scaffoldPlanFromTemplate(1)
-  // does NOT throw; weeksBetween clamps weeks to a minimum of 1, and
-  // scaffoldPlanFromTemplate handles weeks=1 gracefully (returns a 1-phase,
-  // 1-week template). Guard intentionally left commented out.
-  // if (weeks < 2) throw new Error("targetDate too soon — need at least 2 weeks");
-
-  const planTemplate = scaffoldPlanFromTemplate(weeks);
+  // Serialize coachFeasibility into the exact set_goal_feasibility shape
+  const coachFeasibilityValue: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    input.coachFeasibility === null
+      ? Prisma.JsonNull
+      : input.coachFeasibility === undefined
+        ? undefined
+        : ({
+            tier: input.coachFeasibility.tier,
+            rationale: input.coachFeasibility.rationale,
+            assessedAt: new Date().toISOString(),
+            assessedBy: "coach",
+          } as unknown as Prisma.InputJsonValue);
 
   // Legend handling: undefined → omit; [] → JsonNull (= reset to default);
   // non-empty → cast to InputJsonValue.
@@ -89,6 +160,19 @@ export async function createGoalCore(
   const created = await prisma.$transaction(async (tx) => {
     const existingFocusCount = await tx.goal.count({ where: { isFocus: true } });
     const shouldBecomeFocus = existingFocusCount === 0;
+
+    // D1 someday-no-plan: only scaffold a plan when targetDate is set.
+    const plansCreate = targetDate !== null
+      ? {
+          create: (() => {
+            const now = new Date();
+            const weeks = weeksBetween(now, targetDate);
+            const endsOn = targetDate;
+            return buildPlanData({ objective, weeks, startedOn: now, endsOn });
+          })(),
+        }
+      : undefined;
+
     return tx.goal.create({
       data: {
         objective,
@@ -99,31 +183,65 @@ export async function createGoalCore(
         active: true,
         isFocus: shouldBecomeFocus,
         ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
-        plans: {
-          create: {
-            name: `${objective} — ${weeks}-week plan`,
-            startedOn: now,
-            endsOn,
-            weeks,
-            active: true,
-            planJson: planTemplate as unknown as object,
-            revisions: {
-              create: {
-                triggerSource: "manual",
-                summary: "Initial plan from program template",
-                reasoning: `Scaffolded from the program template, scaled to ${weeks} weeks across ${planTemplate.phases.length} phases.`,
-                snapshotJson: planTemplate as unknown as object,
-              },
-            },
-          },
-        },
+        ...(coachFeasibilityValue === undefined ? {} : { coachFeasibility: coachFeasibilityValue }),
+        ...(attributionHints === undefined ? {} : { attributionHints }),
+        ...(plansCreate ? { plans: plansCreate } : {}),
       },
       include: { plans: { select: { id: true } } },
     });
   });
 
-  const planId = created.plans[0]?.id ?? "";
+  const planId = created.plans[0]?.id ?? null;
   return { goal: { id: created.id }, planId };
+}
+
+// ---------------------------------------------------------------------------
+// ensurePlanForGoalCore
+// ---------------------------------------------------------------------------
+// D2 dated-upgrade: zero plans ⇒ scaffold + initial PlanRevision (created:true);
+// any plan exists (even paused) ⇒ no-op (created:false).
+// Called from MCP update_goal handler AND UI updateGoal action when a non-null
+// date is set.
+// ---------------------------------------------------------------------------
+
+export interface EnsurePlanResult {
+  planId: string;
+  created: boolean;
+}
+
+export async function ensurePlanForGoalCore(
+  goalId: string,
+  targetDate: Date,
+): Promise<EnsurePlanResult> {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.plan.findFirst({
+      where: { goalId },
+      select: { id: true },
+    });
+    if (existing) {
+      return { planId: existing.id, created: false };
+    }
+
+    const goal = await tx.goal.findUnique({
+      where: { id: goalId },
+      select: { objective: true },
+    });
+    if (!goal) throw new Error(`Goal ${goalId} not found`);
+
+    const now = new Date();
+    const weeks = weeksBetween(now, targetDate);
+    const planData = buildPlanData({ objective: goal.objective, weeks, startedOn: now, endsOn: targetDate });
+
+    const plan = await tx.plan.create({
+      data: {
+        goalId,
+        ...planData,
+      },
+      select: { id: true },
+    });
+
+    return { planId: plan.id, created: true };
+  });
 }
 
 // ---------------------------------------------------------------------------
