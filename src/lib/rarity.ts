@@ -361,6 +361,7 @@ export async function computeStackRarity(opts?: {
       targetDate: true,
       targets: true,
       kind: true,
+      coachFeasibility: true,
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -376,8 +377,8 @@ export async function computeStackRarity(opts?: {
     coachFeasibility: unknown;
   };
 
-  // Cast the DB rows — coachFeasibility defaults to null (pre-migration)
-  const allGoals: GoalEntry[] = dbGoals.map((g) => ({ ...g, coachFeasibility: null }));
+  // Cast the DB rows — coachFeasibility is now read from the column (REQ-63-2 migration applied)
+  const allGoals: GoalEntry[] = dbGoals.map((g) => ({ ...g }));
   if (opts?.extraGoal) {
     const eg = opts.extraGoal;
     // M8: when extraGoal carries an id matching a fetched goal, exclude the fetched

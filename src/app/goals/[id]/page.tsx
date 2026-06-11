@@ -7,21 +7,31 @@ import { PendingNotes, type PendingNote } from "@/components/PendingNotes";
 import { PlanChangelog, type ChangelogEntry } from "@/components/PlanChangelog";
 import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
+import { ReachMeter } from "@/components/ReachMeter";
 import { prisma } from "@/lib/db";
 import type { GoalReference } from "@/lib/goal-actions";
 import { setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import { computeReadiness } from "@/lib/readiness";
+import { computeGoalFeasibility } from "@/lib/rarity";
+import type { CoachFeasibility } from "@/lib/rarity-core";
 
 export const dynamic = "force-dynamic";
 
 export default async function GoalDetail({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  // UXR-63-10: ?stackWarning — whitelist-only (L10: only "epic" | "legendary" accepted)
+  searchParams: Promise<{ stackWarning?: string }>;
 }) {
-  const { id } = await params;
+  const [{ id }, { stackWarning: rawStackWarning }] = await Promise.all([params, searchParams]);
+  // L10: whitelist check — only "epic" or "legendary" trigger the banner
+  const stackWarning =
+    rawStackWarning === "epic" || rawStackWarning === "legendary" ? rawStackWarning : null;
+
   const goal = await prisma.goal.findUnique({
     where: { id },
     include: {
@@ -94,7 +104,31 @@ export default async function GoalDetail({
 
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
-  const readiness = targets.length > 0 ? await computeReadiness(targets, new Date(), goal.id) : null;
+
+  // Compute goal feasibility + coach override in parallel with readiness (UXR-63-10)
+  const [readiness, feasibility] = await Promise.all([
+    targets.length > 0 ? computeReadiness(targets, new Date(), goal.id) : Promise.resolve(null),
+    computeGoalFeasibility({ id: goal.id, targetDate: goal.targetDate, targets: goal.targets, kind: goal.kind }),
+  ]);
+
+  // Parse coachFeasibility from DB (typed as JsonValue | null by Prisma)
+  function parseCoach(raw: unknown): CoachFeasibility | null {
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw as Record<string, unknown>;
+    if (
+      typeof r.tier !== "string" ||
+      typeof r.rationale !== "string" ||
+      typeof r.assessedAt !== "string" ||
+      r.assessedBy !== "coach"
+    ) return null;
+    return {
+      tier: r.tier as CoachFeasibility["tier"],
+      rationale: r.rationale,
+      assessedAt: r.assessedAt,
+      assessedBy: "coach",
+    };
+  }
+  const coachFeasibility = parseCoach(goal.coachFeasibility);
 
   const otherGoals = await prisma.goal.findMany({
     where: { id: { not: id } },
@@ -117,6 +151,34 @@ export default async function GoalDetail({
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
+      {/* UXR-63-16: one-time post-creation banner at the decision moment — ?stackWarning=epic|legendary
+          UXR-63-13: caps at --warning, NEVER --danger; UXR-63-15: exact copy strings from §0
+          data-testid="stack-warning-banner" per UXR §7 */}
+      {stackWarning && (
+        <div
+          data-testid="stack-warning-banner"
+          className="rounded-2xl border border-[var(--warning)] border-l-[3px] p-4 space-y-1.5"
+          style={{ backgroundColor: "color-mix(in srgb, var(--warning) 8%, var(--card))" }}
+        >
+          <p className="text-sm flex items-baseline gap-1.5">
+            <span className="text-[var(--warning)]" aria-hidden>◣</span>
+            <span className="text-[var(--foreground)]">
+              {stackWarning === "legendary" ? (
+                <>
+                  <strong>Legendary reach.</strong>{" "}
+                  As set, this is near-impossible in the time set. Bring it to your coach to extend the timeline, or pause it until your slate clears.
+                </>
+              ) : (
+                <>
+                  <strong>Epic reach.</strong>{" "}
+                  Hitting this by {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : "the target date"} is a hard ask off your current pace. Talk it over with your coach, or give the deadline more room.
+                </>
+              )}
+            </span>
+          </p>
+        </div>
+      )}
+
       <header className="pt-2">
         <Link href="/goals" className="text-sm text-[var(--accent)]">
           ← Goals
@@ -172,6 +234,70 @@ export default async function GoalDetail({
           <ReadinessBreakdown breakdown={readiness.breakdown} />
         </Card>
       )}
+
+      {/* UXR-63-10: Reach card between Readiness and Plan — computed + coach side-by-side
+          UXR-63-11: computed value NEVER hidden; coach override shown with rationale + assessedAt
+          data-testid="goal-reach-card" per UXR §7 */}
+      {feasibility.tier !== null || coachFeasibility !== null ? (
+        <Card title="Reach" data-testid="goal-reach-card">
+          {/* Side-by-side: Computed | Coach (UXR-63-10, UXR-63-11) */}
+          <div className="flex gap-6 mb-3">
+            {/* Computed */}
+            <div data-testid="goal-reach-computed">
+              <p className="text-[10px] uppercase tracking-wide text-[var(--muted)] mb-1">Computed</p>
+              <ReachMeter tier={feasibility.tier} label size="md" />
+              {feasibility.basis && (
+                <p className="text-xs text-[var(--muted)] mt-1">basis: {feasibility.basis}</p>
+              )}
+            </div>
+            {/* Coach override — shown only when present (UXR-63-11) */}
+            {coachFeasibility && (
+              <div data-testid="goal-reach-coach">
+                <p className="text-[10px] uppercase tracking-wide text-[var(--accent)] mb-1">Coach</p>
+                <ReachMeter tier={coachFeasibility.tier} label size="md" />
+                <p className="text-xs text-[var(--muted)] mt-1">
+                  {new Date(coachFeasibility.assessedAt).toLocaleDateString()}
+                </p>
+              </div>
+            )}
+          </div>
+          {/* Coach rationale */}
+          {coachFeasibility?.rationale && (
+            <p className="text-xs text-[var(--muted)] italic border-l-2 border-[var(--accent)] pl-2 mb-3">
+              &ldquo;{coachFeasibility.rationale}&rdquo;
+            </p>
+          )}
+          {/* Per-target breakdown table — ReadinessBreakdown idiom (UXR-63-10, PRD §3.1.8) */}
+          {feasibility.perTarget.length > 0 && (
+            <ul className="space-y-3" data-testid="goal-reach-pertarget">
+              {feasibility.perTarget.map((t) => (
+                <li key={t.metric}>
+                  <div className="flex justify-between text-sm mb-0.5 gap-2">
+                    <span className="font-medium truncate pr-2">{t.label}</span>
+                    <span className="text-[var(--muted)] shrink-0 text-xs">
+                      {t.verdict === "met" ? "met" : t.verdict === "unknown" ? "no data" : t.verdict}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--muted)]">
+                    {t.requiredRate !== null && t.plausibleRate !== null ? (
+                      <>
+                        required {t.requiredRate.toFixed(2)}/wk
+                        {" · "}
+                        plausible {t.plausibleRate.toFixed(2)}/wk
+                        {t.ratio !== null && ` · ${t.ratio.toFixed(1)}× pace`}
+                      </>
+                    ) : t.verdict === "met" ? (
+                      "Target met"
+                    ) : (
+                      "No rate data"
+                    )}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      ) : null}
 
       {/* Plan card — shows when there are any plans (active or paused). REQ-202 */}
       {hasPlan && (

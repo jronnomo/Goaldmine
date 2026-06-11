@@ -11,8 +11,10 @@ import { AttributeBar } from "@/components/game/AttributeBar";
 import { StreakFlame } from "@/components/game/StreakFlame";
 import { BadgeWall } from "@/components/game/BadgeWall";
 import { XpEventList } from "@/components/game/XpEventList";
+import { ReachMeter } from "@/components/ReachMeter";
 import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
+import { computeStackRarity } from "@/lib/rarity";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +25,8 @@ function nextStreakMilestone(current: number): number | null {
 }
 
 export default async function CharacterPage() {
-  const state = await computeGameState();
+  // UXR-63-09: computeStackRarity alongside computeGameState — one stack computation per request
+  const [state, stack] = await Promise.all([computeGameState(), computeStackRarity()]);
 
   // Hide gamification if no active program
   if (!state.goalKind) {
@@ -81,6 +84,14 @@ export default async function CharacterPage() {
                 data-testid="xp-bar-overall"
               />
             </div>
+            {/* UXR-63-09: Stack reach below XP bar — subordinate to "Lv N Adventurer", word always present
+                Full-width own line to avoid squeezing the XP bar at 390px (UXR-63-09 verify item 7) */}
+            {stack.tier !== null && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-[var(--muted)]">Stack reach</span>
+                <ReachMeter tier={stack.tier} label size="md" />
+              </div>
+            )}
           </div>
         </div>
       </Card>

@@ -2,8 +2,11 @@ import Link from "next/link";
 import { Bullseye } from "@/components/Bullseye";
 import { Card } from "@/components/Card";
 import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
+import { ReachMeter } from "@/components/ReachMeter";
+import { StackReachCard } from "@/components/StackReachCard";
 import { prisma } from "@/lib/db";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
+import { computeStackRarity } from "@/lib/rarity";
 
 export const dynamic = "force-dynamic";
 
@@ -24,22 +27,29 @@ export default async function GoalsPage() {
   // Focus goal first (isFocus=true), then tracked (active=true), then by target date
   // (nulls last = someday goals at the bottom), then most-recently-updated.
   // Include most-recent plan per goal (regardless of active status) to detect paused state.
-  const goals = await prisma.goal.findMany({
-    orderBy: [
-      { isFocus: "desc" },
-      { active: "desc" },
-      { targetDate: { sort: "asc", nulls: "last" } },
-      { updatedAt: "desc" },
-    ],
-    include: {
-      plans: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { id: true, active: true },
+  // One computeStackRarity per request — no re-computation per row (UXR-63-08, PRD §4).
+  const [goals, stack] = await Promise.all([
+    prisma.goal.findMany({
+      orderBy: [
+        { isFocus: "desc" },
+        { active: "desc" },
+        { targetDate: { sort: "asc", nulls: "last" } },
+        { updatedAt: "desc" },
+      ],
+      include: {
+        plans: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { id: true, active: true },
+        },
       },
-    },
-  });
+    }),
+    computeStackRarity(),
+  ]);
   const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
+
+  // Build per-goal map keyed by goalId for O(1) row lookup (UXR-63-07: no recompute)
+  const stackByGoalId = new Map(stack.perGoal.map((pg) => [pg.goalId, pg]));
 
   const copySources: CopySource[] = goals
     .filter((g) => Array.isArray(g.targets) && (g.targets as unknown[]).length > 0)
@@ -67,6 +77,9 @@ export default async function GoalsPage() {
         <GoalCreateForm copySources={copySources} />
       </Card>
 
+      {/* UXR-63-08: StackReachCard above the list; quiet for Common–Rare, escalates for Epic/Legendary */}
+      <StackReachCard stack={stack} />
+
       <Card title="All goals">
         {goals.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
@@ -87,6 +100,17 @@ export default async function GoalsPage() {
                 const untrackAction = setGoalTracked.bind(null, g.id, false);
                 // Tracked goal with a plan where none is active = paused. UXR-62B-01
                 const isPlanPaused = g.active && g.plans.length > 0 && !g.plans[0].active;
+                // UXR-63-07: per-row effective tier from ONE computeStackRarity; no recompute
+                const stackGoal = stackByGoalId.get(g.id);
+                const rowTier = stackGoal?.effectiveTier ?? null;
+                // UXR-63-11: coach-override marker — small gold "coach" tag + title= on compact surface
+                const hasCoach = (stackGoal?.coach ?? null) !== null;
+                const computedTierLabel = stackGoal?.computed.tier
+                  ? stackGoal.computed.tier.charAt(0).toUpperCase() + stackGoal.computed.tier.slice(1)
+                  : "—";
+                const coachTitle = hasCoach
+                  ? `Coach-set · computed: ${computedTierLabel}`
+                  : undefined;
                 const rowBody = (
                   <div className="flex items-start gap-2 min-w-0 flex-1 text-left">
                     {/* [UXR-62-12] glyph may use opacity (non-text, AA-safe); never row-level opacity */}
@@ -112,15 +136,33 @@ export default async function GoalsPage() {
                           </span>
                         )}
                       </p>
-                      <p className="text-xs text-[var(--muted)]">
-                        {g.targetDate ? new Date(g.targetDate).toLocaleDateString() : "Someday"}
-                        {g.status !== "active" ? ` · ${g.status}` : ""}
-                        {/* UXR-62B-01: plain muted text in existing subline, no new chip or control */}
-                        {isPlanPaused && (
-                          <span title="Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact.">
-                            {" · Plan paused"}
+                      {/* UXR-63-07: bare meter at START of left-rail muted subline; right rail untouched */}
+                      <p className="text-xs text-[var(--muted)] flex items-center gap-1.5 flex-wrap">
+                        {/* UXR-63-11: coach-override marker — title= shows computed vs coach on hover */}
+                        <ReachMeter
+                          tier={rowTier}
+                          size="sm"
+                          title={coachTitle ?? `Reach: ${rowTier ?? "unrated"}`}
+                        />
+                        {/* UXR-63-11: small "coach" tag when override is present */}
+                        {hasCoach && (
+                          <span
+                            className="text-[9px] uppercase tracking-wide text-[var(--accent)]"
+                            title={coachTitle}
+                          >
+                            coach
                           </span>
                         )}
+                        <span>
+                          {g.targetDate ? new Date(g.targetDate).toLocaleDateString() : "Someday"}
+                          {g.status !== "active" ? ` · ${g.status}` : ""}
+                          {/* UXR-62B-01: plain muted text in existing subline, no new chip or control */}
+                          {isPlanPaused && (
+                            <span title="Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact.">
+                              {" · Plan paused"}
+                            </span>
+                          )}
+                        </span>
                       </p>
                     </div>
                   </div>
@@ -278,6 +320,17 @@ export default async function GoalsPage() {
                   <p className="text-xs text-[var(--muted)]">
                     <strong className="font-medium text-[var(--foreground)]">Plan paused</strong>
                     {" — "}{"Silences this plan’s retest days. Goal stays tracked — date, coach, rarity intact."}
+                  </p>
+                </li>
+                {/* Reach — UXR-63-20: ≤90-char definition teaching the inversion (higher = harder) */}
+                <li className="flex items-start gap-3 py-2" data-testid="reach-glossary-row">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* Real Rare chip sample (UXR-63-20) */}
+                    <ReachMeter tier="rare" label size="sm" />
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Reach</strong>
+                    {" — "}How big an ask a goal is by its date. Higher tiers are harder to hit in time.
                   </p>
                 </li>
               </ul>
