@@ -12,7 +12,13 @@ export type CopySource = {
   targetCount: number;
 };
 
-export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
+export function GoalCreateForm({
+  copySources,
+  defaultObjective,
+}: {
+  copySources: CopySource[];
+  defaultObjective?: string;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [copyFromGoalId, setCopyFromGoalId] = useState<string>("");
@@ -34,6 +40,25 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
       }
       className="flex flex-col gap-3"
     >
+      {/* UXR-64-01/15: dashed-border whisper banner — reuses import-path grammar; server-rendered,
+          non-dismissible; gold → is the single saturated affordance (UXR-64-13 APPROVED: /coach#interview) */}
+      <div
+        data-testid="interview-banner"
+        className="rounded-lg border border-dashed border-[var(--border)] p-3 space-y-1"
+      >
+        <p className="text-sm text-[var(--muted)]">
+          <span className="font-medium text-[var(--foreground)]">Interview your coach first (recommended)</span>
+          {" — a 5-minute intake nails the date, targets, and feasibility before you commit. "}
+          <a
+            href="/coach#interview"
+            data-testid="interview-banner-link"
+            className="text-[var(--accent)] font-medium inline-flex items-center min-h-[44px]"
+          >
+            →
+          </a>
+        </p>
+      </div>
+
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Objective</span>
         <input
@@ -41,6 +66,7 @@ export function GoalCreateForm({ copySources }: { copySources: CopySource[] }) {
           required
           maxLength={200}
           placeholder="Summit Quandary Peak"
+          defaultValue={defaultObjective}
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
       </label>

@@ -9,6 +9,7 @@ import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReachMeter } from "@/components/ReachMeter";
 import { prisma } from "@/lib/db";
+import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import type { GoalReference } from "@/lib/goal-actions";
 import { setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
@@ -105,11 +106,15 @@ export default async function GoalDetail({
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
 
-  // Compute goal feasibility + coach override in parallel with readiness (UXR-63-10)
-  const [readiness, feasibility] = await Promise.all([
+  // Compute goal feasibility + coach override + lastTrained in parallel with readiness (UXR-63-10)
+  const [readiness, feasibility, trainedMapDetail] = await Promise.all([
     targets.length > 0 ? computeReadiness(targets, new Date(), goal.id) : Promise.resolve(null),
     computeGoalFeasibility({ id: goal.id, targetDate: goal.targetDate, targets: goal.targets, kind: goal.kind }),
+    lastTrainedForGoals([goal]),
   ]);
+  // UXR-64-07/09: trained line near header for hinted goals (no training logged vs trained Nd ago).
+  const hasHints = parseAttributionHints(goal.attributionHints).length > 0;
+  const lastTrained = hasHints ? (trainedMapDetail.get(goal.id) ?? null) : null;
 
   // Parse coachFeasibility from DB (typed as JsonValue | null by Prisma)
   function parseCoach(raw: unknown): CoachFeasibility | null {
@@ -166,12 +171,14 @@ export default async function GoalDetail({
               {stackWarning === "legendary" ? (
                 <>
                   <strong>Legendary reach.</strong>{" "}
-                  As set, this is near-impossible in the time set. Bring it to your coach to extend the timeline, or pause it until your slate clears.
+                  As set, this is near-impossible in the time set. Bring it to your coach to extend the timeline, or pause it until your slate clears.{" "}
+                  Next time, try the coach intake interview — it previews this before anything is created.
                 </>
               ) : (
                 <>
                   <strong>Epic reach.</strong>{" "}
-                  Hitting this by {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : "the target date"} is a hard ask off your current pace. Talk it over with your coach, or give the deadline more room.
+                  Hitting this by {goal.targetDate ? new Date(goal.targetDate).toLocaleDateString() : "the target date"} is a hard ask off your current pace. Talk it over with your coach, or give the deadline more room.{" "}
+                  Next time, try the coach intake interview — it previews this before anything is created.
                 </>
               )}
             </span>
@@ -201,6 +208,12 @@ export default async function GoalDetail({
           )}
           {" "}· {goal.status}
         </p>
+        {/* UXR-64-07/09: muted trained line near header for hinted goals */}
+        {hasHints && (
+          <p className="text-xs text-[var(--muted)] mt-0.5" data-testid="goal-detail-trained">
+            {relativeTrainedLabel(lastTrained)}
+          </p>
+        )}
       </header>
 
       <Card title="Edit">
