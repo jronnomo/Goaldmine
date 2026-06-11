@@ -8,6 +8,7 @@
 import { prisma } from "@/lib/db";
 import { startOfDay, addDays } from "@/lib/calendar";
 import { resolveMetricValue } from "@/lib/goal-targets";
+import { getExerciseHistory } from "@/lib/records";
 import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts } from "@/lib/goal-conflicts";
 import { getActiveProgram } from "@/lib/program";
@@ -15,6 +16,7 @@ import {
   RARITY_RULES,
   normPackForGoal,
   weeklySlope,
+  lookbackWeeksFor,
   computeTargetFeasibility,
   aggregateGoalTier,
   concurrentLoadBump,
@@ -55,7 +57,7 @@ export function weeksRemainingFrac(
  * Fetch the last observedLookbackWeeks weeks of data for a single target.
  * Returns { points, current } where current = last point's value OR resolveMetricValue fallback OR target.start.
  *
- * Query budget: 1 per target.
+ * Query budget: up to 2 per target when the series window is empty (series fetch + resolveMetricValue fallback).
  * Series assembly mirrors metric families in goal-targets.ts resolveMetricValue.
  *
  * For cumulative/build-from-zero metrics (hike:*, workout:count, log:*) the
@@ -134,6 +136,17 @@ export async function observedSeriesFor(
     return { points, current };
   }
 
+  // exercise:<canonical name> — pull from workout history (est 1RM, max reps, or max duration)
+  if (metric.startsWith("exercise:")) {
+    const exerciseName = metric.slice("exercise:".length);
+    const { history } = await getExerciseHistory(exerciseName);
+    const points = history
+      .filter((p) => p.date >= since && p.date <= now)
+      .map((p) => ({ date: p.date, value: p.best }));
+    const current = points.length > 0 ? points.at(-1)!.value : null;
+    return { points, current };
+  }
+
   return { points: [], current: null };
 }
 
@@ -156,6 +169,11 @@ function parseTargets(raw: unknown): GoalTarget[] {
   ) as GoalTarget[];
 }
 
+// TODO(REQ-63-3): The MCP description for set_goal_feasibility should note the
+// "someday-override caveat": the coach CAN set a tier on a someday goal
+// (targetDate=null). effectiveTier() will return the coach tier even though
+// computed is null/unrated. The MCP tool description should explain this so
+// the coach knows the override persists if the user later adds a targetDate.
 function parseCoachFeasibility(raw: unknown): CoachFeasibility | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -227,11 +245,15 @@ export async function computeGoalFeasibility(
 
   const weeksRemaining = weeksRemainingFrac(goal.targetDate, now);
   const normPack = normPackForGoal(goal.kind);
-  const lookbackStart = addDays(now, -(RARITY_RULES.observedLookbackWeeks * 7));
 
-  // Fetch observed series for each target in parallel
+  // Per-target lookback: baseline:* and exercise:* use 16w; all others use 6w.
+  // Fetch observed series for each target in parallel with its own lookback window.
   const seriesResults = await Promise.all(
-    targets.map((t) => observedSeriesFor(t.metric, goal.id, lookbackStart, now)),
+    targets.map((t) => {
+      const lookbackWeeks = lookbackWeeksFor(t.metric);
+      const lookbackStart = addDays(now, -(lookbackWeeks * 7));
+      return observedSeriesFor(t.metric, goal.id, lookbackStart, now);
+    }),
   );
 
   // Resolve current value: last series point → resolveMetricValue fallback → target.start
@@ -250,13 +272,23 @@ export async function computeGoalFeasibility(
       current = t.start;
     }
 
-    const slope = weeklySlope(points, RARITY_RULES.minObservedPoints);
+    const rawSlope = weeklySlope(points, RARITY_RULES.minObservedPoints);
+
+    // H1 — direction sign normalization: positive observedRate = moving toward goal.
+    // For "decrease" metrics (e.g. body weight), an improving trend has a negative raw
+    // slope; negate so computeTargetFeasibility receives a sign-consistent rate.
+    const normalizedSlope =
+      rawSlope !== null
+        ? t.direction === "decrease"
+          ? -rawSlope
+          : rawSlope
+        : null;
 
     const tf = computeTargetFeasibility({
       target: t,
       current,
       weeksRemaining,
-      observedWeeklyRate: slope,
+      observedWeeklyRate: normalizedSlope,
       observedPoints: points.length,
       normPack,
     });
@@ -286,7 +318,13 @@ export async function computeGoalFeasibility(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ExtraGoal = {
-  id: string;
+  /**
+   * Optional goal id. When provided and it matches a goal already fetched from
+   * the DB, the fetched copy is excluded before this extraGoal is injected —
+   * enabling preview of an *updated* version of an existing goal without
+   * double-counting it in the stack.
+   */
+  id?: string;
   objective: string;
   targetDate: Date | null;
   targets: unknown;
@@ -342,20 +380,27 @@ export async function computeStackRarity(opts?: {
   const allGoals: GoalEntry[] = dbGoals.map((g) => ({ ...g, coachFeasibility: null }));
   if (opts?.extraGoal) {
     const eg = opts.extraGoal;
-    // Avoid duplicate if extraGoal.id matches an existing goal
-    if (!allGoals.some((g) => g.id === eg.id)) {
-      allGoals.push({
-        id: eg.id,
-        objective: eg.objective,
-        targetDate: eg.targetDate ?? null,
-        targets: eg.targets,
-        kind: eg.kind,
-        coachFeasibility: eg.coachFeasibility ?? null,
-      });
+    // M8: when extraGoal carries an id matching a fetched goal, exclude the fetched
+    // copy before injecting — lets preview show an *updated* version of an existing
+    // goal without double-counting it in the stack.
+    if (eg.id) {
+      const existingIdx = allGoals.findIndex((g) => g.id === eg.id);
+      if (existingIdx !== -1) {
+        allGoals.splice(existingIdx, 1);
+      }
     }
+    allGoals.push({
+      id: eg.id ?? `__preview__${Date.now()}`,
+      objective: eg.objective,
+      targetDate: eg.targetDate ?? null,
+      targets: eg.targets,
+      kind: eg.kind,
+      coachFeasibility: eg.coachFeasibility ?? null,
+    });
   }
 
-  // Dated active goals only (exclude someday for count + feasibility)
+  // M9: explicit targetDate !== null filter — someday goals (targetDate = null) are excluded
+  // from the count, feasibility computation, and the concurrent-load bump.
   const datedGoals = allGoals.filter((g) => g.targetDate !== null);
   const datedActiveGoalCount = datedGoals.length;
 

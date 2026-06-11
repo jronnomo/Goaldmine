@@ -11,6 +11,7 @@
 
 import type { PrismaClient } from "@/generated/prisma/client";
 import { endOfDay } from "@/lib/calendar";
+import { getExerciseHistory } from "@/lib/records";
 
 // Re-export all pure data / types so existing imports of goal-targets.ts
 // continue to work unchanged.
@@ -110,6 +111,18 @@ export async function resolveMetricValue(
     return entry?.value ?? null;
   }
 
+  // exercise:<canonical name> — latest best (est 1RM, max reps, or max duration)
+  // from workout history as of asOf. The PrismaClient param is unused here because
+  // getExerciseHistory uses the shared singleton, but it is accepted for interface
+  // consistency with other branches.
+  if (metric.startsWith("exercise:")) {
+    void prisma; // singleton used internally by getExerciseHistory
+    const exerciseName = metric.slice("exercise:".length);
+    const { history } = await getExerciseHistory(exerciseName);
+    const filtered = history.filter((p) => p.date <= cutoff);
+    return filtered.length > 0 ? (filtered.at(-1)!.best) : null;
+  }
+
   return null;
 }
 
@@ -142,6 +155,13 @@ export async function resolveMetricStart(
 
   // log:* metrics build from zero — same pattern as hike:*/workout:count.
   if (metric.startsWith(LOG_METRIC_PREFIX)) return 0;
+
+  // exercise:<canonical name> — earliest recorded best from workout history.
+  if (metric.startsWith("exercise:")) {
+    const exerciseName = metric.slice("exercise:".length);
+    const { history } = await getExerciseHistory(exerciseName);
+    return history.length > 0 ? history[0]!.best : null;
+  }
 
   return null;
 }

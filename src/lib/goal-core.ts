@@ -209,22 +209,26 @@ export async function setPlanActiveCore(
     });
     return { goalId, planId: null, active: false };
   } else {
-    // Resume: re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom)
-    const latest = await prisma.plan.findFirst({
-      where: { goalId },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
+    // Resume: re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom).
+    // Wrap findFirst + updateMany + update in a transaction so the "at most one active
+    // plan" invariant holds under concurrent writes.
+    return prisma.$transaction(async (tx) => {
+      const latest = await tx.plan.findFirst({
+        where: { goalId },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (!latest) return { goalId, planId: null, active: true }; // No plan at all — defensive no-op; UI should not offer Resume then
+      // Ensure at most one active plan (deactivate others first)
+      await tx.plan.updateMany({
+        where: { goalId, id: { not: latest.id } },
+        data: { active: false },
+      });
+      await tx.plan.update({
+        where: { id: latest.id },
+        data: { active: true },
+      });
+      return { goalId, planId: latest.id, active: true };
     });
-    if (!latest) return { goalId, planId: null, active: true }; // No plan at all — defensive no-op; UI should not offer Resume then
-    // Ensure at most one active plan (deactivate others first)
-    await prisma.plan.updateMany({
-      where: { goalId, id: { not: latest.id } },
-      data: { active: false },
-    });
-    await prisma.plan.update({
-      where: { id: latest.id },
-      data: { active: true },
-    });
-    return { goalId, planId: latest.id, active: true };
   }
 }
