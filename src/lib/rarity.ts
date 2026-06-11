@@ -22,9 +22,9 @@ import {
   concurrentLoadBump,
   aggregateStackTier,
   effectiveTier as resolveEffectiveTier,
+  parseCoachFeasibility,
   type GoalFeasibility,
   type StackRarity,
-  type CoachFeasibility,
   type TargetFeasibility,
 } from "@/lib/rarity-core";
 import type { GoalTarget } from "@/lib/metrics-registry";
@@ -169,29 +169,8 @@ function parseTargets(raw: unknown): GoalTarget[] {
   ) as GoalTarget[];
 }
 
-// TODO(REQ-63-3): The MCP description for set_goal_feasibility should note the
-// "someday-override caveat": the coach CAN set a tier on a someday goal
-// (targetDate=null). effectiveTier() will return the coach tier even though
-// computed is null/unrated. The MCP tool description should explain this so
-// the coach knows the override persists if the user later adds a targetDate.
-function parseCoachFeasibility(raw: unknown): CoachFeasibility | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  if (
-    typeof r.tier !== "string" ||
-    typeof r.rationale !== "string" ||
-    typeof r.assessedAt !== "string" ||
-    r.assessedBy !== "coach"
-  ) {
-    return null;
-  }
-  return {
-    tier: r.tier as CoachFeasibility["tier"],
-    rationale: r.rationale,
-    assessedAt: r.assessedAt,
-    assessedBy: "coach",
-  };
-}
+// parseCoachFeasibility is re-exported from rarity-core.ts (shared with tools.ts
+// and goals/[id]/page.tsx). Local copy removed — use the import above.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-goal feasibility

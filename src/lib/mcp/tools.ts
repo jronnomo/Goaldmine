@@ -45,6 +45,7 @@ import type { DayTemplate, ProgramTemplate } from "@/lib/program-template";
 import { assertValidProgramTemplate } from "@/lib/program-validation";
 import { fingerprintFinding, lintActivePlan, lintTemplate, type LintFinding, type LintAcknowledgement } from "@/lib/plan-lint";
 import {
+  canonicalExerciseName,
   getBaselineHistory,
   getBaselineSchedule,
   getBaselineSummaries,
@@ -73,7 +74,7 @@ import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
-import { RARITY_TIERS, type CoachFeasibility } from "@/lib/rarity-core";
+import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
 import { GoalTargetSchema } from "@/lib/metrics-registry";
 
 const DateKeyShape = z
@@ -575,29 +576,9 @@ function noteHeader(body: string): string {
   return firstLine.length <= 80 ? firstLine : firstLine.slice(0, 77) + "...";
 }
 
-/**
- * Parse a raw JSON value from the DB into a typed CoachFeasibility, or null.
- * Mirrors the private parseCoachFeasibility in rarity.ts — kept local so
- * tools.ts can surface it without requiring an export change in rarity.ts.
- */
-function parseCoachFeasibilityLocal(raw: unknown): CoachFeasibility | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  if (
-    typeof r.tier !== "string" ||
-    typeof r.rationale !== "string" ||
-    typeof r.assessedAt !== "string" ||
-    r.assessedBy !== "coach"
-  ) {
-    return null;
-  }
-  return {
-    tier: r.tier as CoachFeasibility["tier"],
-    rationale: r.rationale,
-    assessedAt: r.assessedAt,
-    assessedBy: "coach",
-  };
-}
+// parseCoachFeasibilityLocal is now parseCoachFeasibility from rarity-core (shared export).
+// Alias kept here so call sites below remain unchanged without a mass rename.
+const parseCoachFeasibilityLocal = parseCoachFeasibility;
 
 // ----------------------------------------------------------------------------
 // Read tools — context for coaching reasoning
@@ -676,7 +657,9 @@ function registerReadTools(server: McpServer) {
         "Resolve all 7 days of the rotation week containing the given date. " +
         "Returns weekIndex, startDate/endDate of the rotation week, totalWeeks, and a days[] array. " +
         "Each day includes the full ResolvedDay (workoutTemplate, overrides, plannedHikeToday, " +
-        "workoutDeferredForHike, longEffortConflict, baselinesDue, otherGoalEvents, crossGoalConflicts, etc.). " +
+        "workoutDeferredForHike, longEffortConflict, baselinesDue, etc.). " +
+        "Per-day cross-goal events live in days[].otherGoalEvents and days[].crossGoalConflicts " +
+        "(there is no days[].events field). " +
         "Top-level otherGoalEvents (non-focus goals' events for the whole week) and crossGoalConflicts are also returned for coach convenience. " +
         "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
         "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
@@ -1169,7 +1152,7 @@ function registerReadTools(server: McpServer) {
         "Every scheduled baseline test for the active plan with per-checkpoint status: initial collection (week 1) and each retest week. " +
         "Use to answer 'what fitness tests are due', 'what baselines are overdue', 'when's the next retest', or to plan a baseline-collection day. " +
         "Includes overdue/due flags so the coach can call out missed tests before they drift. " +
-        "If the focus goal has no plan (someday goal), this tool operates on the next active plan — set a target date on the someday goal to scaffold its plan first.",
+        "Returns the empty shape when the focus goal has no active plan — set a targetDate on a someday goal to scaffold its plan first.",
     },
     async () => safe(() => getBaselineSchedule()),
   );
@@ -1261,14 +1244,17 @@ function registerReadTools(server: McpServer) {
         "One-call cold-start catch-up for a NEW coaching conversation — today's date, focus goal + days-to-go, " +
         "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
         "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
-        "the latest review, unresolved open items, and any scheduling conflicts for the current rotation week " +
+        "the latest review (body truncated to 400 chars + truncated:true; full text via get_latest_review), " +
+        "unresolved open items, any scheduling conflicts for the current rotation week " +
         "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions + cross-goal conflict kinds: " +
-        "event-on-hard-day, key-events-same-week, event-near-long-effort). " +
-        "otherActiveGoals: non-focus active goals with their next event in a 30-day window. " +
+        "event-on-hard-day, key-events-same-week, event-near-long-effort), " +
+        "and slim stackRarity {tier, baseTier, loadBump}. " +
+        "otherActiveGoals: non-focus active goals with their next event in a 30-day window; isSomeday:true when targetDate is null. " +
         "Call this FIRST in a fresh chat instead of stitching together get_today_plan + recent_history + get_goal. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
         "for a wide activity lookback use recent_history; " +
         "for all-time PRs use get_records_summary; " +
+        "for full stack Reach math use get_rarity; " +
         "for per-day conflict detail use get_week.",
     },
     async () =>
@@ -1292,6 +1278,7 @@ function registerReadTools(server: McpServer) {
           openItems,
           measurements,
           otherGoalsResult,
+          stackRarityResult,
         ] = await Promise.all([
           resolveDay(now),
           getActiveProgram(),
@@ -1330,7 +1317,7 @@ function registerReadTools(server: McpServer) {
           prisma.note.findFirst({
             where: { type: "review" },
             orderBy: { date: "desc" },
-            select: { body: true, date: true, targetDate: true },
+            select: { id: true, body: true, date: true, targetDate: true },
           }),
           fetchOpenItems(),
           prisma.measurement.findMany({
@@ -1340,6 +1327,8 @@ function registerReadTools(server: McpServer) {
           }),
           // 30-day window for other active goals' next events.
           getGoalEventsResult({ start: now, end: thirtyDayEnd }),
+          // Slim stack rarity for cold-start orientation (acceptable cold-start cost).
+          computeStackRarity({ now }),
         ]);
 
         // --- goal ---
@@ -1456,14 +1445,22 @@ function registerReadTools(server: McpServer) {
           lastAcknowledgedAt: r.lastAcknowledgedAt?.toISOString() ?? null,
         }));
 
-        // --- latestReview ---
+        // --- latestReview (body truncated to 400 chars; full text via get_latest_review) ---
+        const REVIEW_BODY_LIMIT = 400;
         const latestReview = latestReviewNote
           ? {
-              body: latestReviewNote.body,
+              id: latestReviewNote.id,
+              body: latestReviewNote.body.length > REVIEW_BODY_LIMIT
+                ? latestReviewNote.body.slice(0, REVIEW_BODY_LIMIT)
+                : latestReviewNote.body,
+              truncated: latestReviewNote.body.length > REVIEW_BODY_LIMIT,
               date: toDateKey(latestReviewNote.date),
               weekOf: latestReviewNote.targetDate
                 ? toDateKey(latestReviewNote.targetDate)
                 : null,
+              note: latestReviewNote.body.length > REVIEW_BODY_LIMIT
+                ? "Body truncated to 400 chars — full text via get_latest_review"
+                : undefined,
             }
           : null;
 
@@ -1485,6 +1482,7 @@ function registerReadTools(server: McpServer) {
             id: meta.id,
             objective: meta.objective,
             targetDate: meta.targetDate ? toDateKey(meta.targetDate) : null,
+            isSomeday: meta.targetDate === null,
             daysToGo,
             nextEvent: nextEvent
               ? { dateKey: nextEvent.dateKey, type: nextEvent.type, label: nextEvent.label }
@@ -1524,6 +1522,13 @@ function registerReadTools(server: McpServer) {
 
         const currentWeekConflicts: WeekConflict[] = [...sameGoalWeekConflicts, ...weekCgConflicts];
 
+        // Slim stack rarity for cold-start orientation
+        const stackRarity = {
+          tier: stackRarityResult.tier,
+          baseTier: stackRarityResult.baseTier,
+          loadBump: stackRarityResult.loadBump,
+        };
+
         return {
           today: toDateKey(now),
           goal,
@@ -1535,6 +1540,7 @@ function registerReadTools(server: McpServer) {
           openItems,
           otherActiveGoals,
           currentWeekConflicts,
+          stackRarity,
         };
       }),
   );
@@ -2045,6 +2051,7 @@ function registerReadTools(server: McpServer) {
         "effectiveTier = coach override (if set) ?? computed tier. " +
         "computed is always present; coach is null when no override is stored. " +
         "Someday goals (no targetDate) are unrated and excluded from stack math. " +
+        "ratio is a difficulty score (required/plausible weekly rate; lower = easier) — NOT a progress percentage. " +
         "loadBump = 1 means concurrent-goal load pushed the stack tier one step higher than the worst individual goal. " +
         "UI displays this as the 'Reach' meter. " +
         "To override a goal's tier, use set_goal_feasibility.",
@@ -4555,14 +4562,15 @@ function registerWriteTools(server: McpServer) {
         if (input.targetDate !== undefined) data.targetDate = input.targetDate ? parseDateInput(input.targetDate) : null;
         if (input.status !== undefined) data.status = input.status;
         if (input.notes !== undefined) data.notes = input.notes;
-        // D3 attributionHints: nullable-optional — null clears (Prisma.JsonNull), array replaces
+        // D3 attributionHints: nullable-optional — null clears (Prisma.JsonNull), array replaces.
+        // Canonicalized via canonicalExerciseName (same as create_goal / promote_note_to_goal paths).
         if (input.attributionHints !== undefined) {
           data.attributionHints =
             input.attributionHints === null
               ? Prisma.JsonNull
               : input.attributionHints.length === 0
                 ? Prisma.JsonNull
-                : input.attributionHints;
+                : (input.attributionHints.map((h) => canonicalExerciseName(h)) as unknown as Prisma.InputJsonValue);
         }
 
         if (Object.keys(data).length === 0) {
@@ -4623,6 +4631,7 @@ function registerWriteTools(server: McpServer) {
         "ScheduledItems, and LogEntries linked to this goal. " +
         "Workouts, measurements, hikes, nutrition logs, notes, and baselines are NOT goal-linked and survive deletion. " +
         "Hikes logged against this goal (goalId = this goal's id) also survive — their goalId is nulled out by the database (onDelete: SetNull) and they are re-attributed to the focus goal at read time. " +
+        "(prefer update_goal status='abandoned' for a soft lifecycle end that preserves history) " +
         "Per operating rules: propose the deletion to the user, describe what will be cascaded, " +
         "and get their explicit approval in chat BEFORE calling this tool. " +
         "Pass confirm:true only after the user has approved.",
@@ -4856,7 +4865,8 @@ function registerWriteTools(server: McpServer) {
         "tracked=true: goal contributes events to the calendar, goal pill lights up, included in cross-goal conflict detection. " +
         "tracked=false: goal is silenced from the calendar and Today strip. " +
         "Guard: the focus goal cannot be untracked — switch focus to another goal first (error text passes through from the guard). " +
-        "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately).",
+        "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately). " +
+        "(focus-switching is app-UI only — no MCP tool exists)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         tracked: z.boolean().describe("true = track the goal; false = untrack it"),
@@ -4880,10 +4890,12 @@ function registerWriteTools(server: McpServer) {
       title: "Pause or resume a goal's plan",
       description:
         "Pause (active=false) or resume (active=true) a goal's plan. " +
-        "Pause silences the plan's retest calendar markers — the goal stays tracked (visible) but its prescribed workouts / baselines no longer generate day events. " +
+        "Pause silences the plan's retest and rotation markers — retest checkpoints and prescribed workouts no longer generate day events. " +
+        "The goal's target-date marker stays on the calendar (it is a Goal-level field, not a Plan-level field). " +
         "Resume re-activates the most recent plan. " +
         "Guard: the focus goal's plan cannot be paused — switch focus to another goal first (error text passes through from the guard). " +
-        "Defensive no-op when resuming a goal that has no plan.",
+        "Defensive no-op when resuming a goal that has no plan. " +
+        "(focus-switching is app-UI only — no MCP tool exists)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         active: z
@@ -4914,7 +4926,8 @@ function registerWriteTools(server: McpServer) {
         "Built for the Phase-3 intake interview: 'If I commit to X by date Y, what does that do to my stack?' " +
         "Tiers: common → uncommon → rare → epic → legendary (higher = harder). " +
         "The hypothetical goal uses norms for a fresh start (no observed history). " +
-        "list_goals count is unchanged after this call.",
+        "list_goals count is unchanged after this call. " +
+        "Targets shape: {metric, label, units, direction, target, weight} — e.g. {metric:'weightLb', label:'Body weight', units:'lb', direction:'decrease', target:155, weight:1}.",
       inputSchema: {
         targets: z
           .array(GoalTargetSchema)

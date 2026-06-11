@@ -173,7 +173,7 @@ export default async function GoalsPage({
                           {g.status !== "active" ? ` · ${g.status}` : ""}
                           {/* UXR-62B-01: plain muted text in existing subline, no new chip or control */}
                           {isPlanPaused && (
-                            <span title="Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact.">
+                            <span title="Silences this plan's retest days. Goal stays tracked — date, coach, Reach intact.">
                               {" · Plan paused"}
                             </span>
                           )}
@@ -224,7 +224,7 @@ export default async function GoalsPage({
                             <button
                               type="submit"
                               className="text-xs rounded-full border px-2 py-0.5 min-h-[44px] border-[var(--accent)] text-[var(--accent)]"
-                              title="Drives your daily Today plan. Only one goal holds focus at a time."
+                              title="Drives your daily Today plan. Only one goal holds focus at a time. Focusing a goal also resumes its paused plan."
                             >
                               Set focus
                             </button>
@@ -242,8 +242,8 @@ export default async function GoalsPage({
                               }`}
                               title={
                                 g.active
-                                  ? "Shows on the calendar and to your coach, and counts toward rarity."
-                                  : "Parked. Hidden from the calendar, coach, and rarity until you track it again."
+                                  ? "Shows on the calendar and to your coach, and counts toward Reach."
+                                  : "Parked. Hidden from the calendar, coach, and Reach until you track it again."
                               }
                             >
                               {g.active ? "Untrack" : "Track"}
@@ -289,7 +289,7 @@ export default async function GoalsPage({
                   </span>
                   <p className="text-xs text-[var(--muted)]">
                     <strong className="font-medium text-[var(--foreground)]">Tracked</strong>
-                    {" — "}Shows on the calendar and to your coach, and counts toward rarity.
+                    {" — "}Shows on the calendar and to your coach, and counts toward Reach.
                   </p>
                 </li>
                 {/* Untracked */}
@@ -302,7 +302,7 @@ export default async function GoalsPage({
                   </span>
                   <p className="text-xs text-[var(--muted)]">
                     <strong className="font-medium text-[var(--foreground)]">Untracked</strong>
-                    {" — "}Parked. Hidden from the calendar, coach, and rarity until you track it again.
+                    {" — "}Parked. Hidden from the calendar, coach, and Reach until you track it again.
                   </p>
                 </li>
                 {/* Someday */}
@@ -341,7 +341,7 @@ export default async function GoalsPage({
                   </span>
                   <p className="text-xs text-[var(--muted)]">
                     <strong className="font-medium text-[var(--foreground)]">Plan paused</strong>
-                    {" — "}{"Silences this plan’s retest days. Goal stays tracked — date, coach, rarity intact."}
+                    {" — "}{"Silences this plan’s retest days. Goal stays tracked — date, coach, Reach intact."}
                   </p>
                 </li>
                 {/* Reach — UXR-63-20: ≤90-char definition teaching the inversion (higher = harder) */}
@@ -353,6 +353,17 @@ export default async function GoalsPage({
                   <p className="text-xs text-[var(--muted)]">
                     <strong className="font-medium text-[var(--foreground)]">Reach</strong>
                     {" — "}How big an ask a goal is by its date. Higher tiers are harder to hit in time.
+                  </p>
+                </li>
+                {/* Trained — UXR-64-09: explains the trained subline for hinted goals */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    <span className="text-xs text-[var(--muted)]">· trained 3d ago</span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Trained</strong>
+                    {" — "}A logged workout included one of this goal&apos;s linked exercises.{" "}
+                    &ldquo;no training logged&rdquo; means none yet.
                   </p>
                 </li>
               </ul>

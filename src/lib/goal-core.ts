@@ -214,11 +214,13 @@ export async function ensurePlanForGoalCore(
   goalId: string,
   targetDate: Date,
 ): Promise<EnsurePlanResult> {
-  // H2 guard (upgrade path only): cannot scaffold a plan for a date already past.
-  // This guards only ensurePlanForGoalCore, not createGoalCore's dated creation path.
+  // H2 guard (upgrade path only): cannot scaffold a plan for a date already in the past.
+  // Today is valid (targetKey === nowKey) — weeksBetween floors at 1 so a same-day upgrade
+  // gets a 1-week plan rather than throwing. This guards only ensurePlanForGoalCore, not
+  // createGoalCore's dated creation path.
   const nowKey = dateKey(new Date());
   const targetKey = dateKey(targetDate);
-  if (targetKey <= nowKey) {
+  if (targetKey < nowKey) {
     throw new Error(
       `targetDate is in the past (${targetKey}) — update the date or leave the goal as someday.`,
     );

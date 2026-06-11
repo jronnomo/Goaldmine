@@ -199,6 +199,11 @@ export type TargetFeasibility = {
   ratio: number | null;
   verdict: TargetVerdict;
   countsTowardTier: boolean;
+  /** The most recent measured value for this metric, or null when unknown.
+   *  Null when no data has been logged and no target.start is set (the "unknown"
+   *  path). Populated as the effective current value (last series point →
+   *  resolveMetricValue fallback → target.start) by the async caller in rarity.ts. */
+  currentValue: number | null;
 };
 
 export type GoalFeasibility = {
@@ -409,6 +414,7 @@ export function computeTargetFeasibility(input: {
       ratio: null,
       verdict: "unknown",
       countsTowardTier: false,
+      currentValue: null,
     };
   }
 
@@ -432,6 +438,7 @@ export function computeTargetFeasibility(input: {
       ratio: 0,
       verdict: "met",
       countsTowardTier: true,
+      currentValue: effectiveCurrent,
     };
   }
 
@@ -469,6 +476,7 @@ export function computeTargetFeasibility(input: {
           ratio: rules.ratioCap,
           verdict: tierFromRatio(rules.ratioCap, rules),
           countsTowardTier: true,
+          currentValue: effectiveCurrent,
         };
       }
     }
@@ -489,6 +497,7 @@ export function computeTargetFeasibility(input: {
       ratio: null,
       verdict: "unknown",
       countsTowardTier: false,
+      currentValue: effectiveCurrent,
     };
   }
 
@@ -508,6 +517,7 @@ export function computeTargetFeasibility(input: {
     ratio,
     verdict,
     countsTowardTier: true,
+    currentValue: effectiveCurrent,
   };
 }
 
@@ -626,4 +636,40 @@ export function effectiveTier(
   coach: CoachFeasibility | null,
 ): RarityTier | null {
   return coach?.tier ?? computed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared coach-feasibility parser (replaces local copies in rarity.ts,
+// tools.ts, and goals/[id]/page.tsx).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a raw JSON value from the DB into a typed CoachFeasibility, or null.
+ * Validates that the stored tier is a known RARITY_TIERS member so stale or
+ * corrupted values don't propagate as valid overrides.
+ *
+ * TODO(REQ-63-3): the MCP description for set_goal_feasibility should note the
+ * "someday-override caveat": the coach CAN set a tier on a someday goal
+ * (targetDate=null). effectiveTier() will return the coach tier even though
+ * computed is null/unrated. The MCP tool description should explain this so
+ * the coach knows the override persists if the user later adds a targetDate.
+ */
+export function parseCoachFeasibility(raw: unknown): CoachFeasibility | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.tier !== "string" ||
+    !RARITY_TIERS.includes(r.tier as RarityTier) ||
+    typeof r.rationale !== "string" ||
+    typeof r.assessedAt !== "string" ||
+    r.assessedBy !== "coach"
+  ) {
+    return null;
+  }
+  return {
+    tier: r.tier as RarityTier,
+    rationale: r.rationale,
+    assessedAt: r.assessedAt,
+    assessedBy: "coach",
+  };
 }

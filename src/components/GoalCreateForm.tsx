@@ -48,7 +48,7 @@ export function GoalCreateForm({
       >
         <p className="text-sm text-[var(--muted)]">
           <span className="font-medium text-[var(--foreground)]">Interview your coach first (recommended)</span>
-          {" — a 5-minute intake nails the date, targets, and feasibility before you commit. "}
+          {" — a 5-minute intake nails the date, targets, and Reach before you commit. "}
           <a
             href="/coach#interview"
             data-testid="interview-banner-link"

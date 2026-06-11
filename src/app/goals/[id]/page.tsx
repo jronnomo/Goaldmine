@@ -16,7 +16,7 @@ import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
-import type { CoachFeasibility } from "@/lib/rarity-core";
+import { parseCoachFeasibility } from "@/lib/rarity-core";
 
 export const dynamic = "force-dynamic";
 
@@ -116,24 +116,8 @@ export default async function GoalDetail({
   const hasHints = parseAttributionHints(goal.attributionHints).length > 0;
   const lastTrained = hasHints ? (trainedMapDetail.get(goal.id) ?? null) : null;
 
-  // Parse coachFeasibility from DB (typed as JsonValue | null by Prisma)
-  function parseCoach(raw: unknown): CoachFeasibility | null {
-    if (!raw || typeof raw !== "object") return null;
-    const r = raw as Record<string, unknown>;
-    if (
-      typeof r.tier !== "string" ||
-      typeof r.rationale !== "string" ||
-      typeof r.assessedAt !== "string" ||
-      r.assessedBy !== "coach"
-    ) return null;
-    return {
-      tier: r.tier as CoachFeasibility["tier"],
-      rationale: r.rationale,
-      assessedAt: r.assessedAt,
-      assessedBy: "coach",
-    };
-  }
-  const coachFeasibility = parseCoach(goal.coachFeasibility);
+  // Parse coachFeasibility from DB using the shared parser (rarity-core.ts).
+  const coachFeasibility = parseCoachFeasibility(goal.coachFeasibility);
 
   const otherGoals = await prisma.goal.findMany({
     where: { id: { not: id } },
@@ -344,7 +328,7 @@ export default async function GoalDetail({
                     title={
                       activePlan
                         ? "Its 12-week plan posts retest days to the calendar on its own schedule."
-                        : "Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact."
+                        : "Silences this plan's retest days. Goal stays tracked — date, coach, Reach intact."
                     }
                   >
                     {activePlan ? "Pause" : "Resume"}
@@ -359,7 +343,7 @@ export default async function GoalDetail({
             <p className="text-xs text-[var(--muted)] mb-3">
               {activePlan
                 ? "Its 12-week plan posts retest days to the calendar on its own schedule."
-                : "Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact."}
+                : "Silences this plan's retest days. Goal stays tracked — date, coach, Reach intact."}
             </p>
           )}
           {activePlan && (

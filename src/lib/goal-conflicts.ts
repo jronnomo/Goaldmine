@@ -19,13 +19,17 @@
 //
 //   key-events-same-week
 //     ≥2 distinct goals each have at least one key event (target-date or
-//     baseline-retest) in the same focus-rotation week. When no focusProgram
-//     is present, falls back to calendar Mon–Sun week buckets.
+//     baseline-retest) in the same CALENDAR Mon–Sun week (dateKey of Monday).
 //     CRIT-3 fix: ALL goals' key events (focus + non-focus) participate in the
 //     week scan so that focus-retest-week vs non-focus-race-week collisions are
 //     detected. Conflicts are emitted only for the non-focus events — the focus
 //     goal's events are the "other side" of the collision, not the conflict
 //     recipient.
+//     NOTE: bucketing is always by calendar week (dateKey(startOfWeekMonday(eventDate))).
+//     The prior rotation-N / calendar-key mixed namespace has been removed —
+//     using a hybrid namespace caused plan-boundary collisions to be silently
+//     missed when one event fell at the tail of a rotation week and another was
+//     bucketed as a calendar-week key.
 //
 //   event-near-long-effort
 //     A non-focus goal's target-date event falls within ±raceProximityDays of
@@ -34,7 +38,9 @@
 //     case is caught by event-on-hard-day when long-endurance is in
 //     hardCategories (CRIT-1 fix — prevents double-reporting).
 //
-// Deduplication: at most one conflict per dateKey; most severe kind wins.
+// Deduplication: at most one conflict per (dateKey, goalId) composite key so
+// two distinct goals' same-day conflicts both surface; most severe kind wins
+// within the same composite key.
 // Severity: event-on-hard-day (3) > event-near-long-effort (2) >
 //           key-events-same-week (1).
 //
@@ -215,12 +221,17 @@ export function crossGoalConflicts(args: {
   // ── Kind 2: key-events-same-week ──────────────────────────────────────────
   //
   // ≥2 distinct goals each have a key event (target-date or baseline-retest)
-  // in the same rotation week.
+  // in the same calendar Mon–Sun week.
   //
   // CRIT-3 fix: Include ALL goals' key events (focus + non-focus) in the week
   // scan. This catches the primary real-world scenario: focus goal has a retest
   // week AND the non-focus goal has its race in that same week. Without the focus
   // goal's events in the scan, only non-focus vs non-focus collisions fire.
+  //
+  // Bucketing is ALWAYS by calendar week (dateKey(startOfWeekMonday(eventDate))).
+  // The prior rotation-N / calendar-key mixed namespace has been removed —
+  // it caused plan-boundary collisions to be missed when events near the plan
+  // boundary were bucketed under different key formats.
   //
   // Conflicts are emitted only for non-focus events — the focus goal's events
   // are the "other side" of the collision, never the conflict recipient.
@@ -228,26 +239,11 @@ export function crossGoalConflicts(args: {
     (e) => e.type === "target-date" || e.type === "baseline-retest",
   );
 
-  // Bucket key events by rotation week (or calendar Mon–Sun fallback).
+  // Bucket key events by calendar Mon–Sun week.
   const byWeek = new Map<string, GoalEvent[]>();
   for (const event of keyEvents) {
     const eventDate = parseDateKey(event.dateKey);
-    let weekKey: string;
-    if (focusProgram) {
-      const startMid = startOfDay(focusProgram.startedOn);
-      const daysDelta = Math.floor(
-        (startOfDay(eventDate).getTime() - startMid.getTime()) / (24 * 3600 * 1000),
-      );
-      if (daysDelta >= 0 && daysDelta < focusProgram.template.totalWeeks * 7) {
-        const wi = Math.floor(daysDelta / 7) + 1;
-        weekKey = `rotation-${wi}`;
-      } else {
-        // Outside focus plan window — fall back to calendar week
-        weekKey = dateKey(startOfWeekMonday(eventDate));
-      }
-    } else {
-      weekKey = dateKey(startOfWeekMonday(eventDate));
-    }
+    const weekKey = dateKey(startOfWeekMonday(eventDate));
     const arr = byWeek.get(weekKey) ?? [];
     arr.push(event);
     byWeek.set(weekKey, arr);
@@ -257,9 +253,7 @@ export function crossGoalConflicts(args: {
     const uniqueGoals = new Set(weekEvents.map((e) => e.goalId));
     if (uniqueGoals.size < 2) continue; // only one goal in this week — no collision
 
-    const weekLabel = weekKey.startsWith("rotation-")
-      ? `rotation week ${weekKey.slice(9)}`
-      : `week of ${weekKey}`;
+    const weekLabel = `week of ${weekKey}`;
 
     // Emit only for non-focus events (focus events are the "other side")
     for (const event of weekEvents.filter((e) => e.goalId !== focusGoalId)) {
@@ -364,12 +358,16 @@ export function crossGoalConflicts(args: {
 
   // ── Deduplication + sort ───────────────────────────────────────────────────
   //
-  // At most one conflict per dateKey; most-severe kind wins.
+  // At most one conflict per (dateKey, goalId) composite key — two distinct
+  // goals' same-day conflicts both surface (a goal-A race and a goal-B race on
+  // the same date are independent events, not duplicates). Most-severe kind wins
+  // within the same composite key.
   const deduped = new Map<string, CrossGoalConflict>();
   for (const c of conflicts) {
-    const existing = deduped.get(c.dateKey);
+    const dedupeKey = `${c.dateKey}|${c.goalId}`;
+    const existing = deduped.get(dedupeKey);
     if (!existing || SEVERITY[c.kind] > SEVERITY[existing.kind]) {
-      deduped.set(c.dateKey, c);
+      deduped.set(dedupeKey, c);
     }
   }
 

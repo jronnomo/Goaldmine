@@ -138,6 +138,12 @@ export async function updateGoal(id: string, form: FormData) {
 }
 
 export async function setFocusGoal(id: string) {
+  // Focus ⇒ active-plan invariant: the target goal is set active=true inside the
+  // transaction (step 2 below), and its most-recent plan is re-activated (step 3).
+  // This means focusing a goal ALSO resumes its paused plan — a paused plan is
+  // silenced solely because it is not the focus; switching focus re-enables it.
+  // setPlanActiveCore is NOT called here because it guards against pausing the focus
+  // goal; instead we replicate its "resume latest plan" logic directly in the tx.
   // Fetch old focus id before transaction so we can revalidate its detail page.
   const oldFocus = await prisma.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
   const oldFocusId = oldFocus?.id ?? null;

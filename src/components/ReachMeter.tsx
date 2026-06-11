@@ -54,7 +54,7 @@ export function ReachMeter({ tier, label = false, size = "sm", title }: ReachMet
   // UXR-63-19: unrated; UXR-63-08: roomy surface always includes word
   const ariaLabel = tier
     ? `Reach: ${config!.label} — ${fillCount} of 5`
-    : "Feasibility not yet rated";
+    : "Reach not yet rated";
 
   return (
     <span
