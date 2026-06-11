@@ -107,7 +107,11 @@ Claude reasons through it, *describes* the cascading effects, doesn't call apply
 | Browse history / charts / records | ✅ `/calendar`, `/baselines`, `/stats` | |
 | View revision before/after | ✅ `/goals/<id>/revisions/<id>` | |
 
-## 4. Troubleshooting
+## 4. Goal intake interview + promote flow
+
+The /coach page includes an **"Interview your coach"** prompt card (slotted first, deep-linkable as `/coach#interview`) that walks through a 7-step guided intake before any goal is created. The flow: the coach asks about the objective, date, benchmarks (logging each via `log_baseline`), constraints, and proposed targets — then calls `preview_goal_feasibility` to show the goal's own rarity tier and its effect on the active stack **before** committing anything. On explicit approval, `create_goal` is called with `targets`, a `coachFeasibility` seed, and `attributionHints` (exercise names that count as training the new goal). For goals that start life as journal/audible notes, use `promote_note_to_goal` instead of `create_goal` at step 7 — it creates the goal and resolves the source note atomically. `list_promotable_notes` (with `includeAspirations: true` to widen to audible + journal types) surfaces candidate notes; the **"Promote to goal →"** link in each pending note row on the dashboard pre-fills the `/goals` form with the note body as the objective.
+
+## 5. Troubleshooting
 
 **"Couldn't reach the MCP server"** — check the connector URL is `https://workout-planner-gold-three.vercel.app/api/mcp/<token>` (the token is the path segment, not a separate field). Verify Vercel deployment is current.
 

@@ -3,7 +3,22 @@ import { CopyPromptButton } from "@/components/CopyPromptButton";
 
 export const dynamic = "force-dynamic";
 
-const PROMPTS = [
+const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string }> = [
+  {
+    id: "interview",
+    title: "Interview your coach",
+    when: "Starting a new goal",
+    prompt:
+      "I want to add a new goal. Run a goal-intake interview with me — one stage at a time, don't skip ahead:\n\n" +
+      "1. Objective — ask what I want to achieve, then distill it into one crisp objective line and confirm it with me.\n" +
+      "2. Date — ask whether this has a hard date, a flexible window (pick a date together), or is a someday goal. Someday = no target date: no plan gets scaffolded, no calendar pin, unrated for rarity. That's a fine answer.\n" +
+      "3. Benchmarks — ask where I am right now on the 2–4 measures that best predict this goal. Log each answer via log_baseline as we go, so my targets start from real numbers.\n" +
+      "4. Constraints — ask about equipment, weekly schedule, and how this sits alongside my current goals (call list_goals for the live slate).\n" +
+      "5. Targets — propose a weighted targets array (weights summing to ~1), each tied to a benchmark from step 3, with a one-line rationale per target. Wait for my edits.\n" +
+      "6. Feasibility — call preview_goal_feasibility with the proposed targets (and date, if any) BEFORE creating anything. Tell me plainly: this goal's own tier, and what it does to my active stack. If the stack lands epic or legendary, talk me through recalibrating the date, trimming targets, or pausing something first.\n" +
+      "7. Create — only on my explicit go-ahead, call create_goal with the objective, date (omit if someday), targets, a coachFeasibility seed ({tier, rationale} summarizing your read from this interview), and attributionHints — the exercise names (exactly as I log them) that count as training this goal, so the app can show when I last trained it. Propose a legend to match the flavor.\n\n" +
+      "If this came from an old note, use promote_note_to_goal instead of create_goal at step 7 so the note gets resolved too.",
+  },
   {
     title: "Daily check-in",
     when: "Morning, before training",
@@ -99,7 +114,7 @@ export default function CoachPage() {
 
       <ul className="space-y-3">
         {PROMPTS.map((p) => (
-          <li key={p.title}>
+          <li key={p.title} id={p.id}>
             <Card
               title={p.title}
               action={<CopyPromptButton text={p.prompt} />}

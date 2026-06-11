@@ -59,21 +59,31 @@ export function PendingNotes({
               </span>
             </div>
             <p className="whitespace-pre-wrap">{n.body}</p>
-            <div className="flex items-center justify-between gap-2 pt-1">
-              <Link
-                href={`/goals/${goalId}/revise?noteId=${n.id}`}
-                className="text-xs text-[var(--accent)]"
-              >
-                Apply revision from this note →
-              </Link>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => startTransition(() => resolveNote(n.id))}
-                className="text-xs text-[var(--muted)] hover:text-[var(--foreground)] disabled:opacity-50"
-              >
-                Mark resolved
-              </button>
+            <div className="pt-1">
+              <div className="flex items-center gap-3">
+                <Link
+                  href={`/goals/${goalId}/revise?noteId=${n.id}`}
+                  className="inline-flex items-center min-h-[44px] text-xs text-[var(--accent)]"
+                >
+                  Apply revision →
+                </Link>
+                <Link
+                  href={`/goals?objective=${encodeURIComponent(n.body.slice(0, 200))}#new-goal`}
+                  className="inline-flex items-center min-h-[44px] text-xs text-[var(--accent)]"
+                >
+                  Promote to goal →
+                </Link>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => startTransition(() => resolveNote(n.id))}
+                  className="inline-flex items-center min-h-[44px] text-xs text-[var(--muted)] hover:text-[var(--foreground)] disabled:opacity-50"
+                >
+                  Mark resolved
+                </button>
+              </div>
             </div>
           </li>
         ))}
