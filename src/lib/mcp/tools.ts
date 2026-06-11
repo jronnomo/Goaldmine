@@ -69,6 +69,10 @@ import {
 } from "@/lib/baseline-ops";
 import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
+import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
+import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
+import { RARITY_TIERS, type CoachFeasibility } from "@/lib/rarity-core";
+import { GoalTargetSchema } from "@/lib/metrics-registry";
 
 const DateKeyShape = z
   .string()
@@ -569,6 +573,30 @@ function noteHeader(body: string): string {
   return firstLine.length <= 80 ? firstLine : firstLine.slice(0, 77) + "...";
 }
 
+/**
+ * Parse a raw JSON value from the DB into a typed CoachFeasibility, or null.
+ * Mirrors the private parseCoachFeasibility in rarity.ts — kept local so
+ * tools.ts can surface it without requiring an export change in rarity.ts.
+ */
+function parseCoachFeasibilityLocal(raw: unknown): CoachFeasibility | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (
+    typeof r.tier !== "string" ||
+    typeof r.rationale !== "string" ||
+    typeof r.assessedAt !== "string" ||
+    r.assessedBy !== "coach"
+  ) {
+    return null;
+  }
+  return {
+    tier: r.tier as CoachFeasibility["tier"],
+    rationale: r.rationale,
+    assessedAt: r.assessedAt,
+    assessedBy: "coach",
+  };
+}
+
 // ----------------------------------------------------------------------------
 // Read tools — context for coaching reasoning
 // ----------------------------------------------------------------------------
@@ -789,7 +817,9 @@ function registerReadTools(server: McpServer) {
         "active=true means the goal is tracked and contributes events to the calendar and Today strip; isFocus=true means this goal's plan drives the daily prescription (exactly one should be true at a time). " +
         "targetDate=null indicates a someday goal (no calendar pin, no countdown). " +
         "Use to discover which goal is in focus, list all tracked goals with their target dates, or find someday goals. " +
-        "Pair with get_goal for full detail on one goal.",
+        "Pair with get_goal for full detail on one goal. " +
+        "coachFeasibilityTier is the coach's stored override tier (null when not set). " +
+        "For the computed feasibility tier (and full stack math), call get_rarity.",
     },
     async () =>
       safe(async () => {
@@ -811,6 +841,7 @@ function registerReadTools(server: McpServer) {
           kind: g.kind,
           targetCount: Array.isArray(g.targets) ? (g.targets as unknown[]).length : 0,
           activePlanId: g.plans[0]?.id ?? null,
+          coachFeasibilityTier: parseCoachFeasibilityLocal(g.coachFeasibility)?.tier ?? null,
         }));
       }),
   );
@@ -891,7 +922,16 @@ function registerReadTools(server: McpServer) {
           });
         }
 
-        return { ...goal, upcomingOverrides };
+        // Compute feasibility for this goal — read-through, no cache.
+        const computed = await computeGoalFeasibility({
+          id: goal.id,
+          targetDate: goal.targetDate,
+          targets: goal.targets,
+          kind: goal.kind,
+        });
+        const coach = parseCoachFeasibilityLocal(goal.coachFeasibility);
+
+        return { ...goal, upcomingOverrides, feasibility: { computed, coach } };
       }),
   );
 
@@ -1915,7 +1955,7 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
-        const state = await computeGameState();
+        const [state, stack] = await Promise.all([computeGameState(), computeStackRarity()]);
         if (!state.goalKind) {
           return { goalKind: null, message: "No active program" };
         }
@@ -1950,7 +1990,39 @@ function registerReadTools(server: McpServer) {
                 bonusHints: state.questToday.bonusHints,
               }
             : null,
+          stackRarity: {
+            tier: stack.tier,
+            baseTier: stack.baseTier,
+            loadBump: stack.loadBump,
+            perGoal: stack.perGoal.map((pg) => ({
+              goalId: pg.goalId,
+              objective: pg.objective,
+              effectiveTier: pg.effectiveTier,
+            })),
+          },
         };
+      }),
+  );
+
+  // ── get_rarity ───────────────────────────────────────────────────────────────
+  server.registerTool(
+    "get_rarity",
+    {
+      title: "Get full stack rarity (Reach meter)",
+      description:
+        "Returns the full StackRarity for the user's active dated goals. " +
+        "Tiers: common → uncommon → rare → epic → legendary. HIGHER tier = HARDER goal. " +
+        "legendary = 'near-impossible in the time set'. " +
+        "effectiveTier = coach override (if set) ?? computed tier. " +
+        "computed is always present; coach is null when no override is stored. " +
+        "Someday goals (no targetDate) are unrated and excluded from stack math. " +
+        "loadBump = 1 means concurrent-goal load pushed the stack tier one step higher than the worst individual goal. " +
+        "UI displays this as the 'Reach' meter. " +
+        "To override a goal's tier, use set_goal_feasibility.",
+    },
+    async () =>
+      safe(async () => {
+        return await computeStackRarity();
       }),
   );
 }
@@ -3182,7 +3254,14 @@ function registerWriteTools(server: McpServer) {
         "Read the current targets via get_goal first; this is a full-replace, not a patch.",
       inputSchema: {
         goalId: z.string(),
-        targets: z.array(z.unknown()),
+        // GoalTargetSchema adopted (M5): all required fields (metric, label, units,
+        // direction, target, weight) have always been set by the create/update flows.
+        // Optional fields (start, rationale) are already optional in the schema,
+        // so existing stored targets validate cleanly.
+        targets: z.array(GoalTargetSchema).min(1).describe(
+          "Full replacement targets array. Each entry: { metric, label, units, direction, target, weight, start?, rationale? }. " +
+          "Weights should sum near 1. Use get_goal to read current targets before replacing.",
+        ),
       },
     },
     async ({ goalId, targets }) =>
@@ -3807,10 +3886,33 @@ function registerWriteTools(server: McpServer) {
           copyFromGoalId,
           legend,
         });
+
+        // Non-blocking stack warning — compute after create so the new goal is included.
+        let stackWarning: { stackTier: string; message: string } | null = null;
+        try {
+          const stack = await computeStackRarity();
+          if (stack.tier === "legendary") {
+            stackWarning = {
+              stackTier: "legendary",
+              message:
+                "Adding this goal pushes the active stack to legendary — near-impossible in the time set. Consider recalibrating dates, pausing a goal, or talking through priorities.",
+            };
+          } else if (stack.tier === "epic") {
+            stackWarning = {
+              stackTier: "epic",
+              message:
+                "Adding this goal pushes the active stack to epic — extremely demanding. Consider recalibrating dates, pausing a goal, or talking through priorities.",
+            };
+          }
+        } catch {
+          // Stack warning is advisory — never let it fail the create.
+        }
+
         return {
           goalId: goal.id,
           planId,
           message: `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`,
+          stackWarning,
         };
       }),
   );
@@ -4438,6 +4540,200 @@ function registerWriteTools(server: McpServer) {
             label: updated.label,
             claudeSummary: updated.claudeSummary,
           },
+        };
+      }),
+  );
+
+  // ── set_goal_feasibility ─────────────────────────────────────────────────────
+  server.registerTool(
+    "set_goal_feasibility",
+    {
+      title: "Set or clear a coach feasibility override for a goal",
+      description:
+        "Store or clear a coach-override feasibility tier for a goal. " +
+        "Tiers: common → uncommon → rare → epic → legendary (higher = harder; legendary = 'near-impossible in the time set'). " +
+        "Pass tier + rationale to override the computed tier. tier REQUIRES rationale — explain why the computed rating is wrong or needs adjustment. " +
+        "Omit tier (pass neither tier nor rationale) to clear the override and revert to the computed rating. " +
+        "Returns { coach, computed } so you can see both sides immediately. " +
+        "Note: an override on a someday goal (no targetDate) is stored but excluded from stack math until the goal gets a targetDate.",
+      inputSchema: {
+        goalId: z.string().describe("Goal id; use list_goals to discover"),
+        tier: z
+          .enum(RARITY_TIERS)
+          .optional()
+          .describe(
+            "Coach override tier. Requires rationale. Omit to clear the override.",
+          ),
+        rationale: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Required when setting tier. Explain why the computed rating needs adjustment.",
+          ),
+      },
+    },
+    async ({ goalId, tier, rationale }) =>
+      safe(async () => {
+        // Tier requires rationale
+        if (tier !== undefined && !rationale) {
+          throw new Error(
+            "rationale is required when setting a tier — explain why the computed rating needs adjustment.",
+          );
+        }
+
+        const goal = await prisma.goal.findUnique({
+          where: { id: goalId },
+          select: { id: true, targetDate: true, targets: true, kind: true, coachFeasibility: true },
+        });
+        if (!goal) throw new Error(`Goal not found: ${goalId}`);
+
+        let newCoachFeasibility: Prisma.InputJsonValue | typeof Prisma.JsonNull;
+        if (tier === undefined) {
+          // Clear override
+          newCoachFeasibility = Prisma.JsonNull;
+        } else {
+          newCoachFeasibility = {
+            tier,
+            rationale: rationale!,
+            assessedAt: new Date().toISOString(),
+            assessedBy: "coach",
+          };
+        }
+
+        await prisma.goal.update({
+          where: { id: goalId },
+          data: { coachFeasibility: newCoachFeasibility },
+        });
+
+        const updatedRow = await prisma.goal.findUniqueOrThrow({
+          where: { id: goalId },
+          select: { coachFeasibility: true },
+        });
+
+        const coach = parseCoachFeasibilityLocal(updatedRow.coachFeasibility);
+        const computed = await computeGoalFeasibility({
+          id: goal.id,
+          targetDate: goal.targetDate,
+          targets: goal.targets,
+          kind: goal.kind,
+        });
+
+        return { coach, computed };
+      }),
+  );
+
+  // ── set_goal_tracked ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "set_goal_tracked",
+    {
+      title: "Track or untrack a goal",
+      description:
+        "Toggle whether a goal is tracked (active). " +
+        "tracked=true: goal contributes events to the calendar, goal pill lights up, included in cross-goal conflict detection. " +
+        "tracked=false: goal is silenced from the calendar and Today strip. " +
+        "Guard: the focus goal cannot be untracked — switch focus to another goal first (error text passes through from the guard). " +
+        "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately).",
+      inputSchema: {
+        goalId: z.string().describe("Goal id; use list_goals to discover"),
+        tracked: z.boolean().describe("true = track the goal; false = untrack it"),
+      },
+    },
+    async ({ goalId, tracked }) =>
+      safe(async () => {
+        const result = await setGoalTrackedCore(goalId, tracked);
+        return {
+          goalId: result.id,
+          active: result.active,
+          message: result.active ? "Goal is now tracked" : "Goal is now untracked",
+        };
+      }),
+  );
+
+  // ── set_plan_active ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "set_plan_active",
+    {
+      title: "Pause or resume a goal's plan",
+      description:
+        "Pause (active=false) or resume (active=true) a goal's plan. " +
+        "Pause silences the plan's retest calendar markers — the goal stays tracked (visible) but its prescribed workouts / baselines no longer generate day events. " +
+        "Resume re-activates the most recent plan. " +
+        "Guard: the focus goal's plan cannot be paused — switch focus to another goal first (error text passes through from the guard). " +
+        "Defensive no-op when resuming a goal that has no plan.",
+      inputSchema: {
+        goalId: z.string().describe("Goal id; use list_goals to discover"),
+        active: z
+          .boolean()
+          .describe("true = resume the plan; false = pause it"),
+      },
+    },
+    async ({ goalId, active }) =>
+      safe(async () => {
+        const result = await setPlanActiveCore(goalId, active);
+        return {
+          goalId: result.goalId,
+          planId: result.planId,
+          active: result.active,
+          message: result.active ? "Plan resumed" : "Plan paused",
+        };
+      }),
+  );
+
+  // ── preview_goal_feasibility ─────────────────────────────────────────────────
+  server.registerTool(
+    "preview_goal_feasibility",
+    {
+      title: "Preview stack rarity for a hypothetical goal (creates nothing)",
+      description:
+        "Compute what the stack rarity WOULD BE if a hypothetical goal were added — without creating anything. " +
+        "Runs the same math as create_goal's stackWarning, plus returns the hypothetical goal's own per-target feasibility. " +
+        "Built for the Phase-3 intake interview: 'If I commit to X by date Y, what does that do to my stack?' " +
+        "Tiers: common → uncommon → rare → epic → legendary (higher = harder). " +
+        "The hypothetical goal uses norms for a fresh start (no observed history). " +
+        "list_goals count is unchanged after this call.",
+      inputSchema: {
+        targets: z
+          .array(GoalTargetSchema)
+          .min(1)
+          .describe(
+            "Targets for the hypothetical goal. Same shape as update_goal_targets.",
+          ),
+        targetDate: DateKeyShape.optional().describe(
+          "Optional target date for the hypothetical goal (yyyy-mm-dd). Omit for a someday goal (unrated, excluded from stack math).",
+        ),
+        kind: z
+          .enum(["fitness", "project"])
+          .default("fitness")
+          .describe("Goal domain; determines which norm pack is used."),
+      },
+    },
+    async ({ targets, targetDate, kind }) =>
+      safe(async () => {
+        const parsedDate = targetDate ? parseDateInput(targetDate) : null;
+        const stack = await computeStackRarity({
+          extraGoal: {
+            objective: "hypothetical",
+            targetDate: parsedDate,
+            targets,
+            kind,
+          },
+        });
+
+        // Extract the hypothetical goal's own feasibility from perGoal
+        const hypotheticalEntry = stack.perGoal.find((pg) =>
+          pg.goalId.startsWith("__preview__"),
+        );
+
+        return {
+          stackRarity: {
+            tier: stack.tier,
+            baseTier: stack.baseTier,
+            loadBump: stack.loadBump,
+            loadBumpReasons: stack.loadBumpReasons,
+            datedActiveGoalCount: stack.datedActiveGoalCount,
+          },
+          hypotheticalGoalFeasibility: hypotheticalEntry?.computed ?? null,
         };
       }),
   );
