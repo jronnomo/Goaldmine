@@ -127,13 +127,9 @@ export default async function GoalsPage() {
                 );
                 return (
                   <li key={g.id} className="flex items-start gap-3 py-3">
-                    {isFocused ? (
-                      rowBody
-                    ) : (
-                      <Link href={`/goals/${g.id}`} className="flex-1 min-w-0 hover:opacity-80">
-                        {rowBody}
-                      </Link>
-                    )}
+                    <Link href={`/goals/${g.id}`} className="flex-1 min-w-0 hover:opacity-80">
+                      {rowBody}
+                    </Link>
                     <div className="shrink-0 flex flex-col items-end gap-1.5">
                       {days !== null ? (
                         <span
