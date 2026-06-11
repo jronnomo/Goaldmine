@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reach / feasibility tiers — mockup</title>
+<style>
+  /* ============ REAL DESIGN TOKENS (src/app/globals.css) ============ */
+  .light {
+    --background:#FAF3E3;
+    --foreground:#1F1408;
+    --muted:#7A5E3A;
+    --card:#FFFBF0;
+    --border:#D9C8A2;
+    --accent:#8A6212;
+    --accent-fg:#FFFBF0;
+    --accent-soft:rgba(138,98,18,0.14);
+    --target:#A82A1F;
+    --target-fg:#FFFBF0;
+    --success:#4E6B36;
+    --warning:#A8511A;
+    --danger:#A82A1F;
+  }
+  .dark {
+    --background:#0F0B07;
+    --foreground:#F4E9D4;
+    --muted:#9C8866;
+    --card:#1A130C;
+    --border:#3A2E1F;
+    --accent:#D4A437;
+    --accent-fg:#0F0B07;
+    --accent-soft:rgba(212,164,55,0.12);
+    --target:#C0392B;
+    --target-fg:#FFFFFF;
+    --success:#7FA45C;
+    --warning:#E0915C;
+    --danger:#C0392B;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #6b6b6b;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    padding: 28px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .col-wrap { display: flex; flex-direction: column; gap: 8px; }
+  .col-label {
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-left: 4px;
+  }
+
+  .phone {
+    width: 390px;
+    max-width: 390px;
+    background: var(--background);
+    color: var(--foreground);
+    padding: 16px;
+    border-radius: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+  }
+
+  .section { display: flex; flex-direction: column; gap: 8px; }
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  /* ============ THE REACH METER GLYPH (5-segment) ============ */
+  /* WARNING provisional tuning: seg 3px x 9px, gap 1.5px, radius 1px */
+  .meter {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 1.5px;
+    vertical-align: middle;
+  }
+  .seg {
+    width: 3px;
+    height: 9px;
+    border-radius: 1px;
+    background: var(--border);
+  }
+  .seg.f-muted   { background: var(--muted); }
+  .seg.f-accent  { background: var(--accent); }
+  .seg.f-warning { background: var(--warning); }
+
+  .reach-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--foreground);
+  }
+  .reach-chip .word { font-size: 13px; }
+  .reach-chip .word.legendary { font-weight: 800; }
+
+  .legend-list { display: flex; flex-direction: column; gap: 9px; }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .legend-row .name { width: 92px; color: var(--foreground); }
+  .legend-row .name.legendary { font-weight: 800; }
+  .legend-row .name.someday { color: var(--muted); }
+  .legend-fraction { font-size: 11px; color: var(--muted); margin-left: auto; }
+  .someday-dash {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .caption {
+    font-size: 10.5px;
+    line-height: 1.45;
+    color: var(--muted);
+    border-top: 1px dashed var(--border);
+    padding-top: 7px;
+    margin-top: 2px;
+  }
+  .caption b { color: var(--warning); font-weight: 700; }
+
+  .goal-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 11px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .goal-row + .goal-row { margin-top: 8px; }
+  .bullseye {
+    font-size: 18px;
+    line-height: 22px;
+    color: var(--muted);
+    flex: 0 0 auto;
+  }
+  .goal-main { flex: 1 1 auto; min-width: 0; }
+  .goal-title-line {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+  }
+  .goal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .focus-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    padding: 1px 5px;
+    text-transform: uppercase;
+  }
+  .goal-subline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .goal-subline.loud { color: var(--foreground); }
+
+  .goal-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .days-chip {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    background: var(--accent-soft);
+    border-radius: 6px;
+    padding: 3px 7px;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .pill.outline {
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    background: transparent;
+  }
+  .pill.outline.gold { border-color: var(--accent); color: var(--accent); }
+  .pill.filled {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .stack-card {
+    background: color-mix(in srgb, var(--warning) 8%, var(--card));
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .stack-glyph { color: var(--warning); font-size: 15px; line-height: 1.2; flex: 0 0 auto; }
+  .stack-body { display: flex; flex-direction: column; gap: 6px; }
+  .stack-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--foreground);
+  }
+  .stack-meter-line {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    color: var(--foreground);
+    font-weight: 600;
+  }
+  .stack-reason { font-size: 12px; color: var(--foreground); }
+
+  .portrait-row { display: flex; gap: 14px; align-items: center; }
+  .medallion-wrap { position: relative; flex: 0 0 auto; }
+  .medallion {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 22%, var(--card));
+    border: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 22px;
+  }
+  .level-chip {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 12px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--card);
+  }
+  .portrait-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+  .level-line { font-size: 16px; }
+  .lv-numeral { font-family: Georgia, "Times New Roman", serif; font-weight: 700; color: var(--foreground); }
+  .level-line .role { color: var(--muted); }
+  .xp-bar {
+    height: 7px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .xp-fill {
+    height: 100%;
+    width: 62%;
+    background: var(--accent);
+    border-radius: 4px;
+  }
+  .portrait-reach {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .reach-card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .cc-grid { display: flex; gap: 10px; }
+  .cc-cell {
+    flex: 1 1 0;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    position: relative;
+  }
+  .cc-label { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .cc-value { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--foreground); }
+  .coach-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+  .coach-tag { font-size: 9px; color: var(--accent); font-weight: 700; }
+  .rationale {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--foreground);
+    margin: 11px 0 3px;
+    line-height: 1.4;
+  }
+  .assessed { font-size: 10.5px; color: var(--muted); }
+  .target-table { margin-top: 11px; border-top: 1px solid var(--border); }
+  .target-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .target-line:last-child { border-bottom: none; }
+  .tl-name { color: var(--foreground); flex: 0 0 auto; }
+  .tl-dots { flex: 1 1 auto; border-bottom: 1px dotted var(--border); height: 1px; margin: 0 2px; transform: translateY(-3px); }
+  .tl-reach { display: flex; align-items: center; gap: 6px; color: var(--foreground); font-weight: 600; flex: 0 0 auto; }
+
+  .banner {
+    background: color-mix(in srgb, var(--warning) 9%, var(--card));
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .banner-glyph { color: var(--warning); font-size: 15px; flex: 0 0 auto; line-height: 1.3; }
+  .banner-body { display: flex; flex-direction: column; gap: 4px; }
+  .banner-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--foreground);
+  }
+  .banner-text { font-size: 12.5px; line-height: 1.5; color: var(--foreground); }
+
+  .glossary-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 11px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .glossary-chip { flex: 0 0 auto; padding-top: 1px; }
+  .glossary-text { font-size: 12.5px; line-height: 1.45; color: var(--foreground); }
+  .glossary-text .term { font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- LIGHT -->
+  <div class="col-wrap">
+    <div class="col-label">Light — cream (#FAF3E3)</div>
+    <div class="phone light">
+
+      <section class="section">
+        <div class="section-title">1 · Tier legend (Reach)</div>
+        <div class="card">
+          <div class="legend-list">
+            <div class="legend-row">
+              <span class="name">Common</span>
+              <span class="meter">
+                <span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">1/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Uncommon</span>
+              <span class="meter">
+                <span class="seg f-muted"></span><span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">2/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Rare</span>
+              <span class="meter">
+                <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">3/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Epic</span>
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">4/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name legendary">Legendary</span>
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span>
+              </span>
+              <span class="legend-fraction">5/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name someday">Someday</span>
+              <span class="someday-dash">—</span>
+              <span class="legend-fraction">neutral</span>
+            </div>
+          </div>
+          <div class="caption">
+            WARNING Provisional tuning — segments <b>3px×9px</b>, gap 1.5px, radius 1px (playtest range). Epic vs Legendary differ only by <b>4 vs 5 fill + bold word</b>: distinguishability is the load-bearing risk at this chip size. Both use <code>--warning</code>; ramp caps at warning-orange, never the reserved rust-red.
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">2 · /goals dense row</div>
+        <div>
+          <div class="goal-row">
+            <div class="bullseye">◎</div>
+            <div class="goal-main">
+              <div class="goal-title-line">
+                <span class="goal-title">Bench 315 lb by Aug 1</span>
+                <span class="focus-badge">Focus</span>
+              </div>
+              <div class="goal-subline loud">
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+                <span>· Aug 1 · active</span>
+              </div>
+            </div>
+            <div class="goal-rail">
+              <span class="days-chip">52d</span>
+              <span class="pill outline gold">Set focus</span>
+              <span class="pill filled">Track</span>
+            </div>
+          </div>
+          <div class="goal-row">
+            <div class="bullseye">◎</div>
+            <div class="goal-main">
+              <div class="goal-title-line">
+                <span class="goal-title">Walk 8k steps most days</span>
+              </div>
+              <div class="goal-subline">
+                <span class="meter">
+                  <span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+                <span>· ongoing · active</span>
+              </div>
+            </div>
+            <div class="goal-rail">
+              <span class="days-chip">—</span>
+              <span class="pill outline gold">Set focus</span>
+              <span class="pill filled">Track</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">3 · StackRarityCard (escalated Epic)</div>
+        <div class="stack-card">
+          <div class="stack-glyph">◣</div>
+          <div class="stack-body">
+            <div class="stack-title">Stack reach</div>
+            <div class="stack-meter-line">
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+              </span>
+              <span>Epic</span>
+            </div>
+            <div class="stack-reason">3 dated goals running at once</div>
+          </div>
+        </div>
+        <div class="caption" style="border-top:none; padding-top:4px;">
+          WARNING Wash = <b>color-mix warning 8–9%</b> into <code>--card</code> (provisional). On cream, <code>--warning #A8511A</code> as text on card is the <b>~4.6:1 AA-edge</b> — acceptable for the icon/word but do not shrink below 12px. Left-border 3px is the primary escalation signal; the wash is intentionally faint.
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">4 · /character portrait</div>
+        <div class="card">
+          <div class="portrait-row">
+            <div class="medallion-wrap">
+              <div class="medallion">☺</div>
+              <div class="level-chip">7</div>
+            </div>
+            <div class="portrait-col">
+              <div class="level-line"><span class="lv-numeral">Lv 7</span><span class="role"> Adventurer</span></div>
+              <div class="xp-bar"><div class="xp-fill"></div></div>
+              <div class="portrait-reach">
+                <span>Reach: Rare</span>
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">5 · /goals/[id] Reach card</div>
+        <div class="card">
+          <div class="reach-card-title">Reach</div>
+          <div class="cc-grid">
+            <div class="cc-cell">
+              <span class="cc-label">Coach <span class="coach-dot"></span></span>
+              <span class="cc-value">
+                Epic
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+              </span>
+              <span class="coach-tag">·coach</span>
+            </div>
+            <div class="cc-cell">
+              <span class="cc-label">Computed</span>
+              <span class="cc-value">
+                Rare
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+          </div>
+          <div class="rationale">"Bench target is aggressive for the window; coach bumped it a tier."</div>
+          <div class="assessed">Assessed Jun 8</div>
+          <div class="target-table">
+            <div class="target-line">
+              <span class="tl-name">Bench 315 by Aug 1</span>
+              <span class="tl-dots"></span>
+              <span class="tl-reach">
+                Epic
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+            <div class="target-line">
+              <span class="tl-name">Bodyweight 155 by Jul 1</span>
+              <span class="tl-dots"></span>
+              <span class="tl-reach">
+                Rare
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">6 · Legendary post-creation banner</div>
+        <div class="banner">
+          <div class="banner-glyph">◣</div>
+          <div class="banner-body">
+            <div class="banner-head">
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span>
+              </span>
+              <span>Legendary reach</span>
+            </div>
+            <div class="banner-text">As set, this is near-impossible in the time set. Bring it to your coach to extend the timeline, or pause it until your slate clears.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">7 · Glossary row</div>
+        <div class="glossary-row">
+          <div class="glossary-chip">
+            <span class="reach-chip">
+              <span>Reach: Rare</span>
+              <span class="meter">
+                <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+            </span>
+          </div>
+          <div class="glossary-text"><span class="term">Reach</span> — How big an ask a goal is by its date. Higher tiers are harder to hit in time.</div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- DARK -->
+  <div class="col-wrap">
+    <div class="col-label">Dark — espresso (#0F0B07)</div>
+    <div class="phone dark">
+
+      <section class="section">
+        <div class="section-title">1 · Tier legend (Reach)</div>
+        <div class="card">
+          <div class="legend-list">
+            <div class="legend-row">
+              <span class="name">Common</span>
+              <span class="meter">
+                <span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">1/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Uncommon</span>
+              <span class="meter">
+                <span class="seg f-muted"></span><span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">2/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Rare</span>
+              <span class="meter">
+                <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">3/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name">Epic</span>
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+              </span>
+              <span class="legend-fraction">4/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name legendary">Legendary</span>
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span>
+              </span>
+              <span class="legend-fraction">5/5</span>
+            </div>
+            <div class="legend-row">
+              <span class="name someday">Someday</span>
+              <span class="someday-dash">—</span>
+              <span class="legend-fraction">neutral</span>
+            </div>
+          </div>
+          <div class="caption">
+            WARNING Provisional tuning — segments <b>3px×9px</b>, gap 1.5px, radius 1px (playtest range). Epic vs Legendary differ only by <b>4 vs 5 fill + bold word</b>: distinguishability is the load-bearing risk at this chip size. Both use <code>--warning</code>; ramp caps at warning-orange, never the reserved rust-red.
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">2 · /goals dense row</div>
+        <div>
+          <div class="goal-row">
+            <div class="bullseye">◎</div>
+            <div class="goal-main">
+              <div class="goal-title-line">
+                <span class="goal-title">Bench 315 lb by Aug 1</span>
+                <span class="focus-badge">Focus</span>
+              </div>
+              <div class="goal-subline loud">
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+                <span>· Aug 1 · active</span>
+              </div>
+            </div>
+            <div class="goal-rail">
+              <span class="days-chip">52d</span>
+              <span class="pill outline gold">Set focus</span>
+              <span class="pill filled">Track</span>
+            </div>
+          </div>
+          <div class="goal-row">
+            <div class="bullseye">◎</div>
+            <div class="goal-main">
+              <div class="goal-title-line">
+                <span class="goal-title">Walk 8k steps most days</span>
+              </div>
+              <div class="goal-subline">
+                <span class="meter">
+                  <span class="seg f-muted"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+                <span>· ongoing · active</span>
+              </div>
+            </div>
+            <div class="goal-rail">
+              <span class="days-chip">—</span>
+              <span class="pill outline gold">Set focus</span>
+              <span class="pill filled">Track</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">3 · StackRarityCard (escalated Epic)</div>
+        <div class="stack-card">
+          <div class="stack-glyph">◣</div>
+          <div class="stack-body">
+            <div class="stack-title">Stack reach</div>
+            <div class="stack-meter-line">
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+              </span>
+              <span>Epic</span>
+            </div>
+            <div class="stack-reason">3 dated goals running at once</div>
+          </div>
+        </div>
+        <div class="caption" style="border-top:none; padding-top:4px;">
+          WARNING Wash = <b>color-mix warning 8–9%</b> into <code>--card</code> (provisional). On cream, <code>--warning #A8511A</code> as text on card is the <b>~4.6:1 AA-edge</b> — acceptable for the icon/word but do not shrink below 12px. Left-border 3px is the primary escalation signal; the wash is intentionally faint.
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">4 · /character portrait</div>
+        <div class="card">
+          <div class="portrait-row">
+            <div class="medallion-wrap">
+              <div class="medallion">☺</div>
+              <div class="level-chip">7</div>
+            </div>
+            <div class="portrait-col">
+              <div class="level-line"><span class="lv-numeral">Lv 7</span><span class="role"> Adventurer</span></div>
+              <div class="xp-bar"><div class="xp-fill"></div></div>
+              <div class="portrait-reach">
+                <span>Reach: Rare</span>
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">5 · /goals/[id] Reach card</div>
+        <div class="card">
+          <div class="reach-card-title">Reach</div>
+          <div class="cc-grid">
+            <div class="cc-cell">
+              <span class="cc-label">Coach <span class="coach-dot"></span></span>
+              <span class="cc-value">
+                Epic
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+              </span>
+              <span class="coach-tag">·coach</span>
+            </div>
+            <div class="cc-cell">
+              <span class="cc-label">Computed</span>
+              <span class="cc-value">
+                Rare
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+          </div>
+          <div class="rationale">"Bench target is aggressive for the window; coach bumped it a tier."</div>
+          <div class="assessed">Assessed Jun 8</div>
+          <div class="target-table">
+            <div class="target-line">
+              <span class="tl-name">Bench 315 by Aug 1</span>
+              <span class="tl-dots"></span>
+              <span class="tl-reach">
+                Epic
+                <span class="meter">
+                  <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+            <div class="target-line">
+              <span class="tl-name">Bodyweight 155 by Jul 1</span>
+              <span class="tl-dots"></span>
+              <span class="tl-reach">
+                Rare
+                <span class="meter">
+                  <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">6 · Legendary post-creation banner</div>
+        <div class="banner">
+          <div class="banner-glyph">◣</div>
+          <div class="banner-body">
+            <div class="banner-head">
+              <span class="meter">
+                <span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span>
+              </span>
+              <span>Legendary reach</span>
+            </div>
+            <div class="banner-text">As set, this is near-impossible in the time set. Bring it to your coach to extend the timeline, or pause it until your slate clears.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">7 · Glossary row</div>
+        <div class="glossary-row">
+          <div class="glossary-chip">
+            <span class="reach-chip">
+              <span>Reach: Rare</span>
+              <span class="meter">
+                <span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg f-accent"></span><span class="seg"></span><span class="seg"></span>
+              </span>
+            </span>
+          </div>
+          <div class="glossary-text"><span class="term">Reach</span> — How big an ask a goal is by its date. Higher tiers are harder to hit in time.</div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
