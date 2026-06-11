@@ -9,6 +9,7 @@ import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { prisma } from "@/lib/db";
 import type { GoalReference } from "@/lib/goal-actions";
+import { setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import { computeReadiness } from "@/lib/readiness";
@@ -39,6 +40,22 @@ export default async function GoalDetail({
   });
   if (!goal) notFound();
   const activePlan = goal.plans[0];
+
+  // When no active plan, check if a paused plan exists — UXR-62B-04
+  // (active=false IS the paused state; no schema change needed)
+  const mostRecentPlan = activePlan
+    ? null
+    : await prisma.plan.findFirst({
+        where: { goalId: id },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, active: true },
+      });
+  const isPaused = !!mostRecentPlan; // has plan(s) but none active
+  const hasPlan = !!activePlan || isPaused;
+
+  // Server actions — bound here so form actions need no client component
+  const pausePlan = setPlanActive.bind(null, goal.id, false);
+  const resumePlan = setPlanActive.bind(null, goal.id, true);
 
   // Pending notes = unresolved notes (no resolvedAt). Cleared either by an
   // apply_plan_revision that includes their id, or by an explicit resolve.
@@ -112,7 +129,11 @@ export default async function GoalDetail({
               {days !== null && ` · ${days < 0 ? `${-days} days past` : `${days} days out`} `}
             </>
           ) : (
-            <span className="inline-flex items-center rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)] mr-1">
+            // UXR-62B-10: title= desktop hover hint for Someday state
+            <span
+              className="inline-flex items-center rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)] mr-1"
+              title="No target date — no countdown and no deadline pressure. Add one anytime."
+            >
               Someday
             </span>
           )}
@@ -152,30 +173,68 @@ export default async function GoalDetail({
         </Card>
       )}
 
-      {activePlan && (
+      {/* Plan card — shows when there are any plans (active or paused). REQ-202 */}
+      {hasPlan && (
         <Card
           title="Plan"
           action={
-            <div className="flex gap-3 text-sm">
-              <Link href={`/goals/${goal.id}/plan`} className="text-[var(--accent)]">
-                Full plan →
-              </Link>
-              <Link href={`/goals/${goal.id}/revise`} className="text-[var(--accent)]">
-                Revise
-              </Link>
+            <div className="flex items-center gap-3 text-sm">
+              {activePlan && (
+                <>
+                  <Link href={`/goals/${goal.id}/plan`} className="text-[var(--accent)]">
+                    Full plan →
+                  </Link>
+                  <Link href={`/goals/${goal.id}/revise`} className="text-[var(--accent)]">
+                    Revise
+                  </Link>
+                </>
+              )}
+              {/* Pause/Resume toggle — hidden entirely on focus goal (server-guarded). UXR-62B-04 */}
+              {!goal.isFocus && (
+                <form action={activePlan ? pausePlan : resumePlan}>
+                  <button
+                    type="submit"
+                    // Pause = muted/quiet (recommended for non-focus skill goals). UXR-62B-04
+                    // Resume = accent-soft CTA (more consequential — restarts retest-marker spray). UXR-62B-05
+                    className={`min-h-[44px] text-xs rounded-full border px-3 ${
+                      activePlan
+                        ? "border-[var(--border)] text-[var(--muted)]"
+                        : "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
+                    }`}
+                    // UXR-62B-10: title= desktop hover hint
+                    title={
+                      activePlan
+                        ? "Its 12-week plan posts retest days to the calendar on its own schedule."
+                        : "Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact."
+                    }
+                  >
+                    {activePlan ? "Pause" : "Resume"}
+                  </button>
+                </form>
+              )}
             </div>
           }
         >
-          <PlanOverview
-            plan={{
-              id: activePlan.id,
-              name: activePlan.name,
-              startedOn: activePlan.startedOn,
-              endsOn: activePlan.endsOn,
-              weeks: activePlan.weeks,
-              template: activePlan.planJson as unknown as ProgramTemplate,
-            }}
-          />
+          {/* Always-on consequence line — state-before-action, no modal needed. UXR-62B-06 */}
+          {!goal.isFocus && (
+            <p className="text-xs text-[var(--muted)] mb-3">
+              {activePlan
+                ? "Its 12-week plan posts retest days to the calendar on its own schedule."
+                : "Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact."}
+            </p>
+          )}
+          {activePlan && (
+            <PlanOverview
+              plan={{
+                id: activePlan.id,
+                name: activePlan.name,
+                startedOn: activePlan.startedOn,
+                endsOn: activePlan.endsOn,
+                weeks: activePlan.weeks,
+                template: activePlan.planJson as unknown as ProgramTemplate,
+              }}
+            />
+          )}
         </Card>
       )}
 

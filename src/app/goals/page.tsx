@@ -23,6 +23,7 @@ function goalProgress(
 export default async function GoalsPage() {
   // Focus goal first (isFocus=true), then tracked (active=true), then by target date
   // (nulls last = someday goals at the bottom), then most-recently-updated.
+  // Include most-recent plan per goal (regardless of active status) to detect paused state.
   const goals = await prisma.goal.findMany({
     orderBy: [
       { isFocus: "desc" },
@@ -30,6 +31,13 @@ export default async function GoalsPage() {
       { targetDate: { sort: "asc", nulls: "last" } },
       { updatedAt: "desc" },
     ],
+    include: {
+      plans: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, active: true },
+      },
+    },
   });
   const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
 
@@ -66,104 +74,218 @@ export default async function GoalsPage() {
             Add a goal — a date, a metric, or both.
           </p>
         ) : (
-          <ul className="divide-y divide-[var(--border)]">
-            {goals.map((g) => {
-              const days = g.targetDate
-                ? Math.ceil((new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24))
-                : null;
-              const pct = goalProgress(g, now);
-              const isFocused = g.id === focusedId;
-              const setFocus = setFocusGoal.bind(null, g.id);
-              const trackAction = setGoalTracked.bind(null, g.id, true);
-              const untrackAction = setGoalTracked.bind(null, g.id, false);
-              const rowBody = (
-                <div className="flex items-start gap-2 min-w-0 flex-1 text-left">
-                  {/* [UXR-62-12] glyph may use opacity (non-text, AA-safe); never row-level opacity */}
-                  <Bullseye
-                    size={20}
-                    progress={pct}
-                    aria-label={`${g.objective}: ${Math.round(pct * 100)}% progress`}
-                    className={`shrink-0 mt-0.5${!g.active && !isFocused ? " opacity-55" : ""}`}
-                  />
-                  <div className="min-w-0">
-                    {/* [UXR-62-12] dim untracked objective text by recolor (not row opacity) */}
-                    <p className={`font-medium truncate${!g.active && !isFocused ? " text-[var(--muted)]" : ""}`}>
-                      {g.objective}
-                      {isFocused && (
-                        // [UXR-62-11] filled Bullseye size=14 (component min for red center ring) + Focus label
-                        <span className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle">
-                          <Bullseye size={14} progress={1} aria-hidden={true} />
-                          Focus
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-[var(--muted)]">
-                      {g.targetDate ? new Date(g.targetDate).toLocaleDateString() : "Someday"}
-                      {g.status !== "active" ? ` · ${g.status}` : ""}
-                    </p>
+          <>
+            <ul className="divide-y divide-[var(--border)]">
+              {goals.map((g) => {
+                const days = g.targetDate
+                  ? Math.ceil((new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24))
+                  : null;
+                const pct = goalProgress(g, now);
+                const isFocused = g.id === focusedId;
+                const setFocus = setFocusGoal.bind(null, g.id);
+                const trackAction = setGoalTracked.bind(null, g.id, true);
+                const untrackAction = setGoalTracked.bind(null, g.id, false);
+                // Tracked goal with a plan where none is active = paused. UXR-62B-01
+                const isPlanPaused = g.active && g.plans.length > 0 && !g.plans[0].active;
+                const rowBody = (
+                  <div className="flex items-start gap-2 min-w-0 flex-1 text-left">
+                    {/* [UXR-62-12] glyph may use opacity (non-text, AA-safe); never row-level opacity */}
+                    <Bullseye
+                      size={20}
+                      progress={pct}
+                      aria-label={`${g.objective}: ${Math.round(pct * 100)}% progress`}
+                      className={`shrink-0 mt-0.5${!g.active && !isFocused ? " opacity-55" : ""}`}
+                    />
+                    <div className="min-w-0">
+                      {/* [UXR-62-12] dim untracked objective text by recolor (not row opacity) */}
+                      <p className={`font-medium truncate${!g.active && !isFocused ? " text-[var(--muted)]" : ""}`}>
+                        {g.objective}
+                        {isFocused && (
+                          // [UXR-62-11] filled Bullseye size=14 (component min for red center ring) + Focus label
+                          // UXR-62B-10: title= for desktop hover hint
+                          <span
+                            className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle"
+                            title="Drives your daily Today plan. Only one goal holds focus at a time."
+                          >
+                            <Bullseye size={14} progress={1} aria-hidden={true} />
+                            Focus
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-[var(--muted)]">
+                        {g.targetDate ? new Date(g.targetDate).toLocaleDateString() : "Someday"}
+                        {g.status !== "active" ? ` · ${g.status}` : ""}
+                        {/* UXR-62B-01: plain muted text in existing subline, no new chip or control */}
+                        {isPlanPaused && (
+                          <span title="Silences this plan's retest days. Goal stays tracked — date, coach, rarity intact.">
+                            {" · Plan paused"}
+                          </span>
+                        )}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              );
-              return (
-                <li key={g.id} className="flex items-start gap-3 py-3">
-                  {isFocused ? (
-                    rowBody
-                  ) : (
-                    <form action={setFocus} className="flex-1 min-w-0">
-                      <button
-                        type="submit"
-                        className="w-full flex items-start gap-2 hover:opacity-80"
-                      >
-                        {rowBody}
-                      </button>
-                    </form>
-                  )}
-                  <div className="shrink-0 flex flex-col items-end gap-1.5">
-                    {days !== null ? (
-                      <span
-                        className={`text-xs rounded-full px-2 py-0.5 border ${
-                          days < 0
-                            ? "border-[var(--danger)]/40 text-[var(--danger)]"
-                            : days <= 14
-                              ? "border-[var(--warning)]/40 text-[var(--warning)]"
-                              : "border-[var(--border)] text-[var(--muted)]"
-                        }`}
-                      >
-                        {days < 0 ? `${-days}d ago` : `${days}d`}
-                      </span>
+                );
+                return (
+                  <li key={g.id} className="flex items-start gap-3 py-3">
+                    {isFocused ? (
+                      rowBody
                     ) : (
-                      // [UXR-62-15] Someday chip: neutral border/muted text, no urgency color
-                      <span className="text-xs rounded-full px-2 py-0.5 border border-[var(--border)] text-[var(--muted)]">
-                        Someday
-                      </span>
-                    )}
-                    {!isFocused && (
-                      // [UXR-62-12] Track/Untrack pill — hidden on focus row (server-guarded + hidden)
-                      // Tracked style: accent-soft bg + accent border; Untracked: border/muted outline
-                      <form action={g.active ? untrackAction : trackAction}>
+                      <form action={setFocus} className="flex-1 min-w-0">
                         <button
                           type="submit"
-                          className={`text-xs rounded-full border px-2 py-0.5 min-h-[44px] ${
-                            g.active
-                              ? "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
-                              : "border-[var(--border)] text-[var(--muted)]"
-                          }`}
+                          className="w-full flex items-start gap-2 hover:opacity-80"
                         >
-                          {g.active ? "Untrack" : "Track"}
+                          {rowBody}
                         </button>
                       </form>
                     )}
-                    <Link
-                      href={`/goals/${g.id}`}
-                      className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]"
-                    >
-                      Manage →
-                    </Link>
-                  </div>
+                    <div className="shrink-0 flex flex-col items-end gap-1.5">
+                      {days !== null ? (
+                        <span
+                          className={`text-xs rounded-full px-2 py-0.5 border ${
+                            days < 0
+                              ? "border-[var(--danger)]/40 text-[var(--danger)]"
+                              : days <= 14
+                                ? "border-[var(--warning)]/40 text-[var(--warning)]"
+                                : "border-[var(--border)] text-[var(--muted)]"
+                          }`}
+                        >
+                          {days < 0 ? `${-days}d ago` : `${days}d`}
+                        </span>
+                      ) : (
+                        // [UXR-62-15] Someday chip: neutral border/muted text, no urgency color
+                        // UXR-62B-10: title= for desktop hover hint
+                        <span
+                          className="text-xs rounded-full px-2 py-0.5 border border-[var(--border)] text-[var(--muted)]"
+                          title="No target date — no countdown and no deadline pressure. Add one anytime."
+                        >
+                          Someday
+                        </span>
+                      )}
+                      {!isFocused && (
+                        // [UXR-62-12] Track/Untrack pill — hidden on focus row (server-guarded + hidden)
+                        // Tracked style: accent-soft bg + accent border; Untracked: border/muted outline
+                        // UXR-62B-10: title= describes current state (not the action) for desktop hover
+                        <form action={g.active ? untrackAction : trackAction}>
+                          <button
+                            type="submit"
+                            className={`text-xs rounded-full border px-2 py-0.5 min-h-[44px] ${
+                              g.active
+                                ? "bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]"
+                                : "border-[var(--border)] text-[var(--muted)]"
+                            }`}
+                            title={
+                              g.active
+                                ? "Shows on the calendar and to your coach, and counts toward rarity."
+                                : "Parked. Hidden from the calendar, coach, and rarity until you track it again."
+                            }
+                          >
+                            {g.active ? "Untrack" : "Track"}
+                          </button>
+                        </form>
+                      )}
+                      <Link
+                        href={`/goals/${g.id}`}
+                        className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--accent)] hover:border-[var(--accent)]"
+                      >
+                        Manage →
+                      </Link>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* REQ-203: State glossary — one learn-once reference, zero JS, keyboard/SR accessible.
+                UXR-62B-07: native <details> pattern, real component samples, DayOverrideForm.tsx styling */}
+            <details className="mt-3 pt-3 border-t border-[var(--border)]">
+              {/* UXR-62B-07: min-h-[44px] tap target on summary */}
+              <summary className="text-sm font-medium cursor-pointer min-h-[44px] flex items-center">
+                What do these states mean?
+              </summary>
+              <ul className="mt-2 divide-y divide-[var(--border)]">
+                {/* Focus */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: real Focus badge markup from the goal rows above */}
+                    <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5">
+                      <Bullseye size={14} progress={1} aria-hidden={true} />
+                      Focus
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Focus</strong>
+                    {" — "}Drives your daily Today plan. Only one goal holds focus at a time.
+                  </p>
                 </li>
-              );
-            })}
-          </ul>
+                {/* Tracked */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: real Track pill classes (accent-soft = tracked state) */}
+                    <span className="text-xs rounded-full border px-2 py-0.5 bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)]">
+                      Tracked
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Tracked</strong>
+                    {" — "}Shows on the calendar and to your coach, and counts toward rarity.
+                  </p>
+                </li>
+                {/* Untracked */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: real Untrack pill classes (border/muted = untracked state) */}
+                    <span className="text-xs rounded-full border px-2 py-0.5 border-[var(--border)] text-[var(--muted)]">
+                      Untracked
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Untracked</strong>
+                    {" — "}Parked. Hidden from the calendar, coach, and rarity until you track it again.
+                  </p>
+                </li>
+                {/* Someday */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: real Someday chip classes */}
+                    <span className="text-xs rounded-full px-2 py-0.5 border border-[var(--border)] text-[var(--muted)]">
+                      Someday
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Someday</strong>
+                    {" — "}No target date — no countdown and no deadline pressure. Add one anytime.
+                  </p>
+                </li>
+                {/* Plan active */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: Pause button style = muted/quiet (appears when plan IS active) */}
+                    <span className="text-xs rounded-full border border-[var(--border)] text-[var(--muted)] px-2 py-0.5">
+                      Pause
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Plan active</strong>
+                    {" — "}Its 12-week plan posts retest days to the calendar on its own schedule.
+                  </p>
+                </li>
+                {/* Plan paused */}
+                <li className="flex items-start gap-3 py-2">
+                  <span className="shrink-0 flex items-center pt-0.5">
+                    {/* UXR-62B-07: Resume button style = accent CTA (appears when plan IS paused) */}
+                    <span className="text-xs rounded-full border bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent)] px-2 py-0.5">
+                      Resume
+                    </span>
+                  </span>
+                  <p className="text-xs text-[var(--muted)]">
+                    <strong className="font-medium text-[var(--foreground)]">Plan paused</strong>
+                    {" — "}{"Silences this plan’s retest days. Goal stays tracked — date, coach, rarity intact."}
+                  </p>
+                </li>
+              </ul>
+            </details>
+          </>
         )}
       </Card>
     </div>

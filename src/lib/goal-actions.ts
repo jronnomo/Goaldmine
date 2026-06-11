@@ -236,3 +236,56 @@ export async function removeGoalReference(id: string, refId: string) {
   await prisma.goal.update({ where: { id }, data: { references: next } });
   revalidatePath(`/goals/${id}`);
 }
+
+/**
+ * Pause (active=false) or Resume (active=true) the goal's plan.
+ * Pause = set the goal's active plan to active=false (silences retest-marker generation).
+ * Resume = re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom).
+ * Guard: the focus goal's plan cannot be paused — UXR-62B-03.
+ * No new schema column: active=false IS the paused state; existing active:true filters
+ * in getActiveGoalsWithPlans + goal-events already silence a paused plan for free.
+ */
+export async function setPlanActive(goalId: string, active: boolean) {
+  const goal = await prisma.goal.findUnique({
+    where: { id: goalId },
+    select: { id: true, isFocus: true },
+  });
+  if (!goal) throw new Error("Goal not found");
+  // Guard: cannot pause the focus goal's plan — switch focus first
+  if (!active && goal.isFocus) {
+    throw new Error(
+      "Cannot pause the focus goal's plan — switch focus to another goal first.",
+    );
+  }
+
+  if (!active) {
+    // Pause: deactivate all active plans for this goal
+    await prisma.plan.updateMany({
+      where: { goalId, active: true },
+      data: { active: false },
+    });
+  } else {
+    // Resume: re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom)
+    const latest = await prisma.plan.findFirst({
+      where: { goalId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (!latest) return; // No plan at all — defensive no-op; UI should not offer Resume then
+    // Ensure at most one active plan (deactivate others first)
+    await prisma.plan.updateMany({
+      where: { goalId, id: { not: latest.id } },
+      data: { active: false },
+    });
+    await prisma.plan.update({
+      where: { id: latest.id },
+      data: { active: true },
+    });
+  }
+
+  revalidatePath("/");
+  revalidatePath("/calendar");
+  revalidatePath("/goals");
+  revalidatePath(`/goals/${goalId}`);
+  // No redirect — stays on current page
+}
