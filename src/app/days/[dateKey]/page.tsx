@@ -4,10 +4,35 @@ import { Card } from "@/components/Card";
 import { DayOverrideForm } from "@/components/DayOverrideForm";
 import { DayNoteForm } from "@/components/DayNoteForm";
 import { NutritionToday } from "@/components/NutritionToday";
-import { parseDateKey, resolveDay, startOfDay } from "@/lib/calendar";
+import {
+  parseDateKey,
+  resolveDay,
+  startOfDay,
+  USER_TZ,
+} from "@/lib/calendar";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
+import { prefillFromTemplate } from "@/lib/prescription-prefill";
+import { WorkoutLoggerForm } from "@/components/days/WorkoutLoggerForm";
+import { SkipDayControl } from "@/components/days/SkipDayControl";
+import { HikeLogForm } from "@/components/days/HikeLogForm";
 
 export const dynamic = "force-dynamic";
+
+/** Format current time in USER_TZ as "HH:MM" for the logger time-field default. */
+function nowHHMM(): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: USER_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts: Record<string, string> = {};
+  for (const p of fmt.formatToParts(new Date())) parts[p.type] = p.value;
+  const h = parts.hour ?? "12";
+  const m = parts.minute ?? "00";
+  // "24" is returned for midnight by some runtimes — fold to "00".
+  return `${h === "24" ? "00" : h}:${m}`;
+}
 
 export default async function DayDetail({
   params,
@@ -42,9 +67,22 @@ export default async function DayDetail({
       ),
   );
 
+  // REQ-65-2: partition workouts into completed vs skipped.
+  const completedWorkouts = r.workouts.filter((w) => w.status === "completed");
+  const skippedWorkouts = r.workouts.filter((w) => w.status === "skipped");
+  const existingSkip = skippedWorkouts.length > 0
+    ? { id: skippedWorkouts[0]!.id, notes: skippedWorkouts[0]!.notes }
+    : null;
+
   // REQ-106: separate target-date events (banner) from other types (inline header lines).
   const targetDateEvents = r.otherGoalEvents.filter((e) => e.type === "target-date");
   const secondaryEvents = r.otherGoalEvents.filter((e) => e.type !== "target-date");
+
+  // Props for the logger form.
+  const isRestDay = r.workoutTemplate?.category === "rest";
+  const prefill = prefillFromTemplate(dayBlocks);
+  const defaultTitle = r.workoutTemplate?.title ?? "";
+  const defaultTimeHHMM = isToday ? nowHHMM() : "12:00";
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -113,10 +151,11 @@ export default async function DayDetail({
         <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
-      {isPast && r.workouts.length > 0 && (
-        <Card title={`Logged workouts (${r.workouts.length})`}>
+      {/* Completed workouts — shown for past and today. */}
+      {completedWorkouts.length > 0 && (
+        <Card title={`Logged workouts (${completedWorkouts.length})`}>
           <ul className="divide-y divide-[var(--border)]">
-            {r.workouts.map((w) => (
+            {completedWorkouts.map((w) => (
               <li key={w.id}>
                 <Link
                   href={`/workouts/${w.id}`}
@@ -133,27 +172,28 @@ export default async function DayDetail({
               </li>
             ))}
           </ul>
+          {/* Skip collapses to attached muted line when a completed workout coexists. */}
+          {existingSkip && (
+            <div className="border-t border-[var(--border)] pt-2 mt-2">
+              <p className="text-xs text-[var(--muted)]">
+                Also acknowledged as rest
+                {existingSkip.notes ? ` — ${existingSkip.notes}` : ""}
+              </p>
+            </div>
+          )}
         </Card>
       )}
 
-      {isPast && r.workouts.length === 0 && r.isInPlan && (
-        <Card title="No workout logged">
-          <p className="text-sm text-[var(--muted)]">
-            No completed workout for this day.{" "}
-            <Link href="/import" className="text-[var(--accent)]">
-              Import one
-            </Link>{" "}
-            or log via Claude.
-          </p>
-        </Card>
-      )}
-
-      {(isToday || isFuture) && r.workoutTemplate && dayBlocks.length > 0 && (
+      {/* Planned workout card — shown for all dates with a template
+          (past: as reference for logging; today/future: as the active plan). */}
+      {r.workoutTemplate && dayBlocks.length > 0 && (
         <Card
           title={
             r.workoutDeferredForBaseline
               ? `Deferred today — ${r.workoutTemplate.title}`
-              : `Planned workout: ${r.workoutTemplate.title}`
+              : isPast
+                ? `Template: ${r.workoutTemplate.title}`
+                : `Planned workout: ${r.workoutTemplate.title}`
           }
         >
           {r.workoutDeferredForBaseline && (
@@ -173,6 +213,32 @@ export default async function DayDetail({
             </ol>
           </div>
         </Card>
+      )}
+
+      {/* REQ-65-2: Three-doors logging section.
+          Past + today: after planned card.
+          Future: hidden entirely. */}
+      {!isFuture && (
+        <div className="space-y-2">
+          <WorkoutLoggerForm
+            dateKey={dateKey}
+            defaultTitle={defaultTitle}
+            defaultTimeHHMM={defaultTimeHHMM}
+            prefill={prefill}
+          />
+          {/* SkipDayControl renders null when isRestDay || !isInPlan (DA H3). */}
+          <SkipDayControl
+            dateKey={dateKey}
+            templateTitle={r.workoutTemplate?.title ?? null}
+            isRestDay={isRestDay}
+            isInPlan={r.isInPlan}
+            existingSkip={completedWorkouts.length > 0 ? null : existingSkip}
+          />
+          <HikeLogForm
+            dateKey={dateKey}
+            plannedHike={r.plannedHikeToday}
+          />
+        </div>
       )}
 
       {(r.nutritionPlan || r.loggedNutrition.length > 0) && (

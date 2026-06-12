@@ -492,7 +492,7 @@ export type ResolvedDay = {
   nutritionPlan: NutritionPlan | null;
   mobilityText: string | null;
   notes: string | null;
-  workouts: { id: string; startedAt: Date; title: string | null; exerciseCount: number; status: string }[];
+  workouts: { id: string; startedAt: Date; title: string | null; exerciseCount: number; status: string; notes: string | null }[];
   loggedNutrition: {
     id: string;
     date: Date;
@@ -837,6 +837,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       title: w.title,
       exerciseCount: w.exercises.length,
       status: w.status,
+      notes: w.notes,
     })),
     loggedNutrition: nutrition.map((n) => ({
       id: n.id,
@@ -1169,7 +1170,9 @@ function userParts(d: Date) {
 // Convert a user-TZ wall-clock (year, month1=1..12, day, hms) to the UTC
 // instant that represents that wall clock. Handles DST by computing the
 // effective offset for our naive UTC guess, then correcting once.
-function userTzWallClockToUTC(
+// Exported for day-log-actions.ts (REQ-65-2 / UXR-65-29): server actions
+// compose dateKey + HH:MM into a DST-safe startedAt Date.
+export function userTzWallClockToUTC(
   year: number,
   month1: number,
   day: number,
