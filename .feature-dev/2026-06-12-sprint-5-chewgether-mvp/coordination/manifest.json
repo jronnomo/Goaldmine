@@ -1,0 +1,60 @@
+{
+  "feature": "Sprint 5 \u2014 Chewgether MVP: Seed + Coaching",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-sprint-5-chewgether-mvp.md",
+  "roadmap_issues": [
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    48
+  ],
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004",
+    "REQ-005",
+    "REQ-006"
+  ],
+  "agents": [
+    {
+      "role": "architect",
+      "id": "a065497d696a4250b"
+    },
+    {
+      "role": "devils-advocate",
+      "id": "a722a70a62fadb32b",
+      "verdict": "CONDITIONAL PASS (2 crit + 3 high)"
+    },
+    {
+      "role": "architect-v2",
+      "id": "a9f2b16b178db72d7"
+    },
+    {
+      "role": "dev",
+      "id": "ab979d394a36ac52e",
+      "commit": "0a8304e"
+    },
+    {
+      "role": "fix",
+      "id": "acd1fa471deb8a39e",
+      "commit": "c25f4b2",
+      "note": "orchestrator-caught milestone-closure + legend-enum corrections"
+    }
+  ],
+  "iteration": 1,
+  "status": "complete (claude.ai manual checks pending user)",
+  "decisions": {
+    "milestones": "GitHub-first (supersedes #42 local seed)",
+    "dates": "Jun19/Jun28/Jul12/Jul19/Jul26/Aug9/Sep30; targetDate 2026-09-30",
+    "goal_state": "active+tracked, Mt. Elbert keeps focus",
+    "instructions": "consolidate both route strings into src/lib/mcp/instructions.ts; fix stale no-focus-tool line",
+    "e6_cleanup": "test LogEntries deleted after verification",
+    "ux_research": "skipped \u2014 no UI changes"
+  },
+  "chewgether_goal_id": "cmqbfseel0000cgdn3oz1uz2u",
+  "github_milestones": "jronnomo/Chewgether #6-#12"
+}
