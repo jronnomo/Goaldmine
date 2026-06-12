@@ -84,6 +84,7 @@ import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
 import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
 import { GoalTargetSchema } from "@/lib/metrics-registry";
+import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 
 const DateKeyShape = z
   .string()
@@ -193,33 +194,7 @@ type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
 // then [0] grabs its first param.
 type DbClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
-function jsonResult(value: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-  };
-}
-
-function errorResult(message: string) {
-  return {
-    content: [{ type: "text" as const, text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-async function safe<T>(fn: () => Promise<T>) {
-  try {
-    return jsonResult(await fn());
-  } catch (e) {
-    return errorResult(e instanceof Error ? e.message : String(e));
-  }
-}
-
-// Bare yyyy-mm-dd is otherwise parsed as UTC midnight, which lands in
-// yesterday's MT day. Treat date-only as USER_TZ midnight; full ISO strings
-// are returned verbatim.
-function parseDateInput(s: string): Date {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDateKey(s) : new Date(s);
-}
+import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 
 // ----------------------------------------------------------------------------
 // Core write helpers. Each takes a DbClient (either the global prisma or a
@@ -505,6 +480,7 @@ export function registerAll(server: McpServer) {
 
   registerReadTools(server);
   registerWriteTools(server);
+  registerProjectTools(server);
 }
 
 // ----------------------------------------------------------------------------
