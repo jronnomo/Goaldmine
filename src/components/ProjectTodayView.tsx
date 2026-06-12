@@ -8,7 +8,7 @@ import Link from "next/link";
 import { Card } from "@/components/Card";
 import { TodayCelebration } from "@/components/TodayCelebration";
 import { prisma } from "@/lib/db";
-import { startOfDay, endOfDay, dateKey, addDays } from "@/lib/calendar";
+import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar";
 import type { GoalTarget } from "@/lib/metrics-registry";
 import type { FocusGoalRow } from "@/lib/goal-focus";
 
@@ -98,7 +98,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
       : null;
 
   const milestoneDueLabel = nextMilestone?.date
-    ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(
+    ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: USER_TZ }).format(
         new Date(nextMilestone.date),
       )
     : null;

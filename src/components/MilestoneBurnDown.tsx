@@ -4,7 +4,7 @@
 
 import { Card } from "@/components/Card";
 import { prisma } from "@/lib/db";
-import { startOfDay } from "@/lib/calendar";
+import { startOfDay, USER_TZ } from "@/lib/calendar";
 
 const MILESTONE_WARNING_DAYS = 14;
 const MS_PER_DAY = 1_000 * 60 * 60 * 24;
@@ -42,7 +42,7 @@ export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
 
   const nextDueLabel =
     nextMilestone?.date != null
-      ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(
+      ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: USER_TZ }).format(
           new Date(nextMilestone.date),
         )
       : null;

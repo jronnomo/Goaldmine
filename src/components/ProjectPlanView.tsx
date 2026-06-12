@@ -105,6 +105,7 @@ export async function ProjectPlanView({ goal }: { goal: GoalArg }) {
                     const dueLabel = new Intl.DateTimeFormat("en-US", {
                       month: "short",
                       day: "numeric",
+                      timeZone: USER_TZ,
                     }).format(new Date(item.date));
 
                     return (
