@@ -1,18 +1,86 @@
 {
-  "feature": "Sprint 4 — Goal-Type-Aware Project UI (chewabl)",
+  "feature": "Sprint 4 \u2014 Goal-Type-Aware Project UI (chewabl)",
   "branch": "main",
   "prd_path": "docs/prds/PRD-sprint-4-project-ui.md",
   "prd_issue": null,
-  "roadmap_issues": [35, 36, 37, 38, 39, 40, 58],
-  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
-  "ux_research": { "status": "running", "agent": "a964e4dd6ad55d2a5", "report": "docs/ux-research/sprint-4-project-ui.md", "ledger": "UXR-s4-NN table in report" },
-  "agents": [],
+  "roadmap_issues": [
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    58
+  ],
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004",
+    "REQ-005",
+    "REQ-006",
+    "REQ-007"
+  ],
+  "ux_research": {
+    "status": "complete",
+    "report": "docs/ux-research/sprint-4-project-ui.md",
+    "ledger": "20 shipped / 1 reworked / 0 dropped"
+  },
+  "agents": [
+    {
+      "role": "ux-research",
+      "id": "a964e4dd6ad55d2a5"
+    },
+    {
+      "role": "research",
+      "id": "a5520cbd9fda2c65a"
+    },
+    {
+      "role": "architect",
+      "id": "a1e29e5f21366141b"
+    },
+    {
+      "role": "devils-advocate",
+      "id": "ab8bf3a1619d59539",
+      "verdict": "NEEDS REVISION (2 HIGH)"
+    },
+    {
+      "role": "architect-v2",
+      "id": "aaf6ccb80ba251e4d"
+    },
+    {
+      "role": "dev-a",
+      "id": "aa2e065bbc4f9c626",
+      "commit": "dc4a989"
+    },
+    {
+      "role": "dev-b",
+      "id": "a00f5fcd087d7e075",
+      "commit": "ccf986b"
+    },
+    {
+      "role": "dev-c",
+      "id": "abee3aa959edab88c",
+      "commit": "ef66abb"
+    },
+    {
+      "role": "qa",
+      "id": "a83a7a48e1d33d371",
+      "verdict": "MINOR FIXES -> fixed"
+    },
+    {
+      "role": "fix",
+      "id": "a36568e25bdb2e63e",
+      "commit": "bf98f97"
+    }
+  ],
   "iteration": 1,
-  "status": "planning",
+  "status": "complete",
   "decisions": {
     "scope": "full Sprint 4",
-    "semantics": "focus goal (isFocus) — issue 'active:true' wording translated",
+    "semantics": "focus goal (isFocus) \u2014 issue 'active:true' wording translated",
     "ux_research": "invoked",
     "legend_fallback": "PROJECT_DEFAULT_LEGEND for project goals with null legend"
-  }
+  },
+  "smoke": "29/29 effective; fitness byte-identical post-cleanup; fixtures cleaned"
 }

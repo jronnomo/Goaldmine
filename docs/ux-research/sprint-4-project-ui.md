@@ -268,24 +268,24 @@ IDs are stable (`UXR-s4-NN`) and never renumbered. `Status` starts blank; the im
 
 | ID | Recommendation | Type | Status | Evidence |
 |----|----------------|------|--------|----------|
-| UXR-s4-01 | Project Today = "QuestCard Hero": accent-soft ribbon + left accent rail, live Bullseye `progress=done/total`, checklist inside the ribbon as the visual anchor | layout | | |
-| UXR-s4-02 | Empty state copy directs to Claude ("Nothing scheduled today — open Claude to plan tomorrow or log MRR"); promote MRR card to top slot when checklist empty; never "no data" | copy | | |
-| UXR-s4-03 | MRR card = big number pair "$450 / $1,000" + thin `--accent` bar on `--border` track; NO sparkline/chart (restraint; scroll budget) | component | | |
-| UXR-s4-04 | Calendar scheduled-item marker glyph = ◆ (U+25C6) in `var(--accent)` | decoration⚠ | | |
-| UXR-s4-05 | `goal-events.ts` foreign scheduled-item icon 📅 → ◆ for cross-path consistency | component | | |
-| UXR-s4-06 | `PROJECT_DEFAULT_LEGEND = [{◆ scheduled-item},{🎯 goal-date}]`; `resolveLegend` falls back when `kind==='project'` && legend null (PRD §3.2.1) | component | | |
-| UXR-s4-07 | `markersFor()` pushes scheduled-item when `count>0` (after baseline, before goal-date); MARKER_CAP=3 unchanged; focus vs foreign dedup confirmed | layout | | |
-| UXR-s4-08 | Project Plan timeline = `CollapsibleCard` per month (current `defaultOpen`), per-month "X/Y done" header, top-of-page "X of Y milestones complete" | layout | | |
-| UXR-s4-09 | Status glyphs: planned ○ `--muted` / done ● `--success` / skipped strikethrough `--muted` (typography, not Bullseye-SVG; avoids ✕ collision) | component | | |
-| UXR-s4-10 | Type badges: task neutral / milestone `--accent`/40 / launch-step `--warning`/40 / review neutral — text chips, not color-only | component | | |
-| UXR-s4-11 | Suppress empty months in the timeline (honest density; no faked "(empty)" rows) | layout | | |
-| UXR-s4-12 | Burn-down card = "X of Y" framing + 3-stat grid (total/done/remaining) + thin `--accent` scope bar + next-milestone line; Bullseye deliberately NOT used (reserved for completion moments) | layout | | |
-| UXR-s4-13 | Next-milestone urgency chip thresholds: neutral / `--warning` ≤14d / `--danger` overdue | tuning⚠ | | |
-| UXR-s4-14 | Fire once-per-day `bullseye-pop` when all of today's project items are done; project-scoped localStorage key; reduced-motion → filled, no pop. Off-tap timing flagged for sign-off | animation | | |
-| UXR-s4-15 | Reuse `bullseye-pop` keyframe (~320ms range); entry `scale(0.6)` may nudge to 0.7–0.75 at 28px | tuning⚠ | | |
-| UXR-s4-16 | Bullseye ring discretization at 1–2 items reads coarse — verify it stays honest at low counts | tuning⚠ | | |
-| UXR-s4-17 | Do-not-animate list (MRR bar, ◆ marker, timeline rows, burn-down bar); at most ≤200ms width transition, no entrance/stagger | animation | | |
-| UXR-s4-18 | Verify contrast: warning-on-cream small badge, target-red-on-coal <14px, ◆ gold-on-cream | a11y⚠ | | |
-| UXR-s4-19 | Status icons get aria-label/title; badges are word+color text chips | a11y | | |
-| UXR-s4-20 | `ProjectTodayView` does one `Promise.all` (items today, latest mrr, next milestone, upcoming-7d); pass `focusGoalId` from the root parallel fetch — no waterfall, no client fetch | component | | |
-| UXR-s4-21 | Bullseye center fill uses `var(--target-fg)`, never raw `#fff` | tuning⚠ | | |
+| UXR-s4-01 | Project Today = "QuestCard Hero": accent-soft ribbon + left accent rail, live Bullseye `progress=done/total`, checklist inside the ribbon as the visual anchor | layout | shipped | dc4a989 ProjectTodayView.tsx hero ribbon + live Bullseye |
+| UXR-s4-02 | Empty state copy directs to Claude ("Nothing scheduled today — open Claude to plan tomorrow or log MRR"); promote MRR card to top slot when checklist empty; never "no data" | copy | shipped | dc4a989 empty state + MRR slot-2 promotion (smoke 4a/4b) |
+| UXR-s4-03 | MRR card = big number pair "$450 / $1,000" + thin `--accent` bar on `--border` track; NO sparkline/chart (restraint; scroll budget) | component | shipped | dc4a989 MRR big-pair + static accent bar (smoke 3d) |
+| UXR-s4-04 | Calendar scheduled-item marker glyph = ◆ (U+25C6) in `var(--accent)` | decoration⚠ | shipped | ccf986b MarkerIcon.tsx ◆ accent branch — 13px visual verify pending (user) |
+| UXR-s4-05 | `goal-events.ts` foreign scheduled-item icon 📅 → ◆ for cross-path consistency | component | shipped | ccf986b goal-events.ts 📅→◆ |
+| UXR-s4-06 | `PROJECT_DEFAULT_LEGEND = [{◆ scheduled-item},{🎯 goal-date}]`; `resolveLegend` falls back when `kind==='project'` && legend null (PRD §3.2.1) | component | shipped | ccf986b legend.ts PROJECT_DEFAULT_LEGEND + kind-aware resolveLegend |
+| UXR-s4-07 | `markersFor()` pushes scheduled-item when `count>0` (after baseline, before goal-date); MARKER_CAP=3 unchanged; focus vs foreign dedup confirmed | layout | shipped | ccf986b markersFor + DC-1 priority comment; dedup verified (goal-events.ts:248) |
+| UXR-s4-08 | Project Plan timeline = `CollapsibleCard` per month (current `defaultOpen`), per-month "X/Y done" header, top-of-page "X of Y milestones complete" | layout | shipped | ef66abb ProjectPlanView CollapsibleCard months, current defaultOpen (smoke 3h) |
+| UXR-s4-09 | Status glyphs: planned ○ `--muted` / done ● `--success` / skipped strikethrough `--muted` (typography, not Bullseye-SVG; avoids ✕ collision) | component | shipped | ef66abb status glyphs ○/●/strikethrough |
+| UXR-s4-10 | Type badges: task neutral / milestone `--accent`/40 / launch-step `--warning`/40 / review neutral — text chips, not color-only | component | shipped | dc4a989+ef66abb type chips per spec |
+| UXR-s4-11 | Suppress empty months in the timeline (honest density; no faked "(empty)" rows) | layout | shipped | ef66abb groups built from items only — empty months never rendered |
+| UXR-s4-12 | Burn-down card = "X of Y" framing + 3-stat grid (total/done/remaining) + thin `--accent` scope bar + next-milestone line; Bullseye deliberately NOT used (reserved for completion moments) | layout | shipped | ef66abb MilestoneBurnDown 3-stat grid + scope bar, no Bullseye (smoke 3k) |
+| UXR-s4-13 | Next-milestone urgency chip thresholds: neutral / `--warning` ≤14d / `--danger` overdue | tuning⚠ | shipped | dc4a989 MILESTONE_WARNING_DAYS=14 const — threshold playtest pending (user) |
+| UXR-s4-14 | Fire once-per-day `bullseye-pop` when all of today's project items are done; project-scoped localStorage key; reduced-motion → filled, no pop. Off-tap timing flagged for sign-off | animation | shipped | dc4a989 project-scoped key goaldmine.project-celebrated.<goalId>.<dateKey>; off-tap sign-off pending (user) |
+| UXR-s4-15 | Reuse `bullseye-pop` keyframe (~320ms range); entry `scale(0.6)` may nudge to 0.7–0.75 at 28px | tuning⚠ | shipped | reused bullseye-pop keyframe unchanged; 28px entry-scale visual verify pending (user) |
+| UXR-s4-16 | Bullseye ring discretization at 1–2 items reads coarse — verify it stays honest at low counts | tuning⚠ | shipped | Bullseye progress prop via TodayCelebration [v2 HIGH-2]; low-count ring read pending (user) |
+| UXR-s4-17 | Do-not-animate list (MRR bar, ◆ marker, timeline rows, burn-down bar); at most ≤200ms width transition, no entrance/stagger | animation | shipped | no transitions added to MRR bar/marker/timeline/burn-down (code-reviewed) |
+| UXR-s4-18 | Verify contrast: warning-on-cream small badge, target-red-on-coal <14px, ◆ gold-on-cream | a11y⚠ | shipped | tokens only; contrast spot-check on real 390px pending (user) |
+| UXR-s4-19 | Status icons get aria-label/title; badges are word+color text chips | a11y | shipped | aria-labels on glyphs; text chips word+color |
+| UXR-s4-20 | `ProjectTodayView` does one `Promise.all` (items today, latest mrr, next milestone, upcoming-7d); pass `focusGoalId` from the root parallel fetch — no waterfall, no client fetch | component | reworked | single Promise.all shipped; upcoming-7d query DROPPED — nothing in chosen direction renders it (blueprint CD-1) |
+| UXR-s4-21 | Bullseye center fill uses `var(--target-fg)`, never raw `#fff` | tuning⚠ | shipped | Bullseye token-based; TodayCelebration passes progress only — no raw #fff (bf98f97 reviewed) |
