@@ -60,6 +60,17 @@ function markersFor(
   if (isPlannedOutdoor) push("hike-planned", cell.plannedHikeCount);
   if (cell.hasOverride) push("override", 1);
   if (cell.baselinesDue > 0) push("baseline", cell.baselinesDue);
+  // REQ-003: push scheduled-item AFTER baseline, BEFORE goal-date. Safe for fitness
+  // goals: DEFAULT_LEGEND has no scheduled-item entry, so push() finds nothing and
+  // returns without adding a marker.
+  //
+  // [v2] DC-1: Focus marker priority order within MARKER_CAP=3:
+  //   trained > hike-completed > hike-planned > override > baseline > scheduled-item > goal-date
+  // goal-date has LOWEST priority and may be truncated by MARKER_CAP when 3 higher-priority
+  // markers are present (e.g., trained + scheduled-item + baseline on a busy project day that
+  // also happens to be the goal date). This is intentional per UXR-s4-07 ordering — goal-date
+  // is a one-off landmark; daily activity markers take precedence in the compact grid.
+  if (cell.scheduledItemCount > 0) push("scheduled-item", cell.scheduledItemCount);
   if (cell.isGoalDate) push("goal-date", 1);
   return out;
 }

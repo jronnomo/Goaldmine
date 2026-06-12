@@ -39,6 +39,7 @@ export const LegendKindSchema = z.enum([
   "override",
   "goal-date",
   "baseline",
+  "scheduled-item", // REQ-003: project goal scheduled items on the calendar
 ]);
 
 export type LegendKind = z.infer<typeof LegendKindSchema>;
@@ -55,7 +56,8 @@ export const LegendEntrySchema = z.object({
     .max(40)
     .describe("Short human-readable label for the legend list"),
   kind: LegendKindSchema.describe(
-    "Which render condition this entry drives (closed enum — see src/lib/legend.ts)",
+    "Which render condition this entry drives (closed enum — see src/lib/legend.ts). " +
+    "Values: trained, hike-completed, hike-planned, override, goal-date, baseline, scheduled-item.",
   ),
 });
 
@@ -75,15 +77,29 @@ export const DEFAULT_LEGEND: readonly LegendEntry[] = [
   { icon: "◎", label: "Baseline due", kind: "baseline" },
 ];
 
+// REQ-003 / PRD §3.2.1: fallback legend for project goals with null legend column.
+// Avoids requiring a manual update_goal_legend call before calendar markers appear.
+// Uses ◆ (U+25C6) per UXR-s4-04; goal-date icon 🎯 per UXR-s4-06.
+export const PROJECT_DEFAULT_LEGEND: readonly LegendEntry[] = [
+  { icon: "◆", label: "Scheduled item", kind: "scheduled-item" },
+  { icon: "🎯", label: "Goal date", kind: "goal-date" },
+];
+
 /**
  * Resolve a goal's legend. Returns the goal's stored legend if it parses,
  * otherwise the default. Safe to call with `null`, `undefined`, or a goal
  * row that lacks a legend column entirely.
  */
 export function resolveLegend(
-  goal: { legend?: unknown } | null | undefined,
+  goal: { legend?: unknown; kind?: unknown } | null | undefined,
 ): readonly LegendEntry[] {
-  if (!goal || goal.legend == null) return DEFAULT_LEGEND;
+  if (!goal || goal.legend == null) {
+    // PRD §3.2.1: project goals with null legend fall back to PROJECT_DEFAULT_LEGEND.
+    if ((goal as { kind?: string } | null | undefined)?.kind === "project") {
+      return PROJECT_DEFAULT_LEGEND;
+    }
+    return DEFAULT_LEGEND;
+  }
   const parsed = LegendSchema.safeParse(goal.legend);
   return parsed.success ? parsed.data : DEFAULT_LEGEND;
 }
