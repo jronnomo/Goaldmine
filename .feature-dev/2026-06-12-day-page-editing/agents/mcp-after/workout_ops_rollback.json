@@ -1,0 +1,13 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Error: workout_ops failed at ops[0] (op=removeExercise): \nInvalid `tx.workoutExercise.delete()` invocation in\n/Users/ggronnii/Development/goaldmine/.claude/worktrees/agent-a6ed2455280b7788c/.next/dev/server/chunks/[root-of-the-server]__12l-wii._.js:3395:52\n\n  3392     });\n  3393     applied.push(`addExercise \u2192 ${created.id} (${op.exercise.sets?.length ?? 0} set${op.exercise.sets?.length === 1 ? \"\" : \"s\"})`);\n  3394 } else if (op.op === \"removeExercise\") {\n\u2192 3395     await tx.workoutExercise.delete(\nAn operation failed because it depends on one or more records that were required but not found. No record was found for a delete.. Whole batch rolled back; nothing was written."
+            }
+        ],
+        "isError": true
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

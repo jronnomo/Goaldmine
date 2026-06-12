@@ -1,0 +1,555 @@
+{
+  "log_workout": {
+    "name": "log_workout",
+    "title": "Log a completed workout",
+    "description": "Persist a completed session with structured exercises and sets. Accepts the same shape produced by parsing a Strong-app txt \u2014 pass the data Claude reasoned out from a paste.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "ISO datetime, e.g. 2026-05-02T15:59:00-06:00"
+        },
+        "source": {
+          "default": "claude",
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "exercises": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "equipment": {
+                "type": "string"
+              },
+              "orderIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "notes": {
+                "type": "string"
+              },
+              "sets": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "setIndex": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "reps": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "weightLb": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "durationSec": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "distanceMi": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "rpe": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 10
+                    },
+                    "notes": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "setIndex"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "name",
+              "orderIndex",
+              "sets"
+            ]
+          }
+        }
+      },
+      "required": [
+        "startedAt",
+        "exercises"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  "log_hike": {
+    "name": "log_hike",
+    "title": "Record a completed hike, schedule a planned hike, or finalize a planned hike",
+    "description": "Log an out-of-gym training day: completed hike, training hike, scheduled future hike, or backpacking trip. Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar (planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression. Pass goalId to attribute the hike to a specific goal (use list_goals to find ids); omit to attribute to the current focus goal. Scheduling is idempotent per day per goal: calling with status='planned' for a date + goal that already has a planned hike updates that row in place. Two different goals may each plan a hike on the same day \u2014 idempotency is scoped per-goal. To finalize a previously-planned hike (the user did the hike that was on the calendar), pass replacesPlannedHikeId \u2014 the existing planned row is updated in place with the actual route/distance/elevation/duration/pack/rpe/notes and status flips to 'completed' (or 'skipped' if you pass that). The original Hike id is preserved, so any downstream references stay intact. Avoids the duplicate-row trap where you'd otherwise have a planned hike AND a completed hike on the calendar for the same trip. If the actual date differs from the planned date (planned for Saturday, happened Sunday), pass the actual date and the row's date is updated too. Errors if the named row isn't found or isn't status='planned'.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "route": {
+          "type": "string"
+        },
+        "distanceMi": {
+          "type": "number",
+          "minimum": 0
+        },
+        "elevationFt": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "durationMin": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "packWeightLb": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rpe": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "status": {
+          "default": "completed",
+          "type": "string",
+          "enum": [
+            "completed",
+            "planned",
+            "skipped"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        },
+        "replacesPlannedHikeId": {
+          "description": "Hike id of a previously-planned hike (status='planned') to finalize in place instead of creating a new row. The row's date, route, distance, etc. are all updated to the values passed in this call. Errors if the id doesn't exist or the row isn't status='planned'.",
+          "type": "string"
+        },
+        "goalId": {
+          "description": "Which goal this hike trains (use list_goals to find goal ids). Omit to attribute to the current focus goal. Stored permanently on the hike row \u2014 affects calendar markers and goal-level readiness.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "route",
+        "distanceMi",
+        "elevationFt",
+        "durationMin"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  "update_workout": {
+    "name": "update_workout",
+    "title": "Edit a logged workout's header fields",
+    "description": "PATCH-style partial update for an already-logged Workout. Only fields you pass are touched: omit a field to leave it unchanged; pass null on a nullable field (title, notes, source, sourceUrl) to clear it. Use for fixing a wrong title, rewording the session notes (e.g. correcting framing on a cycling note), changing source attribution, or correcting startedAt drift. Does NOT touch exercises or sets \u2014 use update_workout_exercise / update_workout_set for those. status accepts planned | completed | skipped. Returns the list of fields actually changed.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "description": "null clears; omit to leave unchanged.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "description": "null clears; omit to leave unchanged.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "description": "e.g. 'manual', 'strong.app', 'claude', 'imported'. null clears.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startedAt": {
+          "description": "ISO datetime, e.g. 2026-05-02T15:59:00-06:00. Omit to leave unchanged.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "completed",
+            "skipped"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  "update_workout_set": {
+    "name": "update_workout_set",
+    "title": "Edit one set on a logged workout",
+    "description": "PATCH-style update for a single Set row (one set within a logged exercise). Pass the set's id (look it up via export_workout). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. Use to correct a mis-logged rep count, weight, RPE, or annotation without re-logging the whole workout. null clears nullable fields (all metric fields and notes). Returns the list of fields actually changed.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "setIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reps": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "weightLb": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationSec": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "distanceMi": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rpe": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  "workout_ops": {
+    "name": "workout_ops",
+    "title": "Atomic structural edits to a logged workout",
+    "description": "Apply a sequence of add/remove operations on a logged Workout in one all-or-nothing transaction. Use when you need to fix a logged session by adding a forgotten exercise/set or removing a wrongly-logged one \u2014 covers the structural gap left by update_workout / update_workout_exercise / update_workout_set, which only edit existing rows. Ops are applied sequentially; any failure rolls the whole batch back, so you never end up with an orphaned exercise that has no sets. Op types: {op:'addExercise', workoutId, exercise:{name, equipment?, notes?, orderIndex?, sets?:[{setIndex, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}]}} \u2014 appends an exercise (orderIndex defaults to max+1) with optional initial sets. {op:'removeExercise', exerciseId} \u2014 drops one WorkoutExercise (cascade-deletes its sets). {op:'addSet', workoutExerciseId, set:{setIndex?, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}} \u2014 adds a set (setIndex defaults to max+1). {op:'removeSet', setId} \u2014 drops one set. Look up IDs via export_workout. For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set \u2014 they're simpler and don't need the transaction.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "ops": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "addExercise"
+                  },
+                  "workoutId": {
+                    "type": "string"
+                  },
+                  "exercise": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "equipment": {
+                        "type": "string"
+                      },
+                      "notes": {
+                        "type": "string"
+                      },
+                      "orderIndex": {
+                        "description": "Position in the workout's exercise list. Defaults to max+1 (append).",
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "sets": {
+                        "description": "Optional initial sets to create alongside the exercise. setIndex auto-numbers 1..N when omitted.",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "setIndex": {
+                              "description": "1-based set number within the exercise. Defaults to max+1.",
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            },
+                            "reps": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "weightLb": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "durationSec": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "distanceMi": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "rpe": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 10
+                            },
+                            "notes": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "workoutId",
+                  "exercise"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "removeExercise"
+                  },
+                  "exerciseId": {
+                    "type": "string",
+                    "description": "WorkoutExercise.id \u2014 cascade-deletes the exercise's sets."
+                  }
+                },
+                "required": [
+                  "op",
+                  "exerciseId"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "addSet"
+                  },
+                  "workoutExerciseId": {
+                    "type": "string"
+                  },
+                  "set": {
+                    "type": "object",
+                    "properties": {
+                      "setIndex": {
+                        "description": "1-based set number within the exercise. Defaults to max+1.",
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "reps": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "weightLb": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "durationSec": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "distanceMi": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "rpe": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 10
+                      },
+                      "notes": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "workoutExerciseId",
+                  "set"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "removeSet"
+                  },
+                  "setId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "setId"
+                ]
+              }
+            ]
+          },
+          "description": "Operations applied in order, atomically."
+        }
+      },
+      "required": [
+        "ops"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  "delete_workout": {
+    "name": "delete_workout",
+    "title": "Delete / remove a logged workout / session",
+    "description": "Permanently remove a Workout row by id. Cascade-deletes its exercises and sets \u2014 irreversible, use carefully. Common reasons: duplicate import from a Strong paste, accidental log, or a test-data row. Records (PRs) recompute from remaining workouts on next read; the deleted session no longer contributes.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+}

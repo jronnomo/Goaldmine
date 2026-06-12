@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"id\": \"cmqatnz2a0008oddnhrst3gpc\",\n  \"finalized\": true,\n  \"previousStatus\": \"planned\",\n  \"dateMoved\": null,\n  \"message\": \"Planned hike finalized in place (status: planned \u2192 completed).\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

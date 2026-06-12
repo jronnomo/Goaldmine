@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"id\": \"cmqatnz2a0008oddnhrst3gpc\",\n  \"finalized\": false,\n  \"deduped\": true,\n  \"message\": \"Existing planned hike on this date updated in place (no duplicate planned row created). To finalize a planned hike to completed, pass replacesPlannedHikeId.\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

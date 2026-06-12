@@ -9,6 +9,7 @@ import {
 } from "@/lib/baseline-workout";
 import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
+import { createWorkoutCore } from "@/lib/workout-core";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
@@ -255,33 +256,29 @@ export async function importStrongWorkout(form: FormData) {
   if (!raw.trim()) throw new Error("Paste a workout to import");
 
   const parsed = parseStrongWorkout(raw);
-  const created = await prisma.workout.create({
-    data: {
-      title: parsed.title,
-      startedAt: parsed.startedAt,
-      status: "completed",
-      source: "strong.app",
-      sourceUrl: parsed.sourceUrl,
-      exercises: {
-        create: parsed.exercises.map((ex) => ({
-          name: ex.name,
-          equipment: ex.equipment,
-          orderIndex: ex.orderIndex,
-          sets: {
-            create: ex.sets.map((s) => ({
-              setIndex: s.setIndex,
-              reps: s.reps ?? null,
-              weightLb: s.weightLb ?? null,
-              durationSec: s.durationSec ?? null,
-            })),
-          },
-        })),
-      },
-    },
+  // Migrate to createWorkoutCore — behavior unchanged; recordsSet is ignored
+  // here since the Strong import path doesn't surface PR strips (MCP path does).
+  const { id } = await createWorkoutCore({
+    title: parsed.title,
+    startedAt: parsed.startedAt,
+    status: "completed",
+    source: "strong.app",
+    sourceUrl: parsed.sourceUrl,
+    exercises: parsed.exercises.map((ex) => ({
+      name: ex.name,
+      equipment: ex.equipment ?? null,
+      orderIndex: ex.orderIndex,
+      sets: ex.sets.map((s) => ({
+        setIndex: s.setIndex,
+        reps: s.reps ?? null,
+        weightLb: s.weightLb ?? null,
+        durationSec: s.durationSec ?? null,
+      })),
+    })),
   });
 
   revalidatePath("/");
   revalidatePath("/history");
-  revalidatePath(`/workouts/${created.id}`);
-  return created.id;
+  revalidatePath(`/workouts/${id}`);
+  return id;
 }

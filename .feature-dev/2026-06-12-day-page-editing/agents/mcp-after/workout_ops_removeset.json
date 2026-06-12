@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"count\": 1,\n  \"applied\": [\n    \"removeSet \u2192 cmqatvtuw0007mydnzkzry2ri\"\n  ],\n  \"message\": \"Applied 1 op atomically.\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

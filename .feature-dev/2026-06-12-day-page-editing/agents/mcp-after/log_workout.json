@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"id\": \"cmqatv64x0000mydng8my9kkb\",\n  \"message\": \"Workout logged\",\n  \"recordsSet\": [\n    {\n      \"name\": \"Squat\",\n      \"equipment\": \"Barbell\",\n      \"kind\": \"rm\",\n      \"value\": 169.16666666666669,\n      \"prior\": 36.66666666666667,\n      \"raw\": {\n        \"weightLb\": 145,\n        \"reps\": 5,\n        \"durationSec\": null\n      }\n    }\n  ]\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}
