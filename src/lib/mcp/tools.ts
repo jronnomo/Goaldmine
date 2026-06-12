@@ -557,12 +557,16 @@ function registerReadTools(server: McpServer) {
         "workoutDeferredForHike (advisory — hike likely the day's work), and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
         "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
-        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today.",
+        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
+        "When focusGoal.kind === 'project', todayItems contains today's ScheduledItems " +
+        "(id, type, title, status, completedAt) for that project goal; " +
+        "when the focus goal is fitness or no focus goal is set, todayItems is always [].",
     },
     async () =>
       safe(async () => {
+        const now = new Date();
         const [r, standingRules, activeGoalRow] = await Promise.all([
-          resolveDay(new Date()),
+          resolveDay(now),
           prisma.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
             // nulls: "last" so freshly-acknowledged rules bubble up first
@@ -590,7 +594,31 @@ function registerReadTools(server: McpServer) {
               githubRepo: activeGoalRow.githubRepo,
             }
           : null;
-        return { ...r, standingRules, focusGoal: activeGoal, activeGoal }; // activeGoal: saved-prompt compat, remove next release
+        let todayItems: {
+          id: string;
+          type: string;
+          title: string;
+          status: string;
+          completedAt: string | null;
+        }[] = [];
+        if (activeGoalRow?.kind === "project") {
+          const rows = await prisma.scheduledItem.findMany({
+            where: {
+              goalId: activeGoalRow.id,
+              date: { gte: startOfDay(now), lte: endOfDay(now) },
+            },
+            orderBy: { date: "asc" },
+            select: { id: true, type: true, title: true, status: true, completedAt: true },
+          });
+          todayItems = rows.map((row) => ({
+            id: row.id,
+            type: row.type,
+            title: row.title,
+            status: row.status,
+            completedAt: row.completedAt?.toISOString() ?? null,
+          }));
+        }
+        return { ...r, standingRules, focusGoal: activeGoal, activeGoal, todayItems }; // activeGoal: saved-prompt compat, remove next release
       }),
   );
 
