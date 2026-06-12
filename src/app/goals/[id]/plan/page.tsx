@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
+import { ProjectPlanView } from "@/components/ProjectPlanView";
 import { prisma } from "@/lib/db";
 import { getBaselineSchedule, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
 import type { Block, DayTemplate, ExercisePrescription, Phase, ProgramTemplate } from "@/lib/program-template";
@@ -22,6 +23,14 @@ export default async function FullPlanPage({
     include: { plans: { where: { active: true }, orderBy: { createdAt: "desc" }, take: 1 } },
   });
   if (!goal) notFound();
+
+  // REQ-005: project goals → ProjectPlanView (no fitness Plan needed).
+  // This branch must come BEFORE the !plan check because project goals have
+  // no fitness Plan row; the !plan early-return would otherwise fire.
+  if (goal.kind === "project") {
+    return <ProjectPlanView goal={goal} />;
+  }
+
   const plan = goal.plans[0];
   if (!plan) {
     return (

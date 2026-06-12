@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { MilestoneBurnDown } from "@/components/MilestoneBurnDown";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReadinessChart } from "@/components/ReadinessChart";
 import { WeightChart } from "@/components/WeightChart";
@@ -44,6 +45,10 @@ export default async function ProgressPage() {
       };
     }),
   );
+
+  // REQ-006: identify the focus project goal for burn-down gating.
+  // Derived from activeGoals (no extra query); null when fitness is focus.
+  const focusProjectGoal = activeGoals.find((g) => g.isFocus && g.kind === "project") ?? null;
 
   // Build weight chart aria-label
   const weightAriaLabel =
@@ -135,6 +140,12 @@ export default async function ProgressPage() {
           </Card>
         );
       })}
+
+      {/* REQ-006: milestone burn-down — only when a project goal is in focus.
+          MilestoneBurnDown fetches its own data and self-gates when milestoneCount=0. */}
+      {focusProjectGoal && (
+        <MilestoneBurnDown goalId={focusProjectGoal.id} />
+      )}
 
       {/* Weight card */}
       <Card title="Weight">
