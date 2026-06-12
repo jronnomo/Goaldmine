@@ -15,6 +15,9 @@ import { prefillFromTemplate } from "@/lib/prescription-prefill";
 import { WorkoutLoggerForm } from "@/components/days/WorkoutLoggerForm";
 import { SkipDayControl } from "@/components/days/SkipDayControl";
 import { HikeLogForm } from "@/components/days/HikeLogForm";
+import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
+import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +76,21 @@ export default async function DayDetail({
   const existingSkip = skippedWorkouts.length > 0
     ? { id: skippedWorkouts[0]!.id, notes: skippedWorkouts[0]!.notes }
     : null;
+
+  // Full exercise/set detail for completed workouts — rendered expanded in place
+  // of the planned card (resolveDay only returns exercise counts).
+  const completedDetails = completedWorkouts.length > 0
+    ? await prisma.workout.findMany({
+        where: { id: { in: completedWorkouts.map((w) => w.id) } },
+        include: {
+          exercises: {
+            orderBy: { orderIndex: "asc" },
+            include: { sets: { orderBy: { setIndex: "asc" } } },
+          },
+        },
+        orderBy: { startedAt: "asc" },
+      })
+    : [];
 
   // REQ-106: separate target-date events (banner) from other types (inline header lines).
   const targetDateEvents = r.otherGoalEvents.filter((e) => e.type === "target-date");
@@ -151,49 +169,30 @@ export default async function DayDetail({
         <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
-      {/* Completed workouts — shown for past and today. */}
-      {completedWorkouts.length > 0 && (
-        <Card title={`Logged workouts (${completedWorkouts.length})`}>
-          <ul className="divide-y divide-[var(--border)]">
-            {completedWorkouts.map((w) => (
-              <li key={w.id}>
-                <Link
-                  href={`/workouts/${w.id}`}
-                  className="flex justify-between items-baseline py-2 gap-2"
-                >
-                  <div>
-                    <p className="font-medium">{w.title ?? "Workout"}</p>
-                    <p className="text-xs text-[var(--muted)]">
-                      {new Date(w.startedAt).toLocaleTimeString()} · {w.exerciseCount} exercises
-                    </p>
-                  </div>
-                  <span className="text-xs text-[var(--accent)]">View →</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          {/* Skip collapses to attached muted line when a completed workout coexists. */}
-          {existingSkip && (
-            <div className="border-t border-[var(--border)] pt-2 mt-2">
-              <p className="text-xs text-[var(--muted)]">
-                Also acknowledged as rest
-                {existingSkip.notes ? ` — ${existingSkip.notes}` : ""}
-              </p>
-            </div>
-          )}
-        </Card>
+      {/* Completed workouts — fully expanded, one card each (past and today). */}
+      {completedDetails.map((w) => (
+        <CompletedWorkoutCard key={w.id} workout={w} />
+      ))}
+      {/* Skip collapses to a muted line when a completed workout coexists. */}
+      {completedDetails.length > 0 && existingSkip && (
+        <p className="text-xs text-[var(--muted)] px-1">
+          Also acknowledged as rest
+          {existingSkip.notes ? ` — ${existingSkip.notes}` : ""}
+        </p>
       )}
 
-      {/* Planned workout card — shown for all dates with a template
-          (past: as reference for logging; today/future: as the active plan). */}
+      {/* Planned card — expandable dropdown; collapsed once something is logged,
+          open otherwise (past: as reference for logging; today/future: the active plan).
+          "Planned" not "Planned workout" — goaldmine will grow non-workout disciplines. */}
       {r.workoutTemplate && dayBlocks.length > 0 && (
-        <Card
+        <CollapsibleCard
+          defaultOpen={completedWorkouts.length === 0}
           title={
             r.workoutDeferredForBaseline
               ? `Deferred today — ${r.workoutTemplate.title}`
               : isPast
                 ? `Template: ${r.workoutTemplate.title}`
-                : `Planned workout: ${r.workoutTemplate.title}`
+                : `Planned: ${r.workoutTemplate.title}`
           }
         >
           {r.workoutDeferredForBaseline && (
@@ -212,7 +211,7 @@ export default async function DayDetail({
               ))}
             </ol>
           </div>
-        </Card>
+        </CollapsibleCard>
       )}
 
       {/* REQ-65-2: Three-doors logging section.
