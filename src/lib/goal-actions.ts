@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
-import { createGoalCore, ensurePlanForGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
+import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeStackRarity } from "@/lib/rarity";
@@ -138,43 +138,12 @@ export async function updateGoal(id: string, form: FormData) {
 }
 
 export async function setFocusGoal(id: string) {
-  // Focus ⇒ active-plan invariant: the target goal is set active=true inside the
-  // transaction (step 2 below), and its most-recent plan is re-activated (step 3).
-  // This means focusing a goal ALSO resumes its paused plan — a paused plan is
-  // silenced solely because it is not the focus; switching focus re-enables it.
-  // setPlanActiveCore is NOT called here because it guards against pausing the focus
-  // goal; instead we replicate its "resume latest plan" logic directly in the tx.
-  // Fetch old focus id before transaction so we can revalidate its detail page.
-  const oldFocus = await prisma.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
-  const oldFocusId = oldFocus?.id ?? null;
-
-  await prisma.$transaction(async (tx) => {
-    const target = await tx.goal.findUnique({ where: { id }, select: { id: true } });
-    if (!target) throw new Error("Goal not found");
-
-    // 1. Clear isFocus on all goals.
-    await tx.goal.updateMany({ data: { isFocus: false } });
-
-    // 2. Set isFocus + ensure active on the target goal.
-    //    (A previously untracked goal that receives focus becomes tracked again.)
-    await tx.goal.update({ where: { id }, data: { isFocus: true, active: true } });
-
-    // 3. Ensure target goal has exactly one active plan (the latest).
-    //    OTHER goals' plans are NOT touched — they stay active.
-    //    NOTE: NO global goal/plan deactivation — this is the core invariant change.
-    const latest = await tx.plan.findFirst({
-      where: { goalId: id },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
-    });
-    if (latest) {
-      await tx.plan.updateMany({
-        where: { goalId: id, id: { not: latest.id } },
-        data: { active: false },
-      });
-      await tx.plan.update({ where: { id: latest.id }, data: { active: true } });
-    }
-  });
+  // Transaction lives in setFocusGoalCore (shared with the MCP set_active_goal
+  // tool). Focus ⇒ active-plan invariant: the target goal is set active=true
+  // and its most-recent plan is re-activated — focusing a goal ALSO resumes
+  // its paused plan; a paused plan is silenced solely because it is not the
+  // focus. The old focus id is returned so we can revalidate its detail page.
+  const { previousFocusGoalId: oldFocusId } = await setFocusGoalCore(id);
 
   revalidatePath("/");
   revalidatePath("/calendar");

@@ -363,3 +363,57 @@ export async function setPlanActiveCore(
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// setFocusGoalCore
+// ---------------------------------------------------------------------------
+// Switch which goal drives Today/Calendar (Goal.isFocus — exactly one at a
+// time). Extracted from the setFocusGoal server action so the MCP
+// set_active_goal tool (project-tools.ts) shares the same transaction.
+// Focus ⇒ active-plan invariant: the target goal is set active=true and its
+// most-recent plan is re-activated — focusing a goal also resumes its paused
+// plan. Other goals stay tracked (active untouched); only isFocus moves.
+// ---------------------------------------------------------------------------
+
+export interface SetFocusGoalCoreResult {
+  previousFocusGoalId: string | null;
+  goal: { id: string; kind: string; objective: string };
+}
+
+export async function setFocusGoalCore(id: string): Promise<SetFocusGoalCoreResult> {
+  const oldFocus = await prisma.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
+
+  const goal = await prisma.$transaction(async (tx) => {
+    const target = await tx.goal.findUnique({
+      where: { id },
+      select: { id: true, kind: true, objective: true },
+    });
+    if (!target) throw new Error(`Goal not found: ${id}`);
+
+    // 1. Clear isFocus on all goals.
+    await tx.goal.updateMany({ data: { isFocus: false } });
+
+    // 2. Set isFocus + ensure active on the target goal.
+    //    (A previously untracked goal that receives focus becomes tracked again.)
+    await tx.goal.update({ where: { id }, data: { isFocus: true, active: true } });
+
+    // 3. Ensure target goal has exactly one active plan (the latest).
+    //    OTHER goals' plans are NOT touched — they stay active.
+    const latest = await tx.plan.findFirst({
+      where: { goalId: id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (latest) {
+      await tx.plan.updateMany({
+        where: { goalId: id, id: { not: latest.id } },
+        data: { active: false },
+      });
+      await tx.plan.update({ where: { id: latest.id }, data: { active: true } });
+    }
+
+    return target;
+  });
+
+  return { previousFocusGoalId: oldFocus?.id ?? null, goal };
+}

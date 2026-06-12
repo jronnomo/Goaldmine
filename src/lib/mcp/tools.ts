@@ -4235,7 +4235,7 @@ function registerWriteTools(server: McpServer) {
         "Setting a targetDate on a goal that has no plan auto-scaffolds a plan from now to that date. " +
         "To shift the plan length / endsOn / plan metadata, follow up with update_plan_metadata after this call. " +
         "Per operating rules: propose the change and get explicit approval before calling. " +
-        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use setFocusGoal from the app UI. " +
+        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use the set_active_goal tool. " +
         "attributionHints: pass an array to set/replace canonical exercise names; pass null to clear; omit to leave unchanged.",
       inputSchema: {
         goalId: z.string().describe("The goal id to update"),

@@ -8,6 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
+import { setFocusGoalCore } from "@/lib/goal-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 
 export function registerProjectTools(server: McpServer): void {
@@ -621,6 +622,47 @@ export function registerProjectTools(server: McpServer): void {
             source: e.source,
             createdAt: e.createdAt.toISOString(), // ISO
           })),
+        };
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // set_active_goal
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "set_active_goal",
+    {
+      title: "Switch which goal drives Today/Calendar (focus goal)",
+      description:
+        "Set the focus goal — the goal whose plan drives get_today_plan, the Today page, and the calendar. " +
+        "Exactly one goal holds focus at a time; this clears focus from ALL other goals (they stay tracked, " +
+        "their plans and events remain visible — only the daily-prescription driver changes). " +
+        "Focusing a goal also re-activates its most recent plan if it was paused, and re-tracks an untracked goal. " +
+        "Works for any goal kind — switch between a fitness goal and a project goal (e.g. chewgether) and back. " +
+        "If the user is mid-program on a fitness goal, confirm before switching: per operating rules, propose the " +
+        "switch, use list_goals to show their goals, and get explicit approval first. " +
+        "Returns the new focus goal (id, kind, objective) and the previous focus goal id. " +
+        "After this call, get_today_plan reflects the new focus goal (focusGoal.kind, todayItems for project goals).",
+      inputSchema: {
+        goalId: z
+          .string()
+          .describe(
+            "The goal to focus. All other goals lose focus (but stay tracked). " +
+              "Use list_goals to discover goal ids.",
+          ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const { previousFocusGoalId, goal } = await setFocusGoalCore(input.goalId);
+        return {
+          focusGoalId: goal.id,
+          kind: goal.kind,
+          objective: goal.objective,
+          previousFocusGoalId,
+          message:
+            `Focus switched to "${goal.objective}" (kind=${goal.kind}). ` +
+            "get_today_plan now reflects this goal.",
         };
       }),
   );
