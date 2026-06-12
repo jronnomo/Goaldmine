@@ -499,6 +499,12 @@ export type ResolvedDay = {
     mealType: string;
     items: unknown;
     notes: string | null;
+    calories: number | null;
+    proteinG: number | null;
+    carbsG: number | null;
+    fatG: number | null;
+    fiberG: number | null;
+    sodiumMg: number | null;
   }[];
   baselinesDue: {
     test: BaselineTest;
@@ -845,6 +851,12 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       mealType: n.mealType,
       items: n.items,
       notes: n.notes,
+      calories: n.calories,
+      proteinG: n.proteinG,
+      carbsG: n.carbsG,
+      fatG: n.fatG,
+      fiberG: n.fiberG,
+      sodiumMg: n.sodiumMg,
     })),
     baselinesDue,
     notesAboutDate: notesForDate.map((n) => ({

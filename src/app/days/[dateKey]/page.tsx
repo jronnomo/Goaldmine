@@ -243,13 +243,7 @@ export default async function DayDetail({
       {(r.nutritionPlan || r.loggedNutrition.length > 0) && (
         <Card title="Nutrition">
           <NutritionToday
-            logs={r.loggedNutrition.map((n) => ({
-              id: n.id,
-              date: n.date,
-              mealType: n.mealType,
-              items: n.items,
-              notes: n.notes,
-            }))}
+            logs={r.loggedNutrition}
             plan={r.nutritionPlan}
             showLogForm={false}
           />
