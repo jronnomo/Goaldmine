@@ -121,8 +121,8 @@ needs attention today.
 When a launch milestone is done, the coach MUST execute all three steps in order.
 Do not mark done in the app before GitHub, and do not skip the log_metric step.
 
-1. **Close on GitHub**: `set_github_issue_status(goalId=<chewgether_id>, issueNumber=<N>, state='closed')` [v2: was `repo=` / `issue=` — no such params; verified against github-tools.ts inputSchema]
-2. **Sync to app**: `sync_github_milestones(goalId=<chewgether_id>)` — mirrors the close; ScheduledItem flips to `status='done'`
+1. **Close on GitHub**: web UI, or ask the user to run: `gh api -X PATCH /repos/<owner>/<repo>/milestones/<n> -f state=closed` — there is no MCP tool for milestone closure. (`set_github_issue_status` closes/reopens GitHub **issues** — use it for issue triage, not milestones.)
+2. **Sync to app**: `sync_github_milestones(goalId=<chewgether_id>, closeCompleted=true)` — mirrors the GitHub close; ScheduledItem flips to `status='done'` with `completedAt` from GitHub
 3. **Log the count**: `log_metric(goalId=<chewgether_id>, metric='milestones_done', value=<new_cumulative>)` — readiness panel reads this row, not ScheduledItem.status
 
 The `value` in step 3 is the new **cumulative** count (e.g. if 3 are done, log 3 — not 1).
@@ -170,7 +170,7 @@ actual tool sequence you observed (compare against Expected above).
 
 | Step | Tool | Pass/Fail | Notes |
 |------|------|-----------|-------|
-| 1. Close on GitHub | `set_github_issue_status(goalId=..., issueNumber=N, state='closed')` | | |
+| 1. Close on GitHub | web UI or `gh api -X PATCH /repos/<owner>/<repo>/milestones/<n> -f state=closed` (no MCP tool for milestone closure) | | |
 | 2. Sync to app | `sync_github_milestones(goalId=...)` | | |
 | 3. Log cumulative count | `log_metric(goalId=..., metric='milestones_done')` | | |
 | Readiness score moved after step 3 | check /progress page | | |
