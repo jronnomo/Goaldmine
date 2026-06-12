@@ -1,0 +1,26 @@
+{
+  "feature": "Epic C — GitHub Tool Pack (chewabl Sprint 3)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-epic-c-github-tools.md",
+  "prd_issue": null,
+  "roadmap_issues": [30, 31, 32, 33, 34, 53, 57],
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
+  "agents": [
+    { "role": "research", "id": "a9c7d2c427a369496" },
+    { "role": "architect", "id": "ae6f0ba8ad25b01e5" },
+    { "role": "devils-advocate", "id": "a10f48df5d0689c83", "verdict": "NEEDS REVISION (4 medium)" },
+    { "role": "architect-v2", "id": "acce6fb489272a4e4" },
+    { "role": "dev", "id": "a63fd7a1e026ff27a", "reqs": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"], "commit": "a699545" },
+    { "role": "qa", "id": "a8495f1780ba85315", "verdict": "SHIP IT" }
+  ],
+  "iteration": 1,
+  "status": "complete",
+  "smoke": "30/30 vs jronnomo/Chewgether; cleanup verified; tool surface 83->88",
+  "decisions": {
+    "scope": "full Sprint 3",
+    "token": "gh CLI OAuth token in .env (done); Vercel env = user action",
+    "smoke_repo": "jronnomo/Chewgether with temp milestones + throwaway issue, cleaned up",
+    "null_due_on": "skip (counted in skipped)",
+    "ux_research": "skipped — backend-only"
+  }
+}
