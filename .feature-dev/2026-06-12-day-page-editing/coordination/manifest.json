@@ -1,0 +1,11 @@
+{
+  "feature": "Day-page editing: manual logger, skip/rest, inline hike, workout editing",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-day-page-editing.md",
+  "prd_issue": "https://github.com/jronnomo/workout-planner/issues/65",
+  "requirements": ["REQ-65-1 cores+MCP", "REQ-65-2 day-page logging", "REQ-65-3 workout editor", "REQ-65-4 calendar+status-audit"],
+  "waves": "{REQ-65-1, REQ-65-4, DA, ux-research} -> {REQ-65-2, REQ-65-3} -> QA/fix -> ship",
+  "notes": "MCP surface must stay byte-identical (no connector reload). Core signatures frozen in blueprint. calendar.ts: REQ-65-4 owns buildCell/getCalendarMonth; REQ-65-2 only the resolveDay workout select (+notes).",
+  "iteration": 1,
+  "status": "developing"
+}
