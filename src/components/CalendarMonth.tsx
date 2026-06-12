@@ -245,11 +245,18 @@ function DayCell({
       ? "opacity-[0.62] border-t border-dashed border-t-[var(--muted)]"
       : "";
 
+  // REQ-65-4: skipped-day cue — muted ✕ when the day has an acknowledged-skipped
+  // workout but no completed training. Placed in the marker row so it occupies the
+  // same visual band as legend icons without disturbing the glow/quiet/provisional logic
+  // (those depend on isCompleted/isQuietPast which are already correct post workoutCount fix).
+  const showSkippedMark = inMonth && cell.skippedCount > 0 && !isCompleted;
+
   // REQ-006 / a11y: extend aria-label with confidence, other-goal events, + conflict.
   const ariaLabel = [
     cell.dateKey,
     cell.dayTitle ? `— ${cell.dayTitle}` : "",
     cell.confidence && cell.confidence !== "past" ? `· ${cell.confidence}` : "",
+    showSkippedMark ? ", skipped (acknowledged)" : "",
     // REQ-106: append foreign goal event labels for screen readers
     ...cell.otherGoalEvents.map((e) => `· ${e.label} — ${e.goalObjective}`),
     // REQ-106: use human label for cross-goal conflicts, kind for same-goal conflicts
@@ -287,6 +294,16 @@ function DayCell({
             size={13}
           />
         ))}
+        {/* REQ-65-4: muted ✕ for acknowledged-skipped days (no completed training). */}
+        {showSkippedMark && (
+          <span
+            aria-hidden="true"
+            style={{ fontSize: "11px" }}
+            className="text-[var(--muted)]"
+          >
+            ✕
+          </span>
+        )}
         {/* UXR-62-04: +N chip — 9px muted text on accent-soft */}
         {overflow > 0 && (
           <span
@@ -358,6 +375,11 @@ function DayDetail({
             ? "Rest / unscheduled day."
             : "Outside the current plan."}
       </p>
+
+      {/* REQ-65-4: acknowledged-skipped indicator in DayDetail. */}
+      {cell.skippedCount > 0 && (
+        <p className="text-xs text-[var(--muted)]">Skipped — acknowledged</p>
+      )}
 
       {markers.length > 0 && (
         <ul className="flex flex-wrap gap-1.5">

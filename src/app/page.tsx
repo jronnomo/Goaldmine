@@ -41,6 +41,7 @@ export default async function HomePage() {
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
+        where: { status: "completed" },
         orderBy: { startedAt: "desc" },
         take: 3,
         include: { exercises: { include: { sets: true } } },

@@ -29,7 +29,8 @@ export type CalendarDayCell = {
   rotationDay: number | null; // 1..7 if isInPlan
   weekIndex: number | null; // 1..plan.weeks if isInPlan
   dayTitle: string | null; // from override or template
-  workoutCount: number; // logged gym workouts on this date
+  workoutCount: number; // completed gym workouts on this date (excludes skipped/planned)
+  skippedCount: number; // skipped (acknowledged) gym workouts on this date
   hikeCount: number; // completed hikes on this date — out-of-gym training days
   plannedHikeCount: number; // hikes scheduled but not yet completed (status: "planned")
   hasOverride: boolean;
@@ -311,7 +312,9 @@ function buildCell(args: {
     }
   }
 
-  const workoutCount = args.workoutsByKey.get(k)?.length ?? 0;
+  const dayWorkouts = args.workoutsByKey.get(k) ?? [];
+  const workoutCount = dayWorkouts.filter((w) => w.status === "completed").length;
+  const skippedCount = dayWorkouts.filter((w) => w.status === "skipped").length;
   const hikeCount = args.hikesByKey.get(k)?.length ?? 0;
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
   const cellOverride = args.overridesByKey.get(k);
@@ -402,6 +405,7 @@ function buildCell(args: {
     weekIndex,
     dayTitle,
     workoutCount,
+    skippedCount,
     hikeCount,
     plannedHikeCount,
     hasOverride,

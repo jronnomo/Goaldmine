@@ -13,7 +13,7 @@ export default async function StatsPage() {
   const [measurements, baselineCount, workoutCount, hikeCount, activeGoals] = await Promise.all([
     prisma.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
     prisma.baseline.count(),
-    prisma.workout.count(),
+    prisma.workout.count({ where: { status: "completed" } }),
     prisma.hike.count(),
     prisma.goal.findMany({
       where: { active: true },

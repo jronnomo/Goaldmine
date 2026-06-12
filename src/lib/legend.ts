@@ -19,6 +19,19 @@
 
 import { z } from "zod";
 
+// Why "skipped" is deliberately NOT a LegendKind:
+//
+//   1. Closed-enum ripple: adding a new LegendKind requires a render branch in
+//      CalendarMonth.tsx AND coach-facing coaching in every tool that mentions
+//      legend kinds. A skipped day is a transient UI acknowledgement, not a
+//      goal-configured semantic category the user would put in their legend.
+//   2. markersFor suppression: CalendarMonth only renders markers whose kind
+//      exists in the goal's stored legend. If "skipped" were a kind, goals that
+//      pre-date the addition would silently suppress it (no legend entry → no
+//      marker) — a confusing invisible state.
+//   3. The ✕ glyph is rendered directly in DayCell (REQ-65-4) outside the
+//      markersFor / findLegendEntry pipeline, so it always shows regardless of
+//      the goal's configured legend.
 export const LegendKindSchema = z.enum([
   "trained",
   "hike-completed",

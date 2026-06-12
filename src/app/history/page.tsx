@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function HistoryPage() {
   const [workouts, measurements] = await Promise.all([
     prisma.workout.findMany({
+      where: { status: { not: "planned" } },
       orderBy: { startedAt: "desc" },
       take: 50,
       include: { exercises: { select: { id: true } } },
@@ -53,25 +54,35 @@ export default async function HistoryPage() {
           </p>
         ) : (
           <ul className="divide-y divide-[var(--border)]">
-            {workouts.map((w) => (
-              <li key={w.id}>
-                <Link
-                  href={`/workouts/${w.id}`}
-                  className="flex items-center justify-between py-3 gap-2"
-                >
-                  <div>
-                    <p className="font-medium">{w.title ?? "Workout"}</p>
-                    <p className="text-xs text-[var(--muted)]">
-                      {new Date(w.startedAt).toLocaleString()}
-                      {w.source ? ` · ${w.source}` : ""}
-                    </p>
-                  </div>
-                  <span className="text-sm text-[var(--muted)]">
-                    {w.exercises.length} ex
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {workouts.map((w) => {
+              const isSkipped = w.status === "skipped";
+              return (
+                <li key={w.id}>
+                  <Link
+                    href={`/workouts/${w.id}`}
+                    className="flex items-center justify-between py-3 gap-2"
+                  >
+                    <div>
+                      <p className={`font-medium${isSkipped ? " text-[var(--muted)]" : ""}`}>
+                        {w.title ?? "Workout"}
+                        {isSkipped && (
+                          <span className="ml-2 text-xs rounded-full px-2 py-0.5 border border-[var(--border)] text-[var(--muted)]">
+                            Skipped
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-[var(--muted)]">
+                        {new Date(w.startedAt).toLocaleString()}
+                        {w.source ? ` · ${w.source}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-sm text-[var(--muted)]">
+                      {w.exercises.length} ex
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
