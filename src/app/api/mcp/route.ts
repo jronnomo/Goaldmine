@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
+import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,14 +25,7 @@ async function handler(req: Request): Promise<Response> {
     { name: "goaldmine", version: MCP_SERVER_VERSION },
     {
       capabilities: { tools: {} },
-      instructions:
-        "Workout coaching MCP for one user. Exactly one goal has isFocus=true (drives the daily prescription); focus switching is app-UI only — no MCP tool exists. " +
-        "Other active goals stay visible — their events (target dates, retest checkpoints, planned hikes, scheduled items) and cross-goal conflicts surface in get_today_plan/get_day/get_week/get_session_brief. " +
-        "START every fresh chat with get_session_brief — one call delivers today's date, focus goal, plan week/phase, recent sessions, weight trend, standing-rule headers, latest review (truncated), open items, current-week conflicts, and slim stack rarity. " +
-        "Epic tools for goal management: get_rarity (full stack Reach math), preview_goal_feasibility (what-if stack preview), set_goal_feasibility (coach tier override), set_goal_tracked (track/untrack), set_plan_active (pause/resume plan), promote_note_to_goal (note → goal with intake data). " +
-        "Use read tools to gather context before proposing changes. " +
-        "apply_plan_revision writes a full template snapshot — include cascading edits in the snapshot, capture reasoning. " +
-        "apply_day_override is for single-day swaps without revising the full plan.",
+      instructions: COACH_INSTRUCTIONS,
     },
   );
   registerAll(server);

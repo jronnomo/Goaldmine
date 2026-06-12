@@ -1218,7 +1218,7 @@ function registerReadTools(server: McpServer) {
         "event-on-hard-day, key-events-same-week, event-near-long-effort), " +
         "and slim stackRarity {tier, baseTier, loadBump}. " +
         "otherActiveGoals: non-focus active goals with their next event in a 30-day window; isSomeday:true when targetDate is null. " +
-        "Call this FIRST in a fresh chat instead of stitching together get_today_plan + recent_history + get_goal. " +
+        "Call this after get_today_plan in a fresh FITNESS chat — it is the rich second call that delivers history, weight trend, standing-rule headers, latest review, open items, week conflicts, and rarity stack; equivalent routing signal to get_today_plan for fitness session context. See COACH_INSTRUCTIONS for the full two-call session-start sequence. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
         "for a wide activity lookback use recent_history; " +
         "for all-time PRs use get_records_summary; " +
