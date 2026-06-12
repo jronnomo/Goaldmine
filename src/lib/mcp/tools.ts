@@ -85,6 +85,7 @@ import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
 import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
 import { GoalTargetSchema } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
+import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 
 const DateKeyShape = z
   .string()
@@ -481,6 +482,7 @@ export function registerAll(server: McpServer) {
   registerReadTools(server);
   registerWriteTools(server);
   registerProjectTools(server);
+  registerGitHubTools(server);
 }
 
 // ----------------------------------------------------------------------------

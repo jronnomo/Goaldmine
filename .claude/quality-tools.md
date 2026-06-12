@@ -63,3 +63,17 @@ Then exercise each new/changed tool with `tools/call`. Read tools (`get_today_pl
 8. **`revalidatePath` after every server-action mutation.** `/`, `/history`, plus the route the change is most visible on. Otherwise the server-rendered Today page serves stale state.
 9. **Migrations on Neon are shared with prod.** `prisma migrate dev` writes the dev DB, which IS the prod DB for this app. Validate the SQL diff before running. A Vercel redeploy is what makes the new client visible to users.
 10. **Single user, no PRs.** This repo pushes directly to `main` with conventional commits (`feat:`, `fix:`, `MCP write tools: …`). No PR workflow exists. If a feature warrants a branch + PR, ask first.
+
+---
+
+## Environment Variables
+
+| Variable | Where set | Required for | Scope / Notes |
+|----------|-----------|-------------|---------------|
+| `DATABASE_URL` | `.env` / Vercel | All DB access | Neon Postgres connection string |
+| `MCP_AUTH_TOKEN` | `.env` / Vercel | MCP endpoint auth (`/api/mcp`) | 32-byte hex; generate with `openssl rand -hex 32`; never echo in scripts |
+| `GITHUB_TOKEN` | `.env` / Vercel | GitHub tool pack (Epic C) | PAT scopes: `repo` + `read:project`. Local: `gh auth token`. Vercel: set via dashboard, NOT CLI. `link_github_project` works without it. |
+
+**Never-echo rule**: none of these values may appear in log output, curl commands, tool responses, captured artifacts, or committed files. The GitHub tool pack has a module-private `sanitize()` layer that redacts `GITHUB_TOKEN` from all error messages before surfacing them via MCP. `.env` is gitignored. `.env.example` contains placeholder strings only.
+
+**Vercel note**: after adding `GITHUB_TOKEN` to Vercel environment variables, trigger a redeploy for the new env to be available to the running instance. The MCP connector in claude.ai caches tool lists — if tool count or names change, the connector may need a disconnect/reconnect to pick up the new tools.
