@@ -11,12 +11,20 @@ import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
+import { getFocusGoal } from "@/lib/goal-focus";
+import { ProjectTodayView } from "@/components/ProjectTodayView";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const program = await getActiveProgram();
-  if (!program) {
+  // REQ-001: fetch program and focus goal in parallel — no waterfall.
+  const [program, focusGoal] = await Promise.all([
+    getActiveProgram(),
+    getFocusGoal(),
+  ]);
+
+  // AC-C: null goal + null program (or fitness focus + no program) → existing NoActiveProgram card.
+  if (!program && focusGoal?.kind !== "project") {
     return (
       <div className="max-w-md mx-auto p-4">
         <Card title="No active program">
@@ -29,7 +37,16 @@ export default async function HomePage() {
     );
   }
 
-  const ctx = getTodayContext(program);
+  // AC-A: project focus goal wins over any lingering fitness Program rows.
+  // CharacterHeader/gameState are skipped on this path (no computeGameState call below).
+  if (focusGoal?.kind === "project") {
+    return <ProjectTodayView goal={focusGoal} />;
+  }
+
+  // [v2] program is guaranteed non-null at this point:
+  // if it were null, one of the two guards above would have returned.
+  // Truth table: (null + project) → early return; (null + fitness/null) → NoActiveProgram.
+  const ctx = getTodayContext(program!);
   const now = new Date();
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
