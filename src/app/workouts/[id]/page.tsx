@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Card } from "@/components/Card";
 import { ShareWorkout } from "@/components/ShareWorkout";
+import { WorkoutEditor } from "@/components/WorkoutEditor";
+import type { WorkoutDTO } from "@/components/WorkoutEditor";
 import { prisma } from "@/lib/db";
 import type { FormattableWorkout } from "@/lib/formatters";
 
@@ -25,6 +26,30 @@ export default async function WorkoutDetail({
 
   if (!workout) notFound();
 
+  // Serialisable DTO — all Dates converted to ISO strings for the client island.
+  const dto: WorkoutDTO = {
+    id: workout.id,
+    title: workout.title,
+    notes: workout.notes,
+    startedAt: workout.startedAt.toISOString(),
+    status: workout.status,
+    exercises: workout.exercises.map((ex) => ({
+      id: ex.id,
+      name: ex.name,
+      equipment: ex.equipment,
+      notes: ex.notes,
+      sets: ex.sets.map((s) => ({
+        id: s.id,
+        setIndex: s.setIndex,
+        reps: s.reps,
+        weightLb: s.weightLb,
+        durationSec: s.durationSec,
+        rpe: s.rpe,
+      })),
+    })),
+  };
+
+  // Separate shape for ShareWorkout (needs distanceMi, different fields).
   const formattable: FormattableWorkout = {
     id: workout.id,
     title: workout.title,
@@ -64,30 +89,8 @@ export default async function WorkoutDetail({
 
       <ShareWorkout workout={formattable} />
 
-      {workout.exercises.map((ex) => (
-        <Card
-          key={ex.id}
-          title={ex.equipment ? `${ex.name} (${ex.equipment})` : ex.name}
-        >
-          <ul className="space-y-1 text-sm">
-            {ex.sets.map((s) => (
-              <li key={s.id} className="flex justify-between">
-                <span className="text-[var(--muted)]">Set {s.setIndex}</span>
-                <span className="font-mono">{formatSet(s)}</span>
-              </li>
-            ))}
-          </ul>
-          {ex.notes && (
-            <p className="text-xs text-[var(--muted)] italic mt-2">{ex.notes}</p>
-          )}
-        </Card>
-      ))}
-
-      {workout.notes && (
-        <Card title="Notes">
-          <p className="text-sm whitespace-pre-wrap">{workout.notes}</p>
-        </Card>
-      )}
+      {/* WorkoutEditor — read-mode default; edit toggle + delete inside (REQ-65-3) */}
+      <WorkoutEditor workout={dto} />
 
       {workout.sourceUrl && (
         <p className="text-xs text-[var(--muted)] text-center">
@@ -104,21 +107,4 @@ export default async function WorkoutDetail({
       )}
     </div>
   );
-}
-
-function formatSet(s: {
-  reps: number | null;
-  weightLb: number | null;
-  durationSec: number | null;
-  distanceMi: number | null;
-}): string {
-  if (s.weightLb !== null && s.reps !== null) return `${s.weightLb} lb × ${s.reps}`;
-  if (s.reps !== null) return `${s.reps} reps`;
-  if (s.durationSec !== null) {
-    const m = Math.floor(s.durationSec / 60);
-    const sec = s.durationSec % 60;
-    return `${m}:${String(sec).padStart(2, "0")}`;
-  }
-  if (s.distanceMi !== null) return `${s.distanceMi} mi`;
-  return "—";
 }

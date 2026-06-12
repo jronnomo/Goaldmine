@@ -98,6 +98,13 @@ input, textarea, select, button {
   color: inherit;
 }
 
+/* Placeholder contrast + source-monitoring cue (UXR-65-05): muted italic
+   signals "the plan suggested this" vs solid-upright typed values. */
+input::placeholder, textarea::placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* Bullseye-pop: one-shot scale + opacity animation triggered by adding
    the `bullseye-pop` class to a freshly-logged Bullseye. Reduced-motion
    users see no animation. React plumbing for `justLogged` is intentionally
