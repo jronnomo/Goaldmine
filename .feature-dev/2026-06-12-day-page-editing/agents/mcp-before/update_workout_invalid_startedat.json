@@ -1,0 +1,13 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Error: startedAt is not a valid ISO datetime: not-a-date"
+            }
+        ],
+        "isError": true
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

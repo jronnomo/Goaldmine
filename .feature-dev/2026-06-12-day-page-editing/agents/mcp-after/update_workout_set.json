@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"id\": \"cmqatv67h0002mydn445snj2q\",\n  \"updatedFields\": [\n    \"reps\",\n    \"weightLb\"\n  ],\n  \"message\": \"Set updated (changed: reps, weightLb). Other fields preserved.\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

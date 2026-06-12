@@ -1,0 +1,4 @@
+EX_ID=
+SET_ID=
+WORKOUT_ID=cmqatju3n0000oddnacdwdud1
+HIKE_ID=cmqatnz2a0008oddnhrst3gpc

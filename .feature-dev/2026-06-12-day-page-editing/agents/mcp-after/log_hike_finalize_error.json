@@ -1,0 +1,13 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Error: replacesPlannedHikeId=\"nonexistent-hike-id\" not found. Drop the field to log a new hike, or fix the id."
+            }
+        ],
+        "isError": true
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

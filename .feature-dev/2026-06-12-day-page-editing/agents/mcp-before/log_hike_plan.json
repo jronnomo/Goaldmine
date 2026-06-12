@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"id\": \"cmqatnz2a0008oddnhrst3gpc\",\n  \"finalized\": false,\n  \"deduped\": false,\n  \"message\": \"Hike logged\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

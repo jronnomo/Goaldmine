@@ -1,0 +1,12 @@
+{
+    "result": {
+        "content": [
+            {
+                "type": "text",
+                "text": "{\n  \"count\": 1,\n  \"applied\": [\n    \"addSet \u2192 cmqatnmob0007oddnizekxtx4 (setIndex=4)\"\n  ],\n  \"message\": \"Applied 1 op atomically.\"\n}"
+            }
+        ]
+    },
+    "jsonrpc": "2.0",
+    "id": 1
+}

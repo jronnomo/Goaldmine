@@ -5,6 +5,15 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
 import {
+  createWorkoutCore,
+  updateWorkoutCore,
+  updateWorkoutSetCore,
+  workoutOpsCore,
+  deleteWorkoutCore,
+  WorkoutOpSchema,
+} from "@/lib/workout-core";
+import { logHikeCore } from "@/lib/hike-core";
+import {
   appendBaselineToDayWorkout,
   removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
@@ -51,7 +60,6 @@ import {
   getBaselineSummaries,
   getExerciseHistory,
   getExerciseSummaries,
-  recordsSetInWorkout,
 } from "@/lib/records";
 import {
   NutritionPlanShape,
@@ -163,54 +171,8 @@ const LogNoteShape = {
 const LogNoteSchema = z.object(LogNoteShape);
 type LogNoteInput = z.infer<typeof LogNoteSchema>;
 
-// Shapes for workout_ops — structural edits to a logged Workout (add/remove
-// exercises and sets). Editing existing rows is covered by update_workout_*.
-const OpSetInputShape = z.object({
-  setIndex: z.number().int().min(1).optional().describe("1-based set number within the exercise. Defaults to max+1."),
-  reps: z.number().int().min(0).optional(),
-  weightLb: z.number().min(0).optional(),
-  durationSec: z.number().min(0).optional(),
-  distanceMi: z.number().min(0).optional(),
-  rpe: z.number().min(0).max(10).optional(),
-  notes: z.string().optional(),
-});
-
-const AddExerciseInputShape = z.object({
-  name: z.string().min(1),
-  equipment: z.string().optional(),
-  notes: z.string().optional(),
-  orderIndex: z.number().int().min(0).optional().describe("Position in the workout's exercise list. Defaults to max+1 (append)."),
-  sets: z.array(OpSetInputShape).optional().describe("Optional initial sets to create alongside the exercise. setIndex auto-numbers 1..N when omitted."),
-});
-
-const AddExerciseOpShape = z.object({
-  op: z.literal("addExercise"),
-  workoutId: z.string(),
-  exercise: AddExerciseInputShape,
-});
-
-const RemoveExerciseOpShape = z.object({
-  op: z.literal("removeExercise"),
-  exerciseId: z.string().describe("WorkoutExercise.id — cascade-deletes the exercise's sets."),
-});
-
-const AddSetOpShape = z.object({
-  op: z.literal("addSet"),
-  workoutExerciseId: z.string(),
-  set: OpSetInputShape,
-});
-
-const RemoveSetOpShape = z.object({
-  op: z.literal("removeSet"),
-  setId: z.string(),
-});
-
-const WorkoutOpSchema = z.discriminatedUnion("op", [
-  AddExerciseOpShape,
-  RemoveExerciseOpShape,
-  AddSetOpShape,
-  RemoveSetOpShape,
-]);
+// WorkoutOpSchema and related op shapes moved to src/lib/workout-core.ts.
+// Imported above as WorkoutOpSchema.
 
 const LogNutritionShape = {
   mealType: MealTypeShape,
@@ -2196,37 +2158,16 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const created = await prisma.workout.create({
-          data: {
-            title: input.title,
-            startedAt: new Date(input.startedAt),
-            status: "completed",
-            source: input.source,
-            sourceUrl: input.sourceUrl,
-            notes: input.notes,
-            exercises: {
-              create: input.exercises.map((ex) => ({
-                name: ex.name,
-                equipment: ex.equipment,
-                orderIndex: ex.orderIndex,
-                notes: ex.notes,
-                sets: {
-                  create: ex.sets.map((s) => ({
-                    setIndex: s.setIndex,
-                    reps: s.reps ?? null,
-                    weightLb: s.weightLb ?? null,
-                    durationSec: s.durationSec ?? null,
-                    distanceMi: s.distanceMi ?? null,
-                    rpe: s.rpe ?? null,
-                    notes: s.notes ?? null,
-                  })),
-                },
-              })),
-            },
-          },
+        const { id, recordsSet } = await createWorkoutCore({
+          title: input.title,
+          startedAt: new Date(input.startedAt),
+          status: "completed",
+          source: input.source,
+          sourceUrl: input.sourceUrl,
+          notes: input.notes,
+          exercises: input.exercises,
         });
-        const recordsSet = await recordsSetInWorkout(created.id);
-        return { id: created.id, message: "Workout logged", recordsSet };
+        return { id, message: "Workout logged", recordsSet };
       }),
   );
 
@@ -2402,151 +2343,21 @@ function registerWriteTools(server: McpServer) {
       },
     },
     async (input) =>
-      safe(async () => {
-        // Resolve the goal id this hike should be attributed to.
-        // null means "focus goal at read time" (standard attribution).
-        // Fetch the focus goal id once so both attribution paths and the
-        // idempotency check can reference it without an extra round-trip.
-        const focusGoal = await prisma.goal.findFirst({
-          where: { isFocus: true },
-          select: { id: true },
-        });
-        const focusGoalId = focusGoal?.id ?? null;
-        let resolvedGoalId: string | null = null;
-        if (input.goalId) {
-          const targetGoal = await prisma.goal.findUnique({
-            where: { id: input.goalId },
-            select: { id: true, active: true },
-          });
-          if (!targetGoal) throw new Error(`Goal "${input.goalId}" not found.`);
-          if (!targetGoal.active) {
-            throw new Error(
-              `Goal "${input.goalId}" is not tracked (active=false). Activate it before logging hikes against it.`,
-            );
-          }
-          resolvedGoalId = input.goalId;
-        } else {
-          resolvedGoalId = focusGoalId;
-        }
-
-        if (input.replacesPlannedHikeId !== undefined) {
-          // Finalize-in-place path. Verify the named row exists and is still
-          // in 'planned' state before updating — protects against accidental
-          // double-finalize and against replacing a completed-but-stale row.
-          const existing = await prisma.hike.findUnique({
-            where: { id: input.replacesPlannedHikeId },
-          });
-          if (!existing) {
-            throw new Error(
-              `replacesPlannedHikeId="${input.replacesPlannedHikeId}" not found. Drop the field to log a new hike, or fix the id.`,
-            );
-          }
-          if (existing.status !== "planned") {
-            throw new Error(
-              `Hike ${input.replacesPlannedHikeId} has status='${existing.status}', not 'planned'. ` +
-                `Finalize-in-place only works on planned rows. To amend a finalized hike, delete_hike + log_hike (a new row).`,
-            );
-          }
-          const updated = await prisma.hike.update({
-            where: { id: input.replacesPlannedHikeId },
-            data: {
-              date: parseDateInput(input.date),
-              route: input.route,
-              distanceMi: input.distanceMi,
-              elevationFt: input.elevationFt,
-              durationMin: input.durationMin,
-              packWeightLb: input.packWeightLb ?? null,
-              rpe: input.rpe ?? null,
-              status: input.status,
-              notes: input.notes ?? null,
-            },
-          });
-          return {
-            id: updated.id,
-            finalized: true,
-            previousStatus: existing.status,
-            dateMoved:
-              existing.date.getTime() !== updated.date.getTime()
-                ? { from: existing.date, to: updated.date }
-                : null,
-            message: `Planned hike finalized in place (status: planned → ${updated.status}).`,
-          };
-        }
-
-        const hikeDate = parseDateInput(input.date);
-
-        // Idempotent scheduling: at most one *planned* hike per calendar day PER GOAL.
-        // A repeat schedule call for the same day + goal updates the existing planned
-        // row in place instead of stacking a duplicate boot icon. Two different goals
-        // CAN each plan a hike on the same day (intentional multi-goal support).
-        // Completed/skipped hikes can legitimately repeat on a date, so this only
-        // applies to status='planned'.
-        //
-        // Legacy rows may have goalId=null (focus-goal attribution at write time).
-        // When the resolved goal IS the focus goal, also match null-attributed rows
-        // so a re-schedule deduplicates instead of creating a duplicate day entry.
-        if (input.status === "planned") {
-          // matchesNullAttribution: resolvedGoalId is non-null and equals the focus
-          // goal, so null-goalId rows are the same logical hike as this one.
-          const matchesNullAttribution =
-            resolvedGoalId !== null && resolvedGoalId === focusGoalId;
-          const existingPlanned = await prisma.hike.findFirst({
-            where: {
-              status: "planned",
-              date: { gte: startOfDay(hikeDate), lte: endOfDay(hikeDate) },
-              // Scope idempotency to the resolved goalId so two goals can each plan
-              // a hike on the same day. Also catch legacy null-attributed rows when
-              // the resolved goal is the current focus goal.
-              ...(matchesNullAttribution
-                ? { OR: [{ goalId: resolvedGoalId }, { goalId: null }] }
-                : { goalId: resolvedGoalId }),
-            },
-            orderBy: { date: "asc" },
-          });
-          if (existingPlanned) {
-            const updated = await prisma.hike.update({
-              where: { id: existingPlanned.id },
-              data: {
-                date: hikeDate,
-                route: input.route,
-                distanceMi: input.distanceMi,
-                elevationFt: input.elevationFt,
-                durationMin: input.durationMin,
-                packWeightLb: input.packWeightLb ?? null,
-                rpe: input.rpe ?? null,
-                status: "planned",
-                notes: input.notes ?? null,
-              },
-            });
-            return {
-              id: updated.id,
-              finalized: false,
-              deduped: true,
-              message:
-                "Existing planned hike on this date updated in place (no duplicate planned row created). " +
-                "To finalize a planned hike to completed, pass replacesPlannedHikeId.",
-            };
-          }
-        }
-
-        // Default path: create a new hike row.
-        const h = await prisma.hike.create({
-          data: {
-            date: hikeDate,
-            route: input.route,
-            distanceMi: input.distanceMi,
-            elevationFt: input.elevationFt,
-            durationMin: input.durationMin,
-            packWeightLb: input.packWeightLb ?? null,
-            rpe: input.rpe ?? null,
-            status: input.status,
-            notes: input.notes ?? null,
-            // null = focus-goal attribution at read time (Hike.goalId nullable FK)
-            goalId: resolvedGoalId,
-          },
-        });
-        return { id: h.id, finalized: false, deduped: false, message: "Hike logged" };
-      }),
+      safe(async () =>
+        logHikeCore({
+          date: parseDateInput(input.date),
+          route: input.route,
+          distanceMi: input.distanceMi,
+          elevationFt: input.elevationFt,
+          durationMin: input.durationMin,
+          packWeightLb: input.packWeightLb,
+          rpe: input.rpe,
+          status: input.status,
+          notes: input.notes,
+          goalId: input.goalId,
+          replacesPlannedHikeId: input.replacesPlannedHikeId,
+        }),
+      ),
   );
 
   server.registerTool(
@@ -3719,28 +3530,21 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const data: Prisma.WorkoutUpdateInput = {};
-        const updatedFields: string[] = [];
-        if (input.title !== undefined) { data.title = input.title; updatedFields.push("title"); }
-        if (input.notes !== undefined) { data.notes = input.notes; updatedFields.push("notes"); }
-        if (input.source !== undefined) { data.source = input.source; updatedFields.push("source"); }
-        if (input.sourceUrl !== undefined) { data.sourceUrl = input.sourceUrl; updatedFields.push("sourceUrl"); }
+        // ISO validity guard stays in the MCP handler (core receives a Date).
+        let startedAt: Date | undefined;
         if (input.startedAt !== undefined) {
           const d = new Date(input.startedAt);
           if (Number.isNaN(d.getTime())) throw new Error(`startedAt is not a valid ISO datetime: ${input.startedAt}`);
-          data.startedAt = d;
-          updatedFields.push("startedAt");
+          startedAt = d;
         }
-        if (input.status !== undefined) { data.status = input.status; updatedFields.push("status"); }
-        if (updatedFields.length === 0) {
-          return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
-        }
-        await prisma.workout.update({ where: { id: input.id }, data });
-        return {
-          id: input.id,
-          updatedFields,
-          message: `Workout updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
-        };
+        return updateWorkoutCore(input.id, {
+          title: input.title,
+          notes: input.notes,
+          source: input.source,
+          sourceUrl: input.sourceUrl,
+          startedAt,
+          status: input.status,
+        });
       }),
   );
 
@@ -3802,26 +3606,17 @@ function registerWriteTools(server: McpServer) {
       },
     },
     async (input) =>
-      safe(async () => {
-        const data: Prisma.SetUpdateInput = {};
-        const updatedFields: string[] = [];
-        if (input.setIndex !== undefined) { data.setIndex = input.setIndex; updatedFields.push("setIndex"); }
-        if (input.reps !== undefined) { data.reps = input.reps; updatedFields.push("reps"); }
-        if (input.weightLb !== undefined) { data.weightLb = input.weightLb; updatedFields.push("weightLb"); }
-        if (input.durationSec !== undefined) { data.durationSec = input.durationSec; updatedFields.push("durationSec"); }
-        if (input.distanceMi !== undefined) { data.distanceMi = input.distanceMi; updatedFields.push("distanceMi"); }
-        if (input.rpe !== undefined) { data.rpe = input.rpe; updatedFields.push("rpe"); }
-        if (input.notes !== undefined) { data.notes = input.notes; updatedFields.push("notes"); }
-        if (updatedFields.length === 0) {
-          return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
-        }
-        await prisma.set.update({ where: { id: input.id }, data });
-        return {
-          id: input.id,
-          updatedFields,
-          message: `Set updated (changed: ${updatedFields.join(", ")}). Other fields preserved.`,
-        };
-      }),
+      safe(async () =>
+        updateWorkoutSetCore(input.id, {
+          setIndex: input.setIndex,
+          reps: input.reps,
+          weightLb: input.weightLb,
+          durationSec: input.durationSec,
+          distanceMi: input.distanceMi,
+          rpe: input.rpe,
+          notes: input.notes,
+        }),
+      ),
   );
 
   server.registerTool(
@@ -3843,80 +3638,7 @@ function registerWriteTools(server: McpServer) {
       },
     },
     async ({ ops }) =>
-      safe(async () => {
-        const applied: string[] = [];
-        await prisma.$transaction(async (tx) => {
-          for (let i = 0; i < ops.length; i++) {
-            const op = ops[i]!;
-            try {
-              if (op.op === "addExercise") {
-                const orderIndex =
-                  op.exercise.orderIndex ??
-                  ((await tx.workoutExercise.aggregate({
-                    where: { workoutId: op.workoutId },
-                    _max: { orderIndex: true },
-                  }))._max.orderIndex ?? -1) + 1;
-                const created = await tx.workoutExercise.create({
-                  data: {
-                    workoutId: op.workoutId,
-                    name: op.exercise.name,
-                    equipment: op.exercise.equipment ?? null,
-                    notes: op.exercise.notes ?? null,
-                    orderIndex,
-                    sets: op.exercise.sets
-                      ? {
-                          create: op.exercise.sets.map((s, idx) => ({
-                            setIndex: s.setIndex ?? idx + 1,
-                            reps: s.reps ?? null,
-                            weightLb: s.weightLb ?? null,
-                            durationSec: s.durationSec ?? null,
-                            distanceMi: s.distanceMi ?? null,
-                            rpe: s.rpe ?? null,
-                            notes: s.notes ?? null,
-                          })),
-                        }
-                      : undefined,
-                  },
-                });
-                applied.push(
-                  `addExercise → ${created.id} (${op.exercise.sets?.length ?? 0} set${op.exercise.sets?.length === 1 ? "" : "s"})`,
-                );
-              } else if (op.op === "removeExercise") {
-                await tx.workoutExercise.delete({ where: { id: op.exerciseId } });
-                applied.push(`removeExercise → ${op.exerciseId}`);
-              } else if (op.op === "addSet") {
-                const setIndex =
-                  op.set.setIndex ??
-                  ((await tx.set.aggregate({
-                    where: { workoutExerciseId: op.workoutExerciseId },
-                    _max: { setIndex: true },
-                  }))._max.setIndex ?? 0) + 1;
-                const created = await tx.set.create({
-                  data: {
-                    workoutExerciseId: op.workoutExerciseId,
-                    setIndex,
-                    reps: op.set.reps ?? null,
-                    weightLb: op.set.weightLb ?? null,
-                    durationSec: op.set.durationSec ?? null,
-                    distanceMi: op.set.distanceMi ?? null,
-                    rpe: op.set.rpe ?? null,
-                    notes: op.set.notes ?? null,
-                  },
-                });
-                applied.push(`addSet → ${created.id} (setIndex=${setIndex})`);
-              } else if (op.op === "removeSet") {
-                await tx.set.delete({ where: { id: op.setId } });
-                applied.push(`removeSet → ${op.setId}`);
-              }
-            } catch (e) {
-              throw new Error(
-                `workout_ops failed at ops[${i}] (op=${op.op}): ${e instanceof Error ? e.message : String(e)}. Whole batch rolled back; nothing was written.`,
-              );
-            }
-          }
-        });
-        return { count: applied.length, applied, message: `Applied ${applied.length} op${applied.length === 1 ? "" : "s"} atomically.` };
-      }),
+      safe(async () => workoutOpsCore(ops)),
   );
 
   server.registerTool(
@@ -3931,7 +3653,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        await prisma.workout.delete({ where: { id } });
+        await deleteWorkoutCore(id);
         return { id, message: "Workout deleted" };
       }),
   );
