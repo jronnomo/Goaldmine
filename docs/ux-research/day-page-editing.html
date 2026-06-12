@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day-page editing forms — chosen direction (#65)</title>
+<style>
+  :root {
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* ---- token sets ---- */
+  .theme-light {
+    --background:#FAF3E3; --foreground:#1F1408; --muted:#7A5E3A;
+    --card:#FFFBF0; --border:#D9C8A2; --accent:#8A6212; --accent-fg:#FFFBF0;
+    --accent-soft:rgba(138,98,18,0.14); --target:#A82A1F; --target-fg:#FFFBF0;
+    --success:#4E6B36; --warning:#A8511A; --danger:#A82A1F;
+  }
+  .theme-dark {
+    --background:#0F0B07; --foreground:#F4E9D4; --muted:#9C8866;
+    --card:#1A130C; --border:#3A2E1F; --accent:#D4A437; --accent-fg:#0F0B07;
+    --accent-soft:rgba(212,164,55,0.12); --target:#C0392B; --target-fg:#FFFFFF;
+    --success:#7FA45C; --warning:#E0915C; --danger:#C0392B;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin:0; font-family:var(--sans); background:#1c1c1e; color:#eee;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---- page chrome ---- */
+  .doc-header {
+    max-width:920px; margin:0 auto; padding:24px 20px 8px;
+  }
+  .doc-header h1 { font-size:18px; margin:0 0 8px; font-weight:600; }
+  .doc-header p { font-size:13px; line-height:1.55; margin:6px 0; color:#c9c9cd; max-width:820px; }
+  .doc-header .flag {
+    display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
+    background:#3a2c0a; color:#ffd97a; border:1px solid #5a4410; margin-right:6px;
+  }
+  .doc-header ul { font-size:13px; line-height:1.6; color:#c9c9cd; padding-left:18px; margin:6px 0; }
+
+  .stage {
+    display:flex; gap:24px; justify-content:center; flex-wrap:wrap;
+    padding:20px; max-width:920px; margin:0 auto;
+  }
+
+  /* ---- phone column ---- */
+  .phone {
+    width:390px; max-width:100%;
+    background:var(--background); color:var(--foreground);
+    border-radius:28px; padding:18px 14px 28px;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);
+  }
+  .phone-label {
+    font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); text-align:center; margin-bottom:12px; font-weight:600;
+  }
+
+  /* ---- shared atoms ---- */
+  .card {
+    border-radius:16px; border:1px solid var(--border); background:var(--card);
+    padding:16px; box-shadow:0 1px 2px rgba(0,0,0,.05); margin-bottom:16px;
+  }
+  .card-title { font-size:16px; font-weight:600; letter-spacing:-.01em; }
+  .subline { font-size:12px; color:var(--muted); }
+  .block-label {
+    font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+  }
+  .cta {
+    display:flex; align-items:center; justify-content:center;
+    background:var(--accent); color:var(--accent-fg); border:none;
+    border-radius:8px; padding:8px 16px; font-weight:500; min-height:44px;
+    font-size:14px; width:100%; cursor:pointer; font-family:inherit;
+  }
+  .input {
+    border-radius:8px; border:1px solid var(--border); background:transparent;
+    color:var(--foreground); padding:8px; min-height:44px; font-size:14px;
+    font-family:inherit; width:100%;
+  }
+  .num { font-variant-numeric:tabular-nums; font-feature-settings:"tnum"; }
+  .ph { color:var(--muted); font-style:italic; }
+  .typed { color:var(--foreground); font-style:normal; }
+  .dashed {
+    display:flex; align-items:center; justify-content:center;
+    border:1px dashed var(--border); color:var(--muted); border-radius:8px;
+    min-height:44px; font-size:13px; background:transparent; width:100%;
+    cursor:pointer; font-family:inherit;
+  }
+  .flat-btn {
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; color:var(--muted);
+    min-height:44px; font-size:14px; width:100%; cursor:pointer; font-family:inherit;
+  }
+  .accent-outline {
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:1px solid var(--accent); color:var(--accent);
+    border-radius:8px; padding:8px 16px; min-height:44px; font-size:14px;
+    font-weight:500; cursor:pointer; font-family:inherit;
+  }
+  .xmark {
+    display:flex; align-items:center; justify-content:center;
+    width:44px; min-height:44px; background:transparent; border:none;
+    color:var(--muted); font-size:15px; cursor:pointer; font-family:inherit;
+  }
+  .xmark:hover { color:var(--danger); }
+
+  /* ---- logger grid ---- */
+  .set-grid {
+    display:grid; grid-template-columns:1.5rem 1fr 1fr 1fr 2.75rem;
+    align-items:center; gap:6px; margin-bottom:6px;
+  }
+  .set-grid .col-head {
+    font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+    padding:0 2px;
+  }
+  .set-grid .idx { font-size:13px; color:var(--muted); text-align:center; }
+  .cell {
+    border-radius:8px; border:1px solid var(--border); background:transparent;
+    min-height:44px; padding:8px; font-size:14px; display:flex; align-items:center;
+    font-variant-numeric:tabular-nums; font-feature-settings:"tnum";
+  }
+  .cell-remove {
+    display:flex; align-items:center; justify-content:center;
+    width:100%; min-height:44px; background:transparent; border:none;
+    color:var(--muted); font-size:14px; cursor:pointer; font-family:inherit;
+  }
+  .cell-remove:hover { color:var(--danger); }
+
+  /* ---- PR strip ---- */
+  .pr-strip {
+    border-radius:16px; border:1px solid var(--target);
+    background:color-mix(in srgb, var(--target) 12%, var(--card));
+    padding:16px; margin-bottom:16px; display:flex; gap:12px; align-items:flex-start;
+  }
+  .pr-strip h3 {
+    margin:0 0 6px; color:var(--target); font-weight:600; font-size:18px;
+    letter-spacing:-.01em;
+  }
+  .pr-line { font-size:13px; color:var(--foreground); line-height:1.5; }
+  .pr-line .was { color:var(--muted); }
+
+  @keyframes bullseye-pop {
+    0%   { transform:scale(.6); opacity:0; }
+    60%  { transform:scale(1.08); opacity:1; }
+    100% { transform:scale(1); }
+  }
+  .pop { animation:bullseye-pop 320ms cubic-bezier(0.16,1,0.3,1) both; }
+  @media (prefers-reduced-motion:reduce) { .pop { animation:none; } }
+
+  /* ---- skip card ---- */
+  .skip-card {
+    border-radius:16px; border:1px solid var(--border); background:var(--card);
+    padding:14px 16px; box-shadow:0 1px 2px rgba(0,0,0,.05); margin-bottom:16px;
+    display:flex; align-items:center; gap:12px;
+  }
+  .skip-card .line { font-size:13px; flex:1; line-height:1.4; }
+  .skip-card .reason { color:var(--muted); }
+
+  /* ---- hike finalize ---- */
+  .hike-band {
+    margin:-16px -16px 14px; padding:14px 16px;
+    border-radius:16px 16px 0 0; background:var(--accent-soft);
+    display:flex; align-items:center; gap:8px;
+  }
+  .hike-band .t { font-size:14px; font-weight:600; letter-spacing:-.01em; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; }
+  .field-label {
+    font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+    margin-bottom:4px; display:block;
+  }
+
+  .row-between { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .mt8 { margin-top:8px; } .mt12 { margin-top:12px; } .mt14 { margin-top:14px; }
+  .stack > * + * { margin-top:10px; }
+</style>
+</head>
+<body>
+
+<div class="doc-header">
+  <h1>Day-page editing forms — chosen direction (#65)</h1>
+  <p>Both palettes shown simultaneously at 390px phone width. All five chosen surfaces are stacked in each column, in render order: resting-day logging doors, expanded WorkoutLoggerForm, post-save New-bests strip, acknowledged-skip card, and the hike finalize variant.</p>
+  <p><strong>What to verify:</strong></p>
+  <ul>
+    <li><strong>Placeholder vs typed contrast</strong> in the logger — prescribed suggestions are <span style="color:#9C8866;font-style:italic">muted-italic</span>, typed values are solid foreground upright. Scrutinize this especially in the DARK column where muted-italic sits on the near-black card; the two states must read as unmistakably different.</li>
+    <li><strong>New-bests strip</strong> — the barn-red "New bests" heading is rendered &ge;600 weight at 18px. <span class="flag">contrast flag</span> target-on-card in DARK is ~3.6:1, so the heading passes only as <em>large text</em> AA — it must stay large + bold; do not shrink it.</li>
+    <li><strong>Skip card</strong> should read calm and informational (hollow muted bullseye, neutral copy), never alarming.</li>
+  </ul>
+</div>
+
+<div class="stage" id="stage">
+
+  <!-- ============ LIGHT ============ -->
+  <div class="phone theme-light">
+    <div class="phone-label">Light</div>
+
+    <!-- 1. Resting / missed day — three quiet doors -->
+    <section class="card">
+      <div class="block-label" style="margin-bottom:10px;">TUE · JUN 3 · <span style="text-transform:none;letter-spacing:0;font-size:12px;">missed</span></div>
+      <div class="stack">
+        <button class="cta">Log workout</button>
+        <button class="flat-btn">Skip · mark rest</button>
+        <button class="dashed">+ Log hike</button>
+      </div>
+    </section>
+
+    <!-- 2. Expanded WorkoutLoggerForm -->
+    <section class="card">
+      <div class="row-between" style="margin-bottom:12px;">
+        <span class="card-title">Tue Jun 3 · logging</span>
+        <button class="xmark" aria-label="Close">✕</button>
+      </div>
+
+      <label class="field-label">TIME</label>
+      <input class="input num" type="text" value="12:00" style="margin-bottom:14px;">
+
+      <div class="block-label" style="margin-bottom:8px;">UPPER · PUSH</div>
+
+      <!-- exercise 1 -->
+      <div style="font-size:14px;font-weight:500;margin-bottom:6px;">Incline DB press</div>
+      <div class="set-grid">
+        <div class="col-head" style="text-align:center;">#</div>
+        <div class="col-head">REPS</div>
+        <div class="col-head">WEIGHT</div>
+        <div class="col-head">SEC</div>
+        <div></div>
+      </div>
+      <div class="set-grid">
+        <div class="idx">1</div>
+        <div class="cell ph">8-12</div>
+        <div class="cell ph">30-50</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <div class="set-grid">
+        <div class="idx">2</div>
+        <div class="cell ph">8-12</div>
+        <div class="cell ph">30-50</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <div class="set-grid">
+        <div class="idx">3</div>
+        <div class="cell typed">8</div>
+        <div class="cell typed">35</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <button class="dashed" style="margin-bottom:16px;">+ Add set</button>
+
+      <!-- exercise 2 -->
+      <div style="font-size:14px;font-weight:500;margin-bottom:6px;">Pull-ups</div>
+      <div class="set-grid">
+        <div class="col-head" style="text-align:center;">#</div>
+        <div class="col-head">REPS</div>
+        <div class="col-head">WEIGHT</div>
+        <div class="col-head">SEC</div>
+        <div></div>
+      </div>
+      <div class="set-grid">
+        <div class="idx">1</div>
+        <div class="cell ph">max</div>
+        <div class="cell ph">—</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <button class="dashed" style="margin-bottom:12px;">+ Add set</button>
+
+      <button class="dashed" style="margin-bottom:16px;">+ Add exercise</button>
+      <button class="cta">Save workout</button>
+    </section>
+
+    <!-- 3. New bests PR strip -->
+    <section class="pr-strip">
+      <svg class="pop" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" style="flex:none;">
+        <circle cx="16" cy="16" r="15" fill="var(--target)"/>
+        <circle cx="16" cy="16" r="11" fill="var(--target-fg)"/>
+        <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+        <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+      </svg>
+      <div>
+        <h3>New bests</h3>
+        <div class="pr-line num">New 1RM · 135 lb<span class="was"> — was 125</span></div>
+        <div class="pr-line num">New rep best · 12 × 35 lb<span class="was"> — was 10</span></div>
+      </div>
+    </section>
+
+    <!-- 4. Acknowledged skip card -->
+    <section class="skip-card">
+      <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" style="flex:none;">
+        <circle cx="16" cy="16" r="14" stroke="var(--muted)" stroke-width="2" fill="none"/>
+      </svg>
+      <div class="line">Rest day <span class="reason">· knee felt off</span></div>
+      <button class="accent-outline" style="width:auto;">Undo skip</button>
+    </section>
+
+    <!-- 5. Hike finalize variant -->
+    <section class="card">
+      <div class="hike-band">
+        <span aria-hidden="true">🏔️</span>
+        <span class="t">Finalize planned hike: Mt. Elbert approach</span>
+      </div>
+      <div class="grid2">
+        <div>
+          <label class="field-label">DISTANCE mi</label>
+          <input class="input num ph" type="text" value="5.5">
+        </div>
+        <div>
+          <label class="field-label">GAIN ft</label>
+          <input class="input num ph" type="text" value="1800">
+        </div>
+        <div>
+          <label class="field-label">DURATION</label>
+          <input class="input num ph" type="text" value="2:30">
+        </div>
+        <div>
+          <label class="field-label">DATE</label>
+          <input class="input num ph" type="text" value="Jun 3">
+        </div>
+      </div>
+      <label class="field-label">ROUTE</label>
+      <input class="input ph" type="text" value="Black Cloud Trailhead loop" style="margin-bottom:10px;">
+      <label class="field-label">NOTES</label>
+      <input class="input ph" type="text" value="Approach / acclimatization day" style="margin-bottom:14px;">
+      <button class="cta">Finalize hike</button>
+    </section>
+  </div>
+
+  <!-- ============ DARK ============ -->
+  <div class="phone theme-dark">
+    <div class="phone-label">Dark</div>
+
+    <!-- 1. Resting / missed day — three quiet doors -->
+    <section class="card">
+      <div class="block-label" style="margin-bottom:10px;">TUE · JUN 3 · <span style="text-transform:none;letter-spacing:0;font-size:12px;">missed</span></div>
+      <div class="stack">
+        <button class="cta">Log workout</button>
+        <button class="flat-btn">Skip · mark rest</button>
+        <button class="dashed">+ Log hike</button>
+      </div>
+    </section>
+
+    <!-- 2. Expanded WorkoutLoggerForm -->
+    <section class="card">
+      <div class="row-between" style="margin-bottom:12px;">
+        <span class="card-title">Tue Jun 3 · logging</span>
+        <button class="xmark" aria-label="Close">✕</button>
+      </div>
+
+      <label class="field-label">TIME</label>
+      <input class="input num" type="text" value="12:00" style="margin-bottom:14px;">
+
+      <div class="block-label" style="margin-bottom:8px;">UPPER · PUSH</div>
+
+      <div style="font-size:14px;font-weight:500;margin-bottom:6px;">Incline DB press</div>
+      <div class="set-grid">
+        <div class="col-head" style="text-align:center;">#</div>
+        <div class="col-head">REPS</div>
+        <div class="col-head">WEIGHT</div>
+        <div class="col-head">SEC</div>
+        <div></div>
+      </div>
+      <div class="set-grid">
+        <div class="idx">1</div>
+        <div class="cell ph">8-12</div>
+        <div class="cell ph">30-50</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <div class="set-grid">
+        <div class="idx">2</div>
+        <div class="cell ph">8-12</div>
+        <div class="cell ph">30-50</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <div class="set-grid">
+        <div class="idx">3</div>
+        <div class="cell typed">8</div>
+        <div class="cell typed">35</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <button class="dashed" style="margin-bottom:16px;">+ Add set</button>
+
+      <div style="font-size:14px;font-weight:500;margin-bottom:6px;">Pull-ups</div>
+      <div class="set-grid">
+        <div class="col-head" style="text-align:center;">#</div>
+        <div class="col-head">REPS</div>
+        <div class="col-head">WEIGHT</div>
+        <div class="col-head">SEC</div>
+        <div></div>
+      </div>
+      <div class="set-grid">
+        <div class="idx">1</div>
+        <div class="cell ph">max</div>
+        <div class="cell ph">—</div>
+        <div class="cell ph">—</div>
+        <button class="cell-remove" aria-label="Remove set">✕</button>
+      </div>
+      <button class="dashed" style="margin-bottom:12px;">+ Add set</button>
+
+      <button class="dashed" style="margin-bottom:16px;">+ Add exercise</button>
+      <button class="cta">Save workout</button>
+    </section>
+
+    <!-- 3. New bests PR strip -->
+    <section class="pr-strip">
+      <svg class="pop" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" style="flex:none;">
+        <circle cx="16" cy="16" r="15" fill="var(--target)"/>
+        <circle cx="16" cy="16" r="11" fill="var(--target-fg)"/>
+        <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+        <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+      </svg>
+      <div>
+        <h3>New bests</h3>
+        <div class="pr-line num">New 1RM · 135 lb<span class="was"> — was 125</span></div>
+        <div class="pr-line num">New rep best · 12 × 35 lb<span class="was"> — was 10</span></div>
+      </div>
+    </section>
+
+    <!-- 4. Acknowledged skip card -->
+    <section class="skip-card">
+      <svg width="16" height="16" viewBox="0 0 32 32" aria-hidden="true" style="flex:none;">
+        <circle cx="16" cy="16" r="14" stroke="var(--muted)" stroke-width="2" fill="none"/>
+      </svg>
+      <div class="line">Rest day <span class="reason">· knee felt off</span></div>
+      <button class="accent-outline" style="width:auto;">Undo skip</button>
+    </section>
+
+    <!-- 5. Hike finalize variant -->
+    <section class="card">
+      <div class="hike-band">
+        <span aria-hidden="true">🏔️</span>
+        <span class="t">Finalize planned hike: Mt. Elbert approach</span>
+      </div>
+      <div class="grid2">
+        <div>
+          <label class="field-label">DISTANCE mi</label>
+          <input class="input num ph" type="text" value="5.5">
+        </div>
+        <div>
+          <label class="field-label">GAIN ft</label>
+          <input class="input num ph" type="text" value="1800">
+        </div>
+        <div>
+          <label class="field-label">DURATION</label>
+          <input class="input num ph" type="text" value="2:30">
+        </div>
+        <div>
+          <label class="field-label">DATE</label>
+          <input class="input num ph" type="text" value="Jun 3">
+        </div>
+      </div>
+      <label class="field-label">ROUTE</label>
+      <input class="input ph" type="text" value="Black Cloud Trailhead loop" style="margin-bottom:10px;">
+      <label class="field-label">NOTES</label>
+      <input class="input ph" type="text" value="Approach / acclimatization day" style="margin-bottom:14px;">
+      <button class="cta">Finalize hike</button>
+    </section>
+  </div>
+
+</div>
+</body>
+</html>

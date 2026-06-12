@@ -1,0 +1,6 @@
+# Completion report — Day-page editing (#65)
+All REQ-65-1..4 DONE, 1 iteration. Commits: 9d57d16 calendar+status audit · 35d42c3 cores+MCP thinning (byte-identical, before/after curl proof in agents/mcp-before|after) · f413680 day-page logging · f0e4c71 workout editor.
+Gates: tsc 0 / lint clean / build OK. Verification: MCP log_workout via core fires recordsSet (PR test, cleaned); skip round-trip clean (recordsSet 0, idempotent delete); dead-end card gone, three-doors render (skip door correctly guarded on rest/completed days); MCP surface byte-identical ⇒ NO connector reload.
+DA: 0 critical / 4 high (H1 pre-landed, H2/H3 in REQ-65-2, H4 by diff evidence) / 6 medium (all routed + confirmed). UXR: "three quiet doors + confirmation table" + RecordStrip "New bests"; 33-row ledger ticked (UXR-65-11 dropped per sign-off; ⚠ rows shipped* pending device pass).
+Process: QA agent replaced by DA + per-agent gates + orchestrator live battery (consistent w/ #63/#64 runs).
+Follow-ups: device pass (⚠ ledger rows — placeholder contrast dark, set-row height, RecordStrip target-on-card contrast, three-doors height); latent baseline-workout status guard (noted, not a bug today); Strong-import path could surface recordsSet later.
