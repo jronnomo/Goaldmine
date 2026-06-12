@@ -191,7 +191,7 @@ export async function getGoalEventsResult(
       isFocusGoal: goal.isFocus,
       dateKey: dateKey(item.date),
       type: "scheduled-item",
-      icon: "📅",
+      icon: "◆",
       label: item.title,
       detail: item.detail ?? undefined,
     });

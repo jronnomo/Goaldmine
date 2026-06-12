@@ -64,6 +64,9 @@ export type CalendarDayCell = {
   confidence: "past" | "confirmed" | "provisional" | null;
   /** Non-focus active goals' events for this date. Empty when none exist. */
   otherGoalEvents: GoalEvent[];
+  /** Count of scheduled items on this date for the focus project goal.
+   *  Always 0 for fitness / null focus goals — ScheduledItem query is gated. */
+  scheduledItemCount: number;
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -105,7 +108,22 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  const [workouts, hikes, overrides, goal, goalEventsResult] = await Promise.all([
+  // Phase 1: fetch focus goal so we can gate the ScheduledItem query in Phase 2.
+  // [v2] MED-1: this adds one sequential step for all calendar paths. The goal fetch is
+  // a single indexed query and is fast. The alternative (single Promise.all) cannot gate
+  // the ScheduledItem query on goal.kind because goal.kind hasn't resolved yet. Accepted
+  // trade-off — #38's AC text does not forbid it; latency impact is sub-millisecond.
+  const goal = await prisma.goal.findFirst({
+    where: { isFocus: true },
+    // Deterministically picks the most-recently-updated if multiple are
+    // stuck isFocus=true (bad state).
+    orderBy: { updatedAt: "desc" },
+    // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
+    select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
+  });
+
+  // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
+  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal] = await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
       select: { id: true, startedAt: true, status: true, title: true },
@@ -121,16 +139,20 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
           where: { planId: program.id, date: { gte: gridStart, lte: gridEnd } },
         })
       : Promise.resolve([] as never[]),
-    prisma.goal.findFirst({
-      where: { isFocus: true },
-      // Deterministically picks the most-recently-updated if multiple are
-      // stuck isFocus=true (bad state).
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, targetDate: true, objective: true, legend: true },
-    }),
-    // REQ-104: cross-goal events for the full grid (3 queries).
-    // +3 query budget for getCalendarMonth (getGoalEventsResult internals).
+    // REQ-104: cross-goal events for the full grid (3 queries — unchanged).
     getGoalEventsResult({ start: gridStart, end: gridEnd }),
+    // REQ-004: ScheduledItem markers — project path only; zero queries for fitness/null.
+    goal?.kind === "project"
+      ? prisma.scheduledItem.findMany({
+          where: {
+            goalId: goal.id,
+            date: { gte: gridStart, lte: gridEnd },
+            status: { in: ["planned", "done"] },
+          },
+          select: { id: true, date: true },
+          orderBy: { date: "asc" },
+        })
+      : Promise.resolve([] as { id: string; date: Date }[]),
   ]);
 
   // Bucket workouts by date key.
@@ -156,6 +178,13 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
 
   const overridesByKey = new Map<string, (typeof overrides)[number]>();
   for (const o of overrides) overridesByKey.set(dateKey(o.date), o);
+
+  // REQ-004: bucket ScheduledItem counts by dateKey for O(1) cell lookup.
+  const scheduledsByKey = new Map<string, number>();
+  for (const si of scheduledItemsForCal) {
+    const k = dateKey(si.date);
+    scheduledsByKey.set(k, (scheduledsByKey.get(k) ?? 0) + 1);
+  }
 
   // Group planned hikes by rotation weekIndex for per-cell conflict computation.
   // Out-of-plan hikes (delta < 0 or >= totalWeeks*7) are excluded — they can't
@@ -227,6 +256,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
         focusGoalId,
       ),
       crossGoalConflictForDate: crossGoalConflictsByKey.get(cursorKey) ?? null,
+      scheduledsByKey, // REQ-004: new
     });
     cells.push(cell);
   }
@@ -281,6 +311,8 @@ function buildCell(args: {
   otherGoalEventsForDate: GoalEvent[];
   /** REQ-104: cross-goal conflict for this date, if any (pre-computed by caller). */
   crossGoalConflictForDate: CrossGoalConflict | null;
+  /** REQ-004: pre-bucketed ScheduledItem count map (dateKey → count). */
+  scheduledsByKey: Map<string, number>;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -413,6 +445,7 @@ function buildCell(args: {
     conflict: resolvedConflict,
     confidence,
     otherGoalEvents: args.otherGoalEventsForDate,
+    scheduledItemCount: args.scheduledsByKey.get(k) ?? 0, // REQ-004: new — always 0 for fitness
   };
 }
 

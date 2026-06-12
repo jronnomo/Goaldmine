@@ -24,6 +24,22 @@ export function MarkerIcon({
     // Bullseye needs size >= 14 to render its red center ring.
     return <Bullseye filled size={Math.max(size, 14)} aria-hidden />;
   }
+  // REQ-003 / UXR-s4-04: ScheduledItem marker = ◆ in var(--accent) gold.
+  // Icon is hardcoded here (not from entry.icon) so it renders in accent color
+  // even if a stored legend uses a different icon string.
+  if (entry.kind === "scheduled-item") {
+    return (
+      <span
+        aria-hidden
+        title={entry.label}
+        data-testid="cal-marker-scheduled-item"
+        className="leading-none"
+        style={{ fontSize: size, color: "var(--accent)" }}
+      >
+        ◆
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden
