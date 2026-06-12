@@ -1,0 +1,26 @@
+{
+  "feature": "Epic B — Project MCP Tool Pack (chewabl Sprint 2)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-epic-b-project-tools.md",
+  "prd_issue": null,
+  "roadmap_issues": [24, 25, 26, 27, 28, 29],
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"],
+  "agents": [
+    { "role": "research", "id": "acc73ae9c0be36f36" },
+    { "role": "architect", "id": "a512e909e79249dd8" },
+    { "role": "devils-advocate", "id": "a9487c6018e9a2ae0", "verdict": "NEEDS REVISION" },
+    { "role": "architect-v2", "id": "a2e3c77b848b30b1a" },
+    { "role": "dev-a", "id": "a7928b4fc559eb501", "reqs": ["REQ-001", "REQ-002", "REQ-003", "REQ-004"], "commit": "353a499" },
+    { "role": "dev-b", "id": "a22454ed18e87808d", "reqs": ["REQ-005"], "commit": "db4997f" },
+    { "role": "qa", "id": "adf81f4bd0e76be59", "verdict": "SHIP IT" }
+  ],
+  "iteration": 1,
+  "status": "complete",
+  "smoke": "29/29 assertions pass; DB restored; tool surface 75->82",
+  "decisions": {
+    "scope": "Epic B only",
+    "ceremony": "main + close issues + board Done",
+    "test_goal": "create -> smoke -> delete",
+    "ux_research": "skipped — backend-only"
+  }
+}
