@@ -3,6 +3,7 @@
 
 import { prisma } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
+import { checkpointWindows } from "@/lib/records";
 import type { BaselineDay, BaselineTest, DayTemplate } from "@/lib/program-template";
 import { type NutritionPlan, parseStoredNutritionPlan } from "@/lib/nutrition-plan";
 import {
@@ -724,24 +725,14 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     }
 
     if (testsForDay.length > 0) {
-      const testNames = testsForDay.map((x) => x.test.testName);
-      const logged = await prisma.baseline.findMany({
-        where: {
-          testName: { in: testNames },
-          date: { gte: dayStart, lte: dayEnd },
-        },
-        orderBy: { date: "desc" },
-      });
-      const loggedByName = new Map<string, (typeof logged)[number]>();
-      for (const b of logged) {
-        if (!loggedByName.has(b.testName)) loggedByName.set(b.testName, b);
-      }
-
-      for (const { test, baselineDay } of testsForDay) {
-        const result = loggedByName.get(test.testName);
-        const loggedOnDate = result
-          ? { id: result.id, value: result.value, units: result.units, date: result.date }
-          : null;
+      // Match logged results within each test's checkpoint credit window
+      // (shared with get_baseline_schedule via checkpointWindows), not just on
+      // this exact date — an early, off-schedule retest still counts (the Wk-7
+      // lower battery logged three days ahead read as undone on its scheduled
+      // day). The day itself is always included too, so an override that
+      // parks a test outside any window still sees a same-day log.
+      const dayEndExcl = new Date(dayEnd.getTime() + 1);
+      const matchTargets = testsForDay.map(({ test, baselineDay }) => {
         // Rotation default: the test's initialWeek (default 1) surfaces the
         // initial, retestWeeks beyond it trigger retests, all else is silent.
         // With an override, the user has explicitly placed these tests on this
@@ -750,6 +741,38 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         const initialWeek = test.initialWeek ?? 1;
         const checkpoint: "initial" | "retest" =
           weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+        const windows = checkpointWindows(test, program.startedOn);
+        const cp =
+          checkpoint === "retest"
+            ? windows.find((w) => w.label === "retest" && w.week === weekIndex)
+            : windows[0];
+        const from =
+          cp && startOfDay(cp.windowStart) < dayStart ? startOfDay(cp.windowStart) : dayStart;
+        const to = cp && cp.windowEnd > dayEndExcl ? cp.windowEnd : dayEndExcl;
+        return { test, baselineDay, checkpoint, initialWeek, from, to };
+      });
+
+      const logged = await prisma.baseline.findMany({
+        where: {
+          OR: matchTargets.map((m) => ({
+            testName: m.test.testName,
+            date: { gte: m.from, lt: m.to },
+          })),
+        },
+        orderBy: { date: "asc" },
+      });
+
+      for (const { test, baselineDay, checkpoint, initialWeek, from, to } of matchTargets) {
+        // Earliest result within this test's window (rows are date-asc) — same
+        // pick as the schedule view's statusFor, so a past initial day keeps
+        // showing its own week-1 result rather than a later retest that also
+        // lands in the overlapping window.
+        const result = logged.find(
+          (b) => b.testName === test.testName && b.date >= from && b.date < to,
+        );
+        const loggedOnDate = result
+          ? { id: result.id, value: result.value, units: result.units, date: result.date }
+          : null;
         if (overrideNames !== null) {
           baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
         } else if (weekIndex === initialWeek) {

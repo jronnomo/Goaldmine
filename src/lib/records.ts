@@ -259,32 +259,12 @@ export async function getBaselineScheduleForPlan(
   const scheduled: ScheduledBaseline[] = flat.map(({ day, test }) => {
     const rows = byName.get(test.testName) ?? [];
 
-    // Initial checkpoint = end of the test's first-collection week (week 1
-    // unless initialWeek says otherwise); retests follow. retestWeeks at or
-    // before the initial week are dropped — they can't be retests of it.
-    const initialWeek = test.initialWeek ?? 1;
-    const targets: { week: number; targetDate: Date; label: "initial" | "retest" }[] = [
-      { week: initialWeek, targetDate: addDays(startedOn, initialWeek * 7), label: "initial" },
-      ...test.retestWeeks
-        .filter((w) => w > initialWeek)
-        .map((w) => ({
-          week: w,
-          targetDate: addDays(startedOn, w * 7),
-          label: "retest" as const,
-        })),
-    ];
-
-    // Each checkpoint owns the window [prev target or program start, next target or +28d).
-    // Results logged anywhere in the window — including before the target — count it as done.
-    const checkpoints: ScheduledCheckpoint[] = targets.map((t, i) => {
-      const windowStart = i === 0 ? startedOn : targets[i - 1].targetDate;
-      const windowEnd =
-        i < targets.length - 1 ? targets[i + 1].targetDate : addDays(t.targetDate, 28);
-      return {
-        ...t,
-        ...statusFor(t.targetDate, rows, now, windowStart, windowEnd),
-      };
-    });
+    const checkpoints: ScheduledCheckpoint[] = checkpointWindows(test, startedOn).map((t) => ({
+      week: t.week,
+      targetDate: t.targetDate,
+      label: t.label,
+      ...statusFor(t.targetDate, rows, now, t.windowStart, t.windowEnd),
+    }));
 
     // Honest labels: a retest needs a prior result to retest against. Walk the
     // chain in order. A not-done retest is unanchored only when no earlier
@@ -369,6 +349,48 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
 // USER_TZ-aware end-of-day shifted by n days.
 function addDays(d: Date, n: number): Date {
   return endOfDay(addDaysCal(d, n));
+}
+
+/**
+ * Checkpoint targets + credit windows for one baseline test.
+ *
+ * Initial checkpoint = end of the test's first-collection week (week 1 unless
+ * initialWeek says otherwise); retests follow. retestWeeks at or before the
+ * initial week are dropped — they can't be retests of it.
+ *
+ * Each checkpoint owns the window [prev target or program start, next target
+ * or +28d). Results logged anywhere in the window — including before the
+ * target — count it as done. Shared by the schedule view
+ * (getBaselineScheduleForPlan) and the day view (resolveDay) so an early,
+ * off-schedule retest credits the checkpoint everywhere, not just in
+ * get_baseline_schedule.
+ */
+export function checkpointWindows(
+  test: Pick<BaselineTest, "initialWeek" | "retestWeeks">,
+  startedOn: Date,
+): Array<{
+  week: number;
+  targetDate: Date;
+  label: "initial" | "retest";
+  windowStart: Date;
+  windowEnd: Date;
+}> {
+  const initialWeek = test.initialWeek ?? 1;
+  const targets: { week: number; targetDate: Date; label: "initial" | "retest" }[] = [
+    { week: initialWeek, targetDate: addDays(startedOn, initialWeek * 7), label: "initial" },
+    ...(test.retestWeeks ?? [])
+      .filter((w) => w > initialWeek)
+      .map((w) => ({
+        week: w,
+        targetDate: addDays(startedOn, w * 7),
+        label: "retest" as const,
+      })),
+  ];
+  return targets.map((t, i) => ({
+    ...t,
+    windowStart: i === 0 ? startedOn : targets[i - 1].targetDate,
+    windowEnd: i < targets.length - 1 ? targets[i + 1].targetDate : addDays(t.targetDate, 28),
+  }));
 }
 
 function statusFor(
