@@ -1,0 +1,18 @@
+{
+  "feature": "Sprint 4 — Goal-Type-Aware Project UI (chewabl)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-sprint-4-project-ui.md",
+  "prd_issue": null,
+  "roadmap_issues": [35, 36, 37, 38, 39, 40, 58],
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006", "REQ-007"],
+  "ux_research": { "status": "running", "agent": "a964e4dd6ad55d2a5", "report": "docs/ux-research/sprint-4-project-ui.md", "ledger": "UXR-s4-NN table in report" },
+  "agents": [],
+  "iteration": 1,
+  "status": "planning",
+  "decisions": {
+    "scope": "full Sprint 4",
+    "semantics": "focus goal (isFocus) — issue 'active:true' wording translated",
+    "ux_research": "invoked",
+    "legend_fallback": "PROJECT_DEFAULT_LEGEND for project goals with null legend"
+  }
+}
