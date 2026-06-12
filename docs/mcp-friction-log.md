@@ -129,6 +129,15 @@ Verification afterward surfaced two follow-up nits (ordering put nulls first, `l
 
 ---
 
+### #12 — Day view showed an early-logged retest battery as still due
+**Reported:** 2026-06-12 (relayed by the user from a coaching session). Severity: Medium (retest checkpoint misreported as undone; coach worked around it with an override that hid, not satisfied, the checkpoint).
+
+> when I first opened Monday, it was showing the Wk-7 lower strength retest battery (Bulgarian/RDL/Lunge/Farmer) as still due — even though you smashed all four on 6/10. Your early, off-schedule logging didn't register against the week-7 retest checkpoint. […] same root cause as the deep-squat-not-counting bug you just fixed, just on the retest side rather than readiness. […] Worth the same kind of "match logs within a window, not just on the exact scheduled day" fix.
+
+**Shipped:** commit `4466d50`. Root cause: `resolveDay` (behind Today, the calendar, `get_today_plan`, `get_day`) matched `Baseline` rows only on the exact resolved day (`gte: dayStart, lte: dayEnd`), while `get_baseline_schedule` already credited results anywhere in the checkpoint's window — the two surfaces disagreed about what "done" means. Fix: extracted the window math into `checkpointWindows()` in `records.ts` ([prev target or program start, next target or +28d) per checkpoint) and made `resolveDay` match each due test against its checkpoint's window, unioned with the resolved day itself so an override that parks a test outside any window still sees a same-day log. Sibling of #11: readiness and the schedule view already credited off-schedule results; the day view was the last surface still doing exact-date matching. Verified live: wk-7 upper battery (6/16) and 1.5-mile run (6/19) now read done from the 6/8–6/9 logs, the un-logged row retest stays due, and week-1 history still shows its original results.
+
+---
+
 ## Out of scope
 
 Friction that's real but can't be fixed inside this codebase. Recorded so the next reporter doesn't repeat the investigation and so the closest available mitigation is documented.

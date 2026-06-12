@@ -46,6 +46,8 @@ No calorie/protein fields — estimate from item names + qty, compare against th
 ### 10. Readiness credits off-schedule PRs immediately — call `compute_readiness` to see it
 Readiness resolves each baseline/measurement target to the **latest value as of end-of-(user-tz)-day**, and an `increase` target reads as met once `current ≥ target` (`decrease` once `≤`). So an off-schedule PR counts toward readiness right away — you do **not** wait for the formal week-N retest checkpoint (that's only for the baseline *schedule* display). Use `compute_readiness` (omit `goalId` → active goal) to see the overall score + per-target breakdown (current/start/progress) + `missing` targets; it's the read tool to reach for when "did my PR move the needle?" comes up. (A June 2026 bug excluded same-day evening-stamped results via an exact-timestamp compare — fixed by the end-of-day cutoff.)
 
+Retest checkpoints credit early results the same way: a baseline logged anywhere in the checkpoint's window — [previous checkpoint target, next target or +28d), including *before* the target date — reads as done in `get_baseline_schedule` **and** (since June 2026, friction log #12) on the scheduled day itself in Today / `get_day` / `get_today_plan`. Before that fix the day view matched logs only on the exact scheduled date, so an early, off-schedule retest battery showed as still due; no override is needed to "hide" a checkpoint that's already been satisfied early.
+
 ---
 
 ## B. Architecture & maintenance gotchas (dev)
