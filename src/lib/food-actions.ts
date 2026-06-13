@@ -12,6 +12,7 @@ import {
 import { searchUsdaFood, searchUsdaByBarcode } from "@/lib/usda";
 import type { NormalizedUsdaBrandedFood } from "@/lib/usda";
 import type { BarcodeLookupResult, LibraryFood, FoodMacros } from "@/lib/food-types";
+import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { OffProduct } from "@/lib/openfoodfacts";
 
 // ── lookupBarcode ─────────────────────────────────────────────────────────────
@@ -655,6 +656,136 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
       message: err instanceof Error ? err.message : "Unknown error in estimateFood",
     };
   }
+}
+
+// ── estimateMealMacros ─────────────────────────────────────────────────────────
+
+/** Per-item resolution result for the meal-macro preview. */
+export type MealItemMacroResult = {
+  name: string;
+  matched: boolean;
+  macros: FoodMacros | null;
+};
+
+/** Aggregate result of estimateMealMacros. */
+export type MealMacroEstimate = {
+  perItem: MealItemMacroResult[];
+  totals: FoodMacros;
+  unmatchedCount: number;
+};
+
+/**
+ * Estimate total macros for a meal's items, READ-ONLY (no DB writes, no
+ * revalidate, no redirect). Feeds the meal edit UI's "Recompute from items"
+ * preview; persistence happens later via updateNutrition on Save.
+ *
+ * Each item's query is built from "qty + name" (e.g. "8 oz 97% beef") and
+ * resolved against the personal FoodLibrary (name match) and the builtin
+ * reference table ONLY — deliberately NO USDA network call, for speed and so the
+ * preview is honest about what it can resolve locally. Unmatched items
+ * contribute nothing and are flagged matched:false (never zeroed or invented).
+ *
+ * Totals are null per-macro when no matched item contributed that field;
+ * otherwise the house-rounded sum (cal/sodium → int, protein/carbs/fat/fiber →
+ * 1 dp), applied via scaleMacros(sum, 1).
+ *
+ * TODO: this shares estimateFood's library/builtin resolution logic (sans the
+ * USDA branch and writes) inline below. A future refactor could extract a single
+ * library-only resolver shared by both.
+ */
+export async function estimateMealMacros(
+  items: NutritionItem[],
+): Promise<MealMacroEstimate> {
+  const perItem: MealItemMacroResult[] = [];
+
+  for (const item of items) {
+    const query = [item.qty, item.name].filter(Boolean).join(" ").trim();
+    const macros = query ? await resolveItemMacrosLocal(query) : null;
+    perItem.push({ name: item.name, matched: macros != null, macros });
+  }
+
+  // Sum matched macros; track which fields any item contributed.
+  const sum: FoodMacros = {
+    calories: null,
+    proteinG: null,
+    carbsG: null,
+    fatG: null,
+    fiberG: null,
+    sodiumMg: null,
+  };
+  for (const key of MACRO_KEYS_LOCAL) {
+    let any = false;
+    let acc = 0;
+    for (const r of perItem) {
+      const v = r.macros?.[key];
+      if (v != null) {
+        any = true;
+        acc += v;
+      }
+    }
+    sum[key] = any ? acc : null;
+  }
+
+  // Apply house rounding to the summed totals (servings = 1).
+  const totals = scaleMacros(sum, 1);
+  const unmatchedCount = perItem.filter((r) => !r.matched).length;
+  return { perItem, totals, unmatchedCount };
+}
+
+const MACRO_KEYS_LOCAL = [
+  "calories",
+  "proteinG",
+  "carbsG",
+  "fatG",
+  "fiberG",
+  "sodiumMg",
+] as const;
+
+/**
+ * Resolve total macros for a single natural-language food query using the
+ * personal library (name match) then the builtin table — NO USDA, NO writes.
+ * Returns null when neither source matches. Mirrors estimateFood's A/B branches
+ * but is purely read-only.
+ */
+async function resolveItemMacrosLocal(query: string): Promise<FoodMacros | null> {
+  const parsed = parseFoodQuery(query.trim());
+  const { count, sizeWord, grams: explicitGrams, rest } = parsed;
+
+  // A. Personal library (exact case-insensitive name match) — read only.
+  const libRow = await prisma.foodLibrary.findFirst({
+    where: { name: { equals: rest, mode: "insensitive" } },
+  });
+
+  if (libRow) {
+    const food = toLibraryFood(libRow);
+    if (food.basis === "100g") {
+      let resolvedGrams: number;
+      if (libRow.barcode?.startsWith("builtin:")) {
+        const slug = libRow.barcode.slice(8);
+        const builtin = BUILTINS.find((b) => b.slug === slug);
+        resolvedGrams = builtin
+          ? resolveBuiltinGrams(builtin, sizeWord, explicitGrams).grams
+          : explicitGrams ?? extractGramsFromLabel(food.servingSize) ?? 100;
+      } else {
+        resolvedGrams = explicitGrams ?? extractGramsFromLabel(food.servingSize) ?? 100;
+      }
+      const servings = (count * resolvedGrams) / 100;
+      return scaleMacros(food.perServing, servings);
+    }
+    // basis="serving" — labelled serving × count.
+    return scaleMacros(food.perServing, count);
+  }
+
+  // B. Builtin reference table.
+  const builtin = findBuiltin(rest);
+  if (builtin) {
+    const { grams: resolvedGrams } = resolveBuiltinGrams(builtin, sizeWord, explicitGrams);
+    const servings = (count * resolvedGrams) / 100;
+    return scaleMacros(builtin.per100g, servings);
+  }
+
+  // No local match — caller flags matched:false (never zero/invent).
+  return null;
 }
 
 // ── estimateFood helpers (module-private) ─────────────────────────────────────

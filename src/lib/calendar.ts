@@ -1305,3 +1305,42 @@ export function addDays(d: Date, days: number): Date {
     shifted.getUTCDate(),
   );
 }
+
+// Shift a Date by a wall-clock delta in USER_TZ, preserving the local clock.
+// Unlike raw millisecond arithmetic, this reads the user-TZ wall-clock parts of
+// `d`, applies the deltas to those parts, and converts back through
+// userTzWallClockToUTC — so { days: -1 } keeps the same local time across a DST
+// boundary, and { hours: -2 } subtracts exactly two wall-clock hours. Date.UTC
+// normalizes out-of-range parts (e.g. negative minutes roll into the prior hour).
+export function shiftWallClock(
+  d: Date,
+  delta: { days?: number; hours?: number; minutes?: number },
+): Date {
+  const { year, month, day, hour, minute, second } = userParts(d);
+  const shifted = new Date(
+    Date.UTC(
+      year,
+      month - 1,
+      day + (delta.days ?? 0),
+      hour + (delta.hours ?? 0),
+      minute + (delta.minutes ?? 0),
+      second,
+    ),
+  );
+  return userTzWallClockToUTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth() + 1,
+    shifted.getUTCDate(),
+    shifted.getUTCHours(),
+    shifted.getUTCMinutes(),
+    shifted.getUTCSeconds(),
+  );
+}
+
+// Format a Date as a USER_TZ wall-clock "YYYY-MM-DDTHH:MM" string for an
+// <input type="datetime-local"> value. Uses USER_TZ parts, never raw getters.
+export function toDatetimeLocalValue(d: Date): string {
+  const { year, month, day, hour, minute } = userParts(d);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}`;
+}

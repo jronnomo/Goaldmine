@@ -4,6 +4,7 @@ import { Card } from "@/components/Card";
 import { EditNutritionForm } from "@/components/EditNutritionForm";
 import { prisma } from "@/lib/db";
 import { getQuickPickFoods } from "@/lib/food-actions";
+import { toDatetimeLocalValue } from "@/lib/calendar";
 
 export const dynamic = "force-dynamic";
 
@@ -30,12 +31,6 @@ function itemsToText(items: Item[]): string {
       return parts.join(" | ");
     })
     .join("\n");
-}
-
-function localDatetime(d: Date): string {
-  // Format as YYYY-MM-DDTHH:MM in local time for <input type="datetime-local">.
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export default async function EditNutritionPage({
@@ -70,7 +65,7 @@ export default async function EditNutritionPage({
             mealType: row.mealType,
             itemsText: itemsToText(asItems(row.items)),
             notes: row.notes ?? "",
-            date: localDatetime(new Date(row.date)),
+            date: toDatetimeLocalValue(new Date(row.date)),
             macros: {
               calories: row.calories,
               proteinG: row.proteinG,

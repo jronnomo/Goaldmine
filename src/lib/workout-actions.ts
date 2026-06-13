@@ -10,6 +10,7 @@ import {
 import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
+import { parseItemsText } from "@/lib/items-text";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
@@ -162,24 +163,8 @@ const MEAL_TYPES = new Set([
   "snack",
 ]);
 
-type NutritionItem = { name: string; qty?: string; notes?: string };
-
-// Each line is "name | qty | notes" (qty/notes optional). Blank lines skipped.
-function parseItemsTextarea(raw: string): NutritionItem[] {
-  const out: NutritionItem[] = [];
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const [namePart, qtyPart, notesPart] = trimmed.split("|").map((p) => p.trim());
-    if (!namePart) continue;
-    out.push({
-      name: namePart,
-      ...(qtyPart ? { qty: qtyPart } : {}),
-      ...(notesPart ? { notes: notesPart } : {}),
-    });
-  }
-  return out;
-}
+// Items textarea parsing now lives in the shared, server-safe @/lib/items-text
+// module (parseItemsText) so the meal edit UI and these actions stay in lockstep.
 
 // Parse the 6 optional macro inputs. Empty → null (lets an edit clear a value);
 // non-numeric / negative → null.
@@ -207,7 +192,7 @@ export async function logNutrition(form: FormData) {
   const dateStr = (form.get("date") as string | null)?.trim();
 
   if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
-  const items = parseItemsTextarea(itemsRaw);
+  const items = parseItemsText(itemsRaw);
   if (items.length === 0) throw new Error("List at least one food item");
 
   const date = dateStr ? new Date(dateStr) : new Date();
@@ -228,7 +213,7 @@ export async function updateNutrition(id: string, form: FormData) {
   const dateStr = (form.get("date") as string | null)?.trim();
 
   if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
-  const items = parseItemsTextarea(itemsRaw);
+  const items = parseItemsText(itemsRaw);
   if (items.length === 0) throw new Error("List at least one food item");
 
   const date = dateStr ? new Date(dateStr) : new Date();
