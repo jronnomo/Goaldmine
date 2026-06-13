@@ -14,6 +14,7 @@ import type { NormalizedUsdaBrandedFood } from "@/lib/usda";
 import type { BarcodeLookupResult, LibraryFood, FoodMacros } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { OffProduct } from "@/lib/openfoodfacts";
+import { scaleMacros } from "@/lib/food-resolve-local";
 
 // ── lookupBarcode ─────────────────────────────────────────────────────────────
 
@@ -416,7 +417,7 @@ export type LibraryFoodRow = LibraryFood & {
 export async function listLibraryFoods(): Promise<LibraryFoodRow[]> {
   const rows = await prisma.foodLibrary.findMany({
     orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
-    take: 50,
+    take: 200,
   });
   const fmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
   return rows.map((row) => ({
@@ -803,28 +804,7 @@ function safeRevalidate(path: string): void {
   }
 }
 
-/**
- * Scale a per-100 g FoodMacros by a servings multiplier.
- * House rounding rules: calories/sodiumMg → integer; protein/carbs/fat/fiber → 1 dp.
- */
-function scaleMacros(per100g: FoodMacros, servings: number): FoodMacros {
-  function scaleInt(v: number | null): number | null {
-    if (v == null) return null;
-    return Math.round(v * servings);
-  }
-  function scale1dp(v: number | null): number | null {
-    if (v == null) return null;
-    return Math.round(v * servings * 10) / 10;
-  }
-  return {
-    calories: scaleInt(per100g.calories),
-    proteinG: scale1dp(per100g.proteinG),
-    carbsG: scale1dp(per100g.carbsG),
-    fatG: scale1dp(per100g.fatG),
-    fiberG: scale1dp(per100g.fiberG),
-    sodiumMg: scaleInt(per100g.sodiumMg),
-  };
-}
+// scaleMacros extracted to src/lib/food-resolve-local.ts (client-safe) and re-imported above.
 
 /**
  * Build the items-textarea line.

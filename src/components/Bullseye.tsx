@@ -23,6 +23,7 @@ type BullseyeBase = {
   size?: number;
   className?: string;
   style?: CSSProperties;
+  "data-testid"?: string;
 };
 
 type BullseyeA11y =
@@ -148,6 +149,7 @@ export function Bullseye(props: BullseyeProps) {
     style,
     "aria-label": ariaLabel,
     "aria-hidden": ariaHidden,
+    "data-testid": dataTestId,
   } = props;
   const filled = "filled" in props ? props.filled : undefined;
   const progress = "progress" in props ? props.progress : undefined;
@@ -179,6 +181,7 @@ export function Bullseye(props: BullseyeProps) {
       className={className}
       style={style}
       xmlns="http://www.w3.org/2000/svg"
+      data-testid={dataTestId}
       {...ariaProps}
     >
       {renderRings(size, ringCount)}
