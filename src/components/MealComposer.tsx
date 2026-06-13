@@ -6,11 +6,7 @@ import { MacroInputs, type MacroDefaults, type MacroValues } from "@/components/
 import { Bullseye } from "@/components/Bullseye";
 import { useFoodComposer } from "@/components/useFoodComposer";
 import { useFormFeedback } from "@/lib/use-form-feedback";
-import {
-  deleteNutrition,
-  logNutrition,
-  updateNutrition,
-} from "@/lib/workout-actions";
+import { logNutrition, updateNutrition } from "@/lib/workout-actions";
 import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
 import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar";
@@ -40,6 +36,23 @@ export type MealDefaults = {
   macros?: MacroDefaults;
 };
 
+/**
+ * Snapshot handed to `onDeleted` so the host can restore the meal without a
+ * server round-trip. Edit-mode Delete is now NON-destructive: MealComposer
+ * does NOT call deleteNutrition itself (UXR-meal-edit-13). The host decides
+ * when/whether to commit — the BottomSheet host defers the commit behind a
+ * ~5s Undo window; the full-page host commits immediately.
+ */
+export type MealDeleteSnapshot = {
+  id: string;
+  mealType: string;
+  items: NutritionItem[];
+  notes: string;
+  /** datetime-local value ("YYYY-MM-DDTHH:MM") in USER_TZ. */
+  date: string;
+  macros: MacroValues;
+};
+
 export type MealComposerProps =
   | {
       mode: "create";
@@ -54,7 +67,8 @@ export type MealComposerProps =
       quickPickFoods?: LibraryFood[];
       plannedTarget?: number;
       onSaved?: () => void;
-      onDeleted?: () => void;
+      /** Non-destructive: receives the snapshot; host owns the commit decision. */
+      onDeleted?: (snapshot: MealDeleteSnapshot) => void;
     };
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
@@ -117,6 +131,17 @@ function macroNum(v: number | null | undefined): string {
   return v == null ? "—" : String(v);
 }
 
+/** True when the user asked for reduced motion (CSS animations are no-ops, so
+ *  any JS that waits on transitionend must take an instant path instead). */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  );
+}
+
+const FLASHABLE_MACROS = ["calories", "proteinG", "carbsG", "fatG"] as const;
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function MealComposer(props: MealComposerProps) {
@@ -160,6 +185,19 @@ export function MealComposer(props: MealComposerProps) {
   // Edit-mode submit plumbing
   const [editPending, startEdit] = useTransition();
   const [editError, setEditError] = useState<string | null>(null);
+  // Quiet-confirm: briefly show ✓ before onSaved closes the sheet (UXR-18).
+  const [editSaved, setEditSaved] = useState(false);
+
+  // ── Motion wiring (F4/F5/F6) ───────────────────────────────────────────────
+  // Row REMOVE: the row stays mounted with `.is-exiting` until its collapse
+  // transition ends, then we splice (UXR-meal-edit-19). null = nothing exiting.
+  const [removingIndex, setRemovingIndex] = useState<number | null>(null);
+  // Stepper numeral tick: re-key the bumped row's numeral so the one-shot
+  // animation replays on every tap, even rapid repeats (UXR-meal-edit-20).
+  const [bumpState, setBumpState] = useState<{ idx: number; n: number } | null>(null);
+  // Apply tint-flash: which macro numerals changed + a nonce to re-fire the
+  // one-shot flash (UXR-meal-edit-21).
+  const [flashMacros, setFlashMacros] = useState<{ keys: Set<string>; n: number } | null>(null);
 
   // Create-mode submit plumbing
   const {
@@ -193,9 +231,17 @@ export function MealComposer(props: MealComposerProps) {
   // setItemsText materializes an appended pipe-line as a new structured row.
   const { controls, sheet } = useFoodComposer({
     itemsText,
+    // This callback is the COMPOSER MERGE PATH — it only fires from
+    // add-chip / scan / estimate, which set items AND macros together (an
+    // honest sum). So we reset the staleness snapshot to the new items here,
+    // same as a manual macro edit or a recompute-Apply. Net: a composer add
+    // never trips "stale" — only HAND edits (stepper / row-remove / textarea)
+    // do (UXR-meal-edit-07, composer-add false-positive fix).
     setItemsText: (next: string) => {
+      const parsed = parseItemsText(next);
       if (rawMode) setRawText(next);
-      else setItems(parseItemsText(next));
+      else setItems(parsed);
+      setSnapshotHash(hashItems(parsed));
     },
     macros,
     setMacros,
@@ -209,9 +255,21 @@ export function MealComposer(props: MealComposerProps) {
         i === index ? { ...it, qty: bumpQty(it.qty, delta) } : it,
       ),
     );
+    // F5 — re-key the bumped numeral so its one-shot tick replays each tap.
+    setBumpState((prev) => ({ idx: index, n: (prev?.n ?? 0) + 1 }));
   }
   function removeItem(index: number) {
     setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+  // F4 — request a remove: under normal motion, mark the row `.is-exiting` and
+  // let its `transitionend` splice it (below). Under reduced-motion the CSS
+  // transition is a no-op so transitionend never fires — splice immediately.
+  function requestRemoveItem(index: number) {
+    if (prefersReducedMotion()) {
+      removeItem(index);
+      return;
+    }
+    setRemovingIndex(index);
   }
   function moveItem(index: number, dir: -1 | 1) {
     setItems((prev) => {
@@ -249,9 +307,16 @@ export function MealComposer(props: MealComposerProps) {
   }
   function applyRecompute() {
     if (!preview) return;
+    // F6 — flash only the numerals that actually changed (NOT bullseye-pop;
+    // UXR-meal-edit-27 cut). Compare before writing the new totals.
+    const changed = new Set<string>();
+    for (const k of FLASHABLE_MACROS) {
+      if ((macros[k] ?? null) !== (preview.totals[k] ?? null)) changed.add(k);
+    }
     setMacros({ ...preview.totals });
     setSnapshotHash(hashItems(effectiveItems)); // Apply → Fresh
     setPreview(null);
+    setFlashMacros(changed.size > 0 ? { keys: changed, n: Date.now() } : null);
   }
   function cancelRecompute() {
     setPreview(null);
@@ -275,11 +340,33 @@ export function MealComposer(props: MealComposerProps) {
     });
     setSnapshotHash(hashItems([]));
     setPreview(null);
+    setRemovingIndex(null);
+    setBumpState(null);
+    setFlashMacros(null);
   }
 
   const unmatchedNames = preview
     ? preview.perItem.filter((p) => !p.matched).map((p) => p.name)
     : [];
+  const matchedCount = preview
+    ? preview.perItem.filter((p) => p.matched).length
+    : 0;
+
+  // F6 — render a macro numeral, re-keyed + tint-flashed when it just changed
+  // via recompute-Apply (UXR-meal-edit-21). The whole flash set clears on the
+  // first numeral's animationend (all run 270ms, so they finish together).
+  function flashNumeral(key: string, value: number | null | undefined) {
+    const flashing = flashMacros?.keys.has(key) === true;
+    return (
+      <span
+        key={flashing ? `${key}-${flashMacros!.n}` : key}
+        className={flashing ? "macro-flash px-0.5" : undefined}
+        onAnimationEnd={flashing ? () => setFlashMacros(null) : undefined}
+      >
+        {macroNum(value)}
+      </span>
+    );
+  }
 
   // ── Shared body (rendered inside the <form>) ─────────────────────────────────
   const lastIndex = items.length - 1;
@@ -290,8 +377,14 @@ export function MealComposer(props: MealComposerProps) {
       <input type="hidden" name="mealType" value={mealType} />
 
       {/* ── Macro summary strip ─────────────────────────────────────────────── */}
+      {/* STICKY (UXR-meal-edit-14/29): pins to the top of the BottomSheet scroll
+          container so the soft keyboard can't bury the readout.
+          ⚠ verify on iOS Safari with keyboard open; fallback = Direction C
+          full-page route.
+          The `accent-soft`-over-`card` wash reads as "pinned" (UXR-meal-edit-28,
+          token-based — ⚠ verify visually it doesn't muddy contrast). */}
       <div
-        className="rounded-xl border border-[var(--border)] px-4 py-3"
+        className="sticky top-0 z-10 rounded-xl border border-[var(--border)] px-4 py-3"
         style={{
           background:
             "linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card)",
@@ -300,7 +393,7 @@ export function MealComposer(props: MealComposerProps) {
         <div className="flex items-center gap-3">
           <div className="flex items-baseline gap-1">
             <span className="font-mono text-[28px] font-semibold leading-none text-[var(--foreground)]">
-              {macroNum(macros.calories)}
+              {flashNumeral("calories", macros.calories)}
             </span>
             <span className="text-[13px] text-[var(--muted)]">cal</span>
           </div>
@@ -323,17 +416,17 @@ export function MealComposer(props: MealComposerProps) {
         </div>
 
         <div className="mt-2 font-mono text-[13px] text-[var(--foreground)]">
-          <span className="text-[var(--muted)]">P</span> {macroNum(macros.proteinG)}{" "}
+          <span className="text-[var(--muted)]">P</span> {flashNumeral("proteinG", macros.proteinG)}{" "}
           <span className="mx-1 text-[var(--muted)]">·</span>
-          <span className="text-[var(--muted)]">C</span> {macroNum(macros.carbsG)}{" "}
+          <span className="text-[var(--muted)]">C</span> {flashNumeral("carbsG", macros.carbsG)}{" "}
           <span className="mx-1 text-[var(--muted)]">·</span>
-          <span className="text-[var(--muted)]">F</span> {macroNum(macros.fatG)}
+          <span className="text-[var(--muted)]">F</span> {flashNumeral("fatG", macros.fatG)}
         </div>
 
         {/* Staleness flag — warning colors the FLAG only; numerals stay foreground */}
         {stale && (
           <div
-            className="mt-3 flex flex-wrap items-center gap-2.5"
+            className="stale-flag-in mt-3 flex flex-wrap items-center gap-2.5"
             aria-live="polite"
           >
             <span
@@ -359,9 +452,19 @@ export function MealComposer(props: MealComposerProps) {
           </div>
         )}
 
-        {/* Recompute preview — proposed totals + unmatched disclosure */}
+        {/* Recompute preview — proposed totals + unmatched disclosure.
+            aria-live announces matched/unmatched counts to SR users (UXR-17). */}
         {preview && (
-          <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5">
+          <div
+            className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5"
+            aria-live="polite"
+          >
+            {/* SR-only count summary — the precise matched/unmatched read. */}
+            <p className="sr-only">
+              Recompute preview: {matchedCount} item
+              {matchedCount === 1 ? "" : "s"} matched, {preview.unmatchedCount}{" "}
+              item{preview.unmatchedCount === 1 ? "" : "s"} with no estimate.
+            </p>
             <p className="text-xs font-medium text-[var(--muted)]">Proposed totals</p>
             <p className="mt-1 font-mono text-[13px] text-[var(--foreground)]">
               {macroNum(preview.totals.calories)} cal
@@ -373,11 +476,11 @@ export function MealComposer(props: MealComposerProps) {
               {macroNum(preview.totals.fatG)}
             </p>
             {preview.unmatchedCount > 0 && (
-              <p className="mt-1.5 text-xs text-[var(--warning)]">
+              <p className="mt-1.5 text-sm font-medium text-[var(--warning)]">
                 {preview.unmatchedCount} item
                 {preview.unmatchedCount === 1 ? "" : "s"} had no estimate
                 {unmatchedNames.length > 0 && (
-                  <span className="text-[var(--muted)]">
+                  <span className="font-normal text-[var(--muted)]">
                     {" "}
                     — {unmatchedNames.join(", ")}
                   </span>
@@ -445,78 +548,102 @@ export function MealComposer(props: MealComposerProps) {
             <ul className="flex flex-col">
               {items.map((item, i) => {
                 const canStep = hasNumericPrefix(item.qty);
+                const bumping = bumpState?.idx === i;
+                const exiting = removingIndex === i;
                 return (
+                  // F3/F4 — `item-row-anim` animates the grid row in on mount
+                  // (@starting-style) and out when `.is-exiting` toggles; the
+                  // inner wrapper clips the content so the collapse is clean.
+                  // The splice runs on the grid-template-rows transitionend.
                   <li
                     key={i}
                     data-testid="item-row"
-                    className="min-h-[64px] border-b border-[var(--border)] px-1 py-2.5"
+                    className={`item-row-anim${exiting ? " is-exiting" : ""}`}
+                    onTransitionEnd={(e) => {
+                      if (
+                        e.propertyName === "grid-template-rows" &&
+                        removingIndex === i
+                      ) {
+                        removeItem(i);
+                        setRemovingIndex(null);
+                      }
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`flex-1 text-sm ${
-                          item.name
-                            ? "text-[var(--foreground)]"
-                            : "text-[var(--muted)]"
-                        }`}
-                      >
-                        {item.name || "Unnamed item"}
-                      </span>
-                      <div className="flex flex-col rounded-lg border border-[var(--border)] text-[var(--muted)]">
+                    <div className="item-row-inner border-b border-[var(--border)] px-1 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`flex-1 text-sm ${
+                            item.name
+                              ? "text-[var(--foreground)]"
+                              : "text-[var(--muted)]"
+                          }`}
+                        >
+                          {item.name || "Unnamed item"}
+                        </span>
+                        <div className="flex flex-col rounded-lg border border-[var(--border)] text-[var(--muted)]">
+                          <button
+                            type="button"
+                            data-testid="item-move-up"
+                            aria-label={`Move ${item.name} up`}
+                            disabled={i === 0 || removingIndex !== null}
+                            onClick={() => moveItem(i, -1)}
+                            className="px-1.5 leading-none disabled:opacity-30"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="item-move-down"
+                            aria-label={`Move ${item.name} down`}
+                            disabled={i === lastIndex || removingIndex !== null}
+                            onClick={() => moveItem(i, 1)}
+                            className="px-1.5 leading-none disabled:opacity-30"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2.5">
                         <button
                           type="button"
-                          data-testid="item-move-up"
-                          aria-label={`Move ${item.name} up`}
-                          disabled={i === 0}
-                          onClick={() => moveItem(i, -1)}
-                          className="px-1.5 leading-none disabled:opacity-30"
+                          data-testid="item-qty-dec"
+                          aria-label={`Decrease ${item.name} quantity`}
+                          disabled={!canStep}
+                          onClick={() => updateItemQty(i, -1)}
+                          className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
                         >
-                          ↑
+                          −
+                        </button>
+                        {/* F5 — re-keyed so the one-shot tick replays each tap. */}
+                        <span
+                          key={bumping ? `bump-${bumpState!.n}` : "static"}
+                          className={`min-w-[62px] text-center font-mono text-sm text-[var(--foreground)]${
+                            bumping ? " qty-bump" : ""
+                          }`}
+                        >
+                          {item.qty || "—"}
+                        </span>
+                        <button
+                          type="button"
+                          data-testid="item-qty-inc"
+                          aria-label={`Increase ${item.name} quantity`}
+                          disabled={!canStep}
+                          onClick={() => updateItemQty(i, 1)}
+                          className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
+                        >
+                          ＋
                         </button>
                         <button
                           type="button"
-                          data-testid="item-move-down"
-                          aria-label={`Move ${item.name} down`}
-                          disabled={i === lastIndex}
-                          onClick={() => moveItem(i, 1)}
-                          className="px-1.5 leading-none disabled:opacity-30"
+                          data-testid="item-remove"
+                          aria-label={`Remove ${item.name}`}
+                          disabled={removingIndex !== null}
+                          onClick={() => requestRemoveItem(i)}
+                          className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30"
                         >
-                          ↓
+                          ✕
                         </button>
                       </div>
-                    </div>
-                    <div className="mt-2 flex items-center gap-2.5">
-                      <button
-                        type="button"
-                        data-testid="item-qty-dec"
-                        aria-label={`Decrease ${item.name} quantity`}
-                        disabled={!canStep}
-                        onClick={() => updateItemQty(i, -1)}
-                        className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
-                      >
-                        −
-                      </button>
-                      <span className="min-w-[62px] text-center font-mono text-sm text-[var(--foreground)]">
-                        {item.qty || "—"}
-                      </span>
-                      <button
-                        type="button"
-                        data-testid="item-qty-inc"
-                        aria-label={`Increase ${item.name} quantity`}
-                        disabled={!canStep}
-                        onClick={() => updateItemQty(i, 1)}
-                        className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
-                      >
-                        ＋
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="item-remove"
-                        aria-label={`Remove ${item.name}`}
-                        onClick={() => removeItem(i)}
-                        className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--danger)]"
-                      >
-                        ✕
-                      </button>
                     </div>
                   </li>
                 );
@@ -643,9 +770,15 @@ export function MealComposer(props: MealComposerProps) {
               setEditError(null);
               try {
                 await updateNutrition(props.id, fd);
+                // Quiet confirm (UXR-18): flip to ✓ and hold ~150ms so the
+                // crossfade is seen before onSaved closes the sheet. NOT
+                // bullseye-pop — an edit-save is housekeeping, not a win.
+                setEditSaved(true);
+                await new Promise((r) => setTimeout(r, 150));
                 props.onSaved?.();
               } catch (e) {
                 if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
+                setEditSaved(false);
                 setEditError(e instanceof Error ? e.message : String(e));
               }
             })
@@ -660,29 +793,50 @@ export function MealComposer(props: MealComposerProps) {
             </p>
           )}
 
-          <div className="flex gap-2">
+          {/* STICKY footer (UXR-meal-edit-14/29): pins Save above the soft
+              keyboard inside the sheet's scroll container. -mx-4/px-4 bleed to
+              the panel edges; the card bg lets content scroll under it.
+              ⚠ verify on iOS Safari with keyboard open; fallback = Direction C
+              full-page route. */}
+          <div className="sticky bottom-0 z-10 -mx-4 flex gap-2 border-t border-[var(--border)] bg-[var(--card)] px-4 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-3">
             <button
               type="submit"
               data-testid="meal-composer-save"
-              disabled={editPending}
-              className="flex-1 rounded-lg bg-[var(--accent)] px-4 py-2 font-medium text-[var(--accent-fg)] disabled:opacity-50"
+              disabled={editPending || editSaved}
+              aria-live="polite"
+              className="relative flex-1 rounded-lg bg-[var(--accent)] px-4 py-2 font-medium text-[var(--accent-fg)] disabled:opacity-50"
             >
-              {editPending ? "Saving…" : "Save"}
+              {/* label↔icon opacity crossfade (~150ms), reduced-motion snaps. */}
+              <span
+                className={`save-confirm-fade ${editSaved ? "opacity-0" : "opacity-100"}`}
+              >
+                {editPending ? "Saving…" : "Save"}
+              </span>
+              <span
+                aria-hidden
+                className={`save-confirm-fade absolute inset-0 flex items-center justify-center ${
+                  editSaved ? "opacity-100" : "opacity-0"
+                }`}
+              >
+                ✓ Saved
+              </span>
             </button>
             <ConfirmButton
               label="Delete"
               confirmLabel="Delete meal · confirm"
-              disabled={editPending}
+              disabled={editPending || editSaved}
               variant="danger"
+              // Non-destructive (UXR-meal-edit-13): DO NOT mutate the server
+              // here. Hand the host a restore snapshot; the host defers (sheet
+              // host: ~5s Undo window) or commits immediately (full-page host).
               onConfirm={() =>
-                startEdit(async () => {
-                  try {
-                    await deleteNutrition(props.id);
-                    props.onDeleted?.();
-                  } catch (e) {
-                    if (e instanceof Error && e.message === "NEXT_REDIRECT") throw e;
-                    setEditError(e instanceof Error ? e.message : String(e));
-                  }
+                props.onDeleted?.({
+                  id: props.id,
+                  mealType,
+                  items: effectiveItems,
+                  notes,
+                  date: toDatetimeLocalValue(whenDate),
+                  macros,
                 })
               }
               className="rounded-lg border border-[var(--danger)]/40 px-3 py-2 text-sm text-[var(--danger)]"

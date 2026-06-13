@@ -122,8 +122,11 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
           </button>
         </div>
 
-        {/* Scrollable content */}
-        <div className="overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
+        {/* Scrollable content. flex-1 + min-h-0 make THIS div the real scroll
+            container (the panel is a flex column capped at max-height), so a
+            child `position: sticky; top/bottom` pins to the sheet viewport
+            rather than scrolling away (UXR-meal-edit-14/29). */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]">
           {children}
         </div>
       </div>

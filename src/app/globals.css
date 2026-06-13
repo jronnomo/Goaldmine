@@ -270,12 +270,11 @@ input::placeholder, textarea::placeholder {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
-   Undo bar (UXR-meal-edit-13). Basic slide-up hook; the motion/polish slice
-   owns the final timing curve. Reduced-motion: appears instantly (the
-   4–6s undo window is logic, not motion — unchanged).
+   Undo bar slide-up (UXR-meal-edit-13). Reduced-motion: appears instantly
+   (the 4–6s undo window is logic, not motion — unchanged).
    ────────────────────────────────────────────────────────────────────── */
 .undo-bar {
-  animation: undo-bar-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: undo-bar-in 190ms cubic-bezier(0.16, 1, 0.3, 1); /* ⚠ playtest 160–220ms */
 }
 @keyframes undo-bar-in {
   from {
@@ -288,5 +287,121 @@ input::placeholder, textarea::placeholder {
 @media (prefers-reduced-motion: reduce) {
   .undo-bar {
     animation: none;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Meal-edit motion polish (UXR-meal-edit-19,20,21,25; storyboard F3–F7).
+   Two easings only: cubic-bezier(0.16,1,0.3,1) for translate/expand,
+   ease-out for opacity-only fades. Every block has a reduced-motion
+   fallback that jumps straight to the final state. Tokens only — no hex.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* F3/F4 — structured item row add & remove via grid-template-rows 0fr↔1fr.
+   The <li> is the animated grid; an inner wrapper carries overflow:hidden so
+   the content clips while the row track collapses/expands. ADD rides
+   @starting-style (mount → expand). REMOVE toggles `.is-exiting`; the host
+   splices the item on `transitionend` guarded by propertyName. */
+.item-row-anim {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  /* base duration = ADD (220ms); REMOVE overrides to 190ms below */
+  transition:
+    grid-template-rows 220ms cubic-bezier(0.16, 1, 0.3, 1), /* ⚠ playtest 180–240ms */
+    opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.item-row-anim > .item-row-inner {
+  overflow: hidden;
+}
+@starting-style {
+  .item-row-anim {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+.item-row-anim.is-exiting {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition-duration: 190ms; /* ⚠ playtest 160–220ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .item-row-anim,
+  .item-row-anim.is-exiting {
+    transition: none;
+  }
+}
+
+/* F5 — stepper qty numeral one-shot tick. Re-fired by re-keying the numeral
+   span (see MealComposer bumpState) so rapid taps replay it. */
+@keyframes qty-bump {
+  0% {
+    transform: translateY(3px);
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.qty-bump {
+  animation: qty-bump 140ms cubic-bezier(0.16, 1, 0.3, 1); /* ⚠ playtest ≤160ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .qty-bump {
+    animation: none;
+  }
+}
+
+/* F5 — "macros may be stale" flag fade-in (opacity only → ease-out). */
+@keyframes stale-flag-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.stale-flag-in {
+  animation: stale-flag-in 170ms ease-out; /* ⚠ playtest 140–200ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .stale-flag-in {
+    animation: none;
+  }
+}
+
+/* F6 — recompute APPLY tint-flash on the changed macro numerals only. This is
+   the confirm — deliberately NOT bullseye-pop (UXR-meal-edit-27, cut). The
+   token wash 0→peak→0 says "these numbers moved." Re-fired by re-keying. */
+@keyframes macro-flash {
+  0% {
+    background-color: transparent;
+  }
+  40% {
+    background-color: var(--accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.macro-flash {
+  border-radius: 4px;
+  animation: macro-flash 270ms cubic-bezier(0.16, 1, 0.3, 1); /* ⚠ playtest 220–320ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .macro-flash {
+    animation: none;
+  }
+}
+
+/* F2 — Save quiet confirm: label↔✓ opacity crossfade (UXR-meal-edit-18).
+   Status indicator, not decoration, but still motion → reduced-motion snaps. */
+.save-confirm-fade {
+  transition: opacity 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .save-confirm-fade {
+    transition: none;
   }
 }

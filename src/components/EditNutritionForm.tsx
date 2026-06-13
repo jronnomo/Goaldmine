@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { MealComposer, type MealDefaults } from "@/components/MealComposer";
+import { deleteNutrition } from "@/lib/workout-actions";
 import type { LibraryFood } from "@/lib/food-types";
 
 /**
@@ -14,6 +15,10 @@ import type { LibraryFood } from "@/lib/food-types";
  * place. The full-page fallback therefore navigates back to /nutrition HERE,
  * at the client level, rather than via a redirect baked into the shared action.
  * The action already revalidated /nutrition, so the list is fresh on arrival.
+ *
+ * Delete (UXR-meal-edit-13): MealComposer's Delete is non-destructive — it hands
+ * us a snapshot but does NOT mutate the server. There's no Undo bar on the full
+ * page, so here we commit deleteNutrition immediately, then navigate back.
  */
 export function EditNutritionForm({
   id,
@@ -32,7 +37,10 @@ export function EditNutritionForm({
       defaults={defaults}
       quickPickFoods={quickPickFoods}
       onSaved={() => router.push("/nutrition")}
-      onDeleted={() => router.push("/nutrition")}
+      onDeleted={async () => {
+        await deleteNutrition(id);
+        router.push("/nutrition");
+      }}
     />
   );
 }

@@ -298,8 +298,14 @@ export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
 }
 
 // Re-create a deleted meal from a snapshot (UXR-meal-edit-13). A new row id is
-// fine — the Undo affordance restores the *meal*, not its identity. dateISO is a
-// real instant, so it round-trips through `new Date()` without TZ reparse.
+// fine — it restores the *meal*, not its identity. dateISO is a real instant, so
+// it round-trips through `new Date()` without TZ reparse.
+//
+// NOTE (polish slice): the Undo flow is now TRULY non-destructive — NutritionList
+// defers the deleteNutrition commit behind the Undo window and simply un-hides on
+// Undo, so it no longer calls restoreNutrition. Kept as a safety fallback / a
+// generic re-create helper (e.g. an MCP-driven restore); not currently referenced
+// by the UI.
 export async function restoreNutrition(snap: NutritionSnapshot) {
   if (!MEAL_TYPES.has(snap.mealType)) throw new Error("Invalid meal type");
   const date = new Date(snap.dateISO);
