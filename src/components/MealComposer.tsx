@@ -9,7 +9,7 @@ import { useFormFeedback } from "@/lib/use-form-feedback";
 import { logNutrition, updateNutrition } from "@/lib/workout-actions";
 import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
-import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar";
+import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 
