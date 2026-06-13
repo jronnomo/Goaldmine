@@ -4,9 +4,9 @@
   "prd_path": "docs/prds/PRD-food-library-redesign.md",
   "ux_research": "complete (not re-run) — docs/ux-research/food-library-redesign.md; ledger UXR-lib-01..25",
   "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"],
-  "agents": [],
+  "agents": ["dev-A-foundation", "dev-B-picker", "dev-C-header-strips-manager", "qa-regression"],
   "iteration": 1,
-  "status": "planning",
+  "status": "shipped",
   "decisions": {
     "direction": "Picker-First / composer-centric (UXR chosen)",
     "no_migration": true,

@@ -354,31 +354,31 @@ with a SHA / `file:line` / reason). Every ⚠ item above appears here.
 
 | ID | Recommendation | Type | Status | Evidence |
 |----|----------------|------|--------|----------|
-| UXR-lib-01 | Macro-grouped library picker (segmented control All/Protein/Carbs/Fat/Misc + search) opened from the composer via "Browse library" | layout |  |  |
-| UXR-lib-02 | `LibraryPickerOverlay` reusing the `fixed inset-0` non-dialog pattern + `ScanFoodSheet` chip-mode for add | component |  |  |
-| UXR-lib-03 | Click-to-add `[+]` on picker rows; reuse servings stepper + `mergeFoodIntoForm` (chip path) | layout |  |  |
-| UXR-lib-04 | Enriched `MealComposer` sticky header: `so far + this meal = projected / target` + remaining + size-24 Bullseye projected fill | component |  |  |
-| UXR-lib-05 | size-20 Bullseye + "remaining" on `NutritionToday` "Day total" strip (grafted from Direction 3) | component |  |  |
-| UXR-lib-06 | Enrich manage-mode `FoodLibraryManager`: macro-group tabs + per-row macro line + dominant-macro badge | layout |  |  |
-| UXR-lib-07 | `classifyFood()` pure helper — caloric-contribution dominance; null/balanced → misc | component |  |  |
-| UXR-lib-08 | Dominance threshold: top macro-cal share ≥40–55% AND exceeds 2nd by 10–20pp | tuning⚠ |  |  |
-| UXR-lib-09 | Extract `resolveItemMacrosPure()` for zero-round-trip live preview (code-only, no migration) | component |  |  |
-| UXR-lib-10 | Reconcile Bullseye ring-rounding (mockup 78%→3 / 60%→2 vs `ceil(p/0.25)`) against `progressToRings` | tuning⚠ |  |  |
-| UXR-lib-11 | Muted 10/11px micro-labels on cream `--card` fail AA small-text → 12px bold or `--foreground` | a11y |  |  |
-| UXR-lib-12 | `--warning` on `--card` ≈4.7:1 borderline → verify at rendered size + weight 600 | a11y |  |  |
-| UXR-lib-13 | Dominant-macro dot is decoration → ship letter badge first; derive badge bg via `color-mix`, no literals | decoration⚠ |  |  |
-| UXR-lib-14 | Macro micro-bar on row is decoration → ship typed numerals; bar conditional | decoration⚠ |  |  |
-| UXR-lib-15 | `item-row-anim` ADD on picker-add (180–240ms) | animation |  |  |
-| UXR-lib-16 | Extend `macro-flash` to the food-add path on changed header numerals (220–320ms) | animation |  |  |
-| UXR-lib-17 | `qty-bump` on the remaining numeral (120–155ms) | animation |  |  |
-| UXR-lib-18 | Tab-content fade reusing `stale-flag-in` (110–160ms, ease-out) | animation |  |  |
-| UXR-lib-19 | Picker overlay slide 220–260ms + scrim 140–180ms; reduced-motion no-op | animation |  |  |
-| UXR-lib-20 | Honest no-target state ("No plan set — showing what's been logged"); remaining framed as budget, not deficit | copy |  |  |
-| UXR-lib-21 | Misc group label "mixed / data incomplete"; null macros render "—"; "partial macros" note | copy |  |  |
-| UXR-lib-22 | Increase `listLibraryFoods` `take` 50→200 to close client-preview gap (query-only, no migration) — sign-off + measure payload | tuning⚠ |  |  |
-| UXR-lib-23 | Picker is a 2nd modal layer — non-dialog overlay required; real-device iOS Safari test gate | a11y |  |  |
-| UXR-lib-24 | Surface macros + usage in collapsed `FoodLibraryManager` rows (data fetched today but hidden) | layout |  |  |
-| UXR-lib-25 | Update `MoreSheet` Nutrition subtitle to signal the library; adopt the one-line library purpose statement | copy |  |  |
+| UXR-lib-01 | Macro-grouped library picker (segmented control All/Protein/Carbs/Fat/Misc + search) opened from the composer via "Browse library" | layout | shipped | `LibraryPickerOverlay.tsx` + `useFoodComposer.tsx` `composer-browse-library` (786ba95) |
+| UXR-lib-02 | `LibraryPickerOverlay` reusing the `fixed inset-0` non-dialog pattern + `ScanFoodSheet` chip-mode for add | component | shipped | `LibraryPickerOverlay.tsx` `fixed inset-0 z-[50]` non-dialog (786ba95) |
+| UXR-lib-03 | Click-to-add `[+]` on picker rows; reuse servings stepper + `mergeFoodIntoForm` (chip path) | layout | shipped | `onFoodPlus` → `setScanFoodInitial`+`setScanOpen` (one ScanFoodSheet, chip path) (786ba95) |
+| UXR-lib-04 | Enriched `MealComposer` sticky header: `so far + this meal = projected / target` + remaining + size-24 Bullseye projected fill | component | shipped | `MealComposer.tsx` enriched header block (0a00bad); wired (7fa20f6) |
+| UXR-lib-05 | size-20 Bullseye + "remaining" on `NutritionToday` "Day total" strip (grafted from Direction 3) | component | shipped | `NutritionToday.tsx` `daytotal-bullseye` + `daytotal-remaining` (0a00bad) |
+| UXR-lib-06 | Enrich manage-mode `FoodLibraryManager`: macro-group tabs + per-row macro line + dominant-macro badge | layout | shipped | `FoodLibraryManager.tsx` tabs + macro line + letter badge (0a00bad) |
+| UXR-lib-07 | `classifyFood()` pure helper — caloric-contribution dominance; null/balanced → misc | component | shipped | `food-resolve-local.ts` `classifyFood` (e858b2d) |
+| UXR-lib-08 | Dominance threshold: top macro-cal share ≥40–55% AND exceeds 2nd by 10–20pp | tuning⚠ | shipped | `food-resolve-local.ts` `DOMINANCE_THRESHOLD=0.45`/`MARGIN_THRESHOLD=0.12`, tunable (e858b2d) — ⚠ playtest vs real library |
+| UXR-lib-09 | Extract `resolveItemMacrosPure()` for zero-round-trip live preview (code-only, no migration) | component | shipped | `food-resolve-local.ts` `resolveItemMacrosPure` (e858b2d) |
+| UXR-lib-10 | Reconcile Bullseye ring-rounding (mockup 78%→3 / 60%→2 vs `ceil(p/0.25)`) against `progressToRings` | tuning⚠ | reworked | Mockup was wrong; canonicalized to real `progressToRings` `ceil(p*4)` at size≥20 — always pass `progress` prop, never compute rings externally (blueprint §3 Decision 1) |
+| UXR-lib-11 | Muted 10/11px micro-labels on cream `--card` fail AA small-text → 12px bold or `--foreground` | a11y | shipped | `text-xs` (12px) across new UI; projected-line 11px→12px (cf7886c) |
+| UXR-lib-12 | `--warning` on `--card` ≈4.7:1 borderline → verify at rendered size + weight 600 | a11y | shipped | over-target text `text-[13px] font-semibold` (cf7886c) — ⚠ device verify |
+| UXR-lib-13 | Dominant-macro dot is decoration → ship letter badge first; derive badge bg via `color-mix`, no literals | decoration⚠ | shipped | `BADGE` map `color-mix(... 15%, var(--card))`, letter not dot, no literals (786ba95/0a00bad) — ⚠ legibility playtest |
+| UXR-lib-14 | Macro micro-bar on row is decoration → ship typed numerals; bar conditional | decoration⚠ | shipped | typed numerals `macroLine()` in picker + manager; no micro-bar (786ba95/0a00bad) |
+| UXR-lib-15 | `item-row-anim` ADD on picker-add (180–240ms) | animation | shipped | picker `[+]` → `handleAdd` → `setItemsText` adds row → existing `item-row-anim` fires (reused, unchanged) |
+| UXR-lib-16 | Extend `macro-flash` to the food-add path on changed header numerals (220–320ms) | animation | shipped | `onMacrosChanged` → `handleMacrosChanged` → `setFlashMacros` on add + estimate-add (DC-2) (7fa20f6) |
+| UXR-lib-17 | `qty-bump` on the remaining numeral (120–155ms) | animation | dropped | superseded by `macro-flash` on the header numerals (UXR-lib-16); separate remaining-numeral bump not added (avoid double-anim) |
+| UXR-lib-18 | Tab-content fade reusing `stale-flag-in` (110–160ms, ease-out) | animation | shipped | `.tab-content-fade` 130ms in `globals.css`; `key={tab}`/`key={activeTab}` wrappers (786ba95/0a00bad) |
+| UXR-lib-19 | Picker overlay slide 220–260ms + scrim 140–180ms; reduced-motion no-op | animation | reworked | overlay uses instant null-return paint + `bg-black/45` scrim (mirrors ScanFoodSheet); no slide keyframe — simpler, reduced-motion moot |
+| UXR-lib-20 | Honest no-target state ("No plan set — showing what's been logged"); remaining framed as budget, not deficit | copy | shipped | `MealComposer.tsx` no-target branch + "−N over target" words / "N cal remaining" (0a00bad) |
+| UXR-lib-21 | Misc group label "mixed / data incomplete"; null macros render "—"; "partial macros" note | copy | shipped | `macroLine` "mixed · data incomplete"; manager "— · mixed / data incomplete" rows (786ba95/0a00bad) |
+| UXR-lib-22 | Increase `listLibraryFoods` `take` 50→200 to close client-preview gap (query-only, no migration) — sign-off + measure payload | tuning⚠ | shipped | `food-actions.ts` `take: 200` (e858b2d); ~14KB gzip, approved (blueprint §3 Decision 2) |
+| UXR-lib-23 | Picker is a 2nd modal layer — non-dialog overlay required; real-device iOS Safari test gate | a11y | shipped | non-dialog `fixed inset-0` overlay shipped (786ba95) — ⚠ **PENDING USER**: iOS Safari device verification |
+| UXR-lib-24 | Surface macros + usage in collapsed `FoodLibraryManager` rows (data fetched today but hidden) | layout | shipped | `FoodLibraryManager.tsx` collapsed-row macro line + usage (0a00bad) |
+| UXR-lib-25 | Update `MoreSheet` Nutrition subtitle to signal the library; adopt the one-line library purpose statement | copy | shipped | `MoreSheet.tsx` sub → "Your macro-grouped pantry, meal log, and daily targets" (0a00bad) |
 
 ---
 
