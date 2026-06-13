@@ -11,6 +11,8 @@ import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
+import { userTzWallClockToUTC } from "@/lib/calendar";
+import type { NutritionItem } from "@/lib/nutrition-log-ops";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
@@ -166,6 +168,27 @@ const MEAL_TYPES = new Set([
 // Items textarea parsing now lives in the shared, server-safe @/lib/items-text
 // module (parseItemsText) so the meal edit UI and these actions stay in lockstep.
 
+// Parse the `name="date"` hidden field. The composer submits a USER_TZ
+// wall-clock "YYYY-MM-DDTHH:MM" (via toDatetimeLocalValue), so it MUST be
+// interpreted in USER_TZ — `new Date(dateStr)` parses datetime-local strings as
+// server-local/UTC and shifts the meal by the TZ offset (UXR-meal-edit-11).
+// When the field is absent (quick create with no When picker), "now" is correct.
+function parseUserTzDate(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date();
+  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (m) {
+    return userTzWallClockToUTC(
+      Number(m[1]),
+      Number(m[2]),
+      Number(m[3]),
+      Number(m[4]),
+      Number(m[5]),
+    );
+  }
+  // Unexpected shape — fall back to permissive parse (validated by caller).
+  return new Date(dateStr);
+}
+
 // Parse the 6 optional macro inputs. Empty → null (lets an edit clear a value);
 // non-numeric / negative → null.
 function parseMacros(form: FormData) {
@@ -195,7 +218,7 @@ export async function logNutrition(form: FormData) {
   const items = parseItemsText(itemsRaw);
   if (items.length === 0) throw new Error("List at least one food item");
 
-  const date = dateStr ? new Date(dateStr) : new Date();
+  const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
   await prisma.nutritionLog.create({
@@ -206,6 +229,11 @@ export async function logNutrition(form: FormData) {
   revalidatePath("/nutrition");
 }
 
+// De-redirected for in-place use (UXR-meal-edit-12): the BottomSheet host awaits
+// this, then closes the sheet over the (already-revalidated) list at the same
+// scroll position — no navigation. The full-page /nutrition/[id]/edit fallback
+// navigates back to /nutrition at the page/client level (EditNutritionForm's
+// onSaved), NOT via a redirect baked into this shared action.
 export async function updateNutrition(id: string, form: FormData) {
   const mealType = String(form.get("mealType") ?? "").trim();
   const itemsRaw = String(form.get("items") ?? "");
@@ -216,7 +244,7 @@ export async function updateNutrition(id: string, form: FormData) {
   const items = parseItemsText(itemsRaw);
   if (items.length === 0) throw new Error("List at least one food item");
 
-  const date = dateStr ? new Date(dateStr) : new Date();
+  const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
   await prisma.nutritionLog.update({
@@ -226,14 +254,70 @@ export async function updateNutrition(id: string, form: FormData) {
 
   revalidatePath("/");
   revalidatePath("/nutrition");
-  redirect("/nutrition");
+  return { ok: true as const };
 }
 
-export async function deleteNutrition(id: string) {
-  await prisma.nutritionLog.delete({ where: { id } });
+// Deleted-meal snapshot — everything restoreNutrition needs to re-create the row.
+export type NutritionSnapshot = {
+  mealType: string;
+  items: NutritionItem[];
+  notes: string | null;
+  /** Original instant as an ISO string (a real UTC instant, not a wall clock). */
+  dateISO: string;
+  macros: {
+    calories: number | null;
+    proteinG: number | null;
+    carbsG: number | null;
+    fatG: number | null;
+    fiberG: number | null;
+    sodiumMg: number | null;
+  };
+};
+
+// De-redirected (UXR-meal-edit-12): returns the deleted row's snapshot so the
+// optimistic-delete/Undo flow (UXR-meal-edit-13) can restore it. Navigation for
+// the full-page fallback is handled by EditNutritionForm's onDeleted.
+export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
+  const row = await prisma.nutritionLog.delete({ where: { id } });
   revalidatePath("/");
   revalidatePath("/nutrition");
-  redirect("/nutrition");
+  return {
+    mealType: row.mealType,
+    items: (row.items as NutritionItem[]) ?? [],
+    notes: row.notes,
+    dateISO: row.date.toISOString(),
+    macros: {
+      calories: row.calories,
+      proteinG: row.proteinG,
+      carbsG: row.carbsG,
+      fatG: row.fatG,
+      fiberG: row.fiberG,
+      sodiumMg: row.sodiumMg,
+    },
+  };
+}
+
+// Re-create a deleted meal from a snapshot (UXR-meal-edit-13). A new row id is
+// fine — the Undo affordance restores the *meal*, not its identity. dateISO is a
+// real instant, so it round-trips through `new Date()` without TZ reparse.
+export async function restoreNutrition(snap: NutritionSnapshot) {
+  if (!MEAL_TYPES.has(snap.mealType)) throw new Error("Invalid meal type");
+  const date = new Date(snap.dateISO);
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  await prisma.nutritionLog.create({
+    data: {
+      date,
+      mealType: snap.mealType,
+      items: snap.items,
+      notes: snap.notes,
+      ...snap.macros,
+    },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+  return { ok: true as const };
 }
 
 export async function importStrongWorkout(form: FormData) {

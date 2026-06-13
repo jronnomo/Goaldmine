@@ -268,3 +268,25 @@ input::placeholder, textarea::placeholder {
     transition: none;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Undo bar (UXR-meal-edit-13). Basic slide-up hook; the motion/polish slice
+   owns the final timing curve. Reduced-motion: appears instantly (the
+   4–6s undo window is logic, not motion — unchanged).
+   ────────────────────────────────────────────────────────────────────── */
+.undo-bar {
+  animation: undo-bar-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes undo-bar-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .undo-bar {
+    animation: none;
+  }
+}

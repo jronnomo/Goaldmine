@@ -1,10 +1,22 @@
-import Link from "next/link";
 import { Card } from "@/components/Card";
 import { FoodLibraryManager } from "@/components/FoodLibraryManager";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
-import { addDays, dateKey, startOfDay } from "@/lib/calendar";
+import {
+  NutritionList,
+  type NutritionDayGroup,
+  type NutritionRowData,
+} from "@/components/NutritionList";
+import {
+  addDays,
+  dateKey,
+  resolveDay,
+  startOfDay,
+  toDatetimeLocalValue,
+} from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import type { MealSlot } from "@/lib/nutrition-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +29,7 @@ const MEAL_LABEL: Record<string, string> = {
   snack: "Snack",
 };
 
-type Item = { name: string; qty?: string; notes?: string };
-
-function asItems(raw: unknown): Item[] {
+function asItems(raw: unknown): NutritionItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
@@ -31,10 +41,25 @@ function asItems(raw: unknown): Item[] {
     .filter((i) => i.name);
 }
 
+function summarize(items: NutritionItem[]): string {
+  return items.map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name)).join(", ");
+}
+
+// Time-of-day label from the USER_TZ wall-clock value (fixes the prior
+// server-local toLocaleTimeString — all date/time routes through @/lib/calendar).
+function timeLabelFromLocal(datetimeLocal: string): string {
+  const time = datetimeLocal.split("T")[1] ?? "00:00";
+  const [hhStr, mm] = time.split(":");
+  const hh = Number(hhStr);
+  const ampm = hh < 12 ? "AM" : "PM";
+  const h12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${h12}:${mm} ${ampm}`;
+}
+
 export default async function NutritionPage() {
   const since = startOfDay(addDays(new Date(), -30));
 
-  const [logs, quickPickFoods, libraryFoods] = await Promise.all([
+  const [logs, quickPickFoods, libraryFoods, today] = await Promise.all([
     prisma.nutritionLog.findMany({
       where: { date: { gte: since } },
       orderBy: { date: "desc" },
@@ -42,15 +67,56 @@ export default async function NutritionPage() {
     }),
     getQuickPickFoods(),
     listLibraryFoods(),
+    // Today's resolved day — only source of a planned per-slot calorie target
+    // (it lives in a per-day nutrition-plan override). Lights the Bullseye meter
+    // for today's meals (UXR-meal-edit-26); other days have no target → hollow.
+    resolveDay(new Date()),
   ]);
 
-  const groups = new Map<string, typeof logs>();
+  const todayKey = dateKey(new Date());
+  const todayPlan = today.nutritionPlan;
+
+  // Group logs by USER_TZ day, building serialized rows for the client island.
+  const groupMap = new Map<string, NutritionRowData[]>();
+  const order: string[] = [];
   for (const log of logs) {
     const k = dateKey(log.date);
-    const arr = groups.get(k) ?? [];
-    arr.push(log);
-    groups.set(k, arr);
+    if (!groupMap.has(k)) {
+      groupMap.set(k, []);
+      order.push(k);
+    }
+    const items = asItems(log.items);
+    const datetimeLocal = toDatetimeLocalValue(new Date(log.date));
+    // Planned calorie target — today only, when a plan slot carries calories.
+    const slot = todayPlan ? todayPlan[log.mealType as MealSlot] : null;
+    const plannedTarget = k === todayKey ? slot?.macros?.calories ?? undefined : undefined;
+    groupMap.get(k)!.push({
+      id: log.id,
+      mealType: log.mealType,
+      label: MEAL_LABEL[log.mealType] ?? log.mealType,
+      items,
+      summary: summarize(items),
+      notes: log.notes,
+      timeLabel: timeLabelFromLocal(datetimeLocal),
+      datetimeLocal,
+      dateISO: new Date(log.date).toISOString(),
+      macros: {
+        calories: log.calories,
+        proteinG: log.proteinG,
+        carbsG: log.carbsG,
+        fatG: log.fatG,
+        fiberG: log.fiberG,
+        sodiumMg: log.sodiumMg,
+      },
+      plannedTarget,
+    });
   }
+
+  const groups: NutritionDayGroup[] = order.map((day) => ({
+    day,
+    dayLabel: formatDay(day),
+    rows: groupMap.get(day)!,
+  }));
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -69,49 +135,12 @@ export default async function NutritionPage() {
         <FoodLibraryManager foods={libraryFoods} />
       </Card>
 
-      {groups.size === 0 ? (
+      {groups.length === 0 ? (
         <Card>
           <p className="text-sm text-[var(--muted)]">No meals logged in the last 30 days.</p>
         </Card>
       ) : (
-        Array.from(groups.entries()).map(([day, dayLogs]) => (
-          <Card key={day} title={formatDay(day)}>
-            <ul className="space-y-3">
-              {dayLogs.map((log) => {
-                const items = asItems(log.items);
-                return (
-                  <li key={log.id} className="border-l-2 border-[var(--border)] pl-3">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="text-xs uppercase tracking-wide text-[var(--muted)]">
-                        {MEAL_LABEL[log.mealType] ?? log.mealType}
-                      </span>
-                      <Link
-                        href={`/nutrition/${log.id}/edit`}
-                        className="text-xs text-[var(--accent)]"
-                      >
-                        Edit
-                      </Link>
-                    </div>
-                    <p className="text-sm">
-                      {items
-                        .map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name))
-                        .join(", ")}
-                    </p>
-                    {log.notes && (
-                      <p className="text-xs text-[var(--muted)] italic mt-0.5">{log.notes}</p>
-                    )}
-                    <p className="text-xs text-[var(--muted)] mt-0.5">
-                      {new Date(log.date).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-        ))
+        <NutritionList groups={groups} quickPickFoods={quickPickFoods} />
       )}
     </div>
   );
