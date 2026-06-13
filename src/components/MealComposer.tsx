@@ -508,7 +508,7 @@ export function MealComposer(props: MealComposerProps) {
                 {/* "so far + this meal = projected / target" line */}
                 <div
                   data-testid="composer-projected-line"
-                  className="mt-2 text-[11px] uppercase tracking-wide text-[var(--muted)]"
+                  className="mt-2 text-xs uppercase tracking-wide text-[var(--muted)]"
                 >
                   Today {Math.round(trackedSoFar!.calories)}{" "}
                   + this meal {Math.round(thisMealCal)}{" "}
@@ -517,8 +517,10 @@ export function MealComposer(props: MealComposerProps) {
                 {/* Remaining / over — never color as the sole signal (a11y) */}
                 <div
                   data-testid="composer-remaining"
-                  className={`mt-1 text-xs font-medium ${
-                    isOver ? "text-[var(--warning)]" : "text-[var(--muted)]"
+                  className={`mt-1 ${
+                    isOver
+                      ? "text-[13px] font-semibold text-[var(--warning)]"
+                      : "text-xs font-medium text-[var(--muted)]"
                   }`}
                 >
                   {isOver
