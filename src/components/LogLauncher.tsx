@@ -8,6 +8,7 @@ import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import type { TodayMealLite } from "@/app/layout";
 import type { LibraryFood } from "@/lib/food-types";
+import { sumLoggedDayMacros, formatDayMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 
 const MEAL_LABELS: Record<string, string> = {
   preworkout: "Preworkout",
@@ -109,6 +110,13 @@ export function LogLauncher({
     setExpanded((prev) => (prev === key ? null : key));
   };
 
+  // Compact "today so far" total shown above the meal log list when food has
+  // been logged. Computed from todaysMeals (already in scope via layout query).
+  const mealSoFar = todaysMeals
+    ? sumLoggedDayMacros(todaysMeals.map((m) => m.macros))
+    : null;
+  const showMealSoFar = mealSoFar !== null && hasAnyMacros(mealSoFar);
+
   return (
     <div className="py-2">
       {rows.map(({ key, label, sub, icon }) => {
@@ -138,6 +146,11 @@ export function LogLauncher({
                 {key === "weight" && <LogMeasurementForm latestWeight={latestWeight} />}
                 {key === "meal" && (
                   <>
+                    {showMealSoFar && mealSoFar && (
+                      <p className="text-xs text-[var(--muted)] mb-3 tabular-nums">
+                        Today so far · <span className="font-mono">{formatDayMacros(mealSoFar)}</span>
+                      </p>
+                    )}
                     {todaysMeals && todaysMeals.length > 0 && (
                       <div className="mb-4">
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] mb-2">

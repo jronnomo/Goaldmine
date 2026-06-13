@@ -6,6 +6,7 @@ import {
   type NutritionDayGroup,
   type NutritionRowData,
 } from "@/components/NutritionList";
+import { TodayMacroSummary } from "@/components/TodayMacroSummary";
 import {
   addDays,
   dateKey,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { sumLoggedDayMacros, sumPlanTargetMacros } from "@/lib/nutrition-macros";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
@@ -118,6 +120,11 @@ export default async function NutritionPage() {
     rows: groupMap.get(day)!,
   }));
 
+  // Today's macro totals for the summary banner.
+  const todayRows = groupMap.get(todayKey) ?? [];
+  const soFar = sumLoggedDayMacros(todayRows.map((r) => r.macros));
+  const target = sumPlanTargetMacros(todayPlan);
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2 space-y-1">
@@ -127,13 +134,7 @@ export default async function NutritionPage() {
         </p>
       </header>
 
-      <Card title="Log a meal">
-        <LogNutritionForm quickPickFoods={quickPickFoods} />
-      </Card>
-
-      <Card title="Food library">
-        <FoodLibraryManager foods={libraryFoods} />
-      </Card>
+      <TodayMacroSummary soFar={soFar} target={target} />
 
       {groups.length === 0 ? (
         <Card>
@@ -142,6 +143,14 @@ export default async function NutritionPage() {
       ) : (
         <NutritionList groups={groups} quickPickFoods={quickPickFoods} />
       )}
+
+      <Card title="Log a meal">
+        <LogNutritionForm quickPickFoods={quickPickFoods} />
+      </Card>
+
+      <Card title="Food library">
+        <FoodLibraryManager foods={libraryFoods} />
+      </Card>
     </div>
   );
 }

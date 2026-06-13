@@ -1,6 +1,7 @@
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import { MEAL_SLOTS, type MealSlot, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
+import { sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
@@ -143,22 +144,20 @@ export function NutritionToday({
     return { mt, meals, loggedSummary, planned: plan?.[mt], actualMacros: loggedMacros(meals) };
   }).filter((r) => r.loggedSummary || r.planned);
 
-  // Cumulative day totals. "target" sums every planned slot's macros. "so far"
-  // uses the actual macros you logged per slot, falling back to that slot's
-  // planned macros when a logged meal didn't record any.
-  const target = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+  // Cumulative day totals. "target" sums every planned slot's macros via the
+  // shared helper. "so far" uses the actual macros you logged per slot, falling
+  // back to that slot's planned macros when a logged meal didn't record any
+  // (fallback logic is unique to this component — not in sumLoggedDayMacros).
+  const target = sumPlanTargetMacros(plan);
   const soFar = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
   for (const r of rows) {
-    if (r.planned?.macros) addMacros(target, r.planned.macros);
     if (r.loggedSummary) {
       const src = r.actualMacros ?? r.planned?.macros;
       if (src) addMacros(soFar, src);
     }
   }
-  const targetPositive =
-    target.calories > 0 || target.proteinG > 0 || target.carbsG > 0 || target.fatG > 0;
-  const soFarPositive =
-    soFar.calories > 0 || soFar.proteinG > 0 || soFar.carbsG > 0 || soFar.fatG > 0;
+  const targetPositive = hasAnyMacros(target);
+  const soFarPositive = hasAnyMacros(soFar);
   const showTotal = targetPositive || soFarPositive;
 
   return (
