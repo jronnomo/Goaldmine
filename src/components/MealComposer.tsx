@@ -12,6 +12,7 @@ import { parseItemsText, serializeItems } from "@/lib/items-text";
 import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import type { DayMacros } from "@/lib/nutrition-macros";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,14 +54,33 @@ export type MealDeleteSnapshot = {
   macros: MacroValues;
 };
 
+/** Shared optional props for day-level context (create mode primary; edit gracefully ignores). */
+type DayContextProps = {
+  /**
+   * Today's already-logged macro total (from RSC). When present, the header shows
+   * the projected fill: (trackedSoFar + thisMeal) / dayTarget.
+   * When absent (edit mode, NutritionToday's embedded form, etc.), the header
+   * degrades to the existing single-meal readout. NO behavior regression.
+   */
+  trackedSoFar?: DayMacros;
+  /**
+   * Today's plan target (null when no plan is set).
+   * null → hollow Bullseye + "No plan set — showing what's been logged".
+   * undefined → not provided (same degraded behavior as null for the header).
+   */
+  dayTarget?: DayMacros | null;
+  /** Pre-loaded library foods for the Browse-library picker. Passed to useFoodComposer. */
+  libraryFoods?: LibraryFood[];
+};
+
 export type MealComposerProps =
-  | {
+  | ({
       mode: "create";
       quickPickFoods?: LibraryFood[];
       /** Planned calorie target for this slot, when known. Host-provided (TODO). */
       plannedTarget?: number;
-    }
-  | {
+    } & DayContextProps)
+  | ({
       mode: "edit";
       id: string;
       defaults: MealDefaults;
@@ -69,7 +89,7 @@ export type MealComposerProps =
       onSaved?: () => void;
       /** Non-destructive: receives the snapshot; host owns the commit decision. */
       onDeleted?: (snapshot: MealDeleteSnapshot) => void;
-    };
+    } & DayContextProps);
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -148,6 +168,10 @@ export function MealComposer(props: MealComposerProps) {
   const isEdit = props.mode === "edit";
   const quickPickFoods = props.quickPickFoods;
   const plannedTarget = props.plannedTarget;
+  const trackedSoFar  = props.trackedSoFar;
+  const dayTarget     = props.dayTarget;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const libraryFoods  = props.libraryFoods; // passed to useFoodComposer after Stream B merges
 
   // ── Canonical state ────────────────────────────────────────────────────────
   const seedItems = isEdit ? props.defaults.items : [];
@@ -227,6 +251,40 @@ export function MealComposer(props: MealComposerProps) {
     ? Math.max(0, Math.min(1, cal / plannedTarget!))
     : 0;
 
+  // ── Day-projected header (REQ-003) ────────────────────────────────────────────
+  // Only shown in create mode, when day context was provided, and draft has items.
+  const thisMealCal   = macros.calories  ?? 0;
+  const thisMealProt  = macros.proteinG  ?? 0;
+  const thisMealCarbs = macros.carbsG    ?? 0;
+  const thisMealFat   = macros.fatG      ?? 0;
+
+  const hasItems = effectiveItems.length > 0;
+
+  // "showDayContext": create mode + caller provided trackedSoFar.
+  // dayTarget may be null (no plan) — that's the "hollow + honest" path below.
+  const showDayContext = !isEdit && trackedSoFar != null;
+
+  const projectedCal   = showDayContext ? trackedSoFar!.calories + thisMealCal   : null;
+  const projectedProt  = showDayContext ? trackedSoFar!.proteinG  + thisMealProt  : null;
+  const projectedCarbs = showDayContext ? trackedSoFar!.carbsG    + thisMealCarbs : null;
+  const projectedFat   = showDayContext ? trackedSoFar!.fatG      + thisMealFat   : null;
+
+  // Bullseye progress for the enriched header.
+  // Only compute when dayTarget is present and positive.
+  const dayTargetCal = dayTarget?.calories ?? 0;
+  const projectedProgress =
+    showDayContext && dayTarget != null && dayTargetCal > 0 && hasItems
+      ? Math.max(0, Math.min(1, projectedCal! / dayTargetCal))
+      : null;
+
+  // Remaining: positive = budget, negative = over.
+  // Over-target uses words, never color alone (UXR-lib-20, a11y).
+  const remainingCal =
+    showDayContext && dayTarget != null && projectedCal != null
+      ? dayTargetCal - projectedCal
+      : null;
+  const isOver = remainingCal != null && remainingCal < 0;
+
   // ── Food composer wiring ─────────────────────────────────────────────────
   // setItemsText materializes an appended pipe-line as a new structured row.
   const { controls, sheet } = useFoodComposer({
@@ -246,6 +304,10 @@ export function MealComposer(props: MealComposerProps) {
     macros,
     setMacros,
     quickPickFoods,
+    // TODO(Stream B merge): add libraryFoods and onMacrosChanged once
+    // useFoodComposer.tsx accepts these props (Stream B wires the types).
+    // libraryFoods,
+    // onMacrosChanged: handleMacrosChanged,
   });
 
   // ── Item ops ───────────────────────────────────────────────────────────────
@@ -345,6 +407,22 @@ export function MealComposer(props: MealComposerProps) {
     setFlashMacros(null);
   }
 
+  // Flash macro numerals on the food-add path (UXR-lib-16).
+  // Compares prev vs next to find which keys changed, then fires flashMacros.
+  // This fires from useFoodComposer.handleAdd via the onMacrosChanged prop.
+  // applyRecompute() continues to set flashMacros directly — no double-fire because
+  // applyRecompute calls the raw setMacros (not via useFoodComposer).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function handleMacrosChanged(prev: MacroValues, next: MacroValues) {
+    const changed = new Set<string>();
+    for (const k of FLASHABLE_MACROS) {
+      if ((prev[k] ?? null) !== (next[k] ?? null)) changed.add(k);
+    }
+    if (changed.size > 0) {
+      setFlashMacros({ keys: changed, n: Date.now() });
+    }
+  }
+
   const unmatchedNames = preview
     ? preview.perItem.filter((p) => !p.matched).map((p) => p.name)
     : [];
@@ -376,54 +454,132 @@ export function MealComposer(props: MealComposerProps) {
       {/* Hidden submit fields consumed by logNutrition / updateNutrition */}
       <input type="hidden" name="mealType" value={mealType} />
 
-      {/* ── Macro summary strip ─────────────────────────────────────────────── */}
-      {/* STICKY (UXR-meal-edit-14/29): pins to the top of the BottomSheet scroll
-          container so the soft keyboard can't bury the readout.
-          ⚠ verify on iOS Safari with keyboard open; fallback = Direction C
-          full-page route.
-          The `accent-soft`-over-`card` wash reads as "pinned" (UXR-meal-edit-28,
-          token-based — ⚠ verify visually it doesn't muddy contrast). */}
+      {/* ── Macro summary / projected header ──────────────────────────────────
+          Sticky (UXR-meal-edit-14/29). Accent-soft-over-card wash.
+          In create mode WITH day context: shows projected fill + remaining.
+          All other modes (edit, no context): existing single-meal readout.
+          ⚠ verify on iOS Safari with keyboard open — fallback = Direction C route. */}
       <div
         className="sticky top-0 z-10 rounded-xl border border-[var(--border)] px-4 py-3"
         style={{
-          background:
-            "linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card)",
+          background: "linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card)",
         }}
       >
-        <div className="flex items-center gap-3">
-          <div className="flex items-baseline gap-1">
-            <span className="font-mono text-[28px] font-semibold leading-none text-[var(--foreground)]">
-              {flashNumeral("calories", macros.calories)}
-            </span>
-            <span className="text-[13px] text-[var(--muted)]">cal</span>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Bullseye
-              size={24}
-              {...(showMeter
-                ? {
-                    progress: meterPct,
-                    "aria-label": `Meal macros at ${Math.round(
-                      meterPct * 100,
-                    )} percent of target`,
-                  }
-                : { "aria-label": "No macro target set" })}
-            />
-            <span className="max-w-[92px] text-[11px] leading-tight text-[var(--muted)]">
-              {showMeter ? `${Math.round(meterPct * 100)}% · of target` : "no target"}
-            </span>
-          </div>
-        </div>
+        {showDayContext && hasItems ? (
+          /* ── ENRICHED: projected vs today (REQ-003) ──────────────────────── */
+          <>
+            {/* Hero row: projected calories + size-24 Bullseye */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-baseline gap-1">
+                <span className="font-mono text-[28px] font-semibold leading-none text-[var(--foreground)]">
+                  {flashNumeral("calories", projectedCal ?? macros.calories)}
+                </span>
+                <span className="text-[13px] text-[var(--muted)]">cal</span>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                {projectedProgress != null ? (
+                  <Bullseye
+                    size={24}
+                    progress={projectedProgress}
+                    aria-label={`Projected ${Math.round(projectedProgress * 100)}% of daily target`}
+                    data-testid="composer-bullseye-meter"
+                  />
+                ) : (
+                  /* No target: hollow */
+                  <Bullseye
+                    size={24}
+                    aria-label="No daily target set"
+                    data-testid="composer-bullseye-meter"
+                  />
+                )}
+              </div>
+            </div>
+            {/* Macro P/C/F row */}
+            <div className="mt-1 font-mono text-[13px] text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">P</span>{" "}
+              {flashNumeral("proteinG", projectedProt)}{" "}
+              <span className="mx-1 text-[var(--muted)]">·</span>
+              <span className="text-[var(--muted)]">C</span>{" "}
+              {flashNumeral("carbsG", projectedCarbs)}{" "}
+              <span className="mx-1 text-[var(--muted)]">·</span>
+              <span className="text-[var(--muted)]">F</span>{" "}
+              {flashNumeral("fatG", projectedFat)}
+            </div>
 
-        <div className="mt-2 font-mono text-[13px] text-[var(--foreground)]">
-          <span className="text-[var(--muted)]">P</span> {flashNumeral("proteinG", macros.proteinG)}{" "}
-          <span className="mx-1 text-[var(--muted)]">·</span>
-          <span className="text-[var(--muted)]">C</span> {flashNumeral("carbsG", macros.carbsG)}{" "}
-          <span className="mx-1 text-[var(--muted)]">·</span>
-          <span className="text-[var(--muted)]">F</span> {flashNumeral("fatG", macros.fatG)}
-        </div>
+            {dayTarget != null ? (
+              /* HAS TARGET: show full projected line + remaining */
+              <>
+                {/* "so far + this meal = projected / target" line */}
+                <div
+                  data-testid="composer-projected-line"
+                  className="mt-2 text-[11px] uppercase tracking-wide text-[var(--muted)]"
+                >
+                  Today {Math.round(trackedSoFar!.calories)}{" "}
+                  + this meal {Math.round(thisMealCal)}{" "}
+                  = {Math.round(projectedCal!)} / {Math.round(dayTargetCal)} cal target
+                </div>
+                {/* Remaining / over — never color as the sole signal (a11y) */}
+                <div
+                  data-testid="composer-remaining"
+                  className={`mt-1 text-xs font-medium ${
+                    isOver ? "text-[var(--warning)]" : "text-[var(--muted)]"
+                  }`}
+                >
+                  {isOver
+                    ? `−${Math.round(Math.abs(remainingCal!))} over target`
+                    : `${Math.round(remainingCal!)} cal remaining`}
+                </div>
+              </>
+            ) : (
+              /* NO TARGET: honest degraded note */
+              <p className="mt-2 text-xs text-[var(--muted)] italic">
+                No plan set — showing what&apos;s been logged
+              </p>
+            )}
+          </>
+        ) : (
+          /* ── FALLBACK: existing single-meal readout ───────────────────────── */
+          /* This path runs for: edit mode, create with no day context, empty draft. */
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex items-baseline gap-1">
+                <span className="font-mono text-[28px] font-semibold leading-none text-[var(--foreground)]">
+                  {flashNumeral("calories", macros.calories)}
+                </span>
+                <span className="text-[13px] text-[var(--muted)]">cal</span>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <Bullseye
+                  size={24}
+                  {...(showMeter
+                    ? {
+                        progress: meterPct,
+                        "aria-label": `Meal macros at ${Math.round(meterPct * 100)} percent of target`,
+                      }
+                    : { "aria-label": "No macro target set" })}
+                  data-testid="composer-bullseye-meter"
+                />
+                <span className="max-w-[92px] text-[11px] leading-tight text-[var(--muted)]">
+                  {showMeter ? `${Math.round(meterPct * 100)}% · of target` : "no target"}
+                </span>
+              </div>
+            </div>
+            <div className="mt-2 font-mono text-[13px] text-[var(--foreground)]">
+              <span className="text-[var(--muted)]">P</span> {flashNumeral("proteinG", macros.proteinG)}{" "}
+              <span className="mx-1 text-[var(--muted)]">·</span>
+              <span className="text-[var(--muted)]">C</span> {flashNumeral("carbsG", macros.carbsG)}{" "}
+              <span className="mx-1 text-[var(--muted)]">·</span>
+              <span className="text-[var(--muted)]">F</span> {flashNumeral("fatG", macros.fatG)}
+            </div>
+            {showDayContext && !hasItems && (
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                Add items to see projected totals
+              </p>
+            )}
+          </>
+        )}
 
-        {/* Staleness flag — warning colors the FLAG only; numerals stay foreground */}
+        {/* ── Staleness flag + recompute — UNCHANGED (do not modify) ─────────── */}
         {stale && (
           <div
             className="stale-flag-in mt-3 flex flex-wrap items-center gap-2.5"
@@ -452,18 +608,15 @@ export function MealComposer(props: MealComposerProps) {
           </div>
         )}
 
-        {/* Recompute preview — proposed totals + unmatched disclosure.
-            aria-live announces matched/unmatched counts to SR users (UXR-17). */}
+        {/* ── Recompute preview — UNCHANGED (do not modify) ──────────────────── */}
         {preview && (
           <div
             className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2.5"
             aria-live="polite"
           >
-            {/* SR-only count summary — the precise matched/unmatched read. */}
             <p className="sr-only">
-              Recompute preview: {matchedCount} item
-              {matchedCount === 1 ? "" : "s"} matched, {preview.unmatchedCount}{" "}
-              item{preview.unmatchedCount === 1 ? "" : "s"} with no estimate.
+              Recompute preview: {matchedCount} item{matchedCount === 1 ? "" : "s"} matched,{" "}
+              {preview.unmatchedCount} item{preview.unmatchedCount === 1 ? "" : "s"} with no estimate.
             </p>
             <p className="text-xs font-medium text-[var(--muted)]">Proposed totals</p>
             <p className="mt-1 font-mono text-[13px] text-[var(--foreground)]">

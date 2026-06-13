@@ -1,5 +1,6 @@
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { MealEditButton } from "@/components/MealEditButton";
+import { Bullseye } from "@/components/Bullseye";
 import { MEAL_SLOTS, type MealSlot, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
 import { sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 import type { LibraryFood } from "@/lib/food-types";
@@ -160,6 +161,15 @@ export function NutritionToday({
   const soFarPositive = hasAnyMacros(soFar);
   const showTotal = targetPositive || soFarPositive;
 
+  // Day-strip Bullseye (REQ-004, UXR-lib-05)
+  // Uses this component's own soFar (which includes planned-fallback) not the page's.
+  const calFill = targetPositive && target.calories > 0
+    ? Math.min(1, soFar.calories / target.calories)
+    : 0;
+  const calRemaining = targetPositive
+    ? Math.max(0, target.calories - soFar.calories)
+    : 0;
+
   return (
     <div className="space-y-3">
       {rows.length === 0 ? (
@@ -229,7 +239,7 @@ export function NutritionToday({
             ))}
           </ul>
           {showTotal && (
-            <div className="flex gap-2 border-t border-[var(--border)] pt-2.5 text-sm">
+            <div className="flex items-center gap-2 border-t border-[var(--border)] pt-2.5 text-sm">
               <span className="w-24 shrink-0 text-xs uppercase tracking-wide font-medium pt-0.5">
                 Day total
               </span>
@@ -248,7 +258,40 @@ export function NutritionToday({
                     <span className="tabular-nums">{formatMacros(target)}</span>
                   </span>
                 )}
+                {/* REQ-004: remaining line */}
+                {targetPositive && calRemaining > 0 && (
+                  <span
+                    data-testid="daytotal-remaining"
+                    className="block text-xs text-[var(--muted)]"
+                  >
+                    {Math.round(calRemaining)} cal remaining
+                  </span>
+                )}
+                {/* No-target note */}
+                {!targetPositive && soFarPositive && (
+                  <span
+                    data-testid="daytotal-no-target-note"
+                    className="block text-xs italic text-[var(--muted)]"
+                  >
+                    No daily target set
+                  </span>
+                )}
               </div>
+              {/* Size-20 Bullseye — appended to the right of the strip (UXR-lib-05) */}
+              {targetPositive ? (
+                <Bullseye
+                  size={20}
+                  progress={calFill}
+                  aria-label={`${Math.round(calFill * 100)}% of daily calorie target reached`}
+                  data-testid="daytotal-bullseye"
+                />
+              ) : (
+                <Bullseye
+                  size={20}
+                  aria-label="No daily calorie target set"
+                  data-testid="daytotal-bullseye"
+                />
+              )}
             </div>
           )}
         </>
