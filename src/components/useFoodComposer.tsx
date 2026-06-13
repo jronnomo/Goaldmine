@@ -13,6 +13,8 @@ import {
 } from "@/lib/food-actions";
 import type { FoodEstimate } from "@/lib/food-actions";
 
+import { LibraryPickerOverlay } from "@/components/LibraryPickerOverlay";
+
 // Dynamic import: ScanFoodSheet + zxing-wasm are browser-only.
 const ScanFoodSheet = dynamic(
   () =>
@@ -170,12 +172,22 @@ export function useFoodComposer({
   macros,
   setMacros,
   quickPickFoods,
+  libraryFoods,
+  onMacrosChanged,
 }: {
   itemsText: string;
   setItemsText: (s: string) => void;
   macros: MacroValues;
   setMacros: (m: MacroValues) => void;
   quickPickFoods?: LibraryFood[];
+  /** Pre-loaded library foods for the Browse-library picker. */
+  libraryFoods?: LibraryFood[];
+  /**
+   * Fired after a food add merges into macros (chip, scan, OR picker path).
+   * MealComposer uses this to trigger flashMacros on the add path (UXR-lib-16).
+   * Args: the macros BEFORE the merge and the macros AFTER.
+   */
+  onMacrosChanged?: (prev: MacroValues, next: MacroValues) => void;
 }): { controls: ReactNode; sheet: ReactNode } {
   // Quick-pick chip state: two orthogonal state slices, merged via useMemo.
   //   lazyFoods    — fetched on mount (no prop provided path)
@@ -197,6 +209,9 @@ export function useFoodComposer({
   const [scanFoodInitial, setScanFoodInitial] = useState<
     LibraryFood | undefined
   >(undefined);
+
+  // Picker overlay state
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Estimate input state
   const [estimateInput, setEstimateInput] = useState("");
@@ -227,6 +242,8 @@ export function useFoodComposer({
     // 1 + 2: merge items text and macros (pure)
     const merged = mergeFoodIntoForm(itemsText, macros, payload);
     setItemsText(merged.itemsText);
+    // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (UXR-lib-16)
+    onMacrosChanged?.(macros, merged.macroValues);
     setMacros(merged.macroValues);
 
     // 3. Usage bump (chip path only)
@@ -271,6 +288,8 @@ export function useFoodComposer({
       estimateResult.macros
     );
     setItemsText(merged.itemsText);
+    // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (DC-2, UXR-lib-16)
+    onMacrosChanged?.(macros, merged.macroValues);
     setMacros(merged.macroValues);
     // Upsert the resolved library food to front of localAdditions so the chip
     // carries fresh macros.
@@ -373,6 +392,23 @@ export function useFoodComposer({
             }}
           />
         </div>
+      )}
+
+      {/* Browse library button — only when library foods are available */}
+      {libraryFoods && libraryFoods.length > 0 && (
+        <button
+          type="button"
+          data-testid="composer-browse-library"
+          onClick={() => setPickerOpen(true)}
+          className="flex items-center gap-1.5 rounded-full px-3 min-h-[44px]
+                     border border-[var(--border)] text-[var(--accent)] text-sm font-medium self-start"
+        >
+          {/* ☰ decorative, SR reads button label */}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          Browse library
+        </button>
       )}
 
       {/* ── Add item row (estimate) ─────────────────────────────────────────── */}
@@ -536,15 +572,30 @@ export function useFoodComposer({
   // ScanFoodSheet; rendering outside the form is the additional structural guarantee.
 
   const sheet: ReactNode = (
-    <ScanFoodSheet
-      open={scanOpen}
-      onClose={() => {
-        setScanOpen(false);
-        setScanFoodInitial(undefined);
-      }}
-      onAdd={handleAdd}
-      initialFood={scanFoodInitial}
-    />
+    <>
+      <ScanFoodSheet
+        open={scanOpen}
+        onClose={() => {
+          setScanOpen(false);
+          setScanFoodInitial(undefined);
+        }}
+        onAdd={handleAdd}
+        initialFood={scanFoodInitial}
+      />
+      {/* LibraryPickerOverlay — z-[50] sits below ScanFoodSheet z-[55].
+          [+] in the overlay sets scanFoodInitial (chip-tap path) — ONE ScanFoodSheet. */}
+      <LibraryPickerOverlay
+        key={pickerOpen ? 1 : 0}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        libraryFoods={libraryFoods ?? []}
+        onFoodPlus={(food) => {
+          setScanFoodInitial(food);
+          setScanOpen(true);
+          // Picker stays open behind ScanFoodSheet so user can add more.
+        }}
+      />
+    </>
   );
 
   return { controls, sheet };

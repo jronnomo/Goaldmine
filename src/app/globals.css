@@ -405,3 +405,15 @@ input::placeholder, textarea::placeholder {
     transition: none;
   }
 }
+
+/* Tab content fade — reuses stale-flag-in keyframe (opacity 0→1, ease-out).
+   Apply to the list area whenever the active tab changes.
+   ⚠ playtest 110–160ms (UXR-lib-18). */
+.tab-content-fade {
+  animation: stale-flag-in 130ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-content-fade {
+    animation: none;
+  }
+}
