@@ -22,17 +22,6 @@ function asItems(raw: unknown): Item[] {
     .filter((i) => i.name);
 }
 
-function itemsToText(items: Item[]): string {
-  return items
-    .map((i) => {
-      const parts = [i.name];
-      if (i.qty) parts.push(i.qty);
-      if (i.notes) parts.push(i.notes);
-      return parts.join(" | ");
-    })
-    .join("\n");
-}
-
 export default async function EditNutritionPage({
   params,
 }: {
@@ -63,7 +52,7 @@ export default async function EditNutritionPage({
           quickPickFoods={quickPickFoods}
           defaults={{
             mealType: row.mealType,
-            itemsText: itemsToText(asItems(row.items)),
+            items: asItems(row.items),
             notes: row.notes ?? "",
             date: toDatetimeLocalValue(new Date(row.date)),
             macros: {
