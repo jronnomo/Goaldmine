@@ -16,7 +16,8 @@ import {
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
-import { sumLoggedDayMacros, sumPlanTargetMacros } from "@/lib/nutrition-macros";
+import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
+import type { DayMacros } from "@/lib/nutrition-macros";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
@@ -125,6 +126,12 @@ export default async function NutritionPage() {
   const soFar = sumLoggedDayMacros(todayRows.map((r) => r.macros));
   const target = sumPlanTargetMacros(todayPlan);
 
+  // dayTargetMacros: null means "no plan" (honest no-target path in the composer).
+  // all-zeros from sumPlanTargetMacros also means no plan.
+  const dayTargetMacros: DayMacros | null = hasAnyMacros(target) ? target : null;
+  // Alias soFar as trackedTodayMacros for clarity at the call-site.
+  const trackedTodayMacros: DayMacros = soFar;
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2 space-y-1">
@@ -145,7 +152,12 @@ export default async function NutritionPage() {
       )}
 
       <Card title="Log a meal">
-        <LogNutritionForm quickPickFoods={quickPickFoods} />
+        <LogNutritionForm
+          quickPickFoods={quickPickFoods}
+          libraryFoods={libraryFoods}
+          trackedSoFar={trackedTodayMacros}
+          dayTarget={dayTargetMacros}
+        />
       </Card>
 
       <Card title="Food library">

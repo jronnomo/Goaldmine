@@ -97,7 +97,7 @@ const navRows: NavRow[] = [
   {
     href: "/nutrition",
     label: "Nutrition",
-    sub: "Meal plan and nutrition log",
+    sub: "Your macro-grouped pantry, meal log, and daily targets",
     icon: <NutritionIcon />,
   },
   {
