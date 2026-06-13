@@ -170,8 +170,7 @@ export function MealComposer(props: MealComposerProps) {
   const plannedTarget = props.plannedTarget;
   const trackedSoFar  = props.trackedSoFar;
   const dayTarget     = props.dayTarget;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const libraryFoods  = props.libraryFoods; // passed to useFoodComposer after Stream B merges
+  const libraryFoods  = props.libraryFoods;
 
   // ── Canonical state ────────────────────────────────────────────────────────
   const seedItems = isEdit ? props.defaults.items : [];
@@ -304,10 +303,8 @@ export function MealComposer(props: MealComposerProps) {
     macros,
     setMacros,
     quickPickFoods,
-    // TODO(Stream B merge): add libraryFoods and onMacrosChanged once
-    // useFoodComposer.tsx accepts these props (Stream B wires the types).
-    // libraryFoods,
-    // onMacrosChanged: handleMacrosChanged,
+    libraryFoods,
+    onMacrosChanged: handleMacrosChanged,
   });
 
   // ── Item ops ───────────────────────────────────────────────────────────────
@@ -412,7 +409,6 @@ export function MealComposer(props: MealComposerProps) {
   // This fires from useFoodComposer.handleAdd via the onMacrosChanged prop.
   // applyRecompute() continues to set flashMacros directly — no double-fire because
   // applyRecompute calls the raw setMacros (not via useFoodComposer).
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function handleMacrosChanged(prev: MacroValues, next: MacroValues) {
     const changed = new Set<string>();
     for (const k of FLASHABLE_MACROS) {
