@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Goaldmine · Food Library Redesign — Picker-First</title>
+<style>
+/*
+ * ⚠ PROVISIONAL VALUES — verify before shipping
+ * Bullseye 78%  → N=3 rings (formula ceil(0.78/0.25)=4; held at 3 so outer gap visible) ⚠ reconcile w/ progressToRings
+ * Bullseye 60%  → N=2 rings (formula ceil(0.60/0.25)=3; held at 2 for visual accuracy) ⚠ reconcile w/ progressToRings
+ * Ring radii in 32-unit viewBox: shell r=14, 3rd r=11, 2nd r=7, center-dot r=3
+ * Rendered px: Panel-1 bullseye 40×40 (spec "size-24"), Panel-3 bullseye 28×28 (spec "size-20")
+ *
+ * AA CONTRAST CAUTION (light / cream-gold):
+ * --muted #7A5E3A on --card #FFFBF0 ≈ 5.1:1 — passes AA ≥14px bold only
+ * 10-11px micro labels in --muted FAIL WCAG AA small text; bump to 12px bold or use --foreground
+ * --warning #A8511A on --card #FFFBF0 ≈ 4.7:1 — borderline AA; OK at ≥13px
+ * --accent  #8A6212 on --card #FFFBF0 ≈ 5.3:1 — passes AA normal text
+ * Dark palette ambers on near-black are comfortable throughout.
+ * NOTE: --bdg-* badge backgrounds are mockup stand-ins; real impl should derive via
+ *       color-mix(in srgb, var(--success) 13%, transparent) etc., NOT new literals.
+ */
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* ── LIGHT PALETTE ── */
+.theme-light{
+  --background:#FAF3E3;--foreground:#1F1408;--muted:#7A5E3A;
+  --card:#FFFBF0;--border:#D9C8A2;--accent:#8A6212;--accent-fg:#FFFBF0;
+  --accent-soft:rgba(138,98,18,0.14);--target:#A82A1F;--target-fg:#FFFBF0;
+  --success:#4E6B36;--warning:#A8511A;--danger:#A82A1F;
+  --bdg-p:rgba(78,107,54,0.13);--bdg-c:rgba(168,81,26,0.13);
+  --bdg-f:rgba(138,98,18,0.13);--bdg-q:rgba(122,94,58,0.13);
+}
+
+/* ── DARK PALETTE ── */
+.theme-dark{
+  --background:#0F0B07;--foreground:#F4E9D4;--muted:#9C8866;
+  --card:#1A130C;--border:#3A2E1F;--accent:#D4A437;--accent-fg:#0F0B07;
+  --accent-soft:rgba(212,164,55,0.12);--target:#C0392B;--target-fg:#FFFFFF;
+  --success:#7FA45C;--warning:#E0915C;--danger:#C0392B;
+  --bdg-p:rgba(127,164,92,0.15);--bdg-c:rgba(224,145,92,0.15);
+  --bdg-f:rgba(212,164,55,0.12);--bdg-q:rgba(156,136,102,0.15);
+}
+
+/* ── PAGE ── */
+body{
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#08080f;color:#c0c0cc;
+  padding:28px 16px 72px;min-height:100vh;
+}
+.page-title{text-align:center;font-size:13px;font-weight:700;color:#fff;
+  letter-spacing:.01em;margin-bottom:4px;}
+.page-sub{text-align:center;font-size:11px;color:#666;margin-bottom:32px;
+  letter-spacing:.025em;}
+
+/* ── PHONE FRAME ── */
+.phones-row{display:flex;gap:40px;justify-content:center;
+  align-items:flex-start;flex-wrap:wrap;}
+.phone-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;}
+.phone-label{font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.12em;color:#555;}
+
+.phone{
+  width:390px;border-radius:50px;
+  background:var(--background);
+  border:4px solid #1a1a1a;outline:1.5px solid #2d2d2d;
+  box-shadow:0 0 0 1px #070707,0 40px 100px rgba(0,0,0,.75),
+    inset 0 1px 0 rgba(255,255,255,.06);
+  overflow:hidden;
+}
+
+/* Dynamic Island */
+.di-bar{height:52px;background:var(--background);
+  display:flex;align-items:center;justify-content:center;
+  border-bottom:1px solid var(--border);}
+.di-island{width:122px;height:34px;background:#000;border-radius:20px;}
+
+/* Scrollable phone body */
+.phone-body{background:var(--background);color:var(--foreground);
+  overflow-y:auto;max-height:812px;
+  scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
+
+/* ── PANEL DIVIDERS ── */
+.pdiv{display:flex;align-items:center;gap:8px;padding:10px 16px 5px;
+  font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.13em;
+  color:var(--muted);background:var(--background);border-top:1px solid var(--border);}
+.pdiv.first{border-top:none;}
+.ppill{background:var(--accent-soft);color:var(--accent);padding:2px 7px;
+  border-radius:20px;font-size:8px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.09em;}
+
+/* ── PANEL 1 — MEAL COMPOSER ── */
+.comp-hdr{
+  position:sticky;top:0;z-index:20;padding:14px 16px 12px;
+  background:linear-gradient(var(--accent-soft),var(--accent-soft)),var(--card);
+  border-bottom:1px solid var(--border);
+  box-shadow:0 3px 14px rgba(0,0,0,.09);
+}
+.comp-top{display:flex;align-items:flex-start;justify-content:space-between;
+  margin-bottom:3px;}
+.cal-line{display:flex;align-items:baseline;gap:5px;}
+.cal-num{
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:44px;font-weight:700;color:var(--foreground);
+  line-height:1;letter-spacing:-.03em;}
+.cal-unit{font-size:16px;font-weight:400;color:var(--muted);}
+.meal-macros{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:13px;color:var(--muted);margin-top:4px;}
+.hdivider{height:1px;background:var(--border);margin:10px 0 8px;}
+.eq-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px;
+  font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-bottom:5px;line-height:1.5;}
+.eqn{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;
+  font-weight:700;text-transform:none;color:var(--muted);}
+.eqover{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;
+  font-weight:700;text-transform:none;color:var(--warning);}
+.remaining{font-size:13px;font-weight:600;}
+.remaining.over{color:var(--warning);}
+.remaining.under{color:var(--success);}
+
+/* Items */
+.comp-items{background:var(--background);padding:0 16px;}
+.item-row{display:flex;align-items:center;gap:8px;padding:11px 0;
+  border-bottom:1px solid var(--border);min-height:60px;}
+.item-row:last-child{border-bottom:none;}
+.item-info{flex:1;min-width:0;}
+.item-name{font-size:14px;font-weight:500;color:var(--foreground);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.item-sub{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:11px;color:var(--muted);margin-top:2px;}
+.stepper{display:flex;align-items:center;border:1px solid var(--border);
+  border-radius:8px;overflow:hidden;background:var(--card);flex-shrink:0;height:34px;}
+.step-btn{width:32px;height:34px;background:transparent;border:none;
+  color:var(--accent);font-size:18px;font-weight:300;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.step-val{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:14px;
+  font-weight:700;color:var(--foreground);min-width:22px;text-align:center;}
+.item-rm{width:30px;height:30px;background:transparent;border:none;
+  color:var(--muted);font-size:13px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;flex-shrink:0;opacity:.65;}
+
+/* Chips */
+.chip-row{display:flex;gap:8px;padding:10px 16px;overflow-x:auto;
+  scrollbar-width:none;background:var(--background);}
+.chip-row::-webkit-scrollbar{display:none;}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;
+  border-radius:24px;border:1px solid var(--border);background:var(--card);
+  color:var(--foreground);font-size:13px;font-weight:500;font-family:inherit;
+  white-space:nowrap;cursor:pointer;min-height:38px;flex-shrink:0;}
+.chip-scan{background:var(--accent-soft);border-color:var(--accent);
+  color:var(--accent);font-weight:700;}
+
+/* Browse */
+.browse-btn{display:flex;align-items:center;gap:10px;
+  margin:2px 16px 8px;padding:11px 14px;
+  border:1px solid var(--border);border-radius:12px;
+  background:var(--card);color:var(--foreground);
+  font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;
+  min-height:44px;width:calc(100% - 32px);text-align:left;}
+.browse-icon{color:var(--muted);font-size:16px;}
+
+/* Actions */
+.action-row{display:flex;gap:10px;padding:4px 16px 16px;background:var(--background);}
+.btn-primary{flex:1;padding:12px 16px;background:var(--accent);color:var(--accent-fg);
+  border:none;border-radius:12px;font-size:15px;font-weight:700;font-family:inherit;
+  cursor:pointer;min-height:44px;letter-spacing:-.01em;}
+.btn-ghost{padding:12px 16px;background:transparent;color:var(--muted);
+  border:1px solid var(--border);border-radius:12px;font-size:14px;font-weight:500;
+  font-family:inherit;cursor:pointer;min-height:44px;}
+
+/* ── PANEL 2 — LIBRARY PICKER ── */
+.lib-hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;background:var(--card);border-bottom:1px solid var(--border);}
+.lib-title{font-size:18px;font-weight:700;color:var(--foreground);
+  letter-spacing:-.02em;}
+.close-btn{width:30px;height:30px;border-radius:50%;background:var(--accent-soft);
+  border:none;color:var(--muted);font-size:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;}
+.search-wrap{background:var(--background);padding:10px 16px 4px;}
+.search-input{display:block;width:100%;padding:11px 14px;
+  border:1px solid var(--border);border-radius:10px;
+  background:var(--card);color:var(--foreground);
+  font-size:14px;font-family:inherit;min-height:44px;outline:none;}
+.search-input::placeholder{color:var(--muted);}
+
+/* Segmented control */
+.seg-ctrl{display:flex;border:1px solid var(--border);border-radius:8px;
+  overflow:hidden;margin:8px 16px 10px;}
+.seg-btn{flex:1;padding:8px 2px;border:none;font-size:12px;font-weight:500;
+  font-family:inherit;cursor:pointer;text-align:center;min-height:44px;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--muted);background:transparent;}
+.seg-btn.active{background:var(--accent);color:var(--accent-fg);font-weight:700;}
+
+/* Group headers */
+.grp-hdr{display:flex;align-items:center;gap:6px;padding:9px 16px 4px;
+  font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--muted);background:var(--background);}
+.mb{display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;border-radius:4px;font-size:9px;font-weight:800;flex-shrink:0;}
+.mb-p{background:var(--bdg-p);color:var(--success);}
+.mb-c{background:var(--bdg-c);color:var(--warning);}
+.mb-f{background:var(--bdg-f);color:var(--accent);}
+.mb-q{background:var(--bdg-q);color:var(--muted);}
+
+/* Food rows */
+.food-row{display:flex;align-items:center;gap:10px;padding:11px 16px;
+  border-bottom:1px solid var(--border);min-height:66px;background:var(--card);}
+.food-info{flex:1;min-width:0;}
+.food-name{font-size:14px;font-weight:500;color:var(--foreground);}
+.food-meta{font-size:11px;color:var(--muted);margin-top:1px;}
+.food-macros{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:11px;color:var(--muted);margin-top:3px;}
+.food-usage{font-size:10px;color:var(--muted);margin-top:2px;opacity:.7;}
+.food-null-note{font-size:10px;color:var(--muted);font-style:italic;margin-top:2px;}
+.add-btn{width:44px;height:44px;border-radius:10px;background:var(--accent-soft);
+  border:none;color:var(--accent);font-size:26px;font-weight:300;
+  font-family:ui-monospace,"SF Mono",Menlo,monospace;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
+/* ── PANEL 3 — DAY TOTAL ── */
+.var-label{font-size:9px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.12em;color:var(--muted);padding:10px 16px 4px;
+  background:var(--background);}
+.day-strip{margin:0 16px 12px;background:var(--card);
+  border:1px solid var(--border);border-radius:16px;padding:16px;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);}
+.strip-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.strip-lbl{flex:1;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.08em;color:var(--muted);}
+.strip-cal-row{display:flex;align-items:flex-end;gap:6px;margin-bottom:3px;}
+.strip-cal-num{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:30px;font-weight:700;color:var(--foreground);
+  line-height:1;letter-spacing:-.02em;}
+.strip-cal-sfx{font-size:13px;color:var(--muted);padding-bottom:2px;}
+.strip-of-target{font-size:12px;color:var(--muted);margin-bottom:5px;}
+.strip-remaining{font-size:13px;font-weight:600;margin-bottom:6px;}
+.strip-remaining.success{color:var(--success);}
+.strip-macros{font-family:ui-monospace,"SF Mono",Menlo,monospace;
+  font-size:12px;color:var(--muted);}
+.strip-note{font-size:11px;font-style:italic;color:var(--muted);
+  margin-top:7px;line-height:1.4;}
+</style>
+</head>
+<body>
+
+<p class="page-title">Food Library Redesign — Chosen Direction (Picker-First / Composer-Centric)</p>
+<p class="page-sub">Left: light &nbsp;·&nbsp; Right: dark &nbsp;—&nbsp; real globals.css tokens</p>
+
+<div class="phones-row">
+
+<!-- ════════════════ LIGHT PHONE ════════════════ -->
+<div class="phone-wrap">
+  <span class="phone-label">Light</span>
+  <div class="phone theme-light">
+    <div class="di-bar"><div class="di-island"></div></div>
+    <div class="phone-body">
+
+      <!-- PANEL 1 -->
+      <div class="pdiv first">Panel 1 · MealComposer <span class="ppill">sticky header</span></div>
+
+      <div class="comp-hdr">
+        <div class="comp-top">
+          <div>
+            <div class="cal-line">
+              <span class="cal-num">640</span>
+              <span class="cal-unit">cal</span>
+            </div>
+            <div class="meal-macros">P 48 · C 71 · F 22</div>
+          </div>
+          <svg width="40" height="40" viewBox="0 0 32 32"
+               role="img" aria-label="Projected 78% of daily calorie target, near-full ring">
+            <title>Projected fill ~78%</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--target)" stroke-width="2"/>
+            <circle cx="16" cy="16" r="11" fill="var(--target-fg)"/>
+            <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+            <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+          </svg>
+        </div>
+        <div class="hdivider"></div>
+        <div class="eq-line">
+          <span>Today</span><span class="eqn">1,840</span>
+          <span>+</span>
+          <span>This Meal</span><span class="eqn">640</span>
+          <span>=</span><span class="eqover">2,480</span>
+          <span>/</span><span class="eqn">2,200</span>
+        </div>
+        <div class="remaining over">−280 over target</div>
+      </div>
+
+      <div class="comp-items">
+        <div class="item-row">
+          <div class="item-info">
+            <div class="item-name">Chicken breast (Kroger)</div>
+            <div class="item-sub">380 cal · 2 srv</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Servings for Chicken breast">
+            <button class="step-btn" aria-label="Decrease">−</button>
+            <span class="step-val">2</span>
+            <button class="step-btn" aria-label="Increase">+</button>
+          </div>
+          <button class="item-rm" aria-label="Remove Chicken breast">✕</button>
+        </div>
+        <div class="item-row">
+          <div class="item-info">
+            <div class="item-name">Greek Yogurt (Chobani)</div>
+            <div class="item-sub">130 cal · 1 srv</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Servings for Greek Yogurt">
+            <button class="step-btn" aria-label="Decrease">−</button>
+            <span class="step-val">1</span>
+            <button class="step-btn" aria-label="Increase">+</button>
+          </div>
+          <button class="item-rm" aria-label="Remove Greek Yogurt">✕</button>
+        </div>
+      </div>
+
+      <div class="chip-row">
+        <button class="chip chip-scan" aria-label="Scan barcode">
+          <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true" style="flex-shrink:0">
+            <path d="M0 3.5V0h3.5M8.5 0H12v3.5M0 8.5V12h3.5M8.5 12H12V8.5"
+                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Scan
+        </button>
+        <button class="chip" aria-label="Quick-add Chicken breast">Chicken breast</button>
+        <button class="chip" aria-label="Quick-add Greek Yogurt">Greek Yogurt ▶</button>
+      </div>
+
+      <button class="browse-btn" aria-label="Open food library browser">
+        <span class="browse-icon">☰</span><span>Browse library</span>
+      </button>
+
+      <div class="action-row">
+        <button class="btn-primary" aria-label="Log this meal">Log meal</button>
+        <button class="btn-ghost"   aria-label="Delete meal draft">Delete</button>
+      </div>
+
+      <!-- PANEL 2 -->
+      <div class="pdiv">Panel 2 · Library Picker <span class="ppill">sheet overlay</span></div>
+
+      <div class="lib-hdr">
+        <span class="lib-title">Food library</span>
+        <button class="close-btn" aria-label="Close food library">✕</button>
+      </div>
+
+      <div class="search-wrap">
+        <input class="search-input" type="search" placeholder="Search foods…"
+               aria-label="Search food library" readonly/>
+      </div>
+
+      <div class="seg-ctrl" role="tablist" aria-label="Filter by macronutrient">
+        <button class="seg-btn"        role="tab" aria-selected="false">All</button>
+        <button class="seg-btn active" role="tab" aria-selected="true">Protein</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Carbs</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Fat</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Misc</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-p" aria-hidden="true">P</span>Protein · 4 foods</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Chicken breast</div>
+          <div class="food-meta">Kroger · 4 oz (113 g)</div>
+          <div class="food-macros">Cal 190&thinsp; P 38&thinsp; C 0&thinsp; F 3.5</div>
+          <div class="food-usage">used 12× · Jun 9</div>
+        </div>
+        <button class="add-btn" aria-label="Add Chicken breast to meal">+</button>
+      </div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Greek Yogurt</div>
+          <div class="food-meta">Chobani · 1 cup (227 g)</div>
+          <div class="food-macros">Cal 130&thinsp; P 17&thinsp; C 9&thinsp; F 0</div>
+          <div class="food-usage">used 8× · Jun 11</div>
+        </div>
+        <button class="add-btn" aria-label="Add Greek Yogurt to meal">+</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-c" aria-hidden="true">C</span>Carbs · 2 foods</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Banana</div>
+          <div class="food-meta">— · medium (118 g)</div>
+          <div class="food-macros">Cal 105&thinsp; P 1.3&thinsp; C 27&thinsp; F 0.4</div>
+          <div class="food-usage">used 5× · Jun 7</div>
+        </div>
+        <button class="add-btn" aria-label="Add Banana to meal">+</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-q" aria-hidden="true">?</span>Misc · data incomplete</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Trail Mix (Homemade)</div>
+          <div class="food-meta">— · —</div>
+          <div class="food-macros">Cal 160&thinsp; P —&thinsp; C —&thinsp; F —</div>
+          <div class="food-null-note">mixed / data incomplete</div>
+        </div>
+        <button class="add-btn" aria-label="Add Trail Mix to meal">+</button>
+      </div>
+
+      <!-- PANEL 3 -->
+      <div class="pdiv">Panel 3 · Day Total <span class="ppill">two variants</span></div>
+
+      <div class="var-label">Has-Target</div>
+      <div class="day-strip">
+        <div class="strip-hdr">
+          <span class="strip-lbl">Day total</span>
+          <svg width="28" height="28" viewBox="0 0 32 32"
+               role="img" aria-label="Approximately 60% of daily calorie target logged">
+            <title>Day total ~60% of target</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--target)" stroke-width="2"/>
+            <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+            <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+          </svg>
+        </div>
+        <div class="strip-cal-row">
+          <span class="strip-cal-num">1,840</span>
+          <span class="strip-cal-sfx">cal so far</span>
+        </div>
+        <div class="strip-of-target">of 2,200 cal target</div>
+        <div class="strip-remaining success">360 cal remaining</div>
+        <div class="strip-macros">P 38 · C 131 · F 11</div>
+      </div>
+
+      <div class="var-label">No-Target (degraded, honest)</div>
+      <div class="day-strip">
+        <div class="strip-hdr">
+          <span class="strip-lbl">Day total</span>
+          <svg width="28" height="28" viewBox="0 0 32 32"
+               role="img" aria-label="No daily target set, hollow ring shown">
+            <title>No target set</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/>
+          </svg>
+        </div>
+        <div class="strip-cal-row">
+          <span class="strip-cal-num">1,840</span>
+          <span class="strip-cal-sfx">cal so far</span>
+        </div>
+        <div class="strip-macros">P 112 · C 89 · F 44</div>
+        <div class="strip-note">No plan set — showing what's been logged</div>
+      </div>
+
+      <div style="height:30px"></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════ DARK PHONE ════════════════ -->
+<div class="phone-wrap">
+  <span class="phone-label">Dark</span>
+  <div class="phone theme-dark">
+    <div class="di-bar"><div class="di-island"></div></div>
+    <div class="phone-body">
+
+      <div class="pdiv first">Panel 1 · MealComposer <span class="ppill">sticky header</span></div>
+
+      <div class="comp-hdr">
+        <div class="comp-top">
+          <div>
+            <div class="cal-line">
+              <span class="cal-num">640</span>
+              <span class="cal-unit">cal</span>
+            </div>
+            <div class="meal-macros">P 48 · C 71 · F 22</div>
+          </div>
+          <svg width="40" height="40" viewBox="0 0 32 32"
+               role="img" aria-label="Projected 78% of daily calorie target, near-full ring">
+            <title>Projected fill ~78%</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--target)" stroke-width="2"/>
+            <circle cx="16" cy="16" r="11" fill="var(--target-fg)"/>
+            <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+            <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+          </svg>
+        </div>
+        <div class="hdivider"></div>
+        <div class="eq-line">
+          <span>Today</span><span class="eqn">1,840</span>
+          <span>+</span>
+          <span>This Meal</span><span class="eqn">640</span>
+          <span>=</span><span class="eqover">2,480</span>
+          <span>/</span><span class="eqn">2,200</span>
+        </div>
+        <div class="remaining over">−280 over target</div>
+      </div>
+
+      <div class="comp-items">
+        <div class="item-row">
+          <div class="item-info">
+            <div class="item-name">Chicken breast (Kroger)</div>
+            <div class="item-sub">380 cal · 2 srv</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Servings for Chicken breast">
+            <button class="step-btn" aria-label="Decrease">−</button>
+            <span class="step-val">2</span>
+            <button class="step-btn" aria-label="Increase">+</button>
+          </div>
+          <button class="item-rm" aria-label="Remove Chicken breast">✕</button>
+        </div>
+        <div class="item-row">
+          <div class="item-info">
+            <div class="item-name">Greek Yogurt (Chobani)</div>
+            <div class="item-sub">130 cal · 1 srv</div>
+          </div>
+          <div class="stepper" role="group" aria-label="Servings for Greek Yogurt">
+            <button class="step-btn" aria-label="Decrease">−</button>
+            <span class="step-val">1</span>
+            <button class="step-btn" aria-label="Increase">+</button>
+          </div>
+          <button class="item-rm" aria-label="Remove Greek Yogurt">✕</button>
+        </div>
+      </div>
+
+      <div class="chip-row">
+        <button class="chip chip-scan" aria-label="Scan barcode">
+          <svg width="13" height="13" viewBox="0 0 12 12" aria-hidden="true" style="flex-shrink:0">
+            <path d="M0 3.5V0h3.5M8.5 0H12v3.5M0 8.5V12h3.5M8.5 12H12V8.5"
+                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Scan
+        </button>
+        <button class="chip" aria-label="Quick-add Chicken breast">Chicken breast</button>
+        <button class="chip" aria-label="Quick-add Greek Yogurt">Greek Yogurt ▶</button>
+      </div>
+
+      <button class="browse-btn" aria-label="Open food library browser">
+        <span class="browse-icon">☰</span><span>Browse library</span>
+      </button>
+
+      <div class="action-row">
+        <button class="btn-primary" aria-label="Log this meal">Log meal</button>
+        <button class="btn-ghost"   aria-label="Delete meal draft">Delete</button>
+      </div>
+
+      <div class="pdiv">Panel 2 · Library Picker <span class="ppill">sheet overlay</span></div>
+
+      <div class="lib-hdr">
+        <span class="lib-title">Food library</span>
+        <button class="close-btn" aria-label="Close food library">✕</button>
+      </div>
+
+      <div class="search-wrap">
+        <input class="search-input" type="search" placeholder="Search foods…"
+               aria-label="Search food library" readonly/>
+      </div>
+
+      <div class="seg-ctrl" role="tablist" aria-label="Filter by macronutrient">
+        <button class="seg-btn"        role="tab" aria-selected="false">All</button>
+        <button class="seg-btn active" role="tab" aria-selected="true">Protein</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Carbs</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Fat</button>
+        <button class="seg-btn"        role="tab" aria-selected="false">Misc</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-p" aria-hidden="true">P</span>Protein · 4 foods</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Chicken breast</div>
+          <div class="food-meta">Kroger · 4 oz (113 g)</div>
+          <div class="food-macros">Cal 190&thinsp; P 38&thinsp; C 0&thinsp; F 3.5</div>
+          <div class="food-usage">used 12× · Jun 9</div>
+        </div>
+        <button class="add-btn" aria-label="Add Chicken breast to meal">+</button>
+      </div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Greek Yogurt</div>
+          <div class="food-meta">Chobani · 1 cup (227 g)</div>
+          <div class="food-macros">Cal 130&thinsp; P 17&thinsp; C 9&thinsp; F 0</div>
+          <div class="food-usage">used 8× · Jun 11</div>
+        </div>
+        <button class="add-btn" aria-label="Add Greek Yogurt to meal">+</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-c" aria-hidden="true">C</span>Carbs · 2 foods</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Banana</div>
+          <div class="food-meta">— · medium (118 g)</div>
+          <div class="food-macros">Cal 105&thinsp; P 1.3&thinsp; C 27&thinsp; F 0.4</div>
+          <div class="food-usage">used 5× · Jun 7</div>
+        </div>
+        <button class="add-btn" aria-label="Add Banana to meal">+</button>
+      </div>
+
+      <div class="grp-hdr"><span class="mb mb-q" aria-hidden="true">?</span>Misc · data incomplete</div>
+
+      <div class="food-row">
+        <div class="food-info">
+          <div class="food-name">Trail Mix (Homemade)</div>
+          <div class="food-meta">— · —</div>
+          <div class="food-macros">Cal 160&thinsp; P —&thinsp; C —&thinsp; F —</div>
+          <div class="food-null-note">mixed / data incomplete</div>
+        </div>
+        <button class="add-btn" aria-label="Add Trail Mix to meal">+</button>
+      </div>
+
+      <div class="pdiv">Panel 3 · Day Total <span class="ppill">two variants</span></div>
+
+      <div class="var-label">Has-Target</div>
+      <div class="day-strip">
+        <div class="strip-hdr">
+          <span class="strip-lbl">Day total</span>
+          <svg width="28" height="28" viewBox="0 0 32 32"
+               role="img" aria-label="Approximately 60% of daily calorie target logged">
+            <title>Day total ~60% of target</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--target)" stroke-width="2"/>
+            <circle cx="16" cy="16" r="7"  fill="var(--target)"/>
+            <circle cx="16" cy="16" r="3"  fill="var(--target-fg)"/>
+          </svg>
+        </div>
+        <div class="strip-cal-row">
+          <span class="strip-cal-num">1,840</span>
+          <span class="strip-cal-sfx">cal so far</span>
+        </div>
+        <div class="strip-of-target">of 2,200 cal target</div>
+        <div class="strip-remaining success">360 cal remaining</div>
+        <div class="strip-macros">P 38 · C 131 · F 11</div>
+      </div>
+
+      <div class="var-label">No-Target (degraded, honest)</div>
+      <div class="day-strip">
+        <div class="strip-hdr">
+          <span class="strip-lbl">Day total</span>
+          <svg width="28" height="28" viewBox="0 0 32 32"
+               role="img" aria-label="No daily target set, hollow ring shown">
+            <title>No target set</title>
+            <circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/>
+          </svg>
+        </div>
+        <div class="strip-cal-row">
+          <span class="strip-cal-num">1,840</span>
+          <span class="strip-cal-sfx">cal so far</span>
+        </div>
+        <div class="strip-macros">P 112 · C 89 · F 44</div>
+        <div class="strip-note">No plan set — showing what's been logged</div>
+      </div>
+
+      <div style="height:30px"></div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

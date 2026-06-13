@@ -1,0 +1,17 @@
+{
+  "feature": "Food Library Redesign — macro-grouped picker + click-to-add + build-a-meal-vs-today",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-food-library-redesign.md",
+  "ux_research": "complete (not re-run) — docs/ux-research/food-library-redesign.md; ledger UXR-lib-01..25",
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"],
+  "agents": [],
+  "iteration": 1,
+  "status": "planning",
+  "decisions": {
+    "direction": "Picker-First / composer-centric (UXR chosen)",
+    "no_migration": true,
+    "restraint": "letter badge not dot; typed numerals not micro-bar; Bullseye snaps discretely",
+    "regression": "existing create/edit meal flow must stay byte-identical",
+    "ship": "direct to main (user dogfoods from production)"
+  }
+}
