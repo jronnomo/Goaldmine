@@ -13,6 +13,7 @@ import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
+import { getQuickPickFoods } from "@/lib/food-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -73,6 +74,7 @@ export default async function HomePage() {
       // resolveDay already provides today's otherGoalEvents/crossGoalConflicts;
       // this call adds the week-ahead window. All date math via @/lib/calendar.
       getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
+      getQuickPickFoods(),
     ]);
 
   // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
@@ -241,7 +243,7 @@ export default async function HomePage() {
           </Link>
         }
       >
-        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} showLogForm={false} />
+        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} showLogForm={false} quickPickFoods={quickPickFoods} />
       </Card>
 
       {/* ── Recent workouts ── */}

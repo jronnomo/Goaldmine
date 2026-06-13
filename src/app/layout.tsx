@@ -2,6 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, DM_Serif_Display } from "next/font/google";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
+import { prisma } from "@/lib/db";
+import { startOfDay, endOfDay } from "@/lib/calendar";
+import { getQuickPickFoods } from "@/lib/food-actions";
+import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -41,11 +45,78 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+/** Serializable per-meal shape threaded to the Log sheet. */
+export type TodayMealLite = {
+  id: string;
+  mealType: string;
+  items: NutritionItem[];
+  notes: string | null;
+  dateISO: string;
+  macros: {
+    calories: number | null;
+    proteinG: number | null;
+    carbsG: number | null;
+    fatG: number | null;
+    fiberG: number | null;
+    sodiumMg: number | null;
+  };
+};
+
+function toNutritionItems(raw: unknown): NutritionItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
+    .map((x) => ({
+      name: typeof x.name === "string" ? x.name : "",
+      qty: typeof x.qty === "string" ? x.qty : undefined,
+      notes: typeof x.notes === "string" ? x.notes : undefined,
+    }))
+    .filter((i) => i.name);
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const now = new Date();
+  const [rawMeals, quickPickFoods] = await Promise.all([
+    prisma.nutritionLog.findMany({
+      where: { date: { gte: startOfDay(now), lte: endOfDay(now) } },
+      orderBy: { date: "asc" },
+      select: {
+        id: true,
+        date: true,
+        mealType: true,
+        items: true,
+        notes: true,
+        calories: true,
+        proteinG: true,
+        carbsG: true,
+        fatG: true,
+        fiberG: true,
+        sodiumMg: true,
+      },
+    }),
+    getQuickPickFoods(),
+  ]);
+
+  const todaysMeals: TodayMealLite[] = rawMeals.map((m) => ({
+    id: m.id,
+    mealType: m.mealType,
+    items: toNutritionItems(m.items),
+    notes: m.notes,
+    dateISO: m.date.toISOString(),
+    macros: {
+      calories: m.calories,
+      proteinG: m.proteinG,
+      carbsG: m.carbsG,
+      fatG: m.fatG,
+      fiberG: m.fiberG,
+      sodiumMg: m.sodiumMg,
+    },
+  }));
+
   return (
     <html
       lang="en"
@@ -64,7 +135,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AppHeader />
         <main className="flex-1 pb-20">{children}</main>
-        <BottomNav />
+        <BottomNav todaysMeals={todaysMeals} quickPickFoods={quickPickFoods} />
       </body>
     </html>
   );

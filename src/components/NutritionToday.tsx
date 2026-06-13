@@ -1,5 +1,7 @@
 import { LogNutritionForm } from "@/components/LogNutritionForm";
+import { MealEditButton } from "@/components/MealEditButton";
 import { MEAL_SLOTS, type MealSlot, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
+import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
 
@@ -28,6 +30,7 @@ export type NutritionTodayLog = {
   fiberG?: number | null;
   sodiumMg?: number | null;
 };
+
 
 // The macros we total + display on Today (calories + the big three).
 type Macros = { calories?: number; proteinG?: number; carbsG?: number; fatG?: number };
@@ -115,10 +118,12 @@ export function NutritionToday({
   logs,
   plan,
   showLogForm = true,
+  quickPickFoods,
 }: {
   logs: NutritionTodayLog[];
   plan?: NutritionPlan | null;
   showLogForm?: boolean;
+  quickPickFoods?: LibraryFood[];
 }) {
   const byMeal = new Map<string, NutritionTodayLog[]>();
   for (const log of logs) {
@@ -135,7 +140,7 @@ export function NutritionToday({
       .map((m) => summarize(asItems(m.items)))
       .filter(Boolean)
       .join(" · ");
-    return { mt, loggedSummary, planned: plan?.[mt], actualMacros: loggedMacros(meals) };
+    return { mt, meals, loggedSummary, planned: plan?.[mt], actualMacros: loggedMacros(meals) };
   }).filter((r) => r.loggedSummary || r.planned);
 
   // Cumulative day totals. "target" sums every planned slot's macros. "so far"
@@ -163,22 +168,49 @@ export function NutritionToday({
       ) : (
         <>
           <ul className="space-y-2.5 text-sm">
-            {rows.map(({ mt, loggedSummary, planned, actualMacros }) => (
+            {rows.map(({ mt, meals, loggedSummary, planned, actualMacros }) => (
               <li key={mt} className="flex gap-2">
                 <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
                   {MEAL_LABEL[mt]}
                 </span>
                 <div className="flex-1 min-w-0 space-y-1">
                   {loggedSummary ? (
-                    // Logged: lead with what you ate, then the macros you logged
-                    // (or the plan's target as a fallback cue).
+                    // Logged: render each logged meal individually with its summary + Edit button.
                     <>
-                      <span className="block">
-                        <span className="text-[var(--success)] mr-1" aria-hidden>
-                          ✓
-                        </span>
-                        {loggedSummary}
-                      </span>
+                      {meals.map((m) => {
+                        const mealSummary = summarize(asItems(m.items));
+                        return (
+                          <div key={m.id} className="flex items-baseline justify-between gap-2">
+                            <span className="flex-1 min-w-0">
+                              <span className="text-[var(--success)] mr-1" aria-hidden>
+                                ✓
+                              </span>
+                              {mealSummary}
+                            </span>
+                            <MealEditButton
+                              meal={{
+                                id: m.id,
+                                mealType: m.mealType,
+                                items: asItems(m.items),
+                                notes: m.notes,
+                                dateISO: m.date.toISOString(),
+                                macros: {
+                                  calories: m.calories ?? null,
+                                  proteinG: m.proteinG ?? null,
+                                  carbsG: m.carbsG ?? null,
+                                  fatG: m.fatG ?? null,
+                                  fiberG: m.fiberG ?? null,
+                                  sodiumMg: m.sodiumMg ?? null,
+                                },
+                                plannedTarget: planned?.macros?.calories != null
+                                  ? Math.round(planned.macros.calories)
+                                  : undefined,
+                              }}
+                              quickPickFoods={quickPickFoods}
+                            />
+                          </div>
+                        );
+                      })}
                       {actualMacros ? (
                         <span className="block text-xs text-[var(--muted)]">
                           {formatMacros(actualMacros)}

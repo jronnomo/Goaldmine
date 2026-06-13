@@ -225,6 +225,7 @@ export async function logNutrition(form: FormData) {
     data: { date, mealType, items, notes, ...parseMacros(form) },
   });
 
+  revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
 }
@@ -252,6 +253,7 @@ export async function updateNutrition(id: string, form: FormData) {
     data: { mealType, items, notes, date, ...parseMacros(form) },
   });
 
+  revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
   return { ok: true as const };
@@ -279,6 +281,7 @@ export type NutritionSnapshot = {
 // the full-page fallback is handled by EditNutritionForm's onDeleted.
 export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
   const row = await prisma.nutritionLog.delete({ where: { id } });
+  revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
   return {

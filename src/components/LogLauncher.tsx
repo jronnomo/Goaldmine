@@ -5,12 +5,32 @@ import Link from "next/link";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
+import { MealEditButton } from "@/components/MealEditButton";
+import type { TodayMealLite } from "@/app/layout";
+import type { LibraryFood } from "@/lib/food-types";
+
+const MEAL_LABELS: Record<string, string> = {
+  preworkout: "Preworkout",
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  snack: "Snack",
+  postworkout: "Postworkout",
+  dinner: "Dinner",
+};
+
+function mealSummary(items: TodayMealLite["items"]): string {
+  return items
+    .map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name))
+    .join(", ");
+}
 
 export type LogLauncherProps = {
   /** Latest recorded weight in lb, or null. Passed to LogMeasurementForm as defaultValue.
    *  Defaults to null (weight input starts empty — by design; BottomNav cannot query Prisma). */
   latestWeight?: number | null;
   onClose: () => void;
+  todaysMeals?: TodayMealLite[];
+  quickPickFoods?: LibraryFood[];
 };
 
 type ExpandedRow = "weight" | "meal" | "note" | null;
@@ -77,7 +97,12 @@ const ImportIcon = () => (
   </svg>
 );
 
-export function LogLauncher({ latestWeight = null, onClose }: LogLauncherProps) {
+export function LogLauncher({
+  latestWeight = null,
+  onClose,
+  todaysMeals,
+  quickPickFoods,
+}: LogLauncherProps) {
   const [expanded, setExpanded] = useState<ExpandedRow>(null);
 
   const toggle = (key: ExpandedRow & string) => {
@@ -111,7 +136,41 @@ export function LogLauncher({ latestWeight = null, onClose }: LogLauncherProps) 
             {isOpen && (
               <div className="px-4 pb-4 pt-1 border-t border-[var(--border)]">
                 {key === "weight" && <LogMeasurementForm latestWeight={latestWeight} />}
-                {key === "meal" && <LogNutritionForm />}
+                {key === "meal" && (
+                  <>
+                    {todaysMeals && todaysMeals.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] mb-2">
+                          Logged today
+                        </p>
+                        <ul className="space-y-2">
+                          {todaysMeals.map((meal) => {
+                            const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
+                            const summary = mealSummary(meal.items);
+                            return (
+                              <li key={meal.id} className="flex items-baseline justify-between gap-2 border-l-2 border-[var(--border)] pl-3">
+                                <span className="flex-1 min-w-0 text-sm">
+                                  <span className="text-xs uppercase tracking-wide text-[var(--muted)] mr-1">
+                                    {label}
+                                  </span>
+                                  {summary && (
+                                    <span className="text-[var(--foreground)]">· {summary}</span>
+                                  )}
+                                </span>
+                                <MealEditButton
+                                  meal={meal}
+                                  quickPickFoods={quickPickFoods}
+                                />
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        <div className="border-t border-[var(--border)] mt-4 pt-4" />
+                      </div>
+                    )}
+                    <LogNutritionForm />
+                  </>
+                )}
                 {key === "note" && <LogNoteForm />}
               </div>
             )}
