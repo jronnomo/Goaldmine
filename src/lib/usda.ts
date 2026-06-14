@@ -184,6 +184,22 @@ function gram1dp(v: number | null): number | null {
  * and no bonuses always scores strictly below 0.5, which our reject threshold
  * catches (see searchUsdaFood).
  */
+/**
+ * Off-target descriptor words: when a result's description contains one of these
+ * AND the user did not type it, the result is almost always the wrong food
+ * (e.g. query "sweet potato" → "Sweet potato LEAVES" / "Sweet potato CHIPS").
+ * Each unrequested off-target word applies a strong penalty so plain/raw/cooked
+ * variants rank above byproducts and processed forms. The word is only penalized
+ * when it is NOT in the query, so "sweet potato chips" still finds chips.
+ */
+const OFF_TARGET_WORDS = [
+  "leaves", "leaf", "chips", "crisps", "fries", "fried", "candied",
+  "canned", "dehydrated", "dried", "powder", "powdered", "flour",
+  "juice", "puree", "sauce", "soup", "baby", "infant", "snacks",
+  "battered", "breaded", "pickled", "puffs", "tots", "patties",
+  "waffles", "tater", "casserole",
+];
+
 function tokenScoreFood(food: UsdaSearchFood, tokens: string[]): number {
   if (tokens.length === 0) return 0;
 
@@ -202,10 +218,47 @@ function tokenScoreFood(food: UsdaSearchFood, tokens: string[]): number {
   let score = fraction;
   if (desc.includes("raw")) score += 0.15;
   if (food.dataType === "Foundation") score += 0.1;
+
+  // Conciseness boost: prefer descriptions whose own words are mostly covered by
+  // the query (a tight match like "Sweet potato, raw" over "Sweet potato leaves,
+  // raw"). descWords counts alphabetic words in the description.
+  const descWords = desc.split(/[^a-z]+/i).filter((w) => w.length > 1);
+  if (descWords.length > 0) {
+    score += (matchedCount / descWords.length) * 0.3;
+  }
+
+  // Off-target penalty: each unrequested byproduct/processed-form word docks the
+  // score hard, pushing those variants below the plain food (UXR meal-edit).
+  for (const w of OFF_TARGET_WORDS) {
+    if (desc.includes(w) && !tokens.includes(w)) score -= 0.6;
+  }
+
   // Tie-break: slightly prefer shorter descriptions
   score -= food.description.length / 10000;
 
   return score;
+}
+
+/** Map a raw FDC search food → NormalizedUsdaFood (per-100g macros + measures). */
+function normalizeSearchFood(food: UsdaSearchFood): NormalizedUsdaFood {
+  const n = food.foodNutrients;
+  const per100g: FoodMacros = {
+    calories: getEnergyKcal(n),
+    proteinG: gram1dp(getNutrientValue(n, NID_PROTEIN)),
+    carbsG: gram1dp(getNutrientValue(n, NID_CARBS)),
+    fatG: gram1dp(getNutrientValue(n, NID_FAT)),
+    fiberG: gram1dp(getNutrientValue(n, NID_FIBER)),
+    sodiumMg: (() => {
+      const s = getNutrientValue(n, NID_SODIUM);
+      return s != null ? Math.round(s) : null;
+    })(),
+  };
+  return {
+    fdcId: food.fdcId,
+    description: food.description,
+    per100g,
+    measures: food.foodMeasures ?? [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -234,35 +287,8 @@ export async function searchUsdaFood(
   const termLower = term.trim().toLowerCase();
   const tokens = termLower.split(/\s+/).filter((t) => t.length > 0);
 
-  function buildUrl(requireAllWords: boolean): string {
-    const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
-    url.searchParams.set("query", term);
-    url.searchParams.append("dataType", "Foundation");
-    url.searchParams.append("dataType", "SR Legacy");
-    url.searchParams.set("pageSize", "6");
-    url.searchParams.set("api_key", apiKey);
-    if (requireAllWords) url.searchParams.set("requireAllWords", "true");
-    return url.toString();
-  }
-
-  async function fetchFoods(requireAllWords: boolean): Promise<UsdaSearchFood[]> {
-    const res = await fetch(buildUrl(requireAllWords), {
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) throw new Error(`FDC HTTP ${res.status}`);
-    const json = (await res.json()) as UsdaSearchResponse;
-    return json.foods ?? [];
-  }
-
   try {
-    // First attempt: require all query words in the result
-    let foods = await fetchFoods(true);
-
-    // Retry without the restriction if no results
-    if (foods.length === 0) {
-      foods = await fetchFoods(false);
-    }
-
+    const foods = await fetchUsdaCandidates(term, apiKey);
     if (foods.length === 0) return null;
 
     // Pick the best-scoring food
@@ -276,37 +302,93 @@ export async function searchUsdaFood(
     // results also fall below the threshold).
     if (best.score <= 0.5) return null;
 
-    // Map nutrient array → FoodMacros (per 100 g)
-    const food = best.food;
-    const n = food.foodNutrients;
-
-    const calories = getEnergyKcal(n);
-    const proteinG = gram1dp(getNutrientValue(n, NID_PROTEIN));
-    const carbsG = gram1dp(getNutrientValue(n, NID_CARBS));
-    const fatG = gram1dp(getNutrientValue(n, NID_FAT));
-    const fiberG = gram1dp(getNutrientValue(n, NID_FIBER));
-
-    const sodiumRaw = getNutrientValue(n, NID_SODIUM);
-    const sodiumMg = sodiumRaw != null ? Math.round(sodiumRaw) : null;
-
-    const per100g: FoodMacros = {
-      calories,
-      proteinG,
-      carbsG,
-      fatG,
-      fiberG,
-      sodiumMg,
-    };
-
-    return {
-      fdcId: food.fdcId,
-      description: food.description,
-      per100g,
-      measures: food.foodMeasures ?? [],
-    };
+    return normalizeSearchFood(best.food);
   } catch {
     // Network failure, timeout (AbortError), JSON parse error → null
     return null;
+  }
+}
+
+/**
+ * Shared FDC search fetch: requireAllWords=true first (tight recall), retry
+ * without the restriction if zero results. pageSize 25 widens the candidate
+ * pool so disambiguation (searchUsdaFoods) and single-pick (searchUsdaFood) see
+ * the plain/raw/cooked variants, not just the API's top few. Throws on HTTP
+ * error / timeout (callers catch → null / []).
+ */
+async function fetchUsdaCandidates(
+  term: string,
+  apiKey: string,
+): Promise<UsdaSearchFood[]> {
+  function buildUrl(requireAllWords: boolean): string {
+    const url = new URL("https://api.nal.usda.gov/fdc/v1/foods/search");
+    url.searchParams.set("query", term);
+    url.searchParams.append("dataType", "Foundation");
+    url.searchParams.append("dataType", "SR Legacy");
+    url.searchParams.set("pageSize", "25");
+    url.searchParams.set("api_key", apiKey);
+    if (requireAllWords) url.searchParams.set("requireAllWords", "true");
+    return url.toString();
+  }
+  async function run(requireAllWords: boolean): Promise<UsdaSearchFood[]> {
+    const res = await fetch(buildUrl(requireAllWords), {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw new Error(`FDC HTTP ${res.status}`);
+    const json = (await res.json()) as UsdaSearchResponse;
+    return json.foods ?? [];
+  }
+  const foods = await run(true);
+  return foods.length === 0 ? run(false) : foods;
+}
+
+/**
+ * Search FDC and return up to `limit` RANKED candidates (best first) for a
+ * disambiguation picker — unlike searchUsdaFood, which returns only the single
+ * best. Candidates are token-scored (off-target byproducts ranked lower but NOT
+ * dropped, so the user can still pick "leaves"/"chips" deliberately). Includes
+ * only results where at least half the query tokens matched. Never throws.
+ */
+export async function searchUsdaFoods(
+  term: string,
+  limit = 8,
+): Promise<NormalizedUsdaFood[]> {
+  const apiKey = process.env.FDC_API_KEY ?? "DEMO_KEY";
+  const termLower = term.trim().toLowerCase();
+  const tokens = termLower.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
+
+  try {
+    const foods = await fetchUsdaCandidates(term, apiKey);
+    if (foods.length === 0) return [];
+
+    const scored = foods
+      .map((f) => {
+        // Inclusion floor: at least half the query tokens present as word-starts.
+        let matched = 0;
+        for (const t of tokens) {
+          const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          if (new RegExp("\\b" + escaped, "i").test(f.description.toLowerCase())) {
+            matched++;
+          }
+        }
+        return { food: f, score: tokenScoreFood(f, tokens), matched };
+      })
+      .filter((s) => s.matched / tokens.length >= 0.5)
+      .sort((a, b) => b.score - a.score);
+
+    // Dedupe by fdcId (defensive — FDC can repeat across dataTypes).
+    const seen = new Set<number>();
+    const out: NormalizedUsdaFood[] = [];
+    for (const s of scored) {
+      if (seen.has(s.food.fdcId)) continue;
+      seen.add(s.food.fdcId);
+      out.push(normalizeSearchFood(s.food));
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
   }
 }
 

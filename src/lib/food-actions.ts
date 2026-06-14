@@ -9,7 +9,7 @@ import {
   findBuiltin,
   resolveBuiltinGrams,
 } from "@/lib/food-builtins";
-import { searchUsdaFood, searchUsdaByBarcode } from "@/lib/usda";
+import { searchUsdaFood, searchUsdaFoods, searchUsdaByBarcode } from "@/lib/usda";
 import type { NormalizedUsdaBrandedFood } from "@/lib/usda";
 import type { BarcodeLookupResult, LibraryFood, FoodMacros } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
@@ -655,6 +655,233 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
     return {
       status: "error",
       message: err instanceof Error ? err.message : "Unknown error in estimateFood",
+    };
+  }
+}
+
+// ── searchFoodCandidates + resolveCandidate (disambiguation picker) ─────────────
+
+/** USDA portion measure shape (matches resolveUsdaGrams's parameter). */
+type UsdaMeasure = { disseminationText: string; gramWeight: number };
+
+/**
+ * How to deterministically resolve a chosen candidate into a FoodEstimate.
+ * Carries everything needed so resolveCandidate never re-runs a fuzzy search.
+ */
+export type CandidateRef =
+  | { type: "library"; id: string }
+  | { type: "builtin"; slug: string }
+  | {
+      type: "usda";
+      fdcId: number;
+      description: string;
+      per100g: FoodMacros;
+      measures: UsdaMeasure[];
+    };
+
+/** A single pickable food in the disambiguation list. */
+export type FoodCandidate = {
+  /** Stable React key. */
+  key: string;
+  /** Display name. */
+  name: string;
+  /** Brand string (library rows only), else null. */
+  brand: string | null;
+  source: "library" | "builtin" | "usda";
+  /** Calories for the row preview (per 100 g, or per serving for serving-basis library rows). */
+  kcal: number | null;
+  /** Short portion/basis hint, e.g. "per 100 g" or "1 scoop (31 g)". */
+  detail: string;
+  /** Deterministic resolution payload. */
+  ref: CandidateRef;
+};
+
+/**
+ * Return a ranked list of candidate foods for a natural-language query so the
+ * user can DISAMBIGUATE (e.g. "sweet potato" → raw / cooked / leaves / chips).
+ * Merges three sources in precedence order: personal library → builtin table →
+ * USDA FDC. Deduped against already-cached library rows (a library row whose
+ * barcode is "usda:<id>"/"builtin:<slug>" suppresses the duplicate USDA/builtin
+ * candidate). Never throws — USDA failure degrades to library+builtin only.
+ */
+export async function searchFoodCandidates(
+  query: string,
+): Promise<{ candidates: FoodCandidate[] }> {
+  const parsed = parseFoodQuery(query.trim());
+  const rest = parsed.rest.trim();
+  if (!rest) return { candidates: [] };
+
+  const candidates: FoodCandidate[] = [];
+  const cachedBarcodes = new Set<string>();
+
+  // ── A. Personal library (name contains query) ─────────────────────────────
+  try {
+    const libRows = await prisma.foodLibrary.findMany({
+      where: { name: { contains: rest, mode: "insensitive" } },
+      orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
+      take: 6,
+    });
+    for (const r of libRows) {
+      if (r.barcode) cachedBarcodes.add(r.barcode);
+      candidates.push({
+        key: `lib:${r.id}`,
+        name: r.name,
+        brand: r.brand,
+        source: "library",
+        kcal: r.calories,
+        detail: r.servingSize ?? (r.basis === "100g" ? "per 100 g" : "1 serving"),
+        ref: { type: "library", id: r.id },
+      });
+    }
+  } catch {
+    // DB error on library lookup → skip library candidates.
+  }
+
+  // ── B. Builtin reference table (slug/alias contains query tokens) ──────────
+  const qLower = rest.toLowerCase();
+  for (const b of BUILTINS) {
+    const barcode = `builtin:${b.slug}`;
+    if (cachedBarcodes.has(barcode)) continue; // already shown as a library row
+    const hay = [b.slug, ...b.aliases].join(" ").toLowerCase();
+    if (hay.includes(qLower) || qLower.includes(b.slug)) {
+      candidates.push({
+        key: barcode,
+        name: slugToDisplayName(b.slug),
+        brand: null,
+        source: "builtin",
+        kcal: b.per100g.calories,
+        detail: "per 100 g",
+        ref: { type: "builtin", slug: b.slug },
+      });
+    }
+  }
+
+  // ── C. USDA FoodData Central (ranked, multi-result) ───────────────────────
+  const usda = await searchUsdaFoods(rest, 8);
+  for (const u of usda) {
+    const barcode = `usda:${u.fdcId}`;
+    if (cachedBarcodes.has(barcode)) continue; // already shown as a library row
+    candidates.push({
+      key: barcode,
+      name: u.description.replace(/\|/g, "-"),
+      brand: null,
+      source: "usda",
+      kcal: u.per100g.calories,
+      detail: "per 100 g",
+      ref: {
+        type: "usda",
+        fdcId: u.fdcId,
+        description: u.description,
+        per100g: u.per100g,
+        measures: u.measures,
+      },
+    });
+  }
+
+  return { candidates };
+}
+
+/**
+ * Deterministically resolve a chosen candidate (+ the original query, for
+ * count/size/grams) into a FoodEstimate — same shape estimateFood returns, so
+ * the existing add path is reused verbatim. No fuzzy search; the ref pins the
+ * exact food. Shares estimateFood's per-source portion/scaling logic.
+ */
+export async function resolveCandidate(
+  ref: CandidateRef,
+  query: string,
+): Promise<FoodEstimate> {
+  try {
+    const { count, sizeWord, grams: explicitGrams } = parseFoodQuery(query.trim());
+
+    // ── library ──────────────────────────────────────────────────────────────
+    if (ref.type === "library") {
+      const libRow = await prisma.foodLibrary.findUnique({ where: { id: ref.id } });
+      if (!libRow) return { status: "not_found", query };
+      await prisma.foodLibrary.update({
+        where: { id: libRow.id },
+        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+      });
+      const food = toLibraryFood(libRow);
+
+      if (food.basis === "100g") {
+        let resolvedGrams: number;
+        let portionLabel: string;
+        if (libRow.barcode?.startsWith("builtin:")) {
+          const slug = libRow.barcode.slice(8);
+          const builtin = BUILTINS.find((b) => b.slug === slug);
+          if (builtin) {
+            const r = resolveBuiltinGrams(builtin, sizeWord, explicitGrams);
+            resolvedGrams = r.grams;
+            portionLabel = r.label;
+          } else {
+            resolvedGrams = explicitGrams ?? extractGramsFromLabel(food.servingSize) ?? 100;
+            portionLabel = formatPortionLabel(resolvedGrams, food.servingSize, explicitGrams != null);
+          }
+        } else {
+          resolvedGrams = explicitGrams ?? extractGramsFromLabel(food.servingSize) ?? 100;
+          portionLabel = formatPortionLabel(resolvedGrams, food.servingSize, explicitGrams != null);
+        }
+        const servings = (count * resolvedGrams) / 100;
+        const macros = scaleMacros(food.perServing, servings);
+        const line = buildLine(food.name, portionLabel, count);
+        return { status: "ok", line, grams: resolvedGrams, macros, source: "library", food, servings };
+      } else {
+        const servings = count;
+        const macros = scaleMacros(food.perServing, servings);
+        const portionLabel = food.servingSize ?? "1 serving";
+        const line = buildLine(food.name, portionLabel, count);
+        return { status: "ok", line, grams: null, macros, source: "library", food, servings };
+      }
+    }
+
+    // ── builtin ────────────────────────────────────────────────────────────────
+    if (ref.type === "builtin") {
+      const builtin = BUILTINS.find((b) => b.slug === ref.slug);
+      if (!builtin) return { status: "not_found", query };
+      const { grams: resolvedGrams, label: portionLabel } = resolveBuiltinGrams(
+        builtin, sizeWord, explicitGrams,
+      );
+      const servings = (count * resolvedGrams) / 100;
+      const macros = scaleMacros(builtin.per100g, servings);
+      const displayName = slugToDisplayName(builtin.slug);
+      const defaultPortion = builtin.portions.find((p) => p.key === builtin.defaultPortionKey);
+      const servingSizeLabel = defaultPortion?.label ?? "100 g";
+      const { food } = await upsertEstimateRow({
+        barcode: `builtin:${builtin.slug}`,
+        name: displayName,
+        servingSize: servingSizeLabel,
+        macros: builtin.per100g,
+        source: "builtin",
+      });
+      const line = buildLine(displayName, portionLabel, count);
+      return { status: "ok", line, grams: resolvedGrams, macros, source: "builtin", food, servings };
+    }
+
+    // ── usda (use the pinned candidate; no re-search) ──────────────────────────
+    const { grams: resolvedGrams, label: portionLabel } = resolveUsdaGrams(
+      ref.measures, sizeWord, explicitGrams,
+    );
+    const servings = (count * resolvedGrams) / 100;
+    const macros = scaleMacros(ref.per100g, servings);
+    const displayName = ref.description.replace(/\|/g, "-");
+    const firstMeasure = ref.measures[0];
+    const servingSizeLabel = firstMeasure
+      ? `${firstMeasure.disseminationText} (${firstMeasure.gramWeight} g)`
+      : "100 g";
+    const { food } = await upsertEstimateRow({
+      barcode: `usda:${ref.fdcId}`,
+      name: displayName,
+      servingSize: servingSizeLabel,
+      macros: ref.per100g,
+      source: "usda",
+    });
+    const line = buildLine(displayName, portionLabel, count);
+    return { status: "ok", line, grams: resolvedGrams, macros, source: "usda", food, servings };
+  } catch (err) {
+    return {
+      status: "error",
+      message: err instanceof Error ? err.message : "Unknown error in resolveCandidate",
     };
   }
 }

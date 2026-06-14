@@ -9,9 +9,10 @@ import type { LibraryFood, AddFoodPayload, FoodMacros } from "@/lib/food-types";
 import {
   getQuickPickFoods,
   recordFoodUse,
-  estimateFood,
+  searchFoodCandidates,
+  resolveCandidate,
 } from "@/lib/food-actions";
-import type { FoodEstimate } from "@/lib/food-actions";
+import type { FoodEstimate, FoodCandidate, CandidateRef } from "@/lib/food-actions";
 
 import { LibraryPickerOverlay } from "@/components/LibraryPickerOverlay";
 
@@ -217,6 +218,8 @@ export function useFoodComposer({
   const [estimateInput, setEstimateInput] = useState("");
   const [estimatePending, setEstimatePending] = useState(false);
   const [estimateResult, setEstimateResult] = useState<FoodEstimate | null>(null);
+  // Disambiguation candidates (multi-match). null = no list shown.
+  const [candidates, setCandidates] = useState<FoodCandidate[] | null>(null);
   // Track the query submitted so "Add anyway" uses the right text even if the
   // user edits the input field after submitting.
   const lastEstimateQueryRef = useRef("");
@@ -271,12 +274,44 @@ export function useFoodComposer({
     lastEstimateQueryRef.current = q;
     setEstimatePending(true);
     setEstimateResult(null);
+    setCandidates(null);
     try {
-      const result = await estimateFood(q);
-      setEstimateResult(result);
+      const { candidates: cands } = await searchFoodCandidates(q);
+      if (cands.length === 0) {
+        setEstimateResult({ status: "not_found", query: q });
+      } else if (cands.length === 1) {
+        // Unambiguous — resolve straight to the macro strip, no extra tap.
+        const result = await resolveCandidate(cands[0].ref, q);
+        setEstimateResult(result);
+      } else {
+        setCandidates(cands);
+      }
+    } catch {
+      setEstimateResult({ status: "error", message: "Estimate failed" });
     } finally {
       setEstimatePending(false);
     }
+  }
+
+  // Pick one candidate from the disambiguation list → resolve to the macro strip.
+  // Keeps `candidates` set so "Back to results" can return to the list.
+  async function handlePickCandidate(ref: CandidateRef) {
+    const q = lastEstimateQueryRef.current || estimateInput.trim();
+    if (!q) return;
+    setEstimatePending(true);
+    setEstimateResult(null);
+    try {
+      const result = await resolveCandidate(ref, q);
+      setEstimateResult(result);
+    } catch {
+      setEstimateResult({ status: "error", message: "Estimate failed" });
+    } finally {
+      setEstimatePending(false);
+    }
+  }
+
+  function handleBackToResults() {
+    setEstimateResult(null);
   }
 
   function handleEstimateAdd() {
@@ -301,6 +336,7 @@ export function useFoodComposer({
 
     setEstimateInput("");
     setEstimateResult(null);
+    setCandidates(null);
   }
 
   function handleEstimateAddAnyway() {
@@ -311,10 +347,12 @@ export function useFoodComposer({
     setMacros(merged.macroValues);
     setEstimateInput("");
     setEstimateResult(null);
+    setCandidates(null);
   }
 
   function handleEstimateDismiss() {
     setEstimateResult(null);
+    setCandidates(null);
   }
 
   // ── controls ──────────────────────────────────────────────────────────────
@@ -427,8 +465,9 @@ export function useFoodComposer({
             disabled={estimatePending}
             onChange={(e) => {
               setEstimateInput(e.target.value);
-              // A new search replaces the current strip.
+              // A new search replaces the current strip + candidate list.
               if (estimateResult) setEstimateResult(null);
+              if (candidates) setCandidates(null);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -451,6 +490,45 @@ export function useFoodComposer({
 
         {/* Estimate strip — aria-live="polite"; one at a time */}
         <div aria-live="polite">
+          {/* Disambiguation list — shown when >1 match and none picked yet */}
+          {candidates && !estimateResult && (
+            <div
+              data-testid="estimate-candidates"
+              className="rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden"
+            >
+              <p className="px-3 pt-2.5 pb-1 text-xs font-medium text-[var(--muted)]">
+                Pick a match
+              </p>
+              <ul className="max-h-64 overflow-y-auto overscroll-contain divide-y divide-[var(--border)]">
+                {candidates.map((c) => (
+                  <li key={c.key}>
+                    <button
+                      type="button"
+                      data-testid={`estimate-candidate-${c.key}`}
+                      onClick={() => handlePickCandidate(c.ref)}
+                      disabled={estimatePending}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 min-h-[44px] text-left hover:bg-[var(--border)]/30 disabled:opacity-60"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-[var(--foreground)] truncate">
+                          {c.name}
+                          {c.brand && (
+                            <span className="font-normal text-[var(--muted)]"> · {c.brand}</span>
+                          )}
+                        </span>
+                        <span className="block text-xs text-[var(--muted)]">
+                          {c.kcal != null ? `${c.kcal} cal · ${c.detail}` : c.detail}
+                          <span className="ml-1.5">{sourceLabel(c.source)}</span>
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[var(--muted)]" aria-hidden>›</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {estimateResult?.status === "ok" && (() => {
             const est = estimateResult;
             // Split the pre-built line ("Banana | medium (118 g)") into name + portion
@@ -493,14 +571,25 @@ export function useFoodComposer({
                   >
                     Add
                   </button>
-                  <button
-                    type="button"
-                    data-testid="estimate-dismiss-btn"
-                    onClick={handleEstimateDismiss}
-                    className="flex-1 rounded-lg border border-[var(--border)] text-[var(--foreground)] py-2.5 text-sm font-medium min-h-[44px]"
-                  >
-                    Dismiss
-                  </button>
+                  {candidates ? (
+                    <button
+                      type="button"
+                      data-testid="estimate-back-btn"
+                      onClick={handleBackToResults}
+                      className="flex-1 rounded-lg border border-[var(--border)] text-[var(--foreground)] py-2.5 text-sm font-medium min-h-[44px]"
+                    >
+                      ‹ Results
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid="estimate-dismiss-btn"
+                      onClick={handleEstimateDismiss}
+                      className="flex-1 rounded-lg border border-[var(--border)] text-[var(--foreground)] py-2.5 text-sm font-medium min-h-[44px]"
+                    >
+                      Dismiss
+                    </button>
+                  )}
                 </div>
               </div>
             );
