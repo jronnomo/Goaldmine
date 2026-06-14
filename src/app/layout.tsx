@@ -3,9 +3,15 @@ import { Geist, Geist_Mono, DM_Serif_Display } from "next/font/google";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { prisma } from "@/lib/db";
-import { startOfDay, endOfDay } from "@/lib/calendar";
-import { getQuickPickFoods } from "@/lib/food-actions";
+import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
+import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import {
+  sumLoggedDayMacros,
+  sumPlanTargetMacros,
+  hasAnyMacros,
+  type DayMacros,
+} from "@/lib/nutrition-macros";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -80,7 +86,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const now = new Date();
-  const [rawMeals, quickPickFoods] = await Promise.all([
+  const [rawMeals, quickPickFoods, libraryFoods, today] = await Promise.all([
     prisma.nutritionLog.findMany({
       where: { date: { gte: startOfDay(now), lte: endOfDay(now) } },
       orderBy: { date: "asc" },
@@ -99,6 +105,10 @@ export default async function RootLayout({
       },
     }),
     getQuickPickFoods(),
+    listLibraryFoods(),
+    // Override-aware resolved day — the only source of today's per-slot
+    // nutrition-plan target. Mirrors /nutrition/page.tsx exactly.
+    resolveDay(now),
   ]);
 
   const todaysMeals: TodayMealLite[] = rawMeals.map((m) => ({
@@ -116,6 +126,16 @@ export default async function RootLayout({
       sodiumMg: m.sodiumMg,
     },
   }));
+
+  // Day context for the Log-sheet meal composer (Browse-library + build-vs-today
+  // header). Same override-aware logic as /nutrition/page.tsx.
+  const trackedTodayMacros: DayMacros = sumLoggedDayMacros(
+    todaysMeals.map((m) => m.macros),
+  );
+  const planTarget = sumPlanTargetMacros(today.nutritionPlan);
+  const dayTargetMacros: DayMacros | null = hasAnyMacros(planTarget)
+    ? planTarget
+    : null;
 
   return (
     <html
@@ -135,7 +155,13 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AppHeader />
         <main className="flex-1 pb-20">{children}</main>
-        <BottomNav todaysMeals={todaysMeals} quickPickFoods={quickPickFoods} />
+        <BottomNav
+          todaysMeals={todaysMeals}
+          quickPickFoods={quickPickFoods}
+          libraryFoods={libraryFoods}
+          trackedSoFar={trackedTodayMacros}
+          dayTarget={dayTargetMacros}
+        />
       </body>
     </html>
   );

@@ -8,7 +8,12 @@ import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import type { TodayMealLite } from "@/app/layout";
 import type { LibraryFood } from "@/lib/food-types";
-import { sumLoggedDayMacros, formatDayMacros, hasAnyMacros } from "@/lib/nutrition-macros";
+import {
+  sumLoggedDayMacros,
+  formatDayMacros,
+  hasAnyMacros,
+  type DayMacros,
+} from "@/lib/nutrition-macros";
 
 const MEAL_LABELS: Record<string, string> = {
   preworkout: "Preworkout",
@@ -32,6 +37,11 @@ export type LogLauncherProps = {
   onClose: () => void;
   todaysMeals?: TodayMealLite[];
   quickPickFoods?: LibraryFood[];
+  /** Full library for the Browse-library picker in the meal composer. */
+  libraryFoods?: LibraryFood[];
+  /** Today's logged macros + plan target — powers the build-vs-today header. */
+  trackedSoFar?: DayMacros;
+  dayTarget?: DayMacros | null;
 };
 
 type ExpandedRow = "weight" | "meal" | "note" | null;
@@ -103,6 +113,9 @@ export function LogLauncher({
   onClose,
   todaysMeals,
   quickPickFoods,
+  libraryFoods,
+  trackedSoFar,
+  dayTarget,
 }: LogLauncherProps) {
   const [expanded, setExpanded] = useState<ExpandedRow>(null);
 
@@ -181,7 +194,12 @@ export function LogLauncher({
                         <div className="border-t border-[var(--border)] mt-4 pt-4" />
                       </div>
                     )}
-                    <LogNutritionForm />
+                    <LogNutritionForm
+                      quickPickFoods={quickPickFoods}
+                      libraryFoods={libraryFoods}
+                      trackedSoFar={trackedSoFar}
+                      dayTarget={dayTarget}
+                    />
                   </>
                 )}
                 {key === "note" && <LogNoteForm />}

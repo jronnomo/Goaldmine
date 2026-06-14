@@ -9,6 +9,7 @@ import { LogLauncher } from "@/components/LogLauncher";
 import { MoreSheet } from "@/components/MoreSheet";
 import type { TodayMealLite } from "@/app/layout";
 import type { LibraryFood } from "@/lib/food-types";
+import type { DayMacros } from "@/lib/nutrition-macros";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tab definitions
@@ -72,9 +73,15 @@ const TABS: Tab[] = [
 export function BottomNav({
   todaysMeals,
   quickPickFoods,
+  libraryFoods,
+  trackedSoFar,
+  dayTarget,
 }: {
   todaysMeals?: TodayMealLite[];
   quickPickFoods?: LibraryFood[];
+  libraryFoods?: LibraryFood[];
+  trackedSoFar?: DayMacros;
+  dayTarget?: DayMacros | null;
 }) {
   const pathname = usePathname();
   const [logOpen, setLogOpen] = useState(false);
@@ -171,6 +178,9 @@ export function BottomNav({
           onClose={() => setLogOpen(false)}
           todaysMeals={todaysMeals}
           quickPickFoods={quickPickFoods}
+          libraryFoods={libraryFoods}
+          trackedSoFar={trackedSoFar}
+          dayTarget={dayTarget}
         />
       </BottomSheet>
 
