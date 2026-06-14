@@ -2625,8 +2625,12 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "update_nutrition",
     {
-      title: "Update a nutrition log",
-      description: "Edit a logged meal's mealType / items / notes / macros / date. Pass only the fields to change. For macros, pass a number to set it or null to clear it; omitted macro fields are left unchanged.",
+      title: "Edit / correct / fix / amend a logged meal (items + macros together)",
+      description:
+        "The canonical, default tool for editing a logged meal — use this to edit, correct, fix, change, modify, or amend any field of a NutritionLog: mealType, items, notes, macros, or date. " +
+        "This is the only edit path that keeps a meal coherent: pass the corrected items AND the recomputed macros in the same call so the item list and the day's totals stay in sync. " +
+        "Prefer this over nutrition_log_ops for any change that affects quantity or food content (nutrition_log_ops edits only the items array and silently leaves the stored macros stale). " +
+        "Pass only the fields to change. For macros, pass a number to set it or null to clear it; omitted macro fields are left unchanged.",
       inputSchema: {
         id: z.string(),
         mealType: MealTypeShape.optional(),
@@ -2666,10 +2670,15 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "nutrition_log_ops",
     {
-      title: "Surgical edits to a logged meal's items list",
+      title: "Surgical edits to a logged meal's items list (does NOT touch macros)",
       description:
         "Apply a sequence of addItem / updateItem / removeItem operations to a single NutritionLog's items array, without re-emitting the whole list. " +
-        "Mirrors workout_ops on the nutrition side. Use when you want to fix one item on a meal — bump a qty, correct a name, add a forgotten side, drop a wrongly-logged item — without sending the full items array via update_nutrition. " +
+        "Mirrors workout_ops on the nutrition side. " +
+        "IMPORTANT: this edits ONLY the items array — it never recomputes or updates the stored macros (calories/protein/carbs/fat/fiber/sodium). " +
+        "Any op that changes food content or quantity (addItem, removeItem, or an updateItem that patches qty) leaves the day's totals frozen at the old, now-wrong value. " +
+        "For quantity or content corrections, use update_nutrition instead and pass the corrected items AND the recomputed macros in one call. " +
+        "Reserve this tool for pure text fixes that don't change the food eaten — renaming an item, fixing a typo, editing item notes, reordering. " +
+        "When an op does change content/qty, the response sets macrosMayBeStale:true with the current stored macros so you can reconcile via update_nutrition. " +
         "Ops are applied sequentially against a working copy; any op that fails (no match, out-of-range index, ambiguous substring) aborts the batch and nothing is written. " +
         "Op types: " +
         "{op:'addItem', item:{name, qty?, notes?}, at?:'end'|'start'|number} — defaults to 'end'. " +
@@ -2697,12 +2706,34 @@ function registerWriteTools(server: McpServer) {
           where: { id },
           data: { items: next as unknown as Prisma.InputJsonValue },
         });
+        // This tool only rewrites the items array; the stored macro columns are
+        // left untouched. Any op that changes food content or quantity desyncs
+        // the day's totals from the new item list — warn the caller and hand
+        // back the stale macros so they can reconcile via update_nutrition.
+        const macrosMayBeStale = ops.some(
+          (op) =>
+            op.op === "addItem" ||
+            op.op === "removeItem" ||
+            (op.op === "updateItem" && op.patch.qty !== undefined),
+        );
+        const baseMessage = `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`;
+        if (!macrosMayBeStale) {
+          return { id, itemCount: next.length, opsApplied: ops.length, items: next, macrosMayBeStale, message: baseMessage };
+        }
+        const storedMacros = Object.fromEntries(
+          MACRO_KEYS.map((k) => [k, (log as Record<string, unknown>)[k] ?? null]),
+        );
         return {
           id,
           itemCount: next.length,
           opsApplied: ops.length,
           items: next,
-          message: `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`,
+          macrosMayBeStale,
+          storedMacros,
+          message:
+            baseMessage +
+            " ⚠️ This changed food content/quantity but the stored macros were NOT recomputed — the day's totals are now stale. " +
+            "Reconcile by calling update_nutrition with the corrected macros (current stored values returned as storedMacros).",
         };
       }),
   );

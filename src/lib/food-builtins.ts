@@ -159,6 +159,21 @@ export const BUILTINS: BuiltinFood[] = [
     defaultPortionKey: "large",
   },
   {
+    slug: "egg-white",
+    aliases: ["egg white", "egg whites", "egg-white", "egg-whites", "eggwhite", "eggwhites"],
+    // USDA: Egg, white, raw, fresh — 52 kcal / 100 g
+    per100g: m(52, 10.9, 0.7, 0.2, 0.0, 166),
+    portions: [
+      { key: "small", label: "1 small egg white (26 g)", grams: 26 },
+      { key: "medium", label: "1 medium egg white (30 g)", grams: 30 },
+      { key: "large", label: "1 large egg white (33 g)", grams: 33 },
+      { key: "xlarge", label: "1 extra-large egg white (37 g)", grams: 37 },
+    ],
+    // Default to one large egg white (a natural "piece"), NOT 100 g — so a
+    // count like "7 egg whites" scales by ~33 g/each (231 g), not 7 × 100 g.
+    defaultPortionKey: "large",
+  },
+  {
     slug: "chicken-breast",
     aliases: [
       "chicken breast",
