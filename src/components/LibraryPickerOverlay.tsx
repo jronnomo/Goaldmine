@@ -127,9 +127,11 @@ export function LibraryPickerOverlay({
       className="fixed inset-0 z-[50] bg-black/45"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      {/* Panel — mirrors ScanFoodSheet panel CSS exactly */}
+      {/* Panel — mirrors ScanFoodSheet panel CSS exactly.
+          overflow-hidden clips the scroll area to the rounded top + prevents the
+          list from bleeding up over the header/tabs. */}
       <div
-        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85vh]"
+        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85vh] overflow-hidden"
         style={{ background: "var(--card)", borderTopLeftRadius: "1rem", borderTopRightRadius: "1rem" }}
       >
         {/* Header */}
@@ -162,7 +164,7 @@ export function LibraryPickerOverlay({
         <div
           role="radiogroup"
           aria-label="Filter by macro type"
-          className="flex gap-1 overflow-x-auto px-4 pb-2 [-webkit-overflow-scrolling:touch]"
+          className="flex shrink-0 gap-1 overflow-x-auto px-4 pb-2 [-webkit-overflow-scrolling:touch]"
         >
           {TABS.map(({ key, label }) => {
             const selected = tab === key;
@@ -174,7 +176,7 @@ export function LibraryPickerOverlay({
                 aria-checked={selected}
                 data-testid={`macro-tab-${key}`}
                 onClick={() => setTab(key)}
-                className={`flex-shrink-0 min-h-[44px] px-3 rounded-full text-xs font-semibold transition-colors ${
+                className={`inline-flex shrink-0 items-center justify-center min-h-[44px] px-4 rounded-full text-xs font-semibold transition-colors ${
                   selected
                     ? "bg-[var(--accent)] text-[var(--accent-fg)]"
                     : "border border-[var(--border)] text-[var(--muted)]"
@@ -186,8 +188,9 @@ export function LibraryPickerOverlay({
           })}
         </div>
 
-        {/* Food list — scrollable */}
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 pb-[env(safe-area-inset-bottom)]">
+        {/* Food list — scrollable. min-h-0 lets this flex child shrink so its own
+            overflow-y-auto engages instead of overflowing the panel upward. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[env(safe-area-inset-bottom)]">
           {filtered.length === 0 ? (
             <p className="py-8 text-center text-sm text-[var(--muted)]">
               {search ? `No foods matching "${search}"` : "No foods in this group."}

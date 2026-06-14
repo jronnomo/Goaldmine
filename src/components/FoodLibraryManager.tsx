@@ -221,7 +221,7 @@ export function FoodLibraryManager({ foods: initial }: { foods: LibraryFoodRow[]
               aria-checked={sel}
               data-testid={`macro-tab-${key}`}
               onClick={() => setActiveTab(key)}
-              className={`flex-shrink-0 min-h-[44px] px-3 rounded-full text-xs font-semibold ${
+              className={`inline-flex shrink-0 items-center justify-center min-h-[44px] px-4 rounded-full text-xs font-semibold ${
                 sel
                   ? "bg-[var(--accent)] text-[var(--accent-fg)]"
                   : "border border-[var(--border)] text-[var(--muted)]"
