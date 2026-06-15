@@ -177,14 +177,12 @@ function sourceLabel(src: "library" | "builtin" | "usda"): string {
  *              Render OUTSIDE the <form> (as a sibling) so its buttons can never
  *              submit the host form.
  */
-// INVARIANT: setItemsText is ONLY used from rawMode paths (toggleRawMode, legacy).
-// All food-resolved adds (handleAdd, handleEstimateAdd, handleEstimateAddAnyway) MUST
-// call addItem(). Never call setItemsText from these paths — it strips amount/unit/source
-// from ALL existing items, not just the new one.
+// INVARIANT: All food-resolved adds (handleAdd, handleEstimateAdd, handleEstimateAddAnyway)
+// MUST call addItem(). Never reconstruct a text line from these paths — doing so would
+// strip amount/unit/source from ALL existing items, not just the new one.
+// setItemsText has been removed from this hook; rawMode text writes live in MealComposer.
 
 export function useFoodComposer({
-  itemsText,
-  setItemsText,
   macros,
   setMacros,
   addItem,
@@ -192,8 +190,6 @@ export function useFoodComposer({
   libraryFoods,
   onMacrosChanged,
 }: {
-  itemsText: string;
-  setItemsText: (s: string) => void;
   macros: MacroValues;
   setMacros: (m: MacroValues) => void;
   /** Called on every food-resolved add (chip / scan / estimate / add-anyway). B-3 rule:
