@@ -923,9 +923,13 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   const isGoalDate = !!goal && !!goal.targetDate && dateKey(goal.targetDate) === dateKey(date);
 
   // On a test day the benchmark replaces the prescribed session. Only defer a
-  // real session (not rest, not a user's explicit workout override).
+  // real session (not rest, not a user's explicit workout override) — and only
+  // when there is still an UNLOGGED test to do. If every baseline due today is
+  // already logged (e.g. a retest done early, within its credit window), there's
+  // nothing to step aside for, so the workout stays active.
+  const hasUnloggedBaseline = baselinesDue.some((b) => b.loggedOnDate === null);
   const workoutDeferredForBaseline =
-    baselinesDue.length > 0 &&
+    hasUnloggedBaseline &&
     !isOverride &&
     !!workoutTemplate &&
     workoutTemplate.category !== "rest";
