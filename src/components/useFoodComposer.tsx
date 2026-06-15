@@ -13,6 +13,16 @@ import {
   resolveCandidate,
 } from "@/lib/food-actions";
 import type { FoodEstimate, FoodCandidate, CandidateRef } from "@/lib/food-actions";
+import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import {
+  buildItemSnapshot,
+  defaultUnitForQuery,
+  deriveAmountFromServings,
+  deriveAmountFromEstimate,
+  buildQtyDisplay,
+  addFoodMacros,
+} from "@/lib/food-units";
+import { parseFoodQuery } from "@/lib/food-parse";
 
 import { LibraryPickerOverlay } from "@/components/LibraryPickerOverlay";
 
@@ -167,11 +177,17 @@ function sourceLabel(src: "library" | "builtin" | "usda"): string {
  *              Render OUTSIDE the <form> (as a sibling) so its buttons can never
  *              submit the host form.
  */
+// INVARIANT: setItemsText is ONLY used from rawMode paths (toggleRawMode, legacy).
+// All food-resolved adds (handleAdd, handleEstimateAdd, handleEstimateAddAnyway) MUST
+// call addItem(). Never call setItemsText from these paths — it strips amount/unit/source
+// from ALL existing items, not just the new one.
+
 export function useFoodComposer({
   itemsText,
   setItemsText,
   macros,
   setMacros,
+  addItem,
   quickPickFoods,
   libraryFoods,
   onMacrosChanged,
@@ -180,6 +196,9 @@ export function useFoodComposer({
   setItemsText: (s: string) => void;
   macros: MacroValues;
   setMacros: (m: MacroValues) => void;
+  /** Called on every food-resolved add (chip / scan / estimate / add-anyway). B-3 rule:
+   *  NEVER call setItemsText from food-resolved paths — use addItem instead. */
+  addItem: (item: NutritionItem) => void;
   quickPickFoods?: LibraryFood[];
   /** Pre-loaded library foods for the Browse-library picker. */
   libraryFoods?: LibraryFood[];
@@ -240,22 +259,32 @@ export function useFoodComposer({
   // ── handleAdd ─────────────────────────────────────────────────────────────
 
   function handleAdd(payload: AddFoodPayload) {
-    const { food, chipSource } = payload;
+    const { food, servings, chipSource } = payload;
 
-    // 1 + 2: merge items text and macros (pure)
-    const merged = mergeFoodIntoForm(itemsText, macros, payload);
-    setItemsText(merged.itemsText);
+    // 1. Build structured item (B-3: addItem path, NOT setItemsText).
+    const snapshot = buildItemSnapshot(food);
+    // chip/scan path has no text query → null; defaultUnitForQuery handles it.
+    const unit = defaultUnitForQuery(null, snapshot);
+    const amount = deriveAmountFromServings(servings, unit, snapshot);
+    const qty = buildQtyDisplay(amount, unit, snapshot);
+    const structuredItem: NutritionItem = { name: food.name, qty, amount, unit, source: snapshot };
+
+    // 2. Macro update — pure helper; no text line built here (S-6 fix).
+    const newMacros = addFoodMacros(macros, food, servings);
     // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (UXR-lib-16)
-    onMacrosChanged?.(macros, merged.macroValues);
-    setMacros(merged.macroValues);
+    onMacrosChanged?.(macros, newMacros);
+    setMacros(newMacros);
 
-    // 3. Usage bump (chip path only)
+    // 3. B-3: addItem, NEVER setItemsText from this path.
+    addItem(structuredItem);
+
+    // 4. Usage bump (chip path only)
     // Scan path: lookupBarcode() already incremented usageCount. Do NOT call here.
     if (chipSource) {
       recordFoodUse(food.id).catch(() => {});
     }
 
-    // 4. Optimistic chip upsert (scan path only)
+    // 5. Optimistic chip upsert (scan path only)
     // After a scan adds (or rescans with healed macros) a food, upsert to front
     // of localAdditions so the chip immediately carries the freshest data.
     if (!chipSource) {
@@ -316,19 +345,34 @@ export function useFoodComposer({
 
   function handleEstimateAdd() {
     if (!estimateResult || estimateResult.status !== "ok") return;
-    const merged = mergeEstimateIntoForm(
-      itemsText,
-      macros,
-      estimateResult.line,
-      estimateResult.macros
-    );
-    setItemsText(merged.itemsText);
+    const est = estimateResult;
+
+    // Build structured item (B-3: addItem path, NOT setItemsText).
+    const snapshot = buildItemSnapshot(est.food);
+    const parsedQuery = parseFoodQuery(lastEstimateQueryRef.current ?? "");
+    const unit = defaultUnitForQuery(parsedQuery, snapshot);
+    const amount = deriveAmountFromEstimate(est.servings, unit, snapshot, parsedQuery);
+    const qty = buildQtyDisplay(amount, unit, snapshot);
+    const structuredItem: NutritionItem = {
+      name: est.food.name,
+      qty,
+      amount,
+      unit,
+      source: snapshot,
+    };
+
+    // Macro update — use addFoodMacros (S-6 fix).
+    const newMacros = addFoodMacros(macros, est.food, est.servings);
     // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (DC-2, UXR-lib-16)
-    onMacrosChanged?.(macros, merged.macroValues);
-    setMacros(merged.macroValues);
+    onMacrosChanged?.(macros, newMacros);
+    setMacros(newMacros);
+
+    // B-3: addItem, NEVER setItemsText from this path.
+    addItem(structuredItem);
+
     // Upsert the resolved library food to front of localAdditions so the chip
     // carries fresh macros.
-    const food = estimateResult.food;
+    const food = est.food;
     setLocalAdditions((prev) => {
       const without = prev.filter((f) => f.id !== food.id);
       return [food, ...without];
@@ -342,9 +386,8 @@ export function useFoodComposer({
   function handleEstimateAddAnyway() {
     const line = lastEstimateQueryRef.current || estimateInput.trim();
     if (!line) return;
-    const merged = mergeEstimateIntoForm(itemsText, macros, line, null);
-    setItemsText(merged.itemsText);
-    setMacros(merged.macroValues);
+    // B-3 FIX: addItem, NEVER setItemsText. Freehand item — no source, no macros.
+    addItem({ name: line });
     setEstimateInput("");
     setEstimateResult(null);
     setCandidates(null);
