@@ -852,7 +852,11 @@ export function MealComposer(props: MealComposerProps) {
                             type="number"
                             inputMode="decimal"
                             aria-label={`Amount for ${item.name}`}
-                            value={item.amount ?? ""}
+                            // Render 0/empty as a blank, clearable field: an empty
+                            // input parses to 0, and `?? ""` would pin a stuck "0"
+                            // the user can't delete. `|| ""` shows it blank instead.
+                            value={item.amount || ""}
+                            placeholder="0"
                             min={0}
                             step="any"
                             onChange={(e) => {
