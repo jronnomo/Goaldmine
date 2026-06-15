@@ -15,6 +15,7 @@ import type { BarcodeLookupResult, LibraryFood, FoodMacros } from "@/lib/food-ty
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { OffProduct } from "@/lib/openfoodfacts";
 import { scaleMacros } from "@/lib/food-resolve-local";
+import { recalcItemMacros } from "@/lib/food-units";
 
 // ── lookupBarcode ─────────────────────────────────────────────────────────────
 
@@ -927,6 +928,15 @@ export async function estimateMealMacros(
   const perItem: MealItemMacroResult[] = [];
 
   for (const item of items) {
+    // T5 (blueprint §2.3): for items with a food snapshot, recalculate via
+    // recalcItemMacros so the Recompute preview is consistent with the stored
+    // amount/unit rather than re-resolving from the text query.
+    if (item.source) {
+      const macros = recalcItemMacros(item);
+      perItem.push({ name: item.name, matched: macros != null, macros });
+      continue;
+    }
+
     const query = [item.qty, item.name].filter(Boolean).join(" ").trim();
     const macros = query ? await resolveItemMacrosLocal(query) : null;
     perItem.push({ name: item.name, matched: macros != null, macros });

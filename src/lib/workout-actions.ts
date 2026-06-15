@@ -12,6 +12,7 @@ import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
 import { userTzWallClockToUTC } from "@/lib/calendar";
+import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 
 export async function logMeasurement(form: FormData) {
@@ -210,12 +211,24 @@ function parseMacros(form: FormData) {
 
 export async function logNutrition(form: FormData) {
   const mealType = String(form.get("mealType") ?? "").trim();
-  const itemsRaw = String(form.get("items") ?? "");
   const notes = (form.get("notes") as string | null)?.trim() || null;
   const dateStr = (form.get("date") as string | null)?.trim();
 
   if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
-  const items = parseItemsText(itemsRaw);
+
+  // itemsJson is the authoritative structured channel (carries amount/unit/source);
+  // falls back to the text `items` field for rawMode / legacy paths.
+  const itemsJsonRaw = form.get("itemsJson") as string | null;
+  let items: NutritionItem[];
+  if (itemsJsonRaw) {
+    try {
+      items = parseStoredItems(JSON.parse(itemsJsonRaw));
+    } catch {
+      items = parseItemsText(String(form.get("items") ?? ""));
+    }
+  } else {
+    items = parseItemsText(String(form.get("items") ?? ""));
+  }
   if (items.length === 0) throw new Error("List at least one food item");
 
   const date = parseUserTzDate(dateStr);
@@ -237,12 +250,24 @@ export async function logNutrition(form: FormData) {
 // onSaved), NOT via a redirect baked into this shared action.
 export async function updateNutrition(id: string, form: FormData) {
   const mealType = String(form.get("mealType") ?? "").trim();
-  const itemsRaw = String(form.get("items") ?? "");
   const notes = (form.get("notes") as string | null)?.trim() || null;
   const dateStr = (form.get("date") as string | null)?.trim();
 
   if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
-  const items = parseItemsText(itemsRaw);
+
+  // itemsJson is the authoritative structured channel (carries amount/unit/source);
+  // falls back to the text `items` field for rawMode / legacy paths.
+  const itemsJsonRaw = form.get("itemsJson") as string | null;
+  let items: NutritionItem[];
+  if (itemsJsonRaw) {
+    try {
+      items = parseStoredItems(JSON.parse(itemsJsonRaw));
+    } catch {
+      items = parseItemsText(String(form.get("items") ?? ""));
+    }
+  } else {
+    items = parseItemsText(String(form.get("items") ?? ""));
+  }
   if (items.length === 0) throw new Error("List at least one food item");
 
   const date = parseUserTzDate(dateStr);
@@ -286,7 +311,7 @@ export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
   revalidatePath("/nutrition");
   return {
     mealType: row.mealType,
-    items: (row.items as NutritionItem[]) ?? [],
+    items: parseStoredItems(row.items),
     notes: row.notes,
     dateISO: row.date.toISOString(),
     macros: {
