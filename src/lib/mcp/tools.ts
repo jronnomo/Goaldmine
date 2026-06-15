@@ -531,8 +531,8 @@ function registerReadTools(server: McpServer) {
       title: "Get today's plan",
       description:
         "Resolve today's workout, nutrition phase, mobility, baselines due, and any logged workouts. Combines the user's active plan rotation with per-day overrides. Returns full DayTemplate plus context. Also surfaces all active standing_rule notes (with lastAcknowledgedAt freshness) under `standingRules` so the coach sees persistent guidance at session start. Call acknowledge_standing_rule when you reference one in a turn so the freshness timestamp stays current. " +
-        "Also surfaces plannedHikeToday (hike detail if planned today), " +
-        "workoutDeferredForHike (advisory — hike likely the day's work), and " +
+        "AUTHORITATIVE TASK FIELDS (use these, not the raw template): `todayTask` is one of 'workout' | 'rest' | 'baseline' | 'hike' | 'out_of_plan' — the single source of truth for what today actually is. `activeWorkout` is the session to do (null on baseline/hike/out_of_plan); `deferredWorkout` is the rotation session that stepped aside (non-null only on baseline/hike). On a baseline day the tests in `baselinesDue` ARE the session — do NOT prescribe `workoutTemplate`/`deferredWorkout` as today's work. `workoutTemplate` is the RAW override-aware rotation and is NOT deferral-aware; `workoutDeferredForBaseline`/`workoutDeferredForHike` are deprecated booleans kept for one release (they equal todayTask === 'baseline'/'hike'). " +
+        "Also surfaces plannedHikeToday (hike detail if planned today) and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
         "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
@@ -606,7 +606,8 @@ function registerReadTools(server: McpServer) {
       title: "Get any day's plan",
       description:
         "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date. " +
-        "Also surfaces plannedHikeToday, workoutDeferredForHike, and longEffortConflict. " +
+        "Read the authoritative task fields `todayTask` ('workout'|'rest'|'baseline'|'hike'|'out_of_plan'), `activeWorkout` (the session to do; null when deferred), and `deferredWorkout` (the stepped-aside rotation session) rather than re-deriving from `workoutTemplate` + the deprecated workoutDeferredFor* flags. " +
+        "Also surfaces plannedHikeToday and longEffortConflict. " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date.",
       inputSchema: { date: DateKeyShape },
     },

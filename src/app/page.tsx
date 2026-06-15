@@ -81,35 +81,30 @@ export default async function HomePage() {
   void latestMeasurement;
 
   const baselinesDue = resolved.baselinesDue;
-  // The day's workout. resolved.workoutTemplate is override-aware: when an
-  // apply_day_override has set workoutJson it returns that; otherwise the
-  // rotation default. ctx.day stays around for week / phase metadata only.
-  const dayTemplate = resolved.workoutTemplate;
-  // When the override duplicates baselines as exercise blocks, treat the
-  // BaselineBlockCard as canonical and hide any block whose exercises are
-  // all baseline tests for the day. Defensive for legacy overrides;
-  // future audibles shouldn't bake baselines into workoutJson at all.
+  // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask):
+  //   activeWorkout   = what to train as today's task (null on baseline/hike/out-of-plan)
+  //   deferredWorkout = the rotation session that stepped aside (non-null only when deferred)
+  // We never render the rotation workout from workoutTemplate directly — that's what let
+  // a deferred session show up next to baseline tests.
+  const activeTemplate = resolved.activeWorkout;
+  const deferredTemplate = resolved.deferredWorkout;
+  // When an override duplicates baselines as exercise blocks, treat the BaselineBlockCard
+  // as canonical and hide any block whose exercises are all baseline tests for the day.
   const baselineNames = new Set(baselinesDue.map((b) => b.test.testName));
-  const dayBlocks = (dayTemplate?.blocks ?? []).filter(
-    (b) =>
-      !(
-        b.exercises.length > 0 &&
-        b.exercises.every((ex) => baselineNames.has(ex.name))
-      ),
-  );
+  const dropBaselineOnlyBlocks = (blocks: Block[]) =>
+    blocks.filter(
+      (b) => !(b.exercises.length > 0 && b.exercises.every((ex) => baselineNames.has(ex.name))),
+    );
+  const dayBlocks = dropBaselineOnlyBlocks(activeTemplate?.blocks ?? []);
+  const deferredBlocks = dropBaselineOnlyBlocks(deferredTemplate?.blocks ?? []);
 
   // --- REQ-D1: Derive completion / rest-day / planned state ---
   // Completed = a workout was logged today (resolveDay already queries this range).
   const completed = resolved.workouts.length > 0;
 
-  // Rest day = workoutTemplate category is "rest".
-  // IMPORTANT: dayTemplate === null means OUTSIDE the plan range (not rest day).
-  // Verified: program-template.ts:413-428 — day 7 has category:"rest" with blocks;
-  // resolveDay returns a non-null workoutTemplate on rest day.
-  const isRestDay = !completed && dayTemplate?.category === "rest";
-
-  // Out-of-plan: dayTemplate === null AND not completed
-  const isOutOfPlan = !completed && !isRestDay && dayTemplate === null;
+  // Rest / out-of-plan now read straight off the authoritative task kind.
+  const isRestDay = !completed && resolved.todayTask === "rest";
+  const isOutOfPlan = !completed && resolved.todayTask === "out_of_plan";
 
   // Planned: in-plan day with workout blocks, not yet completed, not rest day
   // (isPlanned = !completed && !isRestDay && !isOutOfPlan)
@@ -117,11 +112,15 @@ export default async function HomePage() {
   // Derived label shown next to the Bullseye
   const stateLabel: string = completed
     ? "Completed"
-    : isRestDay
-      ? "Rest day"
-      : isOutOfPlan
-        ? "No workout scheduled"
-        : "Today's plan";
+    : resolved.todayTask === "baseline"
+      ? "Baseline testing"
+      : resolved.todayTask === "hike"
+        ? "Hike day"
+        : isRestDay
+          ? "Rest day"
+          : isOutOfPlan
+            ? "No workout scheduled"
+            : "Today's plan";
 
   const dayLabel = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
@@ -129,21 +128,30 @@ export default async function HomePage() {
     day: "numeric",
   }).format(new Date());
 
-  // Summary copy — REQ-D4: no leaked dev string at old line 98
+  // Summary copy — REQ-D4: no leaked dev string at old line 98. Driven by the
+  // ACTIVE workout (on a deferred day there is none → fall back to ctx.day / null).
   let summaryText: string | null = null;
-  if (dayTemplate?.summary) {
-    summaryText = dayTemplate.summary;
+  if (activeTemplate?.summary) {
+    summaryText = activeTemplate.summary;
   } else if (ctx.day?.summary) {
     summaryText = ctx.day.summary;
   }
   // When neither is available, summaryText stays null.
   // Previously this fell through to a dev-facing error string — removed (REQ-D4).
-  // Server-side log for diagnosability if both are absent but a template exists:
-  if (!summaryText && dayTemplate !== null) {
+  // Server-side log for diagnosability if an active workout exists but has no summary:
+  if (!summaryText && activeTemplate !== null) {
     console.warn("[Today] day template present but no summary found; plan details unavailable");
   }
 
-  const workoutTitle = dayTemplate?.title ?? ctx.day?.title;
+  // Header title follows the ACTIVE task. On a deferred day there's no active
+  // workout, so name the actual task (the strength session's title would mislead).
+  const workoutTitle =
+    activeTemplate?.title ??
+    (resolved.todayTask === "baseline"
+      ? "Baseline Testing"
+      : resolved.todayTask === "hike"
+        ? "Hike Day"
+        : ctx.day?.title);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -217,21 +225,29 @@ export default async function HomePage() {
         <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
       )}
 
-      {/* ── Workout blocks ── */}
+      {/* ── Workout blocks — the ACTIVE task only. On a baseline/hike day activeWorkout
+             is null, so this renders nothing and the deferred card below takes over. ── */}
       {dayBlocks.map((block, i) => (
         <BlockCard key={i} block={block} index={i + (baselinesDue.length > 0 ? 1 : 0)} />
       ))}
 
-      {baselinesDue.length > 0 && (
-        <Card>
-          <p className="text-xs text-[var(--muted)]">
-            <strong className="text-foreground">Test + workout pairing.</strong> Run the tests
-            above fresh, then the workout — short power/skill tests pair fine. On days where the
-            tests are long endurance or max-effort lifts, ask Claude whether to defer the regular
-            blocks; stacking max-effort lifts on top of the same-pattern strength work confounds
-            the data.
-          </p>
-        </Card>
+      {/* ── Deferred rotation workout — stepped aside for today's baseline test or hike.
+             Dimmed + labelled so it reads as "normally here, not today", never as the task. ── */}
+      {deferredTemplate && deferredBlocks.length > 0 && (
+        <>
+          <Card title={`Deferred today — ${deferredTemplate.title}`}>
+            <p className="text-xs text-[var(--warning)]">
+              {resolved.todayTask === "baseline"
+                ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
+                : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
+            </p>
+          </Card>
+          <div className="opacity-60 space-y-4">
+            {deferredBlocks.map((block, i) => (
+              <BlockCard key={i} block={block} index={i} />
+            ))}
+          </div>
+        </>
       )}
 
       {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}

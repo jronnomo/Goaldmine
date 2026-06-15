@@ -58,11 +58,17 @@ export default async function DayDetail({
     year: "numeric",
   });
 
+  // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask).
+  // The planned card shows whichever workout applies: the active one, or — when a
+  // baseline test / hike has deferred it — the stepped-aside rotation session, dimmed.
+  const shownTemplate = r.activeWorkout ?? r.deferredWorkout;
+  const isDeferred = r.deferredWorkout !== null;
+
   // Hide workout blocks whose exercises are all baseline tests already
   // rendered in the BaselineBlockCard. Defensive for legacy overrides
   // that bake baselines into workoutJson; future audibles shouldn't.
   const baselineNames = new Set(r.baselinesDue.map((b) => b.test.testName));
-  const dayBlocks = (r.workoutTemplate?.blocks ?? []).filter(
+  const dayBlocks = (shownTemplate?.blocks ?? []).filter(
     (b) =>
       !(
         b.exercises.length > 0 &&
@@ -97,9 +103,9 @@ export default async function DayDetail({
   const secondaryEvents = r.otherGoalEvents.filter((e) => e.type !== "target-date");
 
   // Props for the logger form.
-  const isRestDay = r.workoutTemplate?.category === "rest";
+  const isRestDay = r.todayTask === "rest";
   const prefill = prefillFromTemplate(dayBlocks);
-  const defaultTitle = r.workoutTemplate?.title ?? "";
+  const defaultTitle = shownTemplate?.title ?? "";
   const defaultTimeHHMM = isToday ? nowHHMM() : "12:00";
 
   return (
@@ -184,25 +190,26 @@ export default async function DayDetail({
       {/* Planned card — expandable dropdown; collapsed once something is logged,
           open otherwise (past: as reference for logging; today/future: the active plan).
           "Planned" not "Planned workout" — goaldmine will grow non-workout disciplines. */}
-      {r.workoutTemplate && dayBlocks.length > 0 && (
+      {shownTemplate && dayBlocks.length > 0 && (
         <CollapsibleCard
           defaultOpen={completedWorkouts.length === 0}
           title={
-            r.workoutDeferredForBaseline
-              ? `Deferred today — ${r.workoutTemplate.title}`
+            isDeferred
+              ? `Deferred today — ${shownTemplate.title}`
               : isPast
-                ? `Template: ${r.workoutTemplate.title}`
-                : `Planned: ${r.workoutTemplate.title}`
+                ? `Template: ${shownTemplate.title}`
+                : `Planned: ${shownTemplate.title}`
           }
         >
-          {r.workoutDeferredForBaseline && (
+          {isDeferred && (
             <p className="text-xs text-[var(--warning)] mb-2">
-              Baseline testing day — the tests above are your session. This workout steps aside; a
-              max-effort test is itself a hard day. Do a thorough warmup, then test.
+              {r.todayTask === "baseline"
+                ? "Baseline testing day — the tests above are your session. This workout steps aside; a max-effort test is itself a hard day. Do a thorough warmup, then test."
+                : "Hike day — the planned hike is your session. This workout steps aside. If the hike doesn't happen, ask Claude whether to pick it up instead."}
             </p>
           )}
-          <div className={r.workoutDeferredForBaseline ? "opacity-60" : undefined}>
-            <p className="text-xs text-[var(--muted)] italic mb-2">{r.workoutTemplate.summary}</p>
+          <div className={isDeferred ? "opacity-60" : undefined}>
+            <p className="text-xs text-[var(--muted)] italic mb-2">{shownTemplate.summary}</p>
             <ol className="space-y-3">
               {dayBlocks.map((block, i) => (
                 <li key={i}>

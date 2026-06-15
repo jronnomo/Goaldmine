@@ -509,6 +509,24 @@ function countBaselinesFromOverride(program: ActiveProgramSnapshot, names: strin
   return count;
 }
 
+/**
+ * The single authoritative answer to "what is today's training task", AFTER all
+ * overrides, baseline, and hike deferrals are applied. Consumers should switch on
+ * `todayTask` and read `activeWorkout` / `deferredWorkout` — they must NOT re-derive
+ * the day's task from `workoutTemplate` + the `*DeferredFor*` flags (doing so
+ * inconsistently is what caused the deferred rotation workout to still render
+ * alongside baseline tests). See `deriveTodayTask`.
+ *
+ *  - "workout"     — train the prescribed rotation session (it's in `activeWorkout`).
+ *  - "rest"        — rest / active-recovery day (`activeWorkout` is the rest template).
+ *  - "baseline"    — baseline tests ARE the session (see `baselinesDue`); the rotation
+ *                    workout stepped aside and is in `deferredWorkout`.
+ *  - "hike"        — a planned hike IS the session (see `plannedHikeToday`); the rotation
+ *                    workout stepped aside and is in `deferredWorkout`.
+ *  - "out_of_plan" — no plan covers today (`activeWorkout` and `deferredWorkout` null).
+ */
+export type TodayTask = "workout" | "rest" | "baseline" | "hike" | "out_of_plan";
+
 export type ResolvedDay = {
   date: Date;
   dateKey: string;
@@ -516,12 +534,19 @@ export type ResolvedDay = {
   isGoalDate: boolean;
   rotationDay: number | null;
   weekIndex: number | null;
-  workoutTemplate: DayTemplate | null; // resolved (override-aware)
+  workoutTemplate: DayTemplate | null; // resolved (override-aware) — RAW rotation/override; NOT deferral-aware. Prefer activeWorkout/deferredWorkout below.
+  // ── Authoritative, deferral-aware resolution (single source of truth) ──
+  // Switch on todayTask; render activeWorkout as the day's task and deferredWorkout
+  // (when non-null) as a clearly-labelled "stepped aside" secondary.
+  todayTask: TodayTask;
+  activeWorkout: DayTemplate | null; // the workout to PRESENT as today's task; null on baseline/hike/out_of_plan
+  deferredWorkout: DayTemplate | null; // the rotation workout set aside by a deferral; non-null only on baseline/hike
   isOverride: boolean;
+  // @deprecated Prefer todayTask === "baseline" + deferredWorkout. Retained for one
+  // release for saved-prompt / MCP-consumer compatibility; equals todayTask === "baseline".
   // True when baseline tests are due on this rotation day and the prescribed
   // (non-rest) session steps aside — the test IS the day's work. A max-effort
-  // benchmark is itself a hard session; you don't test AND train heavy the same
-  // day. workoutTemplate is still populated (so the UI can name what's deferred).
+  // benchmark is itself a hard session; you don't test AND train heavy the same day.
   workoutDeferredForBaseline: boolean;
   // Flag A — populated on any date that has a planned hike. The hike's detail
   // is surfaced so the coach can display route/pack weight without a second call.
@@ -534,10 +559,10 @@ export type ResolvedDay = {
     durationMin: number;
     date: Date;
   } | null;
-  // Flag A — advisory, mirrors workoutDeferredForBaseline. True when a planned hike
-  // sits on this date AND the rotation template prescribes a non-rest session AND
-  // no explicit override is present. The gym session is NOT removed; this is a hint
-  // that the hike is likely the day's work.
+  // @deprecated Prefer todayTask === "hike" + deferredWorkout. Retained for one release
+  // for saved-prompt / MCP-consumer compatibility; equals todayTask === "hike".
+  // True when a planned hike sits on this date AND the rotation template prescribes a
+  // non-rest session AND no explicit override is present.
   workoutDeferredForHike: boolean;
   // Flag B — the loud conflict signal for the long-endurance rotation day. Set on the
   // long-endurance slot when a planned hike exists elsewhere in the same rotation week AND no
@@ -620,6 +645,34 @@ export type ResolveDayCtx = {
   /** The focus goal's id (from GoalEventsResult.focusGoalId). */
   focusGoalId: string | null;
 };
+
+/**
+ * The single place deferral intent becomes a concrete task. Given the raw
+ * (override-aware) rotation template and the already-computed deferral flags,
+ * return the authoritative task kind plus the active/deferred split.
+ *
+ * Pure — no I/O — so the contract is testable and every consumer inherits the
+ * exact same resolution instead of re-deriving it from the flags.
+ */
+export function deriveTodayTask(
+  workoutTemplate: DayTemplate | null,
+  flags: { deferredForBaseline: boolean; deferredForHike: boolean },
+): { todayTask: TodayTask; activeWorkout: DayTemplate | null; deferredWorkout: DayTemplate | null } {
+  if (workoutTemplate === null) {
+    return { todayTask: "out_of_plan", activeWorkout: null, deferredWorkout: null };
+  }
+  // Baseline outranks hike (a max-effort benchmark is the hardest thing on the day).
+  if (flags.deferredForBaseline) {
+    return { todayTask: "baseline", activeWorkout: null, deferredWorkout: workoutTemplate };
+  }
+  if (flags.deferredForHike) {
+    return { todayTask: "hike", activeWorkout: null, deferredWorkout: workoutTemplate };
+  }
+  if (workoutTemplate.category === "rest") {
+    return { todayTask: "rest", activeWorkout: workoutTemplate, deferredWorkout: null };
+  }
+  return { todayTask: "workout", activeWorkout: workoutTemplate, deferredWorkout: null };
+}
 
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
   const program = await getActiveProgram();
@@ -879,6 +932,13 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   const isPastForConfidence = dayStart.getTime() < startOfDay(new Date()).getTime();
   const confidence = deriveConfidence(dayStart, isInPlan, isPastForConfidence, program);
 
+  // Collapse the rotation template + deferral flags into the single authoritative
+  // task. Done once here so no consumer has to remember to honor the flags.
+  const { todayTask, activeWorkout, deferredWorkout } = deriveTodayTask(workoutTemplate, {
+    deferredForBaseline: workoutDeferredForBaseline,
+    deferredForHike: workoutDeferredForHike,
+  });
+
   return {
     date: dayStart,
     dateKey: dateKey(date),
@@ -887,6 +947,9 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     rotationDay,
     weekIndex,
     workoutTemplate,
+    todayTask,
+    activeWorkout,
+    deferredWorkout,
     isOverride,
     workoutDeferredForBaseline,
     plannedHikeToday,
