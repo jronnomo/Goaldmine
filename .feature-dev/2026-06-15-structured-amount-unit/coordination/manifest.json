@@ -1,0 +1,11 @@
+{
+  "feature": "Structured amount + unit fields in the food composer (live macro recalc)",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-structured-amount-unit-composer.md",
+  "prd_issue": null,
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005"],
+  "agents": [],
+  "iteration": 1,
+  "status": "architecture",
+  "ux_research": "skipped — incremental control on existing patterned composer; units-per-food is data-derived"
+}
