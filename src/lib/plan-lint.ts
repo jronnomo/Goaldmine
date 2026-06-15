@@ -13,7 +13,7 @@
 //    overrides + planned hikes and runs every rule. Backs the lint_plan MCP
 //    tool so the coach can self-check on demand.
 
-import { addDays, startOfDay, weekConflicts } from "@/lib/calendar";
+import { addDays, resolveDay, startOfDay, weekConflicts } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
 import { getBaselineSchedule } from "@/lib/records";
@@ -303,6 +303,56 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
         message: `A day override exists for ${startOfDay(ov.date).toISOString().slice(0, 10)}, outside the plan's ${template.totalWeeks}-week range — it will never render.`,
         context: { overrideId: ov.id, date: ov.date, daysDelta },
       });
+    }
+  }
+
+  // Rule: the same baseline test scheduled on 2+ days within one rotation week.
+  // Typically a relocation that left the original behind — an override pulled a
+  // test to a new date, but the native occurrence still stands, so BOTH days
+  // defer their workout for a test you'll only do once. May be intentional (a
+  // deliberate twice-in-a-week test), so flag for the coach to resolve via a skip
+  // override (baselineTestNames: []) rather than auto-suppressing. (warning)
+  //
+  // Re-derives via resolveDay (the single source of truth) instead of replaying
+  // the native+override scheduling logic — exactly the duplication that caused
+  // this bug class. Bounded by only scanning weeks that have a baseline-placing
+  // override.
+  const baselineOverrideWeeks = new Set<number>();
+  for (const ov of overrides) {
+    const names = Array.isArray(ov.baselineTestNames) ? (ov.baselineTestNames as unknown[]) : null;
+    if (!names || names.length === 0) continue;
+    const dd = Math.floor((startOfDay(ov.date).getTime() - startMid.getTime()) / 86400000);
+    if (dd < 0 || dd >= planSpanDays) continue; // out-of-range override already flagged
+    baselineOverrideWeeks.add(Math.floor(dd / 7) + 1);
+  }
+  for (const wi of baselineOverrideWeeks) {
+    // Count only UNLOGGED occurrences: a day where the test is already logged
+    // won't defer its workout (post the loggedOnDate deferral guard), so it isn't
+    // part of the wrong-deferral problem. A dup matters only when 2+ days each
+    // still owe the same test — both will defer. This also drops historical noise
+    // (tests logged once during the baseline-collection week).
+    const unloggedDates = new Map<string, Set<string>>(); // testName -> set of dateKeys still owing it
+    for (let d = 0; d < 7; d++) {
+      const dd = (wi - 1) * 7 + d;
+      if (dd < 0 || dd >= planSpanDays) continue;
+      const r = await resolveDay(addDays(startMid, dd));
+      for (const b of r.baselinesDue) {
+        if (b.loggedOnDate !== null) continue; // already done that day → won't defer
+        const set = unloggedDates.get(b.test.testName) ?? new Set<string>();
+        set.add(r.dateKey);
+        unloggedDates.set(b.test.testName, set);
+      }
+    }
+    for (const [testName, dates] of unloggedDates) {
+      if (dates.size > 1) {
+        const sorted = [...dates].sort();
+        findings.push({
+          rule: "baseline-scheduled-twice-one-week",
+          severity: "warning",
+          message: `"${testName}" is still due (unlogged) on ${dates.size} days in rotation week ${wi} (${sorted.join(", ")}). If an override moved it, the original day still carries it and BOTH days will defer their workout for a test you'll do once. Add a skip override (baselineTestNames: []) on the day(s) you didn't mean to keep, or confirm both are intentional.`,
+          context: { testName, weekIndex: wi, dates: sorted },
+        });
+      }
     }
   }
 
