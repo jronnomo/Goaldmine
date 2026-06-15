@@ -534,10 +534,12 @@ export type ResolvedDay = {
   isGoalDate: boolean;
   rotationDay: number | null;
   weekIndex: number | null;
-  workoutTemplate: DayTemplate | null; // resolved (override-aware) — RAW rotation/override; NOT deferral-aware. Prefer activeWorkout/deferredWorkout below.
   // ── Authoritative, deferral-aware resolution (single source of truth) ──
   // Switch on todayTask; render activeWorkout as the day's task and deferredWorkout
-  // (when non-null) as a clearly-labelled "stepped aside" secondary.
+  // (when non-null) as a clearly-labelled "stepped aside" secondary. The old raw
+  // `workoutTemplate` field was removed — it always equalled `activeWorkout ?? deferredWorkout`
+  // but, being deferral-unaware, shadowed/contradicted the resolved view. For "the full
+  // prescription regardless of deferral" use `activeWorkout ?? deferredWorkout`.
   todayTask: TodayTask;
   activeWorkout: DayTemplate | null; // the workout to PRESENT as today's task; null on baseline/hike/out_of_plan
   deferredWorkout: DayTemplate | null; // the rotation workout set aside by a deferral; non-null only on baseline/hike
@@ -946,7 +948,6 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     isGoalDate,
     rotationDay,
     weekIndex,
-    workoutTemplate,
     todayTask,
     activeWorkout,
     deferredWorkout,

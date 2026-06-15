@@ -165,7 +165,7 @@ export default async function DayDetail({
             </span>
           ))}
           {r.isInPlan && r.rotationDay
-            ? `Week ${r.weekIndex} · Day ${r.rotationDay}${r.workoutTemplate ? ` · ${r.workoutTemplate.title}` : ""}`
+            ? `Week ${r.weekIndex} · Day ${r.rotationDay}${shownTemplate ? ` · ${shownTemplate.title}` : ""}`
             : "Outside the active plan window"}
           {r.isOverride && <span className="text-[var(--warning)]"> · custom override</span>}
         </p>
@@ -235,7 +235,7 @@ export default async function DayDetail({
           {/* SkipDayControl renders null when isRestDay || !isInPlan (DA H3). */}
           <SkipDayControl
             dateKey={dateKey}
-            templateTitle={r.workoutTemplate?.title ?? null}
+            templateTitle={shownTemplate?.title ?? null}
             isRestDay={isRestDay}
             isInPlan={r.isInPlan}
             existingSkip={completedWorkouts.length > 0 ? null : existingSkip}
@@ -305,8 +305,8 @@ export default async function DayDetail({
               defaults={{
                 workoutJson: r.override?.workoutJson
                   ? JSON.stringify(r.override.workoutJson, null, 2)
-                  : r.workoutTemplate
-                    ? JSON.stringify(r.workoutTemplate, null, 2)
+                  : shownTemplate
+                    ? JSON.stringify(shownTemplate, null, 2)
                     : "",
                 nutritionText: r.nutritionText ?? "",
                 mobilityText: r.mobilityText ?? "",
