@@ -3,6 +3,7 @@ import { MealEditButton } from "@/components/MealEditButton";
 import { Bullseye } from "@/components/Bullseye";
 import { MEAL_SLOTS, type MealSlot, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
 import { sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
+import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
@@ -38,16 +39,12 @@ export type NutritionTodayLog = {
 type Macros = { calories?: number; proteinG?: number; carbsG?: number; fatG?: number };
 const MACRO4 = ["calories", "proteinG", "carbsG", "fatG"] as const;
 
+// Use the shared parser so structured fields (amount/unit/source) survive into
+// the edit composer — a stripping map here turned structured items back into
+// freehand steppers in edit mode, so changing the size wouldn't recompute and
+// the macros sat stale at the original portion (read as a "double count").
 function asItems(raw: unknown): Item[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-    .map((x) => ({
-      name: typeof x.name === "string" ? x.name : "",
-      qty: typeof x.qty === "string" ? x.qty : undefined,
-      notes: typeof x.notes === "string" ? x.notes : undefined,
-    }))
-    .filter((i) => i.name);
+  return parseStoredItems(raw);
 }
 
 function summarize(items: Item[]): string {

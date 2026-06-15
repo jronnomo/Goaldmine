@@ -18,7 +18,7 @@ import { prisma } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
-import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
 export const dynamic = "force-dynamic";
@@ -32,16 +32,11 @@ const MEAL_LABEL: Record<string, string> = {
   snack: "Snack",
 };
 
+// Shared parser preserves structured fields (amount/unit/source) so the list's
+// edit path keeps live recalc — a stripping map dropped them, reverting items to
+// freehand steppers whose macros went stale on size changes.
 function asItems(raw: unknown): NutritionItem[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-    .map((x) => ({
-      name: typeof x.name === "string" ? x.name : "",
-      qty: typeof x.qty === "string" ? x.qty : undefined,
-      notes: typeof x.notes === "string" ? x.notes : undefined,
-    }))
-    .filter((i) => i.name);
+  return parseStoredItems(raw);
 }
 
 function summarize(items: NutritionItem[]): string {

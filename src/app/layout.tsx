@@ -5,7 +5,7 @@ import { BottomNav } from "@/components/BottomNav";
 import { prisma } from "@/lib/db";
 import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
-import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
 import {
   sumLoggedDayMacros,
   sumPlanTargetMacros,
@@ -68,16 +68,11 @@ export type TodayMealLite = {
   };
 };
 
+// Preserve structured fields so the global Log launcher's edit path keeps live
+// recalc (a stripping map reverted items to freehand steppers — stale macros on
+// size change).
 function toNutritionItems(raw: unknown): NutritionItem[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-    .map((x) => ({
-      name: typeof x.name === "string" ? x.name : "",
-      qty: typeof x.qty === "string" ? x.qty : undefined,
-      notes: typeof x.notes === "string" ? x.notes : undefined,
-    }))
-    .filter((i) => i.name);
+  return parseStoredItems(raw);
 }
 
 export default async function RootLayout({

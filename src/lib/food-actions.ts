@@ -1092,13 +1092,6 @@ function formatPortionLabel(
  * Convert a slug like "chicken-breast" → "Chicken Breast",
  * "white-rice-cooked" → "White Rice Cooked".
  */
-function slugToDisplayName(slug: string): string {
-  return slug
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 /**
  * Resolve grams from USDA foodMeasures for a size word or explicit grams.
  * Falls back to the first measure's gramWeight, then 100 g.
