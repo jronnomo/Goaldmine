@@ -386,6 +386,9 @@ function DayDetail({
             ? "Rest / unscheduled day."
             : "Outside the current plan."}
       </p>
+      {cell.plannedWorkoutTitle && (
+        <p className="text-xs text-[var(--muted)]">planned: {cell.plannedWorkoutTitle}</p>
+      )}
 
       {/* REQ-65-4: acknowledged-skipped indicator in DayDetail. */}
       {cell.skippedCount > 0 && (

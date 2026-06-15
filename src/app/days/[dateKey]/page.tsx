@@ -7,6 +7,7 @@ import { NutritionToday } from "@/components/NutritionToday";
 import {
   parseDateKey,
   resolveDay,
+  deriveDayDisplay,
   startOfDay,
   USER_TZ,
 } from "@/lib/calendar";
@@ -72,6 +73,18 @@ export default async function DayDetail({
   const showProminentBaseline =
     r.baselinesDue.length > 0 && hasOutstandingBaseline && (isToday || isFuture);
   const showCompletedBaseline = r.baselinesDue.length > 0 && !hasOutstandingBaseline;
+
+  // Single source of truth for the day's workout label (shared with Today + calendar).
+  // When a workout is logged, the header names the COMPLETED session, not the
+  // prescription — so a swap day reads the same here as everywhere else.
+  const display = deriveDayDisplay({
+    completedWorkouts: r.workouts
+      .filter((w) => w.status === "completed")
+      .map((w) => ({ id: w.id, title: w.title, startedAt: w.startedAt })),
+    todayTask: r.todayTask,
+    activeWorkout: r.activeWorkout,
+    deferredWorkout: r.deferredWorkout,
+  });
 
   // Hide workout blocks whose exercises are all baseline tests already
   // rendered in the BaselineBlockCard. Defensive for legacy overrides
@@ -174,7 +187,7 @@ export default async function DayDetail({
             </span>
           ))}
           {r.isInPlan && r.rotationDay
-            ? `Week ${r.weekIndex} · Day ${r.rotationDay}${shownTemplate ? ` · ${shownTemplate.title}` : ""}`
+            ? `Week ${r.weekIndex} · Day ${r.rotationDay}${display.primaryTitle ? ` · ${display.primaryTitle}` : ""}`
             : "Outside the active plan window"}
           {r.isOverride && <span className="text-[var(--warning)]"> · custom override</span>}
         </p>

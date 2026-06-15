@@ -54,7 +54,8 @@ export type CalendarDayCell = {
   isGoalDate: boolean;
   rotationDay: number | null; // 1..7 if isInPlan
   weekIndex: number | null; // 1..plan.weeks if isInPlan
-  dayTitle: string | null; // from override or template
+  dayTitle: string | null; // the workout label to show: completed workout title if one exists, else override/template (deriveDayDisplay)
+  plannedWorkoutTitle: string | null; // the prescription, set only when a completed workout differs from it (for "planned X → did Y")
   workoutCount: number; // completed gym workouts on this date (excludes skipped/planned)
   skippedCount: number; // skipped (acknowledged) gym workouts on this date
   hikeCount: number; // completed hikes on this date — out-of-gym training days
@@ -470,6 +471,24 @@ function buildCell(args: {
 
   const confidence = deriveConfidence(args.date, isInPlan, isPast, args.program);
 
+  // Single source of truth for the cell's workout label: a completed workout
+  // wins over the prescription (deriveDayDisplay), so a swap/audible day shows
+  // the SAME name here as the Today tab and day detail. plannedWorkoutTitle keeps
+  // the prescription for a "planned X → did Y" subtitle when they differ.
+  const display = deriveDayDisplay({
+    completedWorkouts: dayWorkouts
+      .filter((w) => w.status === "completed")
+      .map((w) => ({ id: w.id, title: w.title, startedAt: w.startedAt })),
+    todayTask: "workout", // calendar surfaces baseline/deferral via its badge+markers; label only needs the workout name
+    activeWorkout: dayTitle ? { title: dayTitle } : null,
+    deferredWorkout: null,
+  });
+  const cellTitle = display.primaryTitle ?? dayTitle;
+  const plannedWorkoutTitle =
+    display.state === "completed" && display.plannedTitle && display.plannedTitle !== cellTitle
+      ? display.plannedTitle
+      : null;
+
   // Same-goal conflicts take precedence (legacy rule).
   // Cross-goal conflict fills cell.conflict ONLY when no same-goal conflict exists.
   const resolvedConflict: CalendarDayCell["conflict"] =
@@ -493,7 +512,8 @@ function buildCell(args: {
     isGoalDate,
     rotationDay,
     weekIndex,
-    dayTitle,
+    dayTitle: cellTitle,
+    plannedWorkoutTitle,
     workoutCount,
     skippedCount,
     hikeCount,
@@ -730,6 +750,65 @@ export function deriveTodayTask(
     return { todayTask: "rest", activeWorkout: workoutTemplate, deferredWorkout: null };
   }
   return { todayTask: "workout", activeWorkout: workoutTemplate, deferredWorkout: null };
+}
+
+export type DayDisplayState =
+  | "completed"
+  | "planned"
+  | "deferred"
+  | "baseline"
+  | "rest"
+  | "out_of_plan";
+
+/**
+ * The single source of truth for "what workout does this date show". Every
+ * surface (Today tab, calendar label, day detail) feeds in its already-fetched
+ * data and renders from the result — none reads `workouts[]` or the rotation
+ * template directly, so they can't disagree on a swap/audible day.
+ *
+ * Precedence: a COMPLETED workout wins — if one exists, it is the primary and
+ * the prescription becomes `plannedTitle` (for "planned X → did Y"). Among
+ * multiple completed workouts the latest-started one is primary. Otherwise fall
+ * through to the prescribed / deferred / baseline / rest resolution (`todayTask`).
+ *
+ * Pure — no IO. `completedWorkouts` must already be filtered to status==="completed".
+ */
+export function deriveDayDisplay(input: {
+  completedWorkouts: { id: string; title: string | null; startedAt: Date }[];
+  todayTask: TodayTask;
+  activeWorkout: { title: string } | null;
+  deferredWorkout: { title: string } | null;
+}): {
+  state: DayDisplayState;
+  primaryTitle: string | null;
+  plannedTitle: string | null;
+  primaryWorkoutId: string | null;
+} {
+  const plannedTitle = input.activeWorkout?.title ?? input.deferredWorkout?.title ?? null;
+
+  if (input.completedWorkouts.length > 0) {
+    const primary = input.completedWorkouts.reduce((a, b) =>
+      b.startedAt.getTime() > a.startedAt.getTime() ? b : a,
+    );
+    return {
+      state: "completed",
+      primaryTitle: primary.title ?? "Workout",
+      plannedTitle,
+      primaryWorkoutId: primary.id,
+    };
+  }
+
+  const state: DayDisplayState =
+    input.todayTask === "baseline"
+      ? "baseline"
+      : input.todayTask === "hike"
+        ? "deferred"
+        : input.todayTask === "rest"
+          ? "rest"
+          : input.todayTask === "out_of_plan"
+            ? "out_of_plan"
+            : "planned";
+  return { state, primaryTitle: plannedTitle, plannedTitle, primaryWorkoutId: null };
 }
 
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {

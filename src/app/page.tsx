@@ -5,7 +5,8 @@ import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
 import { NutritionToday } from "@/components/NutritionToday";
 import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
-import { addDays, dateKey, startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
+import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay } from "@/lib/calendar";
+import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { prisma } from "@/lib/db";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
@@ -55,7 +56,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -75,6 +76,15 @@ export default async function HomePage() {
       // this call adds the week-ahead window. All date math via @/lib/calendar.
       getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
       getQuickPickFoods(),
+      // Today's completed workouts, full detail — rendered in place of the
+      // prescription when a workout was logged (single source of truth).
+      prisma.workout.findMany({
+        where: { status: "completed", startedAt: { gte: todayStart, lte: todayEnd } },
+        orderBy: { startedAt: "asc" },
+        include: {
+          exercises: { orderBy: { orderIndex: "asc" }, include: { sets: { orderBy: { setIndex: "asc" } } } },
+        },
+      }),
     ]);
 
   // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
@@ -105,6 +115,20 @@ export default async function HomePage() {
   const hasOutstandingBaseline = baselinesDue.some((b) => !b.loggedOnDate);
   const showProminentBaseline = baselinesDue.length > 0 && hasOutstandingBaseline;
   const showCompletedBaseline = baselinesDue.length > 0 && !hasOutstandingBaseline;
+
+  // Single source of truth for "which workout does today show" — shared with the
+  // calendar label + day detail (deriveDayDisplay). A completed workout wins over
+  // the prescription, so a swap/audible day shows the logged session here too
+  // instead of the rotation default.
+  const display = deriveDayDisplay({
+    completedWorkouts: resolved.workouts
+      .filter((w) => w.status === "completed")
+      .map((w) => ({ id: w.id, title: w.title, startedAt: w.startedAt })),
+    todayTask: resolved.todayTask,
+    activeWorkout: activeTemplate,
+    deferredWorkout: deferredTemplate,
+  });
+  const isCompletedDay = display.state === "completed";
 
   // --- REQ-D1: Derive completion / rest-day / planned state ---
   // Completed = a workout was logged today (resolveDay already queries this range).
@@ -151,15 +175,17 @@ export default async function HomePage() {
     console.warn("[Today] day template present but no summary found; plan details unavailable");
   }
 
-  // Header title follows the ACTIVE task. On a deferred day there's no active
-  // workout, so name the actual task (the strength session's title would mislead).
-  const workoutTitle =
-    activeTemplate?.title ??
-    (resolved.todayTask === "baseline"
-      ? "Baseline Testing"
-      : resolved.todayTask === "hike"
-        ? "Hike Day"
-        : ctx.day?.title);
+  // Header title: once a workout is logged it follows the COMPLETED session
+  // (deriveDayDisplay) so a swap shows what was actually done; otherwise it
+  // follows the active task (the prescription, or the named baseline/hike day).
+  const workoutTitle = isCompletedDay
+    ? display.primaryTitle
+    : activeTemplate?.title ??
+      (resolved.todayTask === "baseline"
+        ? "Baseline Testing"
+        : resolved.todayTask === "hike"
+          ? "Hike Day"
+          : ctx.day?.title);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -234,35 +260,52 @@ export default async function HomePage() {
         <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
       )}
 
-      {/* ── Workout blocks — the ACTIVE task only. On a baseline/hike day activeWorkout
-             is null, so this renders nothing and the deferred card below takes over. ── */}
-      {dayBlocks.map((block, i) => (
-        <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
-      ))}
+      {/* ── The day's workout. Once a session is logged we show the COMPLETED workout
+             (deriveDayDisplay — same source the calendar + detail use), so a swap shows
+             what was actually done. Otherwise: the active prescription, or the dimmed
+             deferred session on a baseline/hike day. ── */}
+      {isCompletedDay ? (
+        <>
+          {display.plannedTitle && display.plannedTitle !== display.primaryTitle && (
+            <p className="text-xs text-[var(--muted)] px-1">
+              Planned: {display.plannedTitle} → logged: {display.primaryTitle}
+            </p>
+          )}
+          {todayCompletedDetails.map((w) => (
+            <CompletedWorkoutCard key={w.id} workout={w} />
+          ))}
+        </>
+      ) : (
+        <>
+          {dayBlocks.map((block, i) => (
+            <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
+          ))}
+
+          {/* Deferred rotation workout — stepped aside for today's baseline test or hike.
+              Dimmed + labelled so it reads as "normally here, not today", never the task. */}
+          {deferredTemplate && deferredBlocks.length > 0 && (
+            <>
+              <Card title={`Deferred today — ${deferredTemplate.title}`}>
+                <p className="text-xs text-[var(--warning)]">
+                  {resolved.todayTask === "baseline"
+                    ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
+                    : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
+                </p>
+              </Card>
+              <div className="opacity-60 space-y-4">
+                {deferredBlocks.map((block, i) => (
+                  <BlockCard key={i} block={block} index={i} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {/* ── Completed baselines — demoted below the workout as a quiet "done"
              reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
       {showCompletedBaseline && (
         <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={ctx.weekIndex} />
-      )}
-
-      {/* ── Deferred rotation workout — stepped aside for today's baseline test or hike.
-             Dimmed + labelled so it reads as "normally here, not today", never as the task. ── */}
-      {deferredTemplate && deferredBlocks.length > 0 && (
-        <>
-          <Card title={`Deferred today — ${deferredTemplate.title}`}>
-            <p className="text-xs text-[var(--warning)]">
-              {resolved.todayTask === "baseline"
-                ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
-                : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
-            </p>
-          </Card>
-          <div className="opacity-60 space-y-4">
-            {deferredBlocks.map((block, i) => (
-              <BlockCard key={i} block={block} index={i} />
-            ))}
-          </div>
-        </>
       )}
 
       {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}
