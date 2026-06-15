@@ -8,6 +8,7 @@ import {
   BUILTINS,
   findBuiltin,
   resolveBuiltinGrams,
+  builtinDisplayName,
 } from "@/lib/food-builtins";
 import { searchUsdaFood, searchUsdaFoods, searchUsdaByBarcode } from "@/lib/usda";
 import type { NormalizedUsdaBrandedFood } from "@/lib/usda";
@@ -601,7 +602,7 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
       const servings = (count * resolvedGrams) / 100;
       const macros = scaleMacros(builtin.per100g, servings);
 
-      const displayName = slugToDisplayName(builtin.slug);
+      const displayName = builtinDisplayName(builtin.slug);
       const barcode = `builtin:${builtin.slug}`;
       const defaultPortion = builtin.portions.find((p) => p.key === builtin.defaultPortionKey);
       const servingSizeLabel = defaultPortion?.label ?? "100 g";
@@ -747,7 +748,7 @@ export async function searchFoodCandidates(
     if (hay.includes(qLower) || qLower.includes(b.slug)) {
       candidates.push({
         key: barcode,
-        name: slugToDisplayName(b.slug),
+        name: builtinDisplayName(b.slug),
         brand: null,
         source: "builtin",
         kcal: b.per100g.calories,
@@ -845,7 +846,7 @@ export async function resolveCandidate(
       );
       const servings = (count * resolvedGrams) / 100;
       const macros = scaleMacros(builtin.per100g, servings);
-      const displayName = slugToDisplayName(builtin.slug);
+      const displayName = builtinDisplayName(builtin.slug);
       const defaultPortion = builtin.portions.find((p) => p.key === builtin.defaultPortionKey);
       const servingSizeLabel = defaultPortion?.label ?? "100 g";
       const { food } = await upsertEstimateRow({

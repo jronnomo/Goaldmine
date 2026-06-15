@@ -696,6 +696,44 @@ export const BUILTINS: BuiltinFood[] = [
  * Find a builtin food by query string.
  * Matches against slug and all aliases (case-insensitive exact match).
  */
+// Preparation state for builtin foods where cooked vs raw vs dry materially
+// changes the per-100g macros — so the user never has to guess (a raw chicken
+// weight against cooked macros, or dry oats against cooked, is a real error).
+// Foods where it's unambiguous (fruit eaten raw) are intentionally omitted.
+export const PREP_BY_SLUG: Record<string, "cooked" | "raw" | "dry"> = {
+  egg: "raw",
+  "egg-white": "raw",
+  "chicken-breast": "cooked",
+  "ground-beef-90-10": "raw",
+  salmon: "raw",
+  shrimp: "cooked",
+  "turkey-breast": "cooked",
+  "pork-tenderloin": "cooked",
+  "white-rice-cooked": "cooked",
+  "brown-rice-cooked": "cooked",
+  "oats-dry": "dry",
+  "quinoa-cooked": "cooked",
+  "pasta-cooked": "cooked",
+  potato: "raw",
+  "sweet-potato": "raw",
+};
+
+/**
+ * Display name for a builtin food with its prep state disclosed: "Chicken
+ * Breast (cooked)", "Oats (dry)". Strips a prep token already baked into the
+ * slug (e.g. "white-rice-cooked") so it isn't doubled. Shared by the resolver
+ * (food-actions) and the cached-row relabel script so they agree exactly.
+ */
+export function builtinDisplayName(slug: string): string {
+  const prep = PREP_BY_SLUG[slug];
+  const base = slug.replace(/-(cooked|raw|dry)$/i, "");
+  const name = base
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+  return prep ? `${name} (${prep})` : name;
+}
+
 export function findBuiltin(query: string): BuiltinFood | null {
   const q = query.trim().toLowerCase();
   for (const food of BUILTINS) {
