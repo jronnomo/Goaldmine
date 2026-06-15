@@ -11,8 +11,15 @@ import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
 import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
+import { MACRO_KEYS } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { DayMacros } from "@/lib/nutrition-macros";
+import {
+  sumStructuredMacros,
+  recomposeMacros,
+  buildQtyDisplay,
+  unitsForFood,
+} from "@/lib/food-units";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,9 +108,15 @@ function defaultMeal(): MealType {
   return "dinner";
 }
 
-/** Stable hash of the items array (name+qty+notes) for staleness detection. */
+/**
+ * Stable hash of the items array for staleness detection.
+ * Includes amount and unit so structured edits are detected even if a future code
+ * path changes them without explicitly resetting the hash (defense-in-depth).
+ */
 function hashItems(items: NutritionItem[]): string {
-  return JSON.stringify(items.map((i) => [i.name, i.qty ?? "", i.notes ?? ""]));
+  return JSON.stringify(
+    items.map((i) => [i.name, i.qty ?? "", i.notes ?? "", i.amount ?? "", i.unit ?? ""])
+  );
 }
 
 /** True when qty starts with a number the stepper can bump. */
@@ -284,17 +297,64 @@ export function MealComposer(props: MealComposerProps) {
       : null;
   const isOver = remainingCal != null && remainingCal < 0;
 
+  // ── addItemToComposer — the `addItem` callback passed to useFoodComposer ────
+  // B-2: compute `next` OUTSIDE all setters; call setters sequentially.
+  // B-3: this is the ONLY add path for food-resolved items; setItemsText is NEVER
+  //       called from food-resolved add paths.
+  function addItemToComposer(item: NutritionItem): void {
+    if (rawMode) {
+      // rawMode: append text only; snapshotHash is NOT reset (rawMode is always
+      // considered stale — intentional; user hits Recompute to reconcile).
+      // Note: macros ARE updated by the setMacros call in useFoodComposer above.
+      const line = item.qty ? `${item.name} | ${item.qty}` : item.name;
+      setRawText((prev) => prev + (prev.trim() ? "\n" : "") + line);
+      return;
+    }
+    // B-2: next computed outside any setter; sequential calls below.
+    const next = [...items, item];
+    setItems(next);
+    setSnapshotHash(hashItems(next));
+    // macros already updated by setMacros in useFoodComposer — no double-set.
+  }
+
+  // ── updateItemAmountUnit — T2 transition (structured amount/unit change) ───
+  // Full re-sum approach (B-1 fix): captures residual → rebuilds next → recomposes.
+  // Sequential setters (B-2 fix): no setter inside another setter.
+  function updateItemAmountUnit(idx: number, amount: number, unit: string): void {
+    // 1. Snapshot the freehand/manual residual BEFORE mutating items.
+    const oldSumStruct = sumStructuredMacros(items);
+    const residual: Partial<Record<string, number | null>> = {};
+    for (const k of MACRO_KEYS) {
+      residual[k] = (macros[k] ?? 0) - (oldSumStruct[k] ?? 0);
+    }
+
+    // 2. Build updated items array (refreshes qty display string too).
+    const next = items.map((it, j) =>
+      j === idx
+        ? { ...it, amount, unit, qty: buildQtyDisplay(amount, unit, it.source!) }
+        : it,
+    );
+
+    // 3. Re-sum structured macros with the new amount/unit.
+    const newSumStruct = sumStructuredMacros(next);
+
+    // 4. Recompose total — per-key house rounding (int for cal/sodium, 1dp for rest).
+    const newMacros = recomposeMacros(newSumStruct, residual);
+
+    // 5. B-2: sequential setters — never inside a functional updater.
+    setItems(next);
+    setMacros(newMacros);
+    setSnapshotHash(hashItems(next));
+    // stale = (hashItems(next) !== snapshotHash of next) = false immediately ✓
+  }
+
   // ── Food composer wiring ─────────────────────────────────────────────────
-  // setItemsText materializes an appended pipe-line as a new structured row.
+  // setItemsText is retained for rawMode toggle (toggleRawMode) only.
+  // Food-resolved adds go through addItemToComposer (B-3 rule).
   const { controls, sheet } = useFoodComposer({
     itemsText,
-    // This callback is the COMPOSER MERGE PATH — it only fires from
-    // add-chip / scan / estimate, which set items AND macros together (an
-    // honest sum). So we reset the staleness snapshot to the new items here,
-    // same as a manual macro edit or a recompute-Apply. Net: a composer add
-    // never trips "stale" — only HAND edits (stepper / row-remove / textarea)
-    // do (UXR-meal-edit-07, composer-add false-positive fix).
     setItemsText: (next: string) => {
+      // Only called from rawMode toggle paths, never from food-resolved adds.
       const parsed = parseItemsText(next);
       if (rawMode) setRawText(next);
       else setItems(parsed);
@@ -302,6 +362,7 @@ export function MealComposer(props: MealComposerProps) {
     },
     macros,
     setMacros,
+    addItem: addItemToComposer,
     quickPickFoods,
     libraryFoods,
     onMacrosChanged: handleMacrosChanged,
@@ -320,10 +381,32 @@ export function MealComposer(props: MealComposerProps) {
   function removeItem(index: number) {
     setItems((prev) => prev.filter((_, i) => i !== index));
   }
-  // F4 — request a remove: under normal motion, mark the row `.is-exiting` and
-  // let its `transitionend` splice it (below). Under reduced-motion the CSS
-  // transition is a no-op so transitionend never fires — splice immediately.
+  // F4 — request a remove. Branches on item.source (T3 transition):
+  //
+  //   STRUCTURED item (source present): re-sum macros without this item → stays
+  //     Fresh (no stale flag). No animation needed (instant remove).
+  //
+  //   FREEHAND / LEGACY item (no source): existing behavior — stale flag fires;
+  //     user hits Recompute to reconcile the macro total. Animation plays.
   function requestRemoveItem(index: number) {
+    const item = items[index];
+    if (item?.source) {
+      // T3 STRUCTURED PATH: recalculate macros excluding this item → Fresh.
+      const oldSumStruct = sumStructuredMacros(items);
+      const residual: Partial<Record<string, number | null>> = {};
+      for (const k of MACRO_KEYS) {
+        residual[k] = (macros[k] ?? 0) - (oldSumStruct[k] ?? 0);
+      }
+      const next = items.filter((_, i) => i !== index);
+      const newSumStruct = sumStructuredMacros(next);
+      const newMacros = recomposeMacros(newSumStruct, residual);
+      // B-2: sequential setters.
+      setItems(next);
+      setMacros(newMacros);
+      setSnapshotHash(hashItems(next));
+      return;
+    }
+    // FREEHAND / LEGACY PATH: existing behavior — stale flag fires.
     if (prefersReducedMotion()) {
       removeItem(index);
       return;
@@ -688,8 +771,15 @@ export function MealComposer(props: MealComposerProps) {
         />
       ) : (
         <>
-          {/* Hidden serialized items — the single name="items" the action reads */}
+          {/* Hidden serialized items — text fallback for rawMode / MCP path */}
           <textarea name="items" hidden readOnly value={serializeItems(items)} />
+          {/* Authoritative structured items — read by logNutrition / updateNutrition.
+              Empty string in rawMode → server falls back to text `items` field. */}
+          <input
+            type="hidden"
+            name="itemsJson"
+            value={rawMode ? "" : JSON.stringify(items)}
+          />
 
           {items.length === 0 ? (
             <p className="text-sm text-[var(--muted)] italic">
@@ -698,7 +788,11 @@ export function MealComposer(props: MealComposerProps) {
           ) : (
             <ul className="flex flex-col">
               {items.map((item, i) => {
-                const canStep = hasNumericPrefix(item.qty);
+                const isStructured = !!item.source;
+                // Structured: compute unit options for the select (T2).
+                const unitOptions = isStructured ? unitsForFood(item.source!) : [];
+                const storedUnitInOptions = unitOptions.some((o) => o.key === item.unit);
+                const canStep = !isStructured && hasNumericPrefix(item.qty);
                 const bumping = bumpState?.idx === i;
                 const exiting = removingIndex === i;
                 return (
@@ -706,6 +800,8 @@ export function MealComposer(props: MealComposerProps) {
                   // (@starting-style) and out when `.is-exiting` toggles; the
                   // inner wrapper clips the content so the collapse is clean.
                   // The splice runs on the grid-template-rows transitionend.
+                  // NOTE: structured removes go through requestRemoveItem's instant
+                  // path (no animation) — exiting will never be true for them.
                   <li
                     key={i}
                     data-testid="item-row"
@@ -721,6 +817,7 @@ export function MealComposer(props: MealComposerProps) {
                     }}
                   >
                     <div className="item-row-inner border-b border-[var(--border)] px-1 py-2.5">
+                      {/* Name + move buttons — UNCHANGED */}
                       <div className="flex items-center gap-2">
                         <span
                           className={`flex-1 text-sm ${
@@ -754,47 +851,103 @@ export function MealComposer(props: MealComposerProps) {
                           </button>
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          data-testid="item-qty-dec"
-                          aria-label={`Decrease ${item.name} quantity`}
-                          disabled={!canStep}
-                          onClick={() => updateItemQty(i, -1)}
-                          className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
-                        >
-                          −
-                        </button>
-                        {/* F5 — re-keyed so the one-shot tick replays each tap. */}
-                        <span
-                          key={bumping ? `bump-${bumpState!.n}` : "static"}
-                          className={`min-w-[62px] text-center font-mono text-sm text-[var(--foreground)]${
-                            bumping ? " qty-bump" : ""
-                          }`}
-                        >
-                          {item.qty || "—"}
-                        </span>
-                        <button
-                          type="button"
-                          data-testid="item-qty-inc"
-                          aria-label={`Increase ${item.name} quantity`}
-                          disabled={!canStep}
-                          onClick={() => updateItemQty(i, 1)}
-                          className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
-                        >
-                          ＋
-                        </button>
-                        <button
-                          type="button"
-                          data-testid="item-remove"
-                          aria-label={`Remove ${item.name}`}
-                          disabled={removingIndex !== null}
-                          onClick={() => requestRemoveItem(i)}
-                          className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30"
-                        >
-                          ✕
-                        </button>
-                      </div>
+
+                      {/* Qty row — BRANCHED on item.source */}
+                      {isStructured ? (
+                        /* ── Structured row: amount input + unit select (T2) ── */
+                        <div className="mt-2 flex items-center gap-2.5">
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            aria-label={`Amount for ${item.name}`}
+                            value={item.amount ?? ""}
+                            min={0}
+                            step="any"
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              updateItemAmountUnit(
+                                i,
+                                isFinite(v) && v >= 0 ? v : 0,
+                                item.unit ?? "g",
+                              );
+                            }}
+                            className="w-20 min-h-[44px] rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base text-center font-mono"
+                          />
+                          <select
+                            aria-label={`Unit for ${item.name}`}
+                            value={item.unit ?? ""}
+                            onChange={(e) =>
+                              updateItemAmountUnit(i, item.amount ?? 1, e.target.value)
+                            }
+                            className="flex-1 min-h-[44px] rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
+                          >
+                            {/* S-3: disabled fallback when stored unit no longer in snapshot */}
+                            {!storedUnitInOptions && item.unit && (
+                              <option key="__stored" value={item.unit} disabled>
+                                {item.unit} (not available)
+                              </option>
+                            )}
+                            {unitOptions.map((opt) => (
+                              <option key={opt.key} value={opt.key}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            data-testid="item-remove"
+                            aria-label={`Remove ${item.name}`}
+                            disabled={removingIndex !== null}
+                            onClick={() => requestRemoveItem(i)}
+                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        /* ── Freehand / legacy row: existing stepper (UNCHANGED) ── */
+                        <div className="mt-2 flex items-center gap-2.5">
+                          <button
+                            type="button"
+                            data-testid="item-qty-dec"
+                            aria-label={`Decrease ${item.name} quantity`}
+                            disabled={!canStep}
+                            onClick={() => updateItemQty(i, -1)}
+                            className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
+                          >
+                            −
+                          </button>
+                          {/* F5 — re-keyed so the one-shot tick replays each tap. */}
+                          <span
+                            key={bumping ? `bump-${bumpState!.n}` : "static"}
+                            className={`min-w-[62px] text-center font-mono text-sm text-[var(--foreground)]${
+                              bumping ? " qty-bump" : ""
+                            }`}
+                          >
+                            {item.qty || "—"}
+                          </span>
+                          <button
+                            type="button"
+                            data-testid="item-qty-inc"
+                            aria-label={`Increase ${item.name} quantity`}
+                            disabled={!canStep}
+                            onClick={() => updateItemQty(i, 1)}
+                            className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
+                          >
+                            ＋
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="item-remove"
+                            aria-label={`Remove ${item.name}`}
+                            disabled={removingIndex !== null}
+                            onClick={() => requestRemoveItem(i)}
+                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--muted)] hover:text-[var(--danger)] disabled:opacity-30"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </li>
                 );
