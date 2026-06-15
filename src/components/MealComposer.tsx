@@ -251,7 +251,6 @@ export function MealComposer(props: MealComposerProps) {
     () => (rawMode ? parseItemsText(rawText) : items),
     [rawMode, rawText, items],
   );
-  const itemsText = rawMode ? rawText : serializeItems(items);
   const stale = hashItems(effectiveItems) !== snapshotHash;
 
   // Bullseye meter: only a real meter when a planned target exists AND macros are
@@ -349,17 +348,10 @@ export function MealComposer(props: MealComposerProps) {
   }
 
   // ── Food composer wiring ─────────────────────────────────────────────────
-  // setItemsText is retained for rawMode toggle (toggleRawMode) only.
   // Food-resolved adds go through addItemToComposer (B-3 rule).
+  // setItemsText / itemsText removed from the hook — rawMode text writes stay
+  // in toggleRawMode (above) and are purely in MealComposer scope.
   const { controls, sheet } = useFoodComposer({
-    itemsText,
-    setItemsText: (next: string) => {
-      // Only called from rawMode toggle paths, never from food-resolved adds.
-      const parsed = parseItemsText(next);
-      if (rawMode) setRawText(next);
-      else setItems(parsed);
-      setSnapshotHash(hashItems(parsed));
-    },
     macros,
     setMacros,
     addItem: addItemToComposer,
