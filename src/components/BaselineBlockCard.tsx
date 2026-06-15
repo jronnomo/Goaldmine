@@ -15,7 +15,10 @@ export function BaselineBlockCard({
   tests,
   weekIndex,
 }: {
-  index: number;
+  // A 0-based ordinal renders a "N. " prefix (the test block is the day's task).
+  // Pass null to drop the prefix — used when every test is already logged and the
+  // card is demoted below the workout as a quiet "done" reference.
+  index: number | null;
   tests: BaselineBlockTest[];
   weekIndex?: number | null;
 }) {
@@ -25,11 +28,15 @@ export function BaselineBlockCard({
   const label = checkpoint === "initial" ? "Initial baselines" : `Retest (week ${weekIndex})`;
   const loggedCount = tests.filter((t) => t.loggedOnDate).length;
   const allLogged = loggedCount === tests.length;
+  const prefix = index === null ? "" : `${index + 1}. `;
+  const status = allLogged ? " ✓" : ` (${loggedCount}/${tests.length} logged)`;
 
   return (
-    <Card title={`${index + 1}. ${label}${allLogged ? " ✓" : ` (${loggedCount}/${tests.length} logged)`}`}>
+    <Card title={`${prefix}${label}${status}`}>
       <p className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
-        Tests · do these fresh, before any other lower-body work
+        {allLogged
+          ? "Completed — logged results below"
+          : "Tests · do these fresh, before any other lower-body work"}
       </p>
       <ul className="space-y-3">
         {tests.map(({ test, loggedOnDate }) => (

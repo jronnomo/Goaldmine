@@ -149,7 +149,8 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   });
 
   // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
-  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal] = await Promise.all([
+  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines] =
+    await Promise.all([
     prisma.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
       select: { id: true, startedAt: true, status: true, title: true },
@@ -179,7 +180,20 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
           orderBy: { date: "asc" },
         })
       : Promise.resolve([] as { id: string; date: Date }[]),
+    // Logged baseline results — used to count only UNLOGGED tests per cell so a
+    // completed retest (e.g. logged early in its credit window) doesn't keep
+    // showing a "N Baseline due" badge. Fetched whole (single-user, small table)
+    // so a result outside the grid window still credits its checkpoint.
+    prisma.baseline.findMany({ select: { testName: true, date: true }, orderBy: { date: "asc" } }),
   ]);
+
+  // Bucket logged baselines by test name (date-asc) for the per-cell unlogged count.
+  const loggedBaselinesByTest = new Map<string, { date: Date }[]>();
+  for (const b of loggedBaselines) {
+    const arr = loggedBaselinesByTest.get(b.testName) ?? [];
+    arr.push({ date: b.date });
+    loggedBaselinesByTest.set(b.testName, arr);
+  }
 
   // Bucket workouts by date key.
   const workoutsByKey = new Map<string, typeof workouts>();
@@ -283,6 +297,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       ),
       crossGoalConflictForDate: crossGoalConflictsByKey.get(cursorKey) ?? null,
       scheduledsByKey, // REQ-004: new
+      loggedBaselinesByTest,
     });
     cells.push(cell);
   }
@@ -339,6 +354,8 @@ function buildCell(args: {
   crossGoalConflictForDate: CrossGoalConflict | null;
   /** REQ-004: pre-bucketed ScheduledItem count map (dateKey → count). */
   scheduledsByKey: Map<string, number>;
+  /** Logged baseline results bucketed by test name — for the unlogged-only count. */
+  loggedBaselinesByTest: Map<string, { date: Date }[]>;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -377,15 +394,30 @@ function buildCell(args: {
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
   const cellOverride = args.overridesByKey.get(k);
   const hasOverride = cellOverride !== undefined;
-  // Override-aware baseline count. An override's baselineTestNames replaces the
-  // rotation default for that day — an empty array means "explicitly none"
-  // (mirrors resolveDay). Without this, a day that suppressed baselines via an
-  // override still showed the week's rotation count on the calendar badge.
+  // Override-aware, UNLOGGED-only baseline count. An override's baselineTestNames
+  // replaces the rotation default for that day — an empty array means "explicitly
+  // none" (mirrors resolveDay). A test whose result is already logged within its
+  // credit window is NOT counted: a completed retest shouldn't keep showing a "due"
+  // badge (same loggedOnDate semantics as the workout-deferral guard).
   const baselinesDue = !isInPlan
     ? 0
-    : Array.isArray(cellOverride?.baselineTestNames)
-      ? countBaselinesFromOverride(args.program!, cellOverride.baselineTestNames as string[])
-      : countBaselinesDueForCell(args.program!, weekIndex!, rotationDay!);
+    : scheduledBaselineTests(
+        args.program!,
+        weekIndex!,
+        rotationDay!,
+        Array.isArray(cellOverride?.baselineTestNames)
+          ? (cellOverride.baselineTestNames as string[])
+          : null,
+      ).filter(
+        (t) =>
+          !baselineSatisfied(
+            t,
+            weekIndex!,
+            args.date,
+            args.program!.startedOn,
+            args.loggedBaselinesByTest.get(t.testName),
+          ),
+      ).length;
 
   // Conflict computation (C-2: only when workoutJson-based override is absent).
   // Override-aware: a day is only "resolved" if workoutJson is set — consistent
@@ -475,38 +507,62 @@ function buildCell(args: {
   };
 }
 
-function countBaselinesDueForCell(program: ActiveProgramSnapshot, weekIndex: number, rotationDay: number): number {
-  const tmpl = program.template;
-  const day = tmpl.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-  if (!day) return 0;
-  let count = 0;
-  for (const t of day.tests) {
-    // Initial test = the test's first-collection week (default 1); retests at
-    // retestWeeks beyond it.
-    const initialWeek = t.initialWeek ?? 1;
-    if (weekIndex === initialWeek) {
-      count += 1;
-      continue;
-    }
-    if (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex)) count += 1;
-  }
-  return count;
-}
-
-// Count baselines for a day whose override explicitly lists baselineTestNames.
-// Mirrors resolveDay's override path: each name is matched against a real test
-// in the baselineWeek (unknown names are ignored); an empty list yields 0.
-function countBaselinesFromOverride(program: ActiveProgramSnapshot, names: string[]): number {
-  let count = 0;
-  for (const name of names) {
-    for (const day of program.template.baselineWeek ?? []) {
-      if (day.tests.some((t) => t.testName === name)) {
-        count += 1;
-        break;
+// Scheduled baseline tests for a calendar cell (override-aware), as full test
+// objects. Override path: each name matched against a real test in baselineWeek
+// (unknown names ignored; empty list → none). Native path: the rotation day's
+// tests that are due this week (initial week, or a retest week beyond it).
+// Mirrors resolveDay's two paths — but returns the tests so the caller can filter
+// out already-logged ones.
+function scheduledBaselineTests(
+  program: ActiveProgramSnapshot,
+  weekIndex: number,
+  rotationDay: number,
+  overrideNames: string[] | null,
+): BaselineTest[] {
+  if (overrideNames !== null) {
+    const out: BaselineTest[] = [];
+    for (const name of overrideNames) {
+      for (const day of program.template.baselineWeek ?? []) {
+        const t = day.tests.find((x) => x.testName === name);
+        if (t) {
+          out.push(t);
+          break;
+        }
       }
     }
+    return out;
   }
-  return count;
+  const day = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
+  if (!day) return [];
+  return day.tests.filter((t) => {
+    const initialWeek = t.initialWeek ?? 1;
+    return (
+      weekIndex === initialWeek ||
+      (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
+    );
+  });
+}
+
+// True if a scheduled baseline test for this rotation week already has a logged
+// result crediting it — within its checkpoint window for that week (reusing
+// checkpointWindows, the same matcher resolveDay/getBaselineSchedule use, so the
+// calendar agrees with the day view's ✓), or on the cell date itself (covers an
+// override that parks a test outside any window).
+function baselineSatisfied(
+  test: BaselineTest,
+  weekIndex: number,
+  cellDate: Date,
+  startedOn: Date,
+  logged: { date: Date }[] | undefined,
+): boolean {
+  if (!logged || logged.length === 0) return false;
+  const windows = checkpointWindows(test, startedOn);
+  const win = windows.find((w) => w.week === weekIndex) ?? windows[0];
+  const cellDay = startOfDay(cellDate).getTime();
+  return logged.some((r) => {
+    if (win && r.date >= startOfDay(win.windowStart) && r.date < win.windowEnd) return true;
+    return startOfDay(r.date).getTime() === cellDay;
+  });
 }
 
 /**

@@ -98,6 +98,14 @@ export default async function HomePage() {
   const dayBlocks = dropBaselineOnlyBlocks(activeTemplate?.blocks ?? []);
   const deferredBlocks = dropBaselineOnlyBlocks(deferredTemplate?.blocks ?? []);
 
+  // Baseline display state. An outstanding (unlogged) test is the day's task and
+  // renders prominently above the workout; once every test is logged the block is
+  // demoted below as a quiet "completed" reference, so a done retest doesn't
+  // outrank the actual session.
+  const hasOutstandingBaseline = baselinesDue.some((b) => !b.loggedOnDate);
+  const showProminentBaseline = baselinesDue.length > 0 && hasOutstandingBaseline;
+  const showCompletedBaseline = baselinesDue.length > 0 && !hasOutstandingBaseline;
+
   // --- REQ-D1: Derive completion / rest-day / planned state ---
   // Completed = a workout was logged today (resolveDay already queries this range).
   const completed = resolved.workouts.length > 0;
@@ -220,16 +228,23 @@ export default async function HomePage() {
         )}
       </section>
 
-      {/* ── Baselines due ── */}
-      {baselinesDue.length > 0 && (
+      {/* ── Baselines due — only when something is still outstanding (a completed
+             retest is demoted below the workout). ── */}
+      {showProminentBaseline && (
         <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
       )}
 
       {/* ── Workout blocks — the ACTIVE task only. On a baseline/hike day activeWorkout
              is null, so this renders nothing and the deferred card below takes over. ── */}
       {dayBlocks.map((block, i) => (
-        <BlockCard key={i} block={block} index={i + (baselinesDue.length > 0 ? 1 : 0)} />
+        <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
       ))}
+
+      {/* ── Completed baselines — demoted below the workout as a quiet "done"
+             reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
+      {showCompletedBaseline && (
+        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+      )}
 
       {/* ── Deferred rotation workout — stepped aside for today's baseline test or hike.
              Dimmed + labelled so it reads as "normally here, not today", never as the task. ── */}

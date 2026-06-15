@@ -64,6 +64,15 @@ export default async function DayDetail({
   const shownTemplate = r.activeWorkout ?? r.deferredWorkout;
   const isDeferred = r.deferredWorkout !== null;
 
+  // Baseline display state. A test still owed (loggedOnDate == null) is the day's
+  // task and renders prominently above the workout; once every test is logged the
+  // block is demoted below the workout as a quiet "completed" reference, so a done
+  // retest no longer outranks the actual session.
+  const hasOutstandingBaseline = r.baselinesDue.some((b) => !b.loggedOnDate);
+  const showProminentBaseline =
+    r.baselinesDue.length > 0 && hasOutstandingBaseline && (isToday || isFuture);
+  const showCompletedBaseline = r.baselinesDue.length > 0 && !hasOutstandingBaseline;
+
   // Hide workout blocks whose exercises are all baseline tests already
   // rendered in the BaselineBlockCard. Defensive for legacy overrides
   // that bake baselines into workoutJson; future audibles shouldn't.
@@ -171,7 +180,7 @@ export default async function DayDetail({
         </p>
       </header>
 
-      {r.baselinesDue.length > 0 && (isToday || isFuture) && (
+      {showProminentBaseline && (
         <BaselineBlockCard index={0} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
@@ -213,12 +222,19 @@ export default async function DayDetail({
             <ol className="space-y-3">
               {dayBlocks.map((block, i) => (
                 <li key={i}>
-                  <BlockView block={block} index={i + (r.baselinesDue.length > 0 ? 1 : 0)} />
+                  <BlockView block={block} index={i + (showProminentBaseline ? 1 : 0)} />
                 </li>
               ))}
             </ol>
           </div>
         </CollapsibleCard>
+      )}
+
+      {/* Completed baselines for this day — demoted below the workout as a quiet
+          "done" reference (no "N." prefix), so a finished retest doesn't read as
+          the day's task. */}
+      {showCompletedBaseline && (
+        <BaselineBlockCard index={null} tests={r.baselinesDue} weekIndex={r.weekIndex} />
       )}
 
       {/* REQ-65-2: Three-doors logging section.
