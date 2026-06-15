@@ -72,6 +72,7 @@ import {
   NutritionLogOpSchema,
   applyNutritionLogOps,
   parseStoredItems,
+  stripItemSource,
 } from "@/lib/nutrition-log-ops";
 import {
   BaselineOpSchema,
@@ -758,7 +759,10 @@ function registerReadTools(server: McpServer) {
           }),
         ]);
 
-        return { since, days, workouts, measurements, notes, baselines, hikes, nutrition };
+        // B-4: strip source from nutrition items before sending to coach (saves ~73 KB
+        // in a 14-day recent_history window; source is the rendering payload, not coaching context).
+        const nutritionStripped = nutrition.map((n) => ({ ...n, items: stripItemSource(n.items) }));
+        return { since, days, workouts, measurements, notes, baselines, hikes, nutrition: nutritionStripped };
       }),
   );
 
@@ -1109,7 +1113,9 @@ function registerReadTools(server: McpServer) {
           }),
         ]);
 
-        return { monday, sunday, weekOffset, workouts, measurements, notes, baselines, hikes, nutrition };
+        // B-4: strip source from nutrition items (rendering payload, not coaching context).
+        const nutritionStripped = nutrition.map((n) => ({ ...n, items: stripItemSource(n.items) }));
+        return { monday, sunday, weekOffset, workouts, measurements, notes, baselines, hikes, nutrition: nutritionStripped };
       }),
   );
 
@@ -1590,7 +1596,8 @@ function registerReadTools(server: McpServer) {
           }
           day.meals.push({
             mealType: r.mealType,
-            items: r.items,
+            // B-4: strip source — amount/unit preserved for coach context; perBasis/portions not needed.
+            items: stripItemSource(r.items),
             notes: r.notes,
             calories: r.calories,
             proteinG: r.proteinG,

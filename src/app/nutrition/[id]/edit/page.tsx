@@ -5,22 +5,9 @@ import { EditNutritionForm } from "@/components/EditNutritionForm";
 import { prisma } from "@/lib/db";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { toDatetimeLocalValue } from "@/lib/calendar";
+import { parseStoredItems } from "@/lib/nutrition-log-ops";
 
 export const dynamic = "force-dynamic";
-
-type Item = { name: string; qty?: string; notes?: string };
-
-function asItems(raw: unknown): Item[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null)
-    .map((x) => ({
-      name: typeof x.name === "string" ? x.name : "",
-      qty: typeof x.qty === "string" ? x.qty : undefined,
-      notes: typeof x.notes === "string" ? x.notes : undefined,
-    }))
-    .filter((i) => i.name);
-}
 
 export default async function EditNutritionPage({
   params,
@@ -52,7 +39,7 @@ export default async function EditNutritionPage({
           quickPickFoods={quickPickFoods}
           defaults={{
             mealType: row.mealType,
-            items: asItems(row.items),
+            items: parseStoredItems(row.items),
             notes: row.notes ?? "",
             date: toDatetimeLocalValue(new Date(row.date)),
             macros: {

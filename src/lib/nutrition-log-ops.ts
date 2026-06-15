@@ -6,11 +6,35 @@
 // fetch / write and the PATCH semantics around the surrounding row.
 
 import { z } from "zod";
+import type { FoodMacros } from "@/lib/food-types";
+
+/**
+ * Per-food snapshot captured at add-time.  Stored inside NutritionItem.source
+ * so the app can recalculate macros offline after the user changes amount/unit.
+ *
+ * basis "100g" = perBasis is macros per 100 g (USDA / builtins).
+ * basis "serving" = perBasis is macros per 1 label serving.
+ */
+export type ItemFoodSnapshot = {
+  /** "100g" = perBasis is per 100 g; "serving" = perBasis is per 1 label serving. */
+  basis: "100g" | "serving";
+  /** Macros per basis unit. Stored at add-time from food.perServing. */
+  perBasis: FoodMacros;
+  /** Piece-unit definitions; [] for foods without portions (non-builtins, serving-basis). */
+  portions: { key: string; label: string; grams: number }[];
+  /** Informational only — the FoodLibrary row id. */
+  foodId?: string;
+  brand?: string | null;
+};
 
 export type NutritionItem = {
   name: string;
-  qty?: string;
+  qty?: string;    // display string — kept for freehand / legacy / back-compat
   notes?: string;
+  // ── Structured fields (new; all optional for back-compat) ──
+  amount?: number;               // structured quantity
+  unit?: string;                 // unit key: "g" | "oz" | "serving" | <portion key>
+  source?: ItemFoodSnapshot;     // present only on food-resolved items
 };
 
 // Match by 0-based index or by case-insensitive substring against item name.
@@ -56,8 +80,9 @@ export const NutritionLogOpSchema = z.discriminatedUnion("op", [
 
 export type NutritionLogOp = z.infer<typeof NutritionLogOpSchema>;
 
-// Coerce a raw items JSON value (from Prisma) into a typed array. Drops
-// entries that don't look like items so a malformed row never crashes ops.
+// Coerce a raw items JSON value (from Prisma) into a typed array. Preserves
+// all structured fields (amount, unit, source) so round-trips through storage
+// do not lose the food snapshot needed for offline macro recalculation.
 export function parseStoredItems(raw: unknown): NutritionItem[] {
   if (!Array.isArray(raw)) return [];
   const out: NutritionItem[] = [];
@@ -66,12 +91,58 @@ export function parseStoredItems(raw: unknown): NutritionItem[] {
     const r = v as Record<string, unknown>;
     if (typeof r.name !== "string" || !r.name) continue;
     out.push({
-      name: r.name,
-      qty: typeof r.qty === "string" ? r.qty : undefined,
-      notes: typeof r.notes === "string" ? r.notes : undefined,
+      name:   r.name,
+      qty:    typeof r.qty    === "string"                          ? r.qty    : undefined,
+      notes:  typeof r.notes  === "string"                          ? r.notes  : undefined,
+      amount: typeof r.amount === "number" && isFinite(r.amount as number)
+                                                                    ? (r.amount as number)
+                                                                    : undefined,
+      unit:   typeof r.unit   === "string"                          ? r.unit   : undefined,
+      source: isValidItemFoodSnapshot(r.source)
+                                                                    ? (r.source as ItemFoodSnapshot)
+                                                                    : undefined,
     });
   }
   return out;
+}
+
+/** Runtime guard — validates the minimum shape of a stored ItemFoodSnapshot. */
+function isValidItemFoodSnapshot(v: unknown): boolean {
+  if (v == null || typeof v !== "object") return false;
+  const r = v as Record<string, unknown>;
+  return (r.basis === "100g" || r.basis === "serving")
+    && typeof r.perBasis === "object" && r.perBasis != null
+    && Array.isArray(r.portions);
+}
+
+/**
+ * Strip the `source` (food snapshot) from item arrays before returning them
+ * to MCP read tools. Keeps name/qty/notes/amount/unit — the coach can see
+ * "7 large egg whites" without needing the perBasis/portions rendering payload.
+ *
+ * source is ~350 bytes per structured item; a 14-day history with 3 meals ×
+ * 5 items = 210 items × ~350 bytes = ~73 KB extra in recent_history context.
+ *
+ * This helper is NOT applied on the write/edit-seed path — parseStoredItems
+ * preserves source for the app's offline recalc. It is ONLY used in MCP
+ * read-only tools that serialize for coach context.
+ */
+export function stripItemSource(
+  raw: unknown,
+): Array<{ name?: string; qty?: string; notes?: string; amount?: number; unit?: string }> {
+  if (!Array.isArray(raw)) return [];
+  return (raw as unknown[]).map((v) => {
+    if (v == null || typeof v !== "object") return {};
+    const r = v as Record<string, unknown>;
+    return {
+      ...(typeof r.name   === "string" ? { name:   r.name }   : {}),
+      ...(typeof r.qty    === "string" ? { qty:    r.qty }    : {}),
+      ...(typeof r.notes  === "string" ? { notes:  r.notes }  : {}),
+      ...(typeof r.amount === "number" ? { amount: r.amount } : {}),
+      ...(typeof r.unit   === "string" ? { unit:   r.unit }   : {}),
+      // source intentionally omitted
+    };
+  });
 }
 
 // Resolve an ItemMatch against the current items array.
