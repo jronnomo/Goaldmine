@@ -22,52 +22,78 @@ function fmtElevation(v: number | null): string {
   return v === null ? "—" : `${fmtComma(v)} ft`;
 }
 
-function fmtPct(v: number | null): string {
-  return v === null ? "—" : `${v}%`;
-}
+// ─── ProgressRing — conic-gradient activity ring (% inside) ──────────────────
+//
+// Replaces the old Bullseye concentric-target completely.
+// The outer circle is a conic-gradient "donut" filled clockwise from 12 o'clock
+// to `progressPct`% in gold (tok.barFillBg), with tok.hairline as the empty track.
+// The inner "hole" circle (64% of diameter) punches through to tok.bg and centres
+// the percentage label. Satori-safe: backgroundImage for gradient, flex only.
 
-// ─── Bullseye div-stack (blueprint §9) ───────────────────────────────────────
-
-type BullseyeProps = {
+type ProgressRingProps = {
   tok: TemplateTokens;
   diameter: number;
   progressPct: number | null;
   goalState: WeeklyRecap["goalState"];
+  displayFont: string;
+  displayWeight: number;
 };
 
-function Bullseye({ tok, diameter, progressPct, goalState }: BullseyeProps) {
+function ProgressRing({ tok, diameter, progressPct, goalState, displayFont, displayWeight }: ProgressRingProps) {
   const D = diameter;
-  const sizes = [D, D * 0.75, D * 0.5, D * 0.25];
-
-  // No data → empty shell
   const hasData = goalState === "has-data" && progressPct !== null;
-  const pct = hasData ? progressPct! : 0;
+  const pct = hasData ? Math.max(0, Math.min(100, progressPct!)) : null;
 
-  const ringFilled = [pct >= 25, pct >= 50, pct >= 75, pct >= 100];
+  // Track colour: tok.hairline is a mid-tone that shows up on both templates.
+  const trackColor = tok.hairline;
 
-  function ringStyle(i: number): React.CSSProperties {
-    const size = sizes[i];
-    const filled = hasData && ringFilled[i];
-    return {
-      width: size,
-      height: size,
-      borderRadius: "9999px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      // Filled rings use the same gold as the progress bar.
-      // Unfilled rings use tok.bg to "cut through" any outer filled ring,
-      // revealing concentric ring shapes at every percentage.
-      backgroundColor: filled ? tok.barFillBg : tok.bg,
-      border: filled ? "none" : `2px solid ${tok.bullseyeUnfilledBorder}`,
-    };
-  }
+  // FALLBACK: satori 0.25.0 (bundled in Next.js 16) includes conic-gradient in its
+  // backgroundImage validation list but has NO conic-gradient renderer — it crashes with
+  // "Cannot read properties of undefined (reading 'trim')" at render time.
+  // We fall back to a solid gold ring (filled = gold outer, bg hole) + % text centred.
+  // The arc-fill visual is lost; the % number carries the readiness data.
+  // TODO: when satori adds a conic-gradient renderer, swap in:
+  //   backgroundImage: pct !== null
+  //     ? `conic-gradient(${tok.barFillBg} ${pct}%, ${trackColor} ${pct}%)`
+  //     : undefined
+  const outerStyle: React.CSSProperties = {
+    width: D,
+    height: D,
+    borderRadius: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: pct !== null ? tok.barFillBg : trackColor,
+  };
+
+  const innerD = Math.round(D * 0.64);
+  // Font size scales with ring — leaves comfortable breathing room for "100%".
+  const pctFontSize = Math.round(D * 0.24);
+  const displayText = pct !== null ? `${pct}%` : "—";
 
   return (
-    <div style={ringStyle(0)}>
-      <div style={ringStyle(1)}>
-        <div style={ringStyle(2)}>
-          <div style={ringStyle(3)} />
+    <div style={outerStyle}>
+      <div
+        style={{
+          width: innerD,
+          height: innerD,
+          borderRadius: 9999,
+          backgroundColor: tok.bg,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: pctFontSize,
+            fontFamily: displayFont,
+            fontWeight: displayWeight,
+            color: pct !== null ? tok.accentText : tok.mutedText,
+            lineHeight: 1,
+          }}
+        >
+          {displayText}
         </div>
       </div>
     </div>
@@ -104,11 +130,11 @@ function ProgressBar({ tok, pct }: { tok: TemplateTokens; pct: number | null }) 
 // ─── HighlightBand ────────────────────────────────────────────────────────────
 
 /**
- * Compact featured-highlight callout band.
+ * Hero-weight featured-highlight callout band.
  * Placed AFTER the goal block hairline, BEFORE the streak band.
  * Satori-safe: flex only, inline styles, no SVG/img, every multi-child div has display:"flex".
- * The gold left-edge accent is achieved by a 6px solid bar inside a row container
- * whose default alignItems is "stretch" (full-height without explicit min-height).
+ * The gold left-edge accent (8px) stretches full height via default alignItems:"stretch".
+ * The `sub` (e.g. "new PR") renders as a gold pill badge to make it unmissable.
  */
 function HighlightBand({
   tok,
@@ -126,19 +152,19 @@ function HighlightBand({
       style={{
         marginLeft: tok.safeInset,
         marginRight: tok.safeInset,
-        marginTop: 20,
-        marginBottom: 4,
-        borderRadius: 16,
+        marginTop: 24,
+        marginBottom: 8,
+        borderRadius: 20,
         display: "flex",
         flexDirection: "row",
         backgroundColor: tok.liftedSurface,
         overflow: "hidden",
       }}
     >
-      {/* Gold left accent — stretches full height via default alignItems:"stretch" */}
+      {/* Gold left accent — 8px, stretches full height via default alignItems:"stretch" */}
       <div
         style={{
-          width: 6,
+          width: 8,
           backgroundColor: tok.barFillBg,
           flexShrink: 0,
           display: "flex",
@@ -151,41 +177,41 @@ function HighlightBand({
           flexDirection: "row",
           alignItems: "center",
           flex: 1,
-          gap: 16,
-          paddingTop: 20,
-          paddingBottom: 20,
-          paddingLeft: 20,
-          paddingRight: 24,
+          gap: 20,
+          paddingTop: 28,
+          paddingBottom: 28,
+          paddingLeft: 24,
+          paddingRight: 28,
         }}
       >
-        {/* Emoji icon */}
+        {/* Emoji icon — larger for hero weight */}
         <div
           style={{
             display: "flex",
-            fontSize: 44,
+            fontSize: 60,
             flexShrink: 0,
             lineHeight: 1,
           }}
         >
           {highlight.icon}
         </div>
-        {/* Label + optional sub */}
+        {/* Label + optional gold pill sub */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: 4,
+            gap: 10,
             flex: 1,
             overflow: "hidden",
           }}
         >
           <div
             style={{
-              fontSize: 32,
+              fontSize: 48,
               fontFamily: displayFont,
               fontWeight: displayWeight,
               color: tok.primaryText,
-              lineHeight: 1.2,
+              lineHeight: 1.15,
               overflow: "hidden",
               whiteSpace: "nowrap",
             }}
@@ -193,15 +219,31 @@ function HighlightBand({
             {highlight.label}
           </div>
           {highlight.sub !== null && (
+            /* Gold pill badge — background = gold, text = dark (tok.bg), uppercase */
             <div
               style={{
-                fontSize: tok.fontSize.statLabel,
-                fontFamily: tok.fontSans,
-                fontWeight: tok.fontWeight.regular,
-                color: tok.mutedText,
+                display: "flex",
+                alignSelf: "flex-start",
+                backgroundColor: tok.barFillBg,
+                borderRadius: 9999,
+                paddingLeft: 20,
+                paddingRight: 20,
+                paddingTop: 8,
+                paddingBottom: 8,
               }}
             >
-              {highlight.sub}
+              <div
+                style={{
+                  fontSize: 22,
+                  fontFamily: tok.fontSans,
+                  fontWeight: tok.fontWeight.semibold,
+                  color: tok.bg,
+                  letterSpacing: 2,
+                  lineHeight: 1.2,
+                }}
+              >
+                {highlight.sub.toUpperCase()}
+              </div>
             </div>
           )}
         </div>
@@ -315,7 +357,7 @@ export function RecapCard({
           gap: 40,
         }}
       >
-        {/* Bullseye + readiness hero */}
+        {/* ProgressRing + readiness label — % lives inside the ring */}
         <div
           style={{
             display: "flex",
@@ -325,11 +367,13 @@ export function RecapCard({
             flexShrink: 0,
           }}
         >
-          <Bullseye
+          <ProgressRing
             tok={tok}
             diameter={tok.bullseyeHeroDiameter}
             progressPct={progressPct}
             goalState={recap.goalState}
+            displayFont={displayFont}
+            displayWeight={displayWeight}
           />
           <div
             style={{
@@ -341,16 +385,6 @@ export function RecapCard({
             }}
           >
             READINESS
-          </div>
-          <div
-            style={{
-              fontSize: 60,
-              fontFamily: displayFont,
-              fontWeight: displayWeight,
-              color: progressPct !== null ? tok.accentText : tok.mutedText,
-            }}
-          >
-            {fmtPct(progressPct)}
           </div>
         </div>
 
@@ -563,16 +597,15 @@ export function RecapCard({
       </div>
 
       {/* ── Footer band ──────────────────────────────────────────────── */}
-      {/* Auto-height: paddingTop (28) + wordmark (40) + paddingBottom (igBottomChrome + 28). */}
-      {/* No fixed height — the band is compact and the wordmark is visually centered */}
-      {/* in the visible portion; igBottomChrome bottom padding reserves space for IG chrome. */}
+      {/* Feed card: equal top/bottom padding — no IG Story chrome reserve here. */}
+      {/* Story slides keep igBottomChrome in their own footer / root padding.   */}
       <div
         style={{
           backgroundColor: tok.liftedSurface,
           paddingLeft: tok.safeInset,
           paddingRight: tok.safeInset,
           paddingTop: 28,
-          paddingBottom: tok.igBottomChrome + 28,
+          paddingBottom: 28,
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
@@ -741,17 +774,16 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
         </div>
       </div>
 
-      {/* Big Bullseye hero */}
+      {/* Big ProgressRing hero — % inside the ring, READINESS label below */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 32, flex: 1, justifyContent: "center" }}>
-        <Bullseye
+        <ProgressRing
           tok={tok}
-          diameter={tok.bullseyeHeroDiameter}
+          diameter={tok.bullseyeStoryDiameter}
           progressPct={progressPct}
           goalState={recap.goalState}
+          displayFont={displayFont}
+          displayWeight={displayWeight}
         />
-        <div style={{ fontSize: tok.fontSize.heroReadinessPct, fontFamily: displayFont, fontWeight: displayWeight, color: progressPct !== null ? tok.accentText : tok.mutedText, lineHeight: 1 }}>
-          {fmtPct(progressPct)}
-        </div>
         <div style={{ fontSize: tok.fontSize.readinessLabel, fontFamily: tok.fontSans, fontWeight: tok.fontWeight.regular, color: tok.mutedText, letterSpacing: 3 }}>
           READINESS
         </div>
@@ -893,13 +925,15 @@ function SlideThree({ tok, recap, displayFont, displayWeight }: SlideProps) {
         justifyContent: "space-between",
       }}
     >
-      {/* Big Bullseye */}
+      {/* ProgressRing — % inside; streak + "On to Week N." below */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 24, flex: 1, justifyContent: "center" }}>
-        <Bullseye
+        <ProgressRing
           tok={tok}
-          diameter={tok.bullseyeHeroDiameter}
+          diameter={tok.bullseyeStoryDiameter}
           progressPct={progressPct}
           goalState={recap.goalState}
+          displayFont={displayFont}
+          displayWeight={displayWeight}
         />
         <div style={{ fontSize: tok.fontSize.streakNumeral, fontFamily: displayFont, fontWeight: displayWeight, color: tok.accentText, lineHeight: 1 }}>
           {String(recap.streakDays)}

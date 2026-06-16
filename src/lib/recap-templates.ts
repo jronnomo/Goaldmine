@@ -70,8 +70,9 @@ export type TemplateTokens = {
     footer: number; // ~140
   };
 
-  // Bullseye hero diameter (px)
-  bullseyeHeroDiameter: number; // 300
+  // Progress ring diameters (px)
+  bullseyeHeroDiameter: number; // 300 — feed card goal block
+  bullseyeStoryDiameter: number; // 400 — story-slide hero (larger canvas centre)
   bullseyeHeaderDiameter: number; // 44
   bullseyeFooterDiameter: number; // 48
 
@@ -133,6 +134,7 @@ export const COAL: TemplateTokens = {
   },
 
   bullseyeHeroDiameter: 300,
+  bullseyeStoryDiameter: 400,
   bullseyeHeaderDiameter: 44,
   bullseyeFooterDiameter: 48,
 
@@ -196,6 +198,7 @@ export const PARCHMENT: TemplateTokens = {
   },
 
   bullseyeHeroDiameter: 320, // slightly larger for Parchment's negative-space feel
+  bullseyeStoryDiameter: 400,
   bullseyeHeaderDiameter: 44,
   bullseyeFooterDiameter: 48,
 
