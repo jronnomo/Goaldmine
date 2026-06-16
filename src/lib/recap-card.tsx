@@ -628,7 +628,7 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
       </div>
 
       {/* Goal objective */}
-      <div style={{ marginTop: 48 }}>
+      <div style={{ marginTop: 48, display: "flex", flexDirection: "column" }}>
         {hasGoal && recap.goal?.kind && (
           <div style={{ fontSize: 22, fontFamily: tok.fontSans, fontWeight: tok.fontWeight.regular, color: tok.mutedText, letterSpacing: 2, marginBottom: 12 }}>
             {recap.goal.kind.toUpperCase()}
