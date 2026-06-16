@@ -2,14 +2,14 @@
 
 // src/components/RecapClient.tsx
 // Client component for the /recap page.
-// Owns: week selector, template toggle, preview image, download links.
+// Owns: week selector, template toggle, highlight picker, preview image, download links.
 //
 // CRIT-2 compliance: receives ONLY {offset, label}[] from the server.
 // No Date objects, no WeeklyRecap, no client-side TZ math. Label always
 // comes from weeks[weekIdx].label (pre-computed server-side by weekRangeLabel).
 
-import { useState } from "react";
-import type { RecapTemplate } from "@/lib/recap";
+import { useState, useEffect } from "react";
+import type { RecapTemplate, RecapHighlight } from "@/lib/recap";
 
 type WeekItem = { offset: number; label: string };
 
@@ -25,12 +25,69 @@ export function RecapClient({
   const [template, setTemplate] = useState<RecapTemplate>(defaultTemplate);
   const [imageLoading, setImageLoading] = useState(true);
 
+  // ── Highlight state ──────────────────────────────────────────────────────
+  // candidates: null = loading in progress, [] = loaded (no candidates found)
+  const [candidates, setCandidates] = useState<RecapHighlight[] | null>(null);
+  // highlightValue: "" = None, a candidate id, or "custom:<text>"
+  const [highlightValue, setHighlightValue] = useState("");
+  const [customText, setCustomText] = useState("");
+
+  // ── Fetch candidates when weekIdx changes (purely async — no synchronous setState) ──
+  useEffect(() => {
+    const offset = weeks[weekIdx]?.offset ?? 0;
+    let cancelled = false;
+
+    fetch(`/recap/highlights?weekOffset=${offset}`)
+      .then((r) => (r.ok ? r.json() : Promise.resolve({ highlights: [] })))
+      .then((data: { highlights?: RecapHighlight[] }) => {
+        if (!cancelled) setCandidates(data.highlights ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setCandidates([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [weekIdx, weeks]);
+
+  // ── Week navigation — also resets highlight state ─────────────────────────
+  function navigateToWeek(newIdx: number) {
+    setWeekIdx(newIdx);
+    // Reset highlight for the incoming week; null = loading
+    setCandidates(null);
+    setHighlightValue("");
+    setCustomText("");
+    setImageLoading(true);
+  }
+
+  // ── Derived URLs ─────────────────────────────────────────────────────────
   const currentWeek = weeks[weekIdx];
-  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}`;
+  const highlightParam = highlightValue
+    ? `&highlight=${encodeURIComponent(highlightValue)}`
+    : "";
+  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}${highlightParam}`;
 
   function storyUrl(slide: 1 | 2 | 3): string {
+    // Story slides do NOT carry a highlight param — slides are unchanged.
     return `/recap/story/${slide}?weekOffset=${currentWeek.offset}&template=${template}`;
   }
+
+  // ── Highlight select handler ──────────────────────────────────────────────
+  function handleHighlightSelectChange(value: string) {
+    if (value === "__custom__") {
+      setHighlightValue("custom:");
+    } else {
+      setHighlightValue(value);
+    }
+    setImageLoading(true);
+  }
+
+  const selectValue = highlightValue.startsWith("custom:")
+    ? "__custom__"
+    : highlightValue;
+
+  const highlightLoading = candidates === null;
 
   return (
     <div className="space-y-4">
@@ -57,10 +114,7 @@ export function RecapClient({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => {
-            setWeekIdx((i) => Math.min(i + 1, weeks.length - 1));
-            setImageLoading(true);
-          }}
+          onClick={() => navigateToWeek(Math.min(weekIdx + 1, weeks.length - 1))}
           disabled={weekIdx >= weeks.length - 1}
           aria-label="Previous week"
           className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] disabled:opacity-30 hover:text-foreground transition-colors"
@@ -72,10 +126,7 @@ export function RecapClient({
         </span>
         <button
           type="button"
-          onClick={() => {
-            setWeekIdx((i) => Math.max(i - 1, 0));
-            setImageLoading(true);
-          }}
+          onClick={() => navigateToWeek(Math.max(weekIdx - 1, 0))}
           disabled={weekIdx <= 0}
           aria-label="Next week"
           className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--muted)] disabled:opacity-30 hover:text-foreground transition-colors"
@@ -106,7 +157,49 @@ export function RecapClient({
         ))}
       </div>
 
-      {/* Download card */}
+      {/* Highlight picker */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-[var(--muted)]">Featured Highlight</span>
+          {highlightLoading && (
+            <span className="text-xs text-[var(--muted)]">Loading…</span>
+          )}
+        </div>
+
+        <select
+          value={selectValue}
+          onChange={(e) => handleHighlightSelectChange(e.target.value)}
+          aria-label="Select featured highlight"
+          disabled={highlightLoading}
+          className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)] disabled:opacity-50"
+        >
+          <option value="">None</option>
+          {(candidates ?? []).map((h) => (
+            <option key={h.id} value={h.id}>
+              {h.icon} {h.label}
+            </option>
+          ))}
+          <option value="__custom__">Custom…</option>
+        </select>
+
+        {highlightValue.startsWith("custom:") && (
+          <input
+            type="text"
+            placeholder="Enter your highlight text"
+            value={customText}
+            onChange={(e) => {
+              const text = e.target.value;
+              setCustomText(text);
+              setHighlightValue(`custom:${text}`);
+              setImageLoading(true);
+            }}
+            aria-label="Custom highlight text"
+            className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)]"
+          />
+        )}
+      </div>
+
+      {/* Download card (includes highlight param if set) */}
       <a
         href={cardUrl}
         download="recap-card.png"
@@ -115,7 +208,7 @@ export function RecapClient({
         Download Card
       </a>
 
-      {/* Download stories */}
+      {/* Download stories (no highlight — slides are unchanged) */}
       <div className="flex gap-2">
         {([1, 2, 3] as const).map((slide) => (
           <a

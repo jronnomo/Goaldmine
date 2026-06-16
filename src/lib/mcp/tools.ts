@@ -197,7 +197,7 @@ type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
 type DbClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 import { safe, parseDateInput, errorResult, imageAndJsonResult } from "@/lib/mcp/tool-helpers";
-import { computeWeeklyRecap } from "@/lib/recap";
+import { computeWeeklyRecap, resolveHighlight } from "@/lib/recap";
 import type { RecapTemplate } from "@/lib/recap";
 import { renderRecapCard } from "@/lib/recap-render";
 
@@ -4775,14 +4775,26 @@ function registerWriteTools(server: McpServer) {
           .describe(
             'Visual style variant: "coal" (dark, bold, default) or "parchment" (light, editorial serif)',
           ),
+        highlight: z
+          .string()
+          .optional()
+          .describe(
+            'Feature one achievement on the card: a candidate id from the returned stats.highlights[] ' +
+            '(e.g. "pr:Goblet Squat", "baseline:Plank Max Hold", "hike:<id>", "badge:<id>"), ' +
+            'or "custom:<text>" for a free-form callout, ' +
+            'or "auto" to use the week\'s top achievement automatically. ' +
+            'Omit (or pass "none") for no callout band.',
+          ),
       },
     },
-    async ({ weekOffset, goalId, template }) => {
+    async ({ weekOffset, goalId, template, highlight }) => {
       try {
         const recap = await computeWeeklyRecap(new Date(), { weekOffset, goalId });
         const tpl: RecapTemplate = template ?? "coal";
-        const res = renderRecapCard(recap, tpl);
+        const fh = resolveHighlight(recap, highlight);
+        const res = renderRecapCard(recap, tpl, fh);
         const buf = Buffer.from(await res.arrayBuffer());
+        // stats block includes recap.highlights so Claude can see and choose candidates
         return imageAndJsonResult(buf, recap);
       } catch (e) {
         return errorResult(e instanceof Error ? e.message : String(e));

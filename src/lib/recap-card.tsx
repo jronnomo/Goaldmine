@@ -5,7 +5,7 @@
 // Goal-generic — no hardcoded references to specific goals or people.
 
 import React from "react";
-import type { WeeklyRecap, RecapTemplate, RecapSlide } from "@/lib/recap";
+import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight } from "@/lib/recap";
 import { getTemplate, type TemplateTokens } from "@/lib/recap-templates";
 
 // ─── Number formatting helpers (ADDENDUM §F) ─────────────────────────────────
@@ -101,6 +101,115 @@ function ProgressBar({ tok, pct }: { tok: TemplateTokens; pct: number | null }) 
   );
 }
 
+// ─── HighlightBand ────────────────────────────────────────────────────────────
+
+/**
+ * Compact featured-highlight callout band.
+ * Placed AFTER the goal block hairline, BEFORE the streak band.
+ * Satori-safe: flex only, inline styles, no SVG/img, every multi-child div has display:"flex".
+ * The gold left-edge accent is achieved by a 6px solid bar inside a row container
+ * whose default alignItems is "stretch" (full-height without explicit min-height).
+ */
+function HighlightBand({
+  tok,
+  highlight,
+  displayFont,
+  displayWeight,
+}: {
+  tok: TemplateTokens;
+  highlight: RecapHighlight;
+  displayFont: string;
+  displayWeight: number;
+}) {
+  return (
+    <div
+      style={{
+        marginLeft: tok.safeInset,
+        marginRight: tok.safeInset,
+        marginTop: 20,
+        marginBottom: 4,
+        borderRadius: 16,
+        display: "flex",
+        flexDirection: "row",
+        backgroundColor: tok.liftedSurface,
+        overflow: "hidden",
+      }}
+    >
+      {/* Gold left accent — stretches full height via default alignItems:"stretch" */}
+      <div
+        style={{
+          width: 6,
+          backgroundColor: tok.barFillBg,
+          flexShrink: 0,
+          display: "flex",
+        }}
+      />
+      {/* Content row: icon + text stack */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          flex: 1,
+          gap: 16,
+          paddingTop: 20,
+          paddingBottom: 20,
+          paddingLeft: 20,
+          paddingRight: 24,
+        }}
+      >
+        {/* Emoji icon */}
+        <div
+          style={{
+            display: "flex",
+            fontSize: 44,
+            flexShrink: 0,
+            lineHeight: 1,
+          }}
+        >
+          {highlight.icon}
+        </div>
+        {/* Label + optional sub */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            flex: 1,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 32,
+              fontFamily: displayFont,
+              fontWeight: displayWeight,
+              color: tok.primaryText,
+              lineHeight: 1.2,
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {highlight.label}
+          </div>
+          {highlight.sub !== null && (
+            <div
+              style={{
+                fontSize: tok.fontSize.statLabel,
+                fontFamily: tok.fontSans,
+                fontWeight: tok.fontWeight.regular,
+                color: tok.mutedText,
+              }}
+            >
+              {highlight.sub}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── RecapCard — full 1080×1920 card ─────────────────────────────────────────
 
 /**
@@ -112,9 +221,12 @@ function ProgressBar({ tok, pct }: { tok: TemplateTokens; pct: number | null }) 
 export function RecapCard({
   recap,
   template,
+  featuredHighlight,
 }: {
   recap: WeeklyRecap;
   template: RecapTemplate;
+  /** When non-null, renders a gold-accented callout band after the goal block. */
+  featuredHighlight?: RecapHighlight | null;
 }): React.JSX.Element {
   const tok = getTemplate(template);
   const isParchment = template === "parchment";
@@ -317,6 +429,16 @@ export function RecapCard({
 
       {/* ── Hairline ─────────────────────────────────────────────────── */}
       <div style={{ height: 1, backgroundColor: tok.hairline, marginLeft: tok.safeInset, marginRight: tok.safeInset }} />
+
+      {/* ── Featured Highlight band (conditional) ────────────────────── */}
+      {featuredHighlight != null && (
+        <HighlightBand
+          tok={tok}
+          highlight={featuredHighlight}
+          displayFont={displayFont}
+          displayWeight={displayWeight}
+        />
+      )}
 
       {/* ── Streak band ──────────────────────────────────────────────── */}
       <div

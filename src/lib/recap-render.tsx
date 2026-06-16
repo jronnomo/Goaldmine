@@ -10,7 +10,7 @@ import fs from "fs";
 import path from "path";
 import React from "react";
 import { ImageResponse } from "next/og";
-import type { WeeklyRecap, RecapTemplate, RecapSlide } from "@/lib/recap";
+import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight } from "@/lib/recap";
 import { RecapCard, RecapStorySlide } from "@/lib/recap-card";
 
 // ─── Font loading (DC-1 safe slice) ──────────────────────────────────────────
@@ -82,10 +82,18 @@ export const IMAGE_OPTIONS = buildImageOptions();
 /**
  * Renders the full 1080×1920 recap card as an ImageResponse (PNG stream).
  * Routes return this directly; MCP tool calls .arrayBuffer().
+ *
+ * @param featuredHighlight  When non-null, renders a gold-accented callout band
+ *                           after the goal block. Omit or pass null for the default
+ *                           card layout (identical to pre-highlight behaviour).
  */
-export function renderRecapCard(recap: WeeklyRecap, template: RecapTemplate): ImageResponse {
+export function renderRecapCard(
+  recap: WeeklyRecap,
+  template: RecapTemplate,
+  featuredHighlight?: RecapHighlight | null,
+): ImageResponse {
   return new ImageResponse(
-    React.createElement(RecapCard, { recap, template }),
+    React.createElement(RecapCard, { recap, template, featuredHighlight }),
     IMAGE_OPTIONS,
   );
 }

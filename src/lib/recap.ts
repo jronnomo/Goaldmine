@@ -11,6 +11,7 @@ import {
   endOfWeekSunday,
   addDays,
   startOfDay,
+  dateKey,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
@@ -30,6 +31,19 @@ export type RecapSlide = 1 | 2 | 3;
 
 /** Goal progress completeness state — drives goal-zone rendering. (DC-4) */
 export type RecapGoalState = "no-goal" | "no-targets" | "all-missing" | "has-data";
+
+/**
+ * A single highlight candidate for the featured callout band on the recap card.
+ * Detected from the week's PRs, badges, hikes, and baselines.
+ * Also supports a user-typed custom highlight.
+ */
+export type RecapHighlight = {
+  id: string;       // stable: "pr:<name>" | "baseline:<testName>" | "hike:<hikeId>" | "badge:<id>" | "custom:<text>"
+  kind: "pr" | "baseline" | "hike" | "badge" | "custom";
+  icon: string;     // emoji: pr "🏆", baseline "📏", hike "⛰️", badge "🎖️", custom "⭐"
+  label: string;    // headline e.g. "Goblet Squat — 65 lb" / "Bear Peak — 8.2 mi · 3,768 ft"
+  sub: string | null; // optional secondary line e.g. "new PR" / "new best"
+};
 
 /** A PR set during the recap week. v1 emits only source:"exercise". (CRIT-3, CRIT-4, S-4) */
 export type RecapPR = {
@@ -80,6 +94,12 @@ export type WeeklyRecap = {
   instagramHandle: string | null; // process.env.INSTAGRAM_HANDLE ?? null — card omits when null (DC-2)
   noProgram: boolean; // getActiveProgram() === null
   emptyWeek: boolean; // workoutsCompleted===0 && hikeElevationFt===null
+  /**
+   * Detected highlight candidates for the week, ordered by flex-worthiness:
+   * PRs → badges → hikes → baselines. Empty when nothing notable happened.
+   * Consumed by the card's featuredHighlight callout and the /recap/highlights route.
+   */
+  highlights: RecapHighlight[];
 };
 
 // ─── UNIT_FROM_PRIMARY helper ────────────────────────────────────────────────
@@ -155,10 +175,10 @@ export async function computeWeeklyRecap(
       }),
       // All-time exercise PRs (filter by bestDate in window after)
       getExerciseSummaries(),
-      // Completed hikes in the week
+      // Completed hikes in the week (select extended for highlight detection)
       prisma.hike.findMany({
         where: { date: { gte: monday, lte: sunday }, status: "completed" },
-        select: { elevationFt: true },
+        select: { elevationFt: true, id: true, route: true, distanceMi: true },
       }),
       // Active program for header
       getActiveProgram(),
@@ -276,6 +296,100 @@ export async function computeWeeklyRecap(
     const noProgram = plan === null;
     const emptyWeek = workoutsCompleted === 0 && hikeElevationFt === null;
 
+    // ── 12. Highlight detection ────────────────────────────────────────────
+    // Ordered by flex-worthiness: pr → badge → hike → baseline.
+    // Wrapped in its own try/catch — detection failure silently falls back to [].
+    let highlights: RecapHighlight[] = [];
+    try {
+      const weekDkStart = dateKey(monday);
+      const weekDkEnd = dateKey(sunday);
+
+      // PRs: already filtered to this week in step 4
+      const prHighlights: RecapHighlight[] = prs.map((pr) => ({
+        id: `pr:${pr.name}`,
+        kind: "pr" as const,
+        icon: "🏆",
+        label: `${pr.name} — ${Math.round(pr.bestValue)} ${pr.units}`,
+        sub: "new PR",
+      }));
+
+      // Badges: only those whose unlock dateKey falls within this week.
+      // gameState.badges[].dateKey is "yyyy-mm-dd" when unlocked, null when locked.
+      const badgeHighlights: RecapHighlight[] = gameState.badges
+        .filter(
+          (b) =>
+            b.dateKey !== null &&
+            b.dateKey >= weekDkStart &&
+            b.dateKey <= weekDkEnd,
+        )
+        .map((b) => ({
+          id: `badge:${b.def.id}`,
+          kind: "badge" as const,
+          icon: "🎖️",
+          label: b.def.name,
+          sub: null,
+        }));
+
+      // Hikes: from the already-fetched extended hikes query
+      const hikeHighlights: RecapHighlight[] = hikes.map((h) => ({
+        id: `hike:${h.id}`,
+        kind: "hike" as const,
+        icon: "⛰️",
+        label: `${h.route} — ${h.distanceMi.toFixed(1)} mi · ${new Intl.NumberFormat("en-US").format(h.elevationFt)} ft`,
+        sub: null,
+      }));
+
+      // Baselines: query the week, dedupe by testName (take max value), check vs prior
+      const weekBaselineRows = await prisma.baseline.findMany({
+        where: { date: { gte: monday, lte: sunday } },
+        select: { testName: true, value: true, units: true },
+      });
+
+      // Dedupe by testName: keep the highest-value entry per test
+      const byTestName = new Map<string, { testName: string; value: number; units: string }>();
+      for (const row of weekBaselineRows) {
+        const existing = byTestName.get(row.testName);
+        if (!existing || row.value > existing.value) {
+          byTestName.set(row.testName, row);
+        }
+      }
+      const uniqueWeekBaselines = [...byTestName.values()];
+
+      const priorMaxByTest = new Map<string, number>();
+      if (uniqueWeekBaselines.length > 0) {
+        const testNames = uniqueWeekBaselines.map((b) => b.testName);
+        const priorRows = await prisma.baseline.findMany({
+          where: { testName: { in: testNames }, date: { lt: monday } },
+          select: { testName: true, value: true },
+        });
+        for (const row of priorRows) {
+          const prev = priorMaxByTest.get(row.testName) ?? -Infinity;
+          if (row.value > prev) priorMaxByTest.set(row.testName, row.value);
+        }
+      }
+
+      const baselineHighlights: RecapHighlight[] = uniqueWeekBaselines.map((row) => {
+        const priorMax = priorMaxByTest.get(row.testName);
+        const isNewBest = priorMax === undefined || row.value > priorMax;
+        return {
+          id: `baseline:${row.testName}`,
+          kind: "baseline" as const,
+          icon: "📏",
+          label: `${row.testName} — ${row.value} ${row.units}`,
+          sub: isNewBest ? "new best" : null,
+        };
+      });
+
+      highlights = [
+        ...prHighlights,
+        ...badgeHighlights,
+        ...hikeHighlights,
+        ...baselineHighlights,
+      ];
+    } catch {
+      highlights = [];
+    }
+
     return {
       weekStart: monday,
       weekEnd: sunday,
@@ -293,6 +407,7 @@ export async function computeWeeklyRecap(
       instagramHandle,
       noProgram,
       emptyWeek,
+      highlights,
     };
   } catch {
     // Never throw — return a safe fallback
@@ -318,6 +433,38 @@ export async function computeWeeklyRecap(
       instagramHandle: process.env.INSTAGRAM_HANDLE ?? null,
       noProgram: true,
       emptyWeek: true,
+      highlights: [],
     };
   }
+}
+
+// ─── resolveHighlight ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve the `highlight` query/tool param to a concrete RecapHighlight or null.
+ *
+ * - null / undefined / "none" / ""  → null (no callout band)
+ * - "auto"                          → recap.highlights[0] ?? null (top candidate)
+ * - "custom:<text>"                 → {kind:"custom", icon:"⭐", label:text, ...}
+ *                                     (empty text after "custom:" → null)
+ * - any other string                → match by id in recap.highlights; unmatched → null
+ */
+export function resolveHighlight(
+  recap: WeeklyRecap,
+  param: string | null | undefined,
+): RecapHighlight | null {
+  if (!param || param === "none") return null;
+  if (param === "auto") return recap.highlights[0] ?? null;
+  if (param.startsWith("custom:")) {
+    const text = param.slice(7).trim();
+    if (!text) return null;
+    return {
+      id: param,
+      kind: "custom",
+      icon: "⭐",
+      label: text,
+      sub: null,
+    };
+  }
+  return recap.highlights.find((h) => h.id === param) ?? null;
 }
