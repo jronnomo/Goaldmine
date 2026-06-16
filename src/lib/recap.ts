@@ -110,6 +110,26 @@ const UNIT_FROM_PRIMARY: Record<ExerciseSummary["primary"], string> = {
   duration: "sec",
 };
 
+// Exercise-name keywords marking mobility / stretch / warmup work. These are
+// excluded from highlight CANDIDATES (they remain in the PR stat count — this
+// only affects which achievements are offered as a shareable "flex"). Heuristic
+// by design; the user can always pick another candidate or a custom highlight.
+const MOBILITY_KEYWORDS = [
+  "stretch", "foam roll", "foot roll", "pose", "cat-cow", "cat cow", "mobility",
+  "hip switch", "90/90", "forward fold", "doorway", "figure-4", "figure 4",
+  "couch", "pvc", "warm-up", "warmup", "cool-down", "cooldown", "opener",
+  "breathing", "activation", "thoracic", "pigeon",
+  // specific multi-word mobility moves (phrased to avoid false-positives like "Russian Twist")
+  "thread the needle", "spinal twist", "towel pull",
+];
+function isMobilityName(name: string): boolean {
+  const n = name.toLowerCase();
+  return MOBILITY_KEYWORDS.some((k) => n.includes(k));
+}
+// Sort tier for PR units: weighted lifts first, then reps, then duration.
+const prUnitTier = (units: string): number =>
+  units === "lb" ? 0 : units === "reps" ? 1 : 2;
+
 // ─── weekRangeLabel ───────────────────────────────────────────────────────────
 
 /**
@@ -304,14 +324,22 @@ export async function computeWeeklyRecap(
       const weekDkStart = dateKey(monday);
       const weekDkEnd = dateKey(sunday);
 
-      // PRs: already filtered to this week in step 4
-      const prHighlights: RecapHighlight[] = prs.map((pr) => ({
-        id: `pr:${pr.name}`,
-        kind: "pr" as const,
-        icon: "🏆",
-        label: `${pr.name} — ${Math.round(pr.bestValue)} ${pr.units}`,
-        sub: "new PR",
-      }));
+      // PRs: drop 0-value lifts and mobility/stretch work, then rank by
+      // flex-worthiness — heaviest weighted lifts first, then reps, then duration.
+      const prHighlights: RecapHighlight[] = prs
+        .filter((pr) => pr.bestValue > 0 && !isMobilityName(pr.name))
+        .sort(
+          (a, b) =>
+            prUnitTier(a.units) - prUnitTier(b.units) || b.bestValue - a.bestValue,
+        )
+        .slice(0, 8)
+        .map((pr) => ({
+          id: `pr:${pr.name}`,
+          kind: "pr" as const,
+          icon: "🏆",
+          label: `${pr.name} — ${Math.round(pr.bestValue)} ${pr.units}`,
+          sub: "new PR",
+        }));
 
       // Badges: only those whose unlock dateKey falls within this week.
       // gameState.badges[].dateKey is "yyyy-mm-dd" when unlocked, null when locked.
@@ -382,8 +410,8 @@ export async function computeWeeklyRecap(
 
       highlights = [
         ...prHighlights,
-        ...badgeHighlights,
         ...hikeHighlights,
+        ...badgeHighlights,
         ...baselineHighlights,
       ];
     } catch {
