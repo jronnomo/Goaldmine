@@ -130,9 +130,8 @@ export async function resolveMetricValue(
 export async function resolveMetricStart(
   prisma: PrismaClient,
   metric: string,
-  goalId: string, // reserved for future goal-scoped start queries; fitness branches ignore it
+  goalId: string, // used by the log:* start lookup; fitness branches ignore it
 ): Promise<number | null> {
-  void goalId;
   if (metric === "weightLb") {
     const m = await prisma.measurement.findFirst({
       where: { weightLb: { not: null } },
@@ -153,8 +152,17 @@ export async function resolveMetricStart(
   // Cumulative / count / max metrics start at 0.
   if (metric.startsWith("hike:") || metric === "workout:count") return 0;
 
-  // log:* metrics build from zero — same pattern as hike:*/workout:count.
-  if (metric.startsWith(LOG_METRIC_PREFIX)) return 0;
+  // log:* — start from the EARLIEST logged value (the baseline you're moving from).
+  // Increase metrics ignore start (build-from-zero in progressFor); decrease metrics
+  // (churn, CAC) measure motion from this starting value toward the lower target.
+  if (metric.startsWith(LOG_METRIC_PREFIX)) {
+    const key = metric.slice(LOG_METRIC_PREFIX.length);
+    const entry = await prisma.logEntry.findFirst({
+      where: { goalId, metric: key },
+      orderBy: { date: "asc" },
+    });
+    return entry?.value ?? null;
+  }
 
   // exercise:<canonical name> — earliest recorded best from workout history.
   if (metric.startsWith("exercise:")) {

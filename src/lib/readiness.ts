@@ -72,11 +72,14 @@ export type ReadinessSeriesPoint = {
 export function progressFor(target: GoalTarget, current: number | null, start: number | null): number | null {
   if (current === null) return null;
 
-  // Build-from-zero metrics: progress = current / target, no start needed.
+  // Build-from-zero metrics (INCREASE/accumulation only): progress = current / target.
+  // Decrease log:* metrics (e.g. churn, CAC) fall through to the comparative path
+  // below, which measures motion from the starting value toward the (lower) target.
   if (
-    target.metric.startsWith("hike:") ||
-    target.metric === "workout:count" ||
-    target.metric.startsWith(LOG_METRIC_PREFIX)
+    target.direction === "increase" &&
+    (target.metric.startsWith("hike:") ||
+      target.metric === "workout:count" ||
+      target.metric.startsWith(LOG_METRIC_PREFIX))
   ) {
     if (target.target === 0) return null;
     return clamp01(current / target.target);
