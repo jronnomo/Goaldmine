@@ -916,10 +916,15 @@ function registerReadTools(server: McpServer) {
     {
       title: "Compute a goal's readiness score + per-target breakdown",
       description:
-        "Live readiness for a goal: an overall 0-100 score, a per-target breakdown (each target's current value, start, and 0..1 progress), and the targets with no data yet (excluded from the score). " +
-        "Use it to answer 'how ready am I for the goal', 'did that PR move the needle', or to sanity-check whether a logged result is actually being credited. " +
-        "Each baseline/measurement target resolves to the LATEST value on or before end-of-(user-tz)-day, so a result logged today counts today — including off-schedule PRs, which are eligible immediately (you do NOT have to wait for the formal retest checkpoint). direction=increase reads as met once current ≥ target; decrease once current ≤ target. " +
-        "Read-only — never writes. To change the targets/weights themselves, use update_goal_targets.",
+        "Live readiness for a goal: an overall 0-100 score, a per-target breakdown (each target's current value, start, and 0..1 progress), " +
+        "and the targets with no data yet. " +
+        "Score = min(rawScore, ceiling). rawScore = weighted average over ALL targets (untested = 0 progress, full weight in denominator — a target you haven't logged is dragging the score). " +
+        "Coverage = { tested, total } showing how many targets have any data. " +
+        "Gating: targets with gating:true cap the score at 80 until cleared (progress ≥ 1). " +
+        "gates[] lists each gating target with its cleared status; openGateCount is the number still open. " +
+        "ceiling is 80 when any gate is open, 100 when all are cleared. " +
+        "Use it to answer 'how ready am I for the goal', 'which gates are still open', or to check if a logged result moved the needle. " +
+        "Read-only — never writes. To change targets/weights/gate flags, use update_goal_targets.",
       inputSchema: {
         goalId: z
           .string()
@@ -3148,7 +3153,8 @@ function registerWriteTools(server: McpServer) {
       description:
         "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 155 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
         "Use when adjusting the success criteria / rubric / scoring weights for the goal. " +
-        "Each target = { metric, label, target, weight, units, direction, rationale? }. Weights should sum near 1. " +
+        "Each target = { metric, label, target, weight, units, direction, rationale?, gating? }. Weights should sum near 1. " +
+        "Set gating:true on a target to make it a hard gate — readiness is capped at 80 until that target reaches progress ≥ 1. " +
         "Read the current targets via get_goal first; this is a full-replace, not a patch.",
       inputSchema: {
         goalId: z.string(),
@@ -3157,7 +3163,7 @@ function registerWriteTools(server: McpServer) {
         // Optional fields (start, rationale) are already optional in the schema,
         // so existing stored targets validate cleanly.
         targets: z.array(GoalTargetSchema).min(1).describe(
-          "Full replacement targets array. Each entry: { metric, label, units, direction, target, weight, start?, rationale? }. " +
+          "Full replacement targets array. Each entry: { metric, label, units, direction, target, weight, start?, rationale?, gating? }. " +
           "Weights should sum near 1. Use get_goal to read current targets before replacing.",
         ),
       },
@@ -3808,7 +3814,8 @@ function registerWriteTools(server: McpServer) {
           .optional()
           .describe(
             "Readiness targets captured during the intake interview (weights summing ~1). " +
-              "Each target drives a per-target progress bar in compute_readiness.",
+              "Each target drives a per-target progress bar in compute_readiness. " +
+              "Set gating:true on a target to make it a hard gate — score capped at 80 until cleared.",
           ),
         coachFeasibility: z
           .object({

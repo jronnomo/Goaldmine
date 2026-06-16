@@ -15,12 +15,52 @@ export type TargetProgress = {
   progress: number | null;
 };
 
+/** One gating target's cleared status — returned in ReadinessSnapshot.gates[]. */
+export type ReadinessGate = {
+  /** Human-readable label from GoalTarget.label. */
+  label: string;
+  /** 0..1 progress, or null if no data yet. */
+  progress: number | null;
+  /** True only when progress !== null && progress >= 1. */
+  cleared: boolean;
+};
+
+/** Score ceiling applied while any gating target remains uncleaned. */
+export const GATE_CEILING = 80;
+
 export type ReadinessSnapshot = {
-  /** 0..100 overall readiness. */
+  /**
+   * 0..100 overall readiness score = Math.min(rawScore, ceiling).
+   * This is the honest, capped headline number. Feed it to the ring / chart.
+   */
   score: number;
-  /** Per-target breakdown. */
+  /**
+   * Uncapped weighted average over ALL targets (untested = 0 progress, full
+   * weight in denominator). Equals score when no gates are open.
+   * Math.round(Σ(weightᵢ · (progressᵢ ?? 0)) / Σ(all weights) * 100).
+   */
+  rawScore: number;
+  /**
+   * 80 when any gating target is uncleaned, 100 otherwise.
+   * score = Math.min(rawScore, ceiling).
+   */
+  ceiling: number;
+  /** How many targets have been logged vs the total. */
+  coverage: { tested: number; total: number };
+  /** All targets flagged gating:true, with their cleared status. */
+  gates: ReadinessGate[];
+  /** Count of gating targets not yet cleared (progress === null OR progress < 1). */
+  openGateCount: number;
+  /** Per-target breakdown including untested targets (progress: null). */
   breakdown: TargetProgress[];
-  /** Targets with no data yet (excluded from overall score). */
+  /**
+   * Targets with no data yet. Counted as 0 progress in the score denominator —
+   * they are NOT excluded from the score (unlike the old behavior).
+   * JSDoc updated: was "excluded from overall score" — no longer accurate.
+   *
+   * Note: a gate metric with start === target.target returns progress 0 from
+   * progressFor and can never clear — data-config caveat, not an engine bug.
+   */
   missing: GoalTarget[];
 };
 
@@ -78,14 +118,34 @@ export async function computeReadiness(
     breakdown.push({ target: t, current, start, progress });
   }
 
-  const usable = breakdown.filter((b) => b.progress !== null);
-  if (usable.length === 0) return { score: 0, breakdown, missing };
+  // ── Coverage ────────────────────────────────────────────────────────────
+  const tested = breakdown.filter((b) => b.progress !== null).length;
+  const coverage = { tested, total: targets.length };
 
-  const totalWeight = usable.reduce((acc, b) => acc + (b.target.weight ?? 0), 0);
-  if (totalWeight === 0) return { score: 0, breakdown, missing };
+  // ── Gating ──────────────────────────────────────────────────────────────
+  const gates: ReadinessGate[] = breakdown
+    .filter((b) => b.target.gating === true)
+    .map((b) => ({
+      label: b.target.label,
+      progress: b.progress,
+      cleared: b.progress !== null && b.progress >= 1,
+    }));
+  const openGateCount = gates.filter((g) => !g.cleared).length;
+  const ceiling = openGateCount > 0 ? GATE_CEILING : 100;
 
-  const weighted = usable.reduce((acc, b) => acc + (b.target.weight ?? 0) * (b.progress ?? 0), 0);
-  return { score: Math.round((weighted / totalWeight) * 100), breakdown, missing };
+  // ── Scoring (untested = 0, full weight in denominator) ──────────────────
+  const totalWeight = breakdown.reduce((acc, b) => acc + (b.target.weight ?? 0), 0);
+  if (totalWeight === 0) {
+    return { score: 0, rawScore: 0, ceiling, coverage, gates, openGateCount, breakdown, missing };
+  }
+  const weighted = breakdown.reduce(
+    (acc, b) => acc + (b.target.weight ?? 0) * (b.progress ?? 0),
+    0,
+  );
+  const rawScore = Math.round((weighted / totalWeight) * 100);
+  const score = Math.min(rawScore, ceiling);
+
+  return { score, rawScore, ceiling, coverage, gates, openGateCount, breakdown, missing };
 }
 
 export async function computeReadinessSeries(

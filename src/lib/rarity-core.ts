@@ -397,6 +397,10 @@ export function computeTargetFeasibility(input: {
 
   const family = metricFamilyFor(target.metric, target.units, target.direction);
 
+  // Note: gating:boolean on GoalTarget is a readiness-only concept (caps the
+  // headline score at 80 until cleared). Rarity does not read or act on gating —
+  // difficulty tier is independent of whether a target is a gate.
+
   // post-merge fix: never-measured targets (null current, no explicit start) are 'unknown'
   // — mirrors readiness `missing` semantics.
   // Build-from-zero metrics (hike:*, workout:count, log:*) always have current=0 from

@@ -22,6 +22,21 @@ function fmtElevation(v: number | null): string {
   return v === null ? "—" : `${fmtComma(v)} ft`;
 }
 
+/**
+ * Formats the coverage/gate sub-line. Returns null when coverage data is absent
+ * (no-targets state) — callers should omit the element when null.
+ */
+function fmtCoverageLine(
+  coverage: { tested: number; total: number } | null | undefined,
+  openGateCount: number | undefined,
+): string | null {
+  if (!coverage) return null;
+  if (coverage.total === 0) return null;
+  const base = `${coverage.tested}/${coverage.total} verified`;
+  if (!openGateCount || openGateCount === 0) return base;
+  return `${base} · ${openGateCount} gate${openGateCount === 1 ? "" : "s"} left`;
+}
+
 // ─── ProgressRing — proportional activity ring (% inside) ────────────────────
 //
 // Replaces the old Bullseye concentric-target. An inline SVG draws a gold arc
@@ -296,6 +311,8 @@ export function RecapCard({
   const goalObj = recap.goal?.objective ?? "No focus goal";
   const progressPct = recap.goal?.progressPct ?? null;
   const topMetricLabel = recap.goal?.topMetricLabel ?? null;
+  // REQ-005 coverage line — compute once (CRIT-2: no double-call, no !)
+  const coverageLine = fmtCoverageLine(recap.goal?.coverage, recap.goal?.openGateCount);
 
   // Font choices per template
   const displayFont = isParchment ? tok.fontSerif : tok.fontSans;
@@ -370,6 +387,7 @@ export function RecapCard({
         }}
       >
         {/* ProgressRing + readiness label — % lives inside the ring */}
+        {/* CRIT-1: explicit width pins the column so coverage text can't widen it */}
         <div
           style={{
             display: "flex",
@@ -377,6 +395,7 @@ export function RecapCard({
             alignItems: "center",
             gap: 16,
             flexShrink: 0,
+            width: tok.bullseyeHeroDiameter,
           }}
         >
           <ProgressRing
@@ -389,14 +408,37 @@ export function RecapCard({
           />
           <div
             style={{
-              fontSize: tok.fontSize.readinessLabel,
-              fontFamily: tok.fontSans,
-              fontWeight: tok.fontWeight.regular,
-              color: tok.mutedText,
-              letterSpacing: 3,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 6,
             }}
           >
-            READINESS
+            <div
+              style={{
+                fontSize: tok.fontSize.readinessLabel,
+                fontFamily: tok.fontSans,
+                fontWeight: tok.fontWeight.regular,
+                color: tok.mutedText,
+                letterSpacing: 3,
+              }}
+            >
+              READINESS
+            </div>
+            {coverageLine && (
+              <div
+                style={{
+                  fontSize: 22,
+                  fontFamily: tok.fontSans,
+                  fontWeight: tok.fontWeight.regular,
+                  color: tok.mutedText,
+                  letterSpacing: 0,
+                  textAlign: "center",
+                }}
+              >
+                {coverageLine}
+              </div>
+            )}
           </div>
         </div>
 
@@ -757,6 +799,8 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
   const goalObj = recap.goal?.objective ?? "No focus goal";
   const progressPct = recap.goal?.progressPct ?? null;
   const topMetricLabel = recap.goal?.topMetricLabel ?? null;
+  // REQ-005 coverage line — compute once (CRIT-2: no double-call, no !)
+  const coverageLine = fmtCoverageLine(recap.goal?.coverage, recap.goal?.openGateCount);
 
   return (
     <div
@@ -788,16 +832,43 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
 
       {/* Big ProgressRing hero — % inside the ring, READINESS label below */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 32, flex: 1, justifyContent: "center" }}>
-        <ProgressRing
-          tok={tok}
-          diameter={tok.bullseyeStoryDiameter}
-          progressPct={progressPct}
-          goalState={recap.goalState}
-          displayFont={displayFont}
-          displayWeight={displayWeight}
-        />
-        <div style={{ fontSize: tok.fontSize.readinessLabel, fontFamily: tok.fontSans, fontWeight: tok.fontWeight.regular, color: tok.mutedText, letterSpacing: 3 }}>
-          READINESS
+        {/* CRIT-1: explicit width pins the column so coverage text can't widen it */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 16,
+            width: tok.bullseyeStoryDiameter,
+          }}
+        >
+          <ProgressRing
+            tok={tok}
+            diameter={tok.bullseyeStoryDiameter}
+            progressPct={progressPct}
+            goalState={recap.goalState}
+            displayFont={displayFont}
+            displayWeight={displayWeight}
+          />
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: tok.fontSize.readinessLabel, fontFamily: tok.fontSans, fontWeight: tok.fontWeight.regular, color: tok.mutedText, letterSpacing: 3 }}>
+              READINESS
+            </div>
+            {coverageLine && (
+              <div
+                style={{
+                  fontSize: 24,
+                  fontFamily: tok.fontSans,
+                  fontWeight: tok.fontWeight.regular,
+                  color: tok.mutedText,
+                  letterSpacing: 0,
+                  textAlign: "center",
+                }}
+              >
+                {coverageLine}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

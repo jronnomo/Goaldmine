@@ -136,6 +136,15 @@ export default async function ProgressPage() {
                     best-effort estimate
                   </p>
                 </div>
+                {/* REQ-006: coverage + open-gate hint */}
+                {snapshot.coverage.total > 0 && (
+                  <p className="text-xs text-[var(--muted)] mb-2">
+                    {snapshot.coverage.tested}/{snapshot.coverage.total} verified
+                    {snapshot.openGateCount > 0
+                      ? ` · ${snapshot.openGateCount} gate${snapshot.openGateCount === 1 ? "" : "s"} left`
+                      : ""}
+                  </p>
+                )}
                 {series.length > 1 ? (
                   <div aria-label={readinessAriaLabel}>
                     <ReadinessChart data={series} targetDate={goal.targetDate?.toISOString()} />

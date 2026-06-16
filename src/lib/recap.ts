@@ -60,6 +60,10 @@ export type RecapGoalBlock = {
   progressPct: number | null; // computeReadiness(...).score; null when no/all-missing targets → render "—" never "0%"
   topMetricLabel: string | null; // highest-weight non-missing target.label; null → omit bar sub-label (S-2)
   kind: string; // Goal.kind — small accent only; must degrade for any kind
+  /** Coverage from ReadinessSnapshot — how many targets have been tested. */
+  coverage: { tested: number; total: number } | null; // null when no targets
+  /** Number of gating targets not yet cleared. 0 when no gates. */
+  openGateCount: number;
 };
 
 /** Program header data. All fields null when no active plan. */
@@ -251,6 +255,8 @@ export async function computeWeeklyRecap(
           progressPct: null,
           topMetricLabel: null,
           kind: goal.kind ?? "fitness",
+          coverage: null,
+          openGateCount: 0,
         };
       } else {
         const snapshot = await computeReadiness(targets, sunday, goal.id);
@@ -275,6 +281,8 @@ export async function computeWeeklyRecap(
           progressPct,
           topMetricLabel,
           kind: goal.kind ?? "fitness",
+          coverage: snapshot.coverage,
+          openGateCount: snapshot.openGateCount,
         };
       }
     }

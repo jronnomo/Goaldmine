@@ -21,6 +21,13 @@ export type GoalTarget = {
   weight: number;
   /** Optional rationale string for the user / Claude to read. */
   rationale?: string;
+  /**
+   * If true, while this target's progress < 1 (including untested),
+   * the headline readiness score is capped at GATE_CEILING (80).
+   * All gating targets cleared → ceiling lifts to 100.
+   * Readiness-only concept; has no effect on rarity tier.
+   */
+  gating?: boolean;
 };
 
 export type MetricSpec = {
@@ -57,6 +64,11 @@ export const GoalTargetSchema = z.object({
   start: z.number().optional().describe("Optional starting value auto-captured at goal creation"),
   weight: z.number().min(0).max(1).describe("Importance weight 0–1; all targets should sum to ~1"),
   rationale: z.string().optional().describe("Optional explanation for the user / coach"),
+  gating: z.boolean().optional().describe(
+    "Gate flag — while any gating target has progress < 1 (including untested), " +
+    "the headline score is capped at 80. All gates cleared → ceiling 100. " +
+    "Readiness-only concept; ignored by rarity tier.",
+  ),
 });
 
 /** Curated registry — keeps the UI to known metrics and avoids typos. */
@@ -194,6 +206,7 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
     direction: "increase",
     target: 6,
     weight: 0.3,
+    gating: true,
     rationale:
       "Most direct predictor. Six substantial Colorado hikes during a 12-week build (roughly one every other weekend) gives the body repeat exposure to sustained climbing, altitude, pacing, and terrain — none of which transfer perfectly from gym work.",
   },
@@ -204,6 +217,7 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
     direction: "increase",
     target: 4000,
     weight: 0.2,
+    gating: true,
     rationale:
       "Black Cloud Trail's 5,200 ft gain is unforgiving. Successfully completing a 4,000+ ft single-day effort first (e.g. Bierstadt + extension, Quandary, Massive) is the proof that the cardio-vascular and quad-eccentric demands are within reach.",
   },
