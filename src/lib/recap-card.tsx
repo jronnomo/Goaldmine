@@ -144,17 +144,18 @@ export function RecapCard({
         color: tok.primaryText,
       }}
     >
+      {/* ── IG top chrome clearance (separate spacer so header box is unconstrained) */}
+      <div style={{ height: tok.igTopChrome }} />
+
       {/* ── Header zone ──────────────────────────────────────────────── */}
       <div
         style={{
-          height: tok.zoneHeight.header,
           paddingLeft: tok.safeInset,
           paddingRight: tok.safeInset,
-          paddingTop: tok.igTopChrome,
+          paddingBottom: 20,
           display: "flex",
           flexDirection: "column",
-          justifyContent: "flex-end",
-          paddingBottom: 20,
+          gap: 4,
         }}
       >
         {programLine && (
@@ -176,7 +177,6 @@ export function RecapCard({
             fontFamily: tok.fontSans,
             fontWeight: tok.fontWeight.regular,
             color: tok.mutedText,
-            marginTop: programLine ? 4 : 0,
           }}
         >
           {recap.dateRangeLabel}
@@ -434,6 +434,9 @@ export function RecapCard({
           />
         </div>
       </div>
+
+      {/* ── Flexible spacer — pushes footer to the bottom of the 1920px canvas */}
+      <div style={{ flex: 1 }} />
 
       {/* ── Footer band ──────────────────────────────────────────────── */}
       <div
