@@ -25,7 +25,7 @@ export type ReadinessGate = {
   cleared: boolean;
 };
 
-/** Score ceiling applied while any gating target remains uncleaned. */
+/** Score ceiling applied while any gating target remains uncleared. */
 export const GATE_CEILING = 80;
 
 export type ReadinessSnapshot = {
@@ -41,7 +41,7 @@ export type ReadinessSnapshot = {
    */
   rawScore: number;
   /**
-   * 80 when any gating target is uncleaned, 100 otherwise.
+   * 80 when any gating target is uncleared, 100 otherwise.
    * score = Math.min(rawScore, ceiling).
    */
   ceiling: number;

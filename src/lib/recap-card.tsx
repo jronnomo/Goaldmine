@@ -33,7 +33,7 @@ function fmtCoverageLine(
   if (!coverage) return null;
   if (coverage.total === 0) return null;
   const base = `${coverage.tested}/${coverage.total} verified`;
-  if (!openGateCount || openGateCount === 0) return base;
+  if (!openGateCount) return base;
   return `${base} · ${openGateCount} gate${openGateCount === 1 ? "" : "s"} left`;
 }
 

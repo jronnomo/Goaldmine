@@ -946,13 +946,14 @@ function registerReadTools(server: McpServer) {
         const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
         const asOfDate = asOf ? parseDateKey(asOf) : new Date();
         if (targets.length === 0) {
+          // Spread an empty-targets snapshot so the new fields (coverage, gates,
+          // ceiling, rawScore, openGateCount) are always present and consistent.
+          const empty = await computeReadiness([], asOfDate, goal.id);
           return {
             goalId: goal.id,
             objective: goal.objective,
             asOf: toDateKey(asOfDate),
-            score: null,
-            breakdown: [],
-            missing: [],
+            ...empty,
             message: "This goal has no readiness targets. Set them with update_goal_targets.",
           };
         }
