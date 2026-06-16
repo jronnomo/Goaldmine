@@ -55,8 +55,11 @@ function Bullseye({ tok, diameter, progressPct, goalState }: BullseyeProps) {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: filled ? tok.bullseyeRingColors[i] : "transparent",
-      border: filled ? "none" : `1px solid ${tok.bullseyeUnfilledBorder}`,
+      // Filled rings use the same gold as the progress bar.
+      // Unfilled rings use tok.bg to "cut through" any outer filled ring,
+      // revealing concentric ring shapes at every percentage.
+      backgroundColor: filled ? tok.barFillBg : tok.bg,
+      border: filled ? "none" : `2px solid ${tok.bullseyeUnfilledBorder}`,
     };
   }
 
@@ -373,9 +376,11 @@ export function RecapCard({
       <div style={{ height: 1, backgroundColor: tok.hairline }} />
 
       {/* ── Stat grid (2×2) ──────────────────────────────────────────── */}
+      {/* flex:1 so the grid absorbs all remaining canvas height — numbers */}
+      {/* fill the lower half of the card rather than leaving a void gap.  */}
       <div
         style={{
-          height: tok.zoneHeight.statGrid,
+          flex: 1,
           display: "flex",
           flexDirection: "column",
         }}
@@ -435,17 +440,17 @@ export function RecapCard({
         </div>
       </div>
 
-      {/* ── Flexible spacer — pushes footer to the bottom of the 1920px canvas */}
-      <div style={{ flex: 1 }} />
-
       {/* ── Footer band ──────────────────────────────────────────────── */}
+      {/* Auto-height: paddingTop (28) + wordmark (40) + paddingBottom (igBottomChrome + 28). */}
+      {/* No fixed height — the band is compact and the wordmark is visually centered */}
+      {/* in the visible portion; igBottomChrome bottom padding reserves space for IG chrome. */}
       <div
         style={{
-          height: tok.zoneHeight.footer,
           backgroundColor: tok.liftedSurface,
           paddingLeft: tok.safeInset,
           paddingRight: tok.safeInset,
-          paddingBottom: tok.igBottomChrome,
+          paddingTop: 28,
+          paddingBottom: tok.igBottomChrome + 28,
           display: "flex",
           flexDirection: "row",
           alignItems: "center",

@@ -19,8 +19,7 @@ export type TemplateTokens = {
   mutedText: string;
   accentText: string; // bar fill color, hero %, streak numeral
 
-  // Bullseye rings (out → in: ring0, ring1, ring2, ring3)
-  bullseyeRingColors: [string, string, string, string];
+  // Bullseye rings — outline color for unfilled rings; filled rings use barFillBg (gold)
   bullseyeUnfilledBorder: string;
 
   // Bar
@@ -90,8 +89,6 @@ export const COAL: TemplateTokens = {
   mutedText: "#9C8866",
   accentText: "#D4A437",
 
-  // Out→in: ring0 fill / ring1 fill / ring2 fill / ring3 fill
-  bullseyeRingColors: ["#C0392B", "#FFFFFF", "#C0392B", "#FFFFFF"],
   bullseyeUnfilledBorder: "#9C8866",
 
   barTrackBg: "#3A2E1F",
@@ -155,7 +152,6 @@ export const PARCHMENT: TemplateTokens = {
   mutedText: "#7A5E3A",
   accentText: "#8A6212", // bar fill, large display only (see note above)
 
-  bullseyeRingColors: ["#A82A1F", "#FFFBF0", "#A82A1F", "#FFFBF0"],
   bullseyeUnfilledBorder: "#7A5E3A",
 
   barTrackBg: "#D9C8A2",
