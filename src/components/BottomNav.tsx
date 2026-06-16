@@ -57,7 +57,8 @@ const TABS: Tab[] = [
     match: (p) =>
       p.startsWith("/progress") ||
       p.startsWith("/stats") ||
-      p.startsWith("/baselines"),
+      p.startsWith("/baselines") ||
+      p.startsWith("/recap"),
   },
   {
     type: "sheet",

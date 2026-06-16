@@ -64,6 +64,15 @@ export default async function ProgressPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Progress</h1>
       </header>
 
+      {/* Share recap entry point */}
+      <Link
+        href="/recap"
+        className="flex items-center gap-2 min-h-[44px] text-sm font-medium text-[var(--accent)] hover:opacity-80 transition-opacity"
+      >
+        <span>Share recap</span>
+        <span aria-hidden>→</span>
+      </Link>
+
       {/* Readiness by goal */}
       {readinessByGoal.length === 0 && (
         <Card title="Readiness">
