@@ -22,13 +22,13 @@ function fmtElevation(v: number | null): string {
   return v === null ? "—" : `${fmtComma(v)} ft`;
 }
 
-// ─── ProgressRing — conic-gradient activity ring (% inside) ──────────────────
+// ─── ProgressRing — proportional activity ring (% inside) ────────────────────
 //
-// Replaces the old Bullseye concentric-target completely.
-// The outer circle is a conic-gradient "donut" filled clockwise from 12 o'clock
-// to `progressPct`% in gold (tok.barFillBg), with tok.hairline as the empty track.
-// The inner "hole" circle (64% of diameter) punches through to tok.bg and centres
-// the percentage label. Satori-safe: backgroundImage for gradient, flex only.
+// Replaces the old Bullseye concentric-target. An inline SVG draws a gold arc
+// swept to `progressPct`% over a muted track circle (via stroke-dasharray),
+// starting at 12 o'clock. The percentage label is centred over the ring. satori
+// rasterises the SVG through resvg, which supports dash arrays (conic-gradient is
+// validated but NOT rendered by satori 0.25.0).
 
 type ProgressRingProps = {
   tok: TemplateTokens;
@@ -44,41 +44,52 @@ function ProgressRing({ tok, diameter, progressPct, goalState, displayFont, disp
   const hasData = goalState === "has-data" && progressPct !== null;
   const pct = hasData ? Math.max(0, Math.min(100, progressPct!)) : null;
 
-  // Track colour: tok.hairline is a mid-tone that shows up on both templates.
+  // Ring geometry: stroke is centred on radius r so outer edge = D/2 exactly.
+  const sw = Math.round(D * 0.16);
+  const r = (D - sw) / 2;
+  const cx = D / 2;
+  const cy = D / 2;
+  const circumference = 2 * Math.PI * r;
+  const dashOffset = pct === null ? circumference : circumference * (1 - pct / 100);
   const trackColor = tok.hairline;
-
-  // FALLBACK: satori 0.25.0 (bundled in Next.js 16) includes conic-gradient in its
-  // backgroundImage validation list but has NO conic-gradient renderer — it crashes with
-  // "Cannot read properties of undefined (reading 'trim')" at render time.
-  // We fall back to a solid gold ring (filled = gold outer, bg hole) + % text centred.
-  // The arc-fill visual is lost; the % number carries the readiness data.
-  // TODO: when satori adds a conic-gradient renderer, swap in:
-  //   backgroundImage: pct !== null
-  //     ? `conic-gradient(${tok.barFillBg} ${pct}%, ${trackColor} ${pct}%)`
-  //     : undefined
-  const outerStyle: React.CSSProperties = {
-    width: D,
-    height: D,
-    borderRadius: 9999,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: pct !== null ? tok.barFillBg : trackColor,
-  };
-
-  const innerD = Math.round(D * 0.64);
-  // Font size scales with ring — leaves comfortable breathing room for "100%".
   const pctFontSize = Math.round(D * 0.24);
   const displayText = pct !== null ? `${pct}%` : "—";
 
   return (
-    <div style={outerStyle}>
+    <div
+      style={{
+        width: D,
+        height: D,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+      }}
+    >
+      <svg width={D} height={D} viewBox={`0 0 ${D} ${D}`}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={trackColor} strokeWidth={sw} />
+        {pct !== null && (
+          <circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke={tok.barFillBg}
+            strokeWidth={sw}
+            strokeDasharray={`${circumference}`}
+            strokeDashoffset={`${dashOffset}`}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${cx} ${cy})`}
+          />
+        )}
+      </svg>
       <div
         style={{
-          width: innerD,
-          height: innerD,
-          borderRadius: 9999,
-          backgroundColor: tok.bg,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: D,
+          height: D,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -207,13 +218,14 @@ function HighlightBand({
         >
           <div
             style={{
-              fontSize: 48,
+              fontSize: 40,
               fontFamily: displayFont,
               fontWeight: displayWeight,
               color: tok.primaryText,
               lineHeight: 1.15,
               overflow: "hidden",
               whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
             }}
           >
             {highlight.label}
