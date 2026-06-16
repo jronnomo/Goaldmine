@@ -20,7 +20,6 @@ import {
   deriveAmountFromServings,
   deriveAmountFromEstimate,
   buildQtyDisplay,
-  addFoodMacros,
 } from "@/lib/food-units";
 import { parseFoodQuery } from "@/lib/food-parse";
 
@@ -183,27 +182,21 @@ function sourceLabel(src: "library" | "builtin" | "usda"): string {
 // setItemsText has been removed from this hook; rawMode text writes live in MealComposer.
 
 export function useFoodComposer({
-  macros,
-  setMacros,
   addItem,
   quickPickFoods,
   libraryFoods,
-  onMacrosChanged,
 }: {
-  macros: MacroValues;
-  setMacros: (m: MacroValues) => void;
-  /** Called on every food-resolved add (chip / scan / estimate / add-anyway). B-3 rule:
-   *  NEVER call setItemsText from food-resolved paths — use addItem instead. */
+  /**
+   * Called on every food-resolved add (chip / scan / estimate / add-anyway). B-3 rule:
+   * NEVER call setItemsText from food-resolved paths — use addItem instead.
+   * The host (MealComposer.addItemToComposer) owns the macro total: it recomputes
+   * it from the items array so the total always equals sumStructuredMacros(items) +
+   * residual. This hook no longer touches macros at all.
+   */
   addItem: (item: NutritionItem) => void;
   quickPickFoods?: LibraryFood[];
   /** Pre-loaded library foods for the Browse-library picker. */
   libraryFoods?: LibraryFood[];
-  /**
-   * Fired after a food add merges into macros (chip, scan, OR picker path).
-   * MealComposer uses this to trigger flashMacros on the add path (UXR-lib-16).
-   * Args: the macros BEFORE the merge and the macros AFTER.
-   */
-  onMacrosChanged?: (prev: MacroValues, next: MacroValues) => void;
 }): { controls: ReactNode; sheet: ReactNode } {
   // Quick-pick chip state: two orthogonal state slices, merged via useMemo.
   //   lazyFoods    — fetched on mount (no prop provided path)
@@ -259,28 +252,27 @@ export function useFoodComposer({
 
     // 1. Build structured item (B-3: addItem path, NOT setItemsText).
     const snapshot = buildItemSnapshot(food);
-    // chip/scan path has no text query → null; defaultUnitForQuery handles it.
-    const unit = defaultUnitForQuery(null, snapshot);
+    // ScanFoodSheet's servings stepper is a pure "× 100 g" multiplier (no portion
+    // picker), so grams is the faithful representation for a 100g-basis food. Forcing
+    // portions[0] ("small") + integer rounding here is what desynced the item from the
+    // running total and accreted a phantom residual. Serving-basis foods → "serving".
+    const unit = snapshot.basis === "100g" ? "g" : defaultUnitForQuery(null, snapshot);
     const amount = deriveAmountFromServings(servings, unit, snapshot);
     const qty = buildQtyDisplay(amount, unit, snapshot);
     const structuredItem: NutritionItem = { name: food.name, qty, amount, unit, source: snapshot };
 
-    // 2. Macro update — pure helper; no text line built here (S-6 fix).
-    const newMacros = addFoodMacros(macros, food, servings);
-    // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (UXR-lib-16)
-    onMacrosChanged?.(macros, newMacros);
-    setMacros(newMacros);
-
-    // 3. B-3: addItem, NEVER setItemsText from this path.
+    // 2. B-3: addItem, NEVER setItemsText from this path. The host recomputes the
+    //    macro total from the items array (single source of truth) — this hook no
+    //    longer sets macros directly.
     addItem(structuredItem);
 
-    // 4. Usage bump (chip path only)
+    // 3. Usage bump (chip path only)
     // Scan path: lookupBarcode() already incremented usageCount. Do NOT call here.
     if (chipSource) {
       recordFoodUse(food.id).catch(() => {});
     }
 
-    // 5. Optimistic chip upsert (scan path only)
+    // 4. Optimistic chip upsert (scan path only)
     // After a scan adds (or rescans with healed macros) a food, upsert to front
     // of localAdditions so the chip immediately carries the freshest data.
     if (!chipSource) {
@@ -357,13 +349,8 @@ export function useFoodComposer({
       source: snapshot,
     };
 
-    // Macro update — use addFoodMacros (S-6 fix).
-    const newMacros = addFoodMacros(macros, est.food, est.servings);
-    // Fire onMacrosChanged BEFORE setMacros so caller sees old→new (DC-2, UXR-lib-16)
-    onMacrosChanged?.(macros, newMacros);
-    setMacros(newMacros);
-
-    // B-3: addItem, NEVER setItemsText from this path.
+    // B-3: addItem, NEVER setItemsText from this path. The host recomputes the macro
+    //      total from the items array (single source of truth) — no setMacros here.
     addItem(structuredItem);
 
     // Upsert the resolved library food to front of localAdditions so the chip

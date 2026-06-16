@@ -166,6 +166,58 @@ export function recomposeMacros(
   return result;
 }
 
+// ── recomposeWithResidual ─────────────────────────────────────────────────────
+
+/**
+ * Recompute the meal total from an items mutation, preserving the freehand/manual
+ * residual (the part of `prevMacros` not explained by the structured items).
+ *
+ * This is the single-source-of-truth pattern that updateItemAmountUnit and
+ * requestRemoveItem already use inline; extracted so the ADD path can share it and
+ * the macro total always equals sumStructuredMacros(items) + residual. Passing
+ * prevMacros={} / prevItems=[] yields a pure item-derived total (residual 0) — used
+ * by the edit-mode heal seed.
+ */
+export function recomposeWithResidual(
+  prevMacros: MacroValues,
+  prevItems: NutritionItem[],
+  nextItems: NutritionItem[],
+): MacroValues {
+  const oldSum = sumStructuredMacros(prevItems);
+  const residual: MacroValues = {};
+  for (const k of MACRO_KEYS) residual[k] = (prevMacros[k] ?? 0) - (oldSum[k] ?? 0);
+  return recomposeMacros(sumStructuredMacros(nextItems), residual);
+}
+
+// ── addMacroValues ────────────────────────────────────────────────────────────
+
+/**
+ * Null-preserving continuous add: current + added, with house rounding
+ * (calories/sodiumMg → int; others → 1dp). A null `added` value leaves the
+ * existing key untouched (does NOT zero it). Used by the rawMode (freehand text)
+ * add branch, where items are not structured so a sum-from-items recompute doesn't
+ * apply. Mirrors the rounding rules in mergeFoodIntoForm.
+ */
+export function addMacroValues(
+  current: MacroValues,
+  added: MacroValues,
+): MacroValues {
+  const result: MacroValues = {};
+  for (const k of MACRO_KEYS) {
+    const av = added[k];
+    if (av == null) {
+      result[k] = current[k] ?? null;
+      continue;
+    }
+    const sum = (current[k] ?? 0) + av;
+    result[k] =
+      k === "calories" || k === "sodiumMg"
+        ? Math.round(sum)
+        : Math.round(sum * 10) / 10;
+  }
+  return result;
+}
+
 // ── defaultUnitForQuery ───────────────────────────────────────────────────────
 
 /**
@@ -301,7 +353,7 @@ export function deriveAmountFromServings(
 ): number {
   if (snapshot.basis === "serving") return servings;
 
-  if (unit === "g") return servings * 100;
+  if (unit === "g") return Math.round(servings * 100);
   if (unit === "oz") return Math.round((servings * 100 / OZ_TO_G) * 10) / 10;
 
   const portion = snapshot.portions.find((p) => p.key === unit);

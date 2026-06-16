@@ -11,12 +11,12 @@ import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
 import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
-import { MACRO_KEYS } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import {
-  sumStructuredMacros,
-  recomposeMacros,
+  recomposeWithResidual,
+  recalcItemMacros,
+  addMacroValues,
   buildQtyDisplay,
   unitsForFood,
 } from "@/lib/food-units";
@@ -195,14 +195,25 @@ export function MealComposer(props: MealComposerProps) {
   const [whenDate, setWhenDate] = useState<Date>(() =>
     isEdit && props.defaults.date ? new Date(props.defaults.date) : new Date(),
   );
-  const [macros, setMacros] = useState<MacroValues>({
-    calories: isEdit ? props.defaults.macros?.calories ?? null : null,
-    proteinG: isEdit ? props.defaults.macros?.proteinG ?? null : null,
-    carbsG: isEdit ? props.defaults.macros?.carbsG ?? null : null,
-    fatG: isEdit ? props.defaults.macros?.fatG ?? null : null,
-    fiberG: isEdit ? props.defaults.macros?.fiberG ?? null : null,
-    sodiumMg: isEdit ? props.defaults.macros?.sodiumMg ?? null : null,
-  });
+  // Heal-on-seed: a fully food-resolved meal (every item carries `source`) derives
+  // its total from the items, so trust the items over the stored macro columns —
+  // this auto-corrects logs saved before the add-path residual bug was fixed. Meals
+  // with any freehand/legacy item (no source) keep their stored macros so manually
+  // entered values are never clobbered.
+  const seedAllStructured =
+    isEdit && seedItems.length > 0 && seedItems.every((i) => !!i.source);
+  const [macros, setMacros] = useState<MacroValues>(
+    seedAllStructured
+      ? recomposeWithResidual({}, [], seedItems)
+      : {
+          calories: isEdit ? props.defaults.macros?.calories ?? null : null,
+          proteinG: isEdit ? props.defaults.macros?.proteinG ?? null : null,
+          carbsG: isEdit ? props.defaults.macros?.carbsG ?? null : null,
+          fatG: isEdit ? props.defaults.macros?.fatG ?? null : null,
+          fiberG: isEdit ? props.defaults.macros?.fiberG ?? null : null,
+          sodiumMg: isEdit ? props.defaults.macros?.sodiumMg ?? null : null,
+        },
+  );
 
   // Raw-paste escape hatch
   const [rawMode, setRawMode] = useState(false);
@@ -297,50 +308,60 @@ export function MealComposer(props: MealComposerProps) {
   const isOver = remainingCal != null && remainingCal < 0;
 
   // ── addItemToComposer — the `addItem` callback passed to useFoodComposer ────
-  // B-2: compute `next` OUTSIDE all setters; call setters sequentially.
+  // SINGLE MACRO AUTHORITY: the hook no longer touches macros; this function owns
+  // the total and derives it from the items array — symmetric with
+  // updateItemAmountUnit/requestRemoveItem. That invariant (total ===
+  // sumStructuredMacros(items) + residual) is what fixes the phantom-residual /
+  // "cached values" bug; the old add path summed food×servings independently and the
+  // gap accreted into residual.
+  // B-2: compute `next`/`newMacros` OUTSIDE all setters; call setters sequentially.
   // B-3: this is the ONLY add path for food-resolved items; setItemsText is NEVER
   //       called from food-resolved add paths.
   function addItemToComposer(item: NutritionItem): void {
     if (rawMode) {
       // rawMode: append text only; snapshotHash is NOT reset (rawMode is always
-      // considered stale — intentional; user hits Recompute to reconcile).
-      // Note: macros ARE updated by the setMacros call in useFoodComposer above.
+      // considered stale — intentional; user hits Recompute to reconcile). Items are
+      // freehand text here (not structured), so bump the total by the item's own
+      // contribution rather than re-summing structured items. recalcItemMacros is
+      // null for a freehand "Add anyway" item → leave macros untouched.
       const line = item.qty ? `${item.name} | ${item.qty}` : item.name;
       setRawText((prev) => prev + (prev.trim() ? "\n" : "") + line);
+      const added = recalcItemMacros(item);
+      if (added) {
+        const newMacros = addMacroValues(macros, added);
+        handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
+        setMacros(newMacros);
+      }
       return;
     }
-    // B-2: next computed outside any setter; sequential calls below.
+    // B-2: next/newMacros computed outside any setter; sequential calls below.
     const next = [...items, item];
     setItems(next);
     setSnapshotHash(hashItems(next));
-    // macros already updated by setMacros in useFoodComposer — no double-set.
+    // Structured item → recompute the total from items, preserving the freehand
+    // residual. Freehand item (no source, e.g. "Add anyway") contributes nothing to
+    // the structured sum, so the total is unchanged — matches prior behavior.
+    if (item.source) {
+      const newMacros = recomposeWithResidual(macros, items, next);
+      handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
+      setMacros(newMacros);
+    }
   }
 
   // ── updateItemAmountUnit — T2 transition (structured amount/unit change) ───
   // Full re-sum approach (B-1 fix): captures residual → rebuilds next → recomposes.
   // Sequential setters (B-2 fix): no setter inside another setter.
   function updateItemAmountUnit(idx: number, amount: number, unit: string): void {
-    // 1. Snapshot the freehand/manual residual BEFORE mutating items.
-    const oldSumStruct = sumStructuredMacros(items);
-    const residual: Partial<Record<string, number | null>> = {};
-    for (const k of MACRO_KEYS) {
-      residual[k] = (macros[k] ?? 0) - (oldSumStruct[k] ?? 0);
-    }
-
-    // 2. Build updated items array (refreshes qty display string too).
+    // Build updated items array (refreshes qty display string too), then recompose
+    // the total from items while preserving the freehand/manual residual.
     const next = items.map((it, j) =>
       j === idx
         ? { ...it, amount, unit, qty: buildQtyDisplay(amount, unit, it.source!) }
         : it,
     );
+    const newMacros = recomposeWithResidual(macros, items, next);
 
-    // 3. Re-sum structured macros with the new amount/unit.
-    const newSumStruct = sumStructuredMacros(next);
-
-    // 4. Recompose total — per-key house rounding (int for cal/sodium, 1dp for rest).
-    const newMacros = recomposeMacros(newSumStruct, residual);
-
-    // 5. B-2: sequential setters — never inside a functional updater.
+    // B-2: sequential setters — never inside a functional updater.
     setItems(next);
     setMacros(newMacros);
     setSnapshotHash(hashItems(next));
@@ -352,12 +373,9 @@ export function MealComposer(props: MealComposerProps) {
   // setItemsText / itemsText removed from the hook — rawMode text writes stay
   // in toggleRawMode (above) and are purely in MealComposer scope.
   const { controls, sheet } = useFoodComposer({
-    macros,
-    setMacros,
     addItem: addItemToComposer,
     quickPickFoods,
     libraryFoods,
-    onMacrosChanged: handleMacrosChanged,
   });
 
   // ── Item ops ───────────────────────────────────────────────────────────────
@@ -383,15 +401,9 @@ export function MealComposer(props: MealComposerProps) {
   function requestRemoveItem(index: number) {
     const item = items[index];
     if (item?.source) {
-      // T3 STRUCTURED PATH: recalculate macros excluding this item → Fresh.
-      const oldSumStruct = sumStructuredMacros(items);
-      const residual: Partial<Record<string, number | null>> = {};
-      for (const k of MACRO_KEYS) {
-        residual[k] = (macros[k] ?? 0) - (oldSumStruct[k] ?? 0);
-      }
+      // T3 STRUCTURED PATH: recompute macros from items excluding this one → Fresh.
       const next = items.filter((_, i) => i !== index);
-      const newSumStruct = sumStructuredMacros(next);
-      const newMacros = recomposeMacros(newSumStruct, residual);
+      const newMacros = recomposeWithResidual(macros, items, next);
       // B-2: sequential setters.
       setItems(next);
       setMacros(newMacros);
@@ -481,9 +493,9 @@ export function MealComposer(props: MealComposerProps) {
 
   // Flash macro numerals on the food-add path (UXR-lib-16).
   // Compares prev vs next to find which keys changed, then fires flashMacros.
-  // This fires from useFoodComposer.handleAdd via the onMacrosChanged prop.
+  // Called from addItemToComposer (the single macro authority) right before setMacros.
   // applyRecompute() continues to set flashMacros directly — no double-fire because
-  // applyRecompute calls the raw setMacros (not via useFoodComposer).
+  // applyRecompute does not route through addItemToComposer.
   function handleMacrosChanged(prev: MacroValues, next: MacroValues) {
     const changed = new Set<string>();
     for (const k of FLASHABLE_MACROS) {
