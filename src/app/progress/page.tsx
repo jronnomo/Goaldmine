@@ -67,10 +67,19 @@ export default async function ProgressPage() {
       {/* Share recap entry point */}
       <Link
         href="/recap"
-        className="flex items-center gap-2 min-h-[44px] text-sm font-medium text-[var(--accent)] hover:opacity-80 transition-opacity"
+        aria-label="Share weekly recap — generate a card and Stories from your week"
+        className="flex items-center justify-between gap-3 min-h-[64px] rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 hover:opacity-90 transition-opacity"
       >
-        <span>Share recap</span>
-        <span aria-hidden>→</span>
+        <span className="flex items-center gap-3">
+          <span aria-hidden className="text-xl">📤</span>
+          <span className="flex flex-col">
+            <span className="text-sm font-semibold">Share weekly recap</span>
+            <span className="text-xs text-[var(--muted)]">
+              Generate a card &amp; Stories from your week
+            </span>
+          </span>
+        </span>
+        <span aria-hidden className="text-[var(--accent)]">→</span>
       </Link>
 
       {/* Readiness by goal */}
