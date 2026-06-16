@@ -196,7 +196,10 @@ type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
 // then [0] grabs its first param.
 type DbClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
-import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
+import { safe, parseDateInput, errorResult, imageAndJsonResult } from "@/lib/mcp/tool-helpers";
+import { computeWeeklyRecap } from "@/lib/recap";
+import type { RecapTemplate } from "@/lib/recap";
+import { renderRecapCard } from "@/lib/recap-render";
 
 // ----------------------------------------------------------------------------
 // Core write helpers. Each takes a DbClient (either the global prisma or a
@@ -4741,5 +4744,49 @@ function registerWriteTools(server: McpServer) {
           hypotheticalGoalFeasibility: hypotheticalEntry?.computed ?? null,
         };
       }),
+  );
+
+  // ── generate_recap_card ────────────────────────────────────────────────────
+  server.registerTool(
+    "generate_recap_card",
+    {
+      title: "Generate weekly recap card (shareable image + stats)",
+      description:
+        "Render the week's recap as a share-ready 9:16 image plus the underlying numbers. " +
+        "Defaults to the focus goal and the current week (through today). " +
+        'Use for "make my recap card", "weekly recap image", "card for last week". ' +
+        "Progress relates to the focus goal's baseline→target metrics. " +
+        "Pass goalId for a specific catalogued goal, weekOffset (0=this week, -1=last week) for a different week.",
+      inputSchema: {
+        weekOffset: z
+          .number()
+          .int()
+          .min(-26)
+          .max(0)
+          .default(0)
+          .describe("0 = current week through today, -1 = last completed week"),
+        goalId: z
+          .string()
+          .optional()
+          .describe("Catalogued goal to feature; defaults to the focus goal"),
+        template: z
+          .enum(["coal", "parchment"])
+          .optional()
+          .describe(
+            'Visual style variant: "coal" (dark, bold, default) or "parchment" (light, editorial serif)',
+          ),
+      },
+    },
+    async ({ weekOffset, goalId, template }) => {
+      try {
+        const recap = await computeWeeklyRecap(new Date(), { weekOffset, goalId });
+        const tpl: RecapTemplate = template ?? "coal";
+        const res = renderRecapCard(recap, tpl);
+        const buf = Buffer.from(await res.arrayBuffer());
+        return imageAndJsonResult(buf, recap);
+      } catch (e) {
+        return errorResult(e instanceof Error ? e.message : String(e));
+      }
+    },
   );
 }

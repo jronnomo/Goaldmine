@@ -32,3 +32,26 @@ export async function safe<T>(fn: () => Promise<T>) {
 export function parseDateInput(s: string): Date {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDateKey(s) : new Date(s);
 }
+
+/**
+ * Returns an MCP content-block array: one image block + one text/JSON block.
+ * The image block uses raw base64 (no data-URI prefix) per MCP ImageContentSchema.
+ * The text block is JSON.stringify of stats (the WeeklyRecap, or a subset).
+ * NOT wrapped in safe() — the MCP tool handler calls this directly after
+ * successful render and catches errors with errorResult() in a try/catch.
+ */
+export function imageAndJsonResult(pngBuffer: Buffer, stats: unknown) {
+  return {
+    content: [
+      {
+        type: "image" as const,
+        data: pngBuffer.toString("base64"),
+        mimeType: "image/png",
+      },
+      {
+        type: "text" as const,
+        text: JSON.stringify(stats, null, 2),
+      },
+    ],
+  };
+}
