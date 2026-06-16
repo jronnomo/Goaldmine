@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Weekly Recap Card — Bullseye Hero (satori-faithful proxy)</title>
+<style>
+  /* ---- PREVIEW CHROME ONLY (not part of the satori-faithful card markup) ---- */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #14100b; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #F4E9D4;
+    padding: 56px 48px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page-title {
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #F4E9D4;
+  }
+  .page-note {
+    margin-top: 10px;
+    font-size: 15px;
+    line-height: 1.5;
+    color: #9C8866;
+    max-width: 980px;
+  }
+  .page-note b { color: #D4A437; font-weight: 600; }
+  .gallery {
+    margin-top: 44px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 56px 44px;
+    align-items: flex-start;
+  }
+  .item { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .caption {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #9C8866;
+    text-align: center;
+  }
+  .caption .sub { display:block; font-weight:400; letter-spacing:0.5px; text-transform:none; color:#6f5d40; margin-top:3px; }
+  /* outer scale wrapper: clips a real 1080x1920 div scaled to 0.25 */
+  .frame {
+    width: 270px;
+    height: 480px;
+    overflow: hidden;
+    border-radius: 10px;
+    border: 1px solid #2a2118;
+    background: #000;
+  }
+  .card {
+    width: 1080px;
+    height: 1920px;
+    transform: scale(0.25);
+    transform-origin: top left;
+  }
+  .section-break {
+    width: 100%;
+    margin: 64px 0 0;
+    padding-top: 28px;
+    border-top: 1px solid #2a2118;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: #D4A437;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+  <div class="page-title">Weekly Recap Card — "Bullseye Hero"</div>
+  <div class="page-note">
+    A <b>satori-faithful proxy</b> for a <b>next/og</b> export: every color is a hardcoded literal hex, layout is
+    <b>flexbox-only</b>, and there are no gradients, box-shadows, filters, or transforms (the only transform is the outer
+    <b>scale()</b> used to shrink each real 1080&times;1920 div into this preview). The Bullseye is a stack of concentric
+    <b>border-radius:9999px</b> divs, not an SVG — matching the planned div-stack render.
+  </div>
+
+  <div class="gallery">
+
+    <!-- ============================================================= -->
+    <!-- TEMPLATE A — COAL (full card, strong week)                     -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Template A · "Coal"<span class="sub">dark · bold · strong week</span></div>
+      <div class="frame">
+        <div class="card" style="background:#0F0B07;color:#F4E9D4;display:flex;flex-direction:column;padding:64px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <!-- 1. HEADER BAND -->
+          <div style="display:flex;align-items:center;justify-content:space-between;height:120px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:44px;height:44px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:33px;height:33px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:22px;height:22px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:11px;height:11px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:34px;text-transform:uppercase;letter-spacing:3px;color:#D4A437;font-weight:600;">WEEK 3 · DAY 19 OF 84</div>
+            </div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:2px;color:#9C8866;">JUN 9 – JUN 15</div>
+          </div>
+
+          <!-- 2. FOCUS-GOAL BLOCK -->
+          <div style="display:flex;flex-direction:column;margin-top:36px;">
+            <div style="font-size:64px;font-weight:600;line-height:1.05;color:#F4E9D4;max-width:860px;">Summit Mt. Elbert via Black Cloud Trail</div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:34px;">READINESS</div>
+            <div style="display:flex;align-items:center;margin-top:14px;">
+              <div style="font-size:300px;font-weight:700;letter-spacing:-4px;line-height:1;color:#D4A437;">68%</div>
+              <div style="margin-left:48px;width:300px;height:300px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:225px;height:225px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:150px;height:150px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:75px;height:75px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;width:100%;height:28px;border-radius:14px;background:#3A2E1F;margin-top:36px;">
+              <div style="width:68%;height:28px;border-radius:14px;background:#D4A437;"></div>
+            </div>
+          </div>
+
+          <!-- 3. DAY-STREAK HERO BAND -->
+          <div style="display:flex;align-items:center;background:#1A130C;border-radius:24px;padding:44px 48px;margin-top:48px;">
+            <div style="font-size:140px;font-weight:700;letter-spacing:-4px;line-height:1;color:#D4A437;">47</div>
+            <div style="margin-left:36px;font-size:36px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;font-weight:600;">DAY STREAK</div>
+          </div>
+
+          <!-- 4. 2x2 STAT GRID -->
+          <div style="display:flex;flex-direction:column;margin-top:48px;border-top:2px solid #3A2E1F;">
+            <div style="display:flex;border-bottom:2px solid #3A2E1F;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 40px 40px 0;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">12</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">WORKOUTS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 0 40px 48px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">48,300 lb</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">VOLUME</div>
+              </div>
+            </div>
+            <div style="display:flex;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 40px 40px 0;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">4</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">PRS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 0 40px 48px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">6,240 ft</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">ELEVATION</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. FOOTER BAND -->
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#1A130C;border-radius:24px;padding:32px 48px;margin-top:48px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:48px;height:48px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:36px;height:36px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:24px;height:24px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:12px;height:12px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:40px;font-weight:700;letter-spacing:2px;color:#F4E9D4;">GOALDMINE</div>
+            </div>
+            <div style="font-size:32px;color:#9C8866;">@gabe</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- TEMPLATE B — PARCHMENT (full card, same values)               -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Template B · "Parchment"<span class="sub">light · serif · minimal</span></div>
+      <div class="frame">
+        <div class="card" style="background:#FAF3E3;color:#1F1408;display:flex;flex-direction:column;padding:72px 64px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <!-- HEADER -->
+          <div style="display:flex;align-items:center;justify-content:space-between;height:110px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:44px;height:44px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                <div style="width:33px;height:33px;border-radius:9999px;background:#FFFBF0;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:22px;height:22px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:11px;height:11px;border-radius:9999px;background:#FFFBF0;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;font-weight:600;">WEEK 3 · DAY 19 OF 84</div>
+            </div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:2px;color:#7A5E3A;">JUN 9 – JUN 15</div>
+          </div>
+
+          <!-- gold hairline -->
+          <div style="height:2px;background:#8A6212;margin-top:8px;"></div>
+
+          <!-- FOCUS-GOAL BLOCK -->
+          <div style="display:flex;flex-direction:column;margin-top:48px;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:80px;line-height:1.04;color:#1F1408;max-width:900px;">Summit Mt. Elbert via Black Cloud Trail</div>
+            <div style="font-size:28px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;margin-top:48px;">READINESS</div>
+            <div style="display:flex;align-items:center;margin-top:16px;">
+              <div style="font-family:Georgia,'Times New Roman',serif;font-size:150px;line-height:1;color:#1F1408;">68%</div>
+              <div style="margin-left:56px;width:300px;height:300px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                <div style="width:225px;height:225px;border-radius:9999px;background:#FFFBF0;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:150px;height:150px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:75px;height:75px;border-radius:9999px;background:#FFFBF0;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;width:100%;height:12px;border-radius:6px;background:#D9C8A2;margin-top:48px;">
+              <div style="width:68%;height:12px;border-radius:6px;background:#8A6212;"></div>
+            </div>
+          </div>
+
+          <!-- STREAK (hairline rules, no fill) -->
+          <div style="display:flex;align-items:center;padding:40px 0;margin-top:56px;border-top:2px solid #D9C8A2;border-bottom:2px solid #D9C8A2;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:140px;line-height:1;color:#1F1408;">47</div>
+            <div style="margin-left:40px;font-size:32px;text-transform:uppercase;letter-spacing:4px;color:#7A5E3A;">DAY STREAK</div>
+          </div>
+
+          <!-- 2x2 GRID -->
+          <div style="display:flex;flex-direction:column;margin-top:48px;">
+            <div style="display:flex;border-bottom:2px solid #D9C8A2;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:36px 40px 36px 0;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:68px;line-height:1;color:#1F1408;">12</div>
+                <div style="font-size:26px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;margin-top:14px;">WORKOUTS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:36px 0 36px 48px;border-left:2px solid #D9C8A2;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:68px;line-height:1;color:#1F1408;">48,300 lb</div>
+                <div style="font-size:26px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;margin-top:14px;">VOLUME</div>
+              </div>
+            </div>
+            <div style="display:flex;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:36px 40px 36px 0;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:68px;line-height:1;color:#1F1408;">4</div>
+                <div style="font-size:26px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;margin-top:14px;">PRS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:36px 0 36px 48px;border-left:2px solid #D9C8A2;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:68px;line-height:1;color:#1F1408;">6,240 ft</div>
+                <div style="font-size:26px;text-transform:uppercase;letter-spacing:3px;color:#7A5E3A;margin-top:14px;">ELEVATION</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- FOOTER (hairline, no fill) -->
+          <div style="display:flex;align-items:center;justify-content:space-between;padding-top:36px;margin-top:48px;border-top:2px solid #8A6212;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:48px;height:48px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                <div style="width:36px;height:36px;border-radius:9999px;background:#FFFBF0;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:24px;height:24px;border-radius:9999px;background:#A82A1F;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:12px;height:12px;border-radius:9999px;background:#FFFBF0;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-family:Georgia,'Times New Roman',serif;font-size:40px;letter-spacing:1px;color:#1F1408;">GOALDMINE</div>
+            </div>
+            <div style="font-size:32px;color:#7A5E3A;">@gabe</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- TEMPLATE A — EMPTY STATE (no targets / no data)               -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Template A · Empty State<span class="sub">0 = normal · "—" = muted · no collapse</span></div>
+      <div class="frame">
+        <div class="card" style="background:#0F0B07;color:#F4E9D4;display:flex;flex-direction:column;padding:64px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <!-- HEADER -->
+          <div style="display:flex;align-items:center;justify-content:space-between;height:120px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:44px;height:44px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:33px;height:33px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:22px;height:22px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:11px;height:11px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:34px;text-transform:uppercase;letter-spacing:3px;color:#D4A437;font-weight:600;">WEEK 3 · DAY 19 OF 84</div>
+            </div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:2px;color:#9C8866;">JUN 9 – JUN 15</div>
+          </div>
+
+          <!-- FOCUS-GOAL BLOCK (no targets) -->
+          <div style="display:flex;flex-direction:column;margin-top:36px;">
+            <div style="font-size:64px;font-weight:600;line-height:1.05;color:#F4E9D4;max-width:860px;">Summit Mt. Elbert via Black Cloud Trail</div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:34px;">READINESS</div>
+            <div style="display:flex;align-items:center;margin-top:14px;">
+              <div style="font-size:300px;font-weight:700;letter-spacing:-4px;line-height:1;color:#9C8866;">—</div>
+              <!-- unfilled bullseye: outer shell ring only -->
+              <div style="margin-left:48px;width:300px;height:300px;border-radius:9999px;background:transparent;border:10px solid #9C8866;display:flex;align-items:center;justify-content:center;">
+                <div style="width:150px;height:150px;border-radius:9999px;background:transparent;border:6px solid #3A2E1F;"></div>
+              </div>
+            </div>
+            <!-- empty track, no fill -->
+            <div style="display:flex;width:100%;height:28px;border-radius:14px;background:#3A2E1F;margin-top:36px;"></div>
+          </div>
+
+          <!-- STREAK = 0 (countable -> normal text color, not muted) -->
+          <div style="display:flex;align-items:center;background:#1A130C;border-radius:24px;padding:44px 48px;margin-top:48px;">
+            <div style="font-size:140px;font-weight:700;letter-spacing:-4px;line-height:1;color:#F4E9D4;">0</div>
+            <div style="margin-left:36px;font-size:36px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;font-weight:600;">DAY STREAK</div>
+          </div>
+
+          <!-- GRID: 0 = #F4E9D4 (normal), "—" = #9C8866 (muted) -->
+          <div style="display:flex;flex-direction:column;margin-top:48px;border-top:2px solid #3A2E1F;">
+            <div style="display:flex;border-bottom:2px solid #3A2E1F;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 40px 40px 0;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">0</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">WORKOUTS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 0 40px 48px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:88px;font-weight:700;color:#9C8866;line-height:1;">—</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">VOLUME</div>
+              </div>
+            </div>
+            <div style="display:flex;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 40px 40px 0;">
+                <div style="font-size:88px;font-weight:700;color:#F4E9D4;line-height:1;">0</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">PRS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;padding:40px 0 40px 48px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:88px;font-weight:700;color:#9C8866;line-height:1;">—</div>
+                <div style="font-size:30px;text-transform:uppercase;letter-spacing:3px;color:#9C8866;margin-top:14px;">ELEVATION</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- FOOTER -->
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#1A130C;border-radius:24px;padding:32px 48px;margin-top:48px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:48px;height:48px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:36px;height:36px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:24px;height:24px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:12px;height:12px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:40px;font-weight:700;letter-spacing:2px;color:#F4E9D4;">GOALDMINE</div>
+            </div>
+            <div style="font-size:32px;color:#9C8866;">@gabe</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- STORY SLIDE 1 — COVER (header + goal + hero + bar)            -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Story 1/3 · Cover<span class="sub">Template A · header + goal + hero + bar</span></div>
+      <div class="frame">
+        <div class="card" style="background:#0F0B07;color:#F4E9D4;display:flex;flex-direction:column;padding:96px 80px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <!-- HEADER -->
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:44px;height:44px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:33px;height:33px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:22px;height:22px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:11px;height:11px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:34px;text-transform:uppercase;letter-spacing:3px;color:#D4A437;font-weight:600;">WEEK 3 · DAY 19 OF 84</div>
+            </div>
+            <div style="font-size:30px;text-transform:uppercase;letter-spacing:2px;color:#9C8866;">JUN 9 – JUN 15</div>
+          </div>
+
+          <!-- CENTERED COVER BODY -->
+          <div style="display:flex;flex:1 1 0;flex-direction:column;align-items:center;justify-content:center;">
+            <div style="font-size:72px;font-weight:600;line-height:1.06;color:#F4E9D4;text-align:center;max-width:860px;">Summit Mt. Elbert via Black Cloud Trail</div>
+
+            <div style="font-size:32px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;margin-top:64px;">READINESS</div>
+
+            <div style="width:520px;height:520px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;margin-top:36px;">
+              <div style="width:390px;height:390px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                <div style="width:260px;height:260px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:130px;height:130px;border-radius:9999px;background:#FFFFFF;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size:240px;font-weight:700;letter-spacing:-6px;line-height:1;color:#D4A437;margin-top:48px;">68%</div>
+          </div>
+
+          <!-- BAR -->
+          <div style="display:flex;width:100%;height:28px;border-radius:14px;background:#3A2E1F;">
+            <div style="width:68%;height:28px;border-radius:14px;background:#D4A437;"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- STORY SLIDE 2 — THIS WEEK IN NUMBERS                          -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Story 2/3 · The Numbers<span class="sub">Template A · streak band + enlarged grid</span></div>
+      <div class="frame">
+        <div class="card" style="background:#0F0B07;color:#F4E9D4;display:flex;flex-direction:column;padding:96px 80px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <div style="font-size:60px;font-weight:700;text-transform:uppercase;letter-spacing:4px;color:#D4A437;line-height:1.1;">THIS WEEK<br>IN NUMBERS</div>
+
+          <!-- STREAK BAND -->
+          <div style="display:flex;align-items:center;background:#1A130C;border-radius:28px;padding:56px 64px;margin-top:72px;">
+            <div style="font-size:180px;font-weight:700;letter-spacing:-6px;line-height:1;color:#D4A437;">47</div>
+            <div style="margin-left:44px;font-size:44px;text-transform:uppercase;letter-spacing:5px;color:#9C8866;font-weight:600;">DAY STREAK</div>
+          </div>
+
+          <!-- ENLARGED 2x2 GRID -->
+          <div style="display:flex;flex-direction:column;flex:1 1 0;margin-top:72px;border-top:2px solid #3A2E1F;">
+            <div style="display:flex;flex:1 1 0;border-bottom:2px solid #3A2E1F;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;justify-content:center;padding:0 40px 0 0;">
+                <div style="font-size:130px;font-weight:700;color:#F4E9D4;line-height:1;">12</div>
+                <div style="font-size:34px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;margin-top:18px;">WORKOUTS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;justify-content:center;padding:0 0 0 56px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:110px;font-weight:700;color:#F4E9D4;line-height:1;">48,300 lb</div>
+                <div style="font-size:34px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;margin-top:18px;">VOLUME</div>
+              </div>
+            </div>
+            <div style="display:flex;flex:1 1 0;">
+              <div style="display:flex;flex:1 1 0;flex-direction:column;justify-content:center;padding:0 40px 0 0;">
+                <div style="font-size:130px;font-weight:700;color:#F4E9D4;line-height:1;">4</div>
+                <div style="font-size:34px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;margin-top:18px;">PRS</div>
+              </div>
+              <div style="display:flex;flex:1 1 0;flex-direction:column;justify-content:center;padding:0 0 0 56px;border-left:2px solid #3A2E1F;">
+                <div style="font-size:110px;font-weight:700;color:#F4E9D4;line-height:1;">6,240 ft</div>
+                <div style="font-size:34px;text-transform:uppercase;letter-spacing:4px;color:#9C8866;margin-top:18px;">ELEVATION</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- STORY SLIDE 3 — CLOSING                                       -->
+    <!-- ============================================================= -->
+    <div class="item">
+      <div class="caption">Story 3/3 · Closing<span class="sub">Template A · centered bullseye + sign-off</span></div>
+      <div class="frame">
+        <div class="card" style="background:#0F0B07;color:#F4E9D4;display:flex;flex-direction:column;padding:96px 80px;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;">
+
+          <div style="display:flex;flex:1 1 0;flex-direction:column;align-items:center;justify-content:center;">
+            <div style="width:560px;height:560px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+              <div style="width:420px;height:420px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                <div style="width:280px;height:280px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:140px;height:140px;border-radius:9999px;background:#FFFFFF;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:baseline;margin-top:88px;">
+              <div style="font-size:200px;font-weight:700;letter-spacing:-6px;line-height:1;color:#D4A437;">47</div>
+              <div style="margin-left:36px;font-size:48px;text-transform:uppercase;letter-spacing:5px;color:#9C8866;font-weight:600;">DAY STREAK</div>
+            </div>
+
+            <div style="font-size:64px;font-weight:600;color:#F4E9D4;margin-top:72px;">On to Week 4.</div>
+          </div>
+
+          <!-- FOOTER -->
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#1A130C;border-radius:24px;padding:32px 48px;">
+            <div style="display:flex;align-items:center;">
+              <div style="width:48px;height:48px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                <div style="width:36px;height:36px;border-radius:9999px;background:#FFFFFF;display:flex;align-items:center;justify-content:center;">
+                  <div style="width:24px;height:24px;border-radius:9999px;background:#C0392B;display:flex;align-items:center;justify-content:center;">
+                    <div style="width:12px;height:12px;border-radius:9999px;background:#FFFFFF;"></div>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-left:24px;font-size:40px;font-weight:700;letter-spacing:2px;color:#F4E9D4;">GOALDMINE</div>
+            </div>
+            <div style="font-size:32px;color:#9C8866;">@gabe</div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>
