@@ -5,9 +5,9 @@
 // Goal-generic — no hardcoded references to specific goals or people.
 
 import React from "react";
-import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight } from "@/lib/recap";
+import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight, ResolvedStatSlot } from "@/lib/recap";
 import { getTemplate, type TemplateTokens } from "@/lib/recap-templates";
-import { fmtVolume, fmtElevation } from "@/lib/goal-presentation";
+import { presentationForGoal } from "@/lib/goal-presentation";
 
 /**
  * Formats the coverage/gate sub-line. Returns null when coverage data is absent
@@ -287,11 +287,20 @@ export function RecapCard({
   const tok = getTemplate(template);
   const isParchment = template === "parchment";
 
+  // Presentation registry
+  const presentation = presentationForGoal(recap.goal);
+
   // Header program line
   const programLine =
-    recap.header.programWeek !== null
-      ? `WEEK ${recap.header.programWeek} · DAY ${recap.header.dayOfProgram} OF ${recap.header.totalProgramDays}`
-      : null;
+    presentation.headerStyle === "program-week"
+      ? (recap.header.programWeek !== null
+          ? `WEEK ${recap.header.programWeek} · DAY ${recap.header.dayOfProgram} OF ${recap.header.totalProgramDays}`
+          : null)
+      : presentation.headerStyle === "weeks-to-target"
+      ? (recap.header.weeksToTarget !== null
+          ? `${recap.header.weeksToTarget} WEEKS TO ${(recap.header.targetDateLabel ?? "").toUpperCase()}`
+          : null)
+      : null; // "none"
 
   // Goal state
   const hasGoal = recap.goal !== null;
@@ -410,7 +419,7 @@ export function RecapCard({
                 letterSpacing: 3,
               }}
             >
-              READINESS
+              {presentation.ringLabel}
             </div>
             {coverageLine && (
               <div
@@ -572,70 +581,10 @@ export function RecapCard({
       {/* ── Hairline ─────────────────────────────────────────────────── */}
       <div style={{ height: 1, backgroundColor: tok.hairline }} />
 
-      {/* ── Stat grid (2×2) ──────────────────────────────────────────── */}
+      {/* ── Stat grid (kind-aware) ────────────────────────────────────── */}
       {/* flex:1 so the grid absorbs all remaining canvas height — numbers */}
       {/* fill the lower half of the card rather than leaving a void gap.  */}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {/* Row 1 */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "row",
-            borderBottom: `1px solid ${tok.statDivider}`,
-          }}
-        >
-          <StatCell
-            tok={tok}
-            value={String(recap.workoutsCompleted)}
-            label="WORKOUTS"
-            displayFont={displayFont}
-            displayWeight={displayWeight}
-            isNull={false}
-          />
-          <div style={{ width: 1, backgroundColor: tok.statDivider }} />
-          <StatCell
-            tok={tok}
-            value={fmtVolume(recap.volumeLb)}
-            label="VOLUME"
-            displayFont={displayFont}
-            displayWeight={displayWeight}
-            isNull={recap.volumeLb === null}
-          />
-        </div>
-        {/* Row 2 */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "row",
-          }}
-        >
-          <StatCell
-            tok={tok}
-            value={String(recap.prCount)}
-            label="NEW PRs"
-            displayFont={displayFont}
-            displayWeight={displayWeight}
-            isNull={false}
-          />
-          <div style={{ width: 1, backgroundColor: tok.statDivider }} />
-          <StatCell
-            tok={tok}
-            value={fmtElevation(recap.hikeElevationFt)}
-            label="ELEVATION"
-            displayFont={displayFont}
-            displayWeight={displayWeight}
-            isNull={recap.hikeElevationFt === null}
-          />
-        </div>
-      </div>
+      <StatGrid tok={tok} statSlots={recap.statSlots} displayFont={displayFont} displayWeight={displayWeight} />
 
       {/* ── Footer band ──────────────────────────────────────────────── */}
       {/* Feed card: equal top/bottom padding — no IG Story chrome reserve here. */}
@@ -736,6 +685,55 @@ function StatCell({
   );
 }
 
+// ─── StatGrid helper ──────────────────────────────────────────────────────────
+
+function StatGrid({
+  tok,
+  statSlots,
+  displayFont,
+  displayWeight,
+}: {
+  tok: TemplateTokens;
+  statSlots: ResolvedStatSlot[];
+  displayFont: string;
+  displayWeight: number;
+}) {
+  const rows: ResolvedStatSlot[][] = [];
+  for (let i = 0; i < statSlots.length; i += 2) rows.push(statSlots.slice(i, i + 2));
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      {rows.map((row, ri) => (
+        <div
+          key={ri}
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "row",
+            ...(ri < rows.length - 1 ? { borderBottom: `1px solid ${tok.statDivider}` } : {}),
+          }}
+        >
+          {row.flatMap((slot, ci) => {
+            const cell = (
+              <StatCell
+                key={slot.key}
+                tok={tok}
+                value={slot.value}
+                label={slot.label}
+                displayFont={displayFont}
+                displayWeight={displayWeight}
+                isNull={slot.isNull}
+              />
+            );
+            return ci === 0
+              ? [cell]
+              : [<div key={slot.key + "-div"} style={{ width: 1, backgroundColor: tok.statDivider }} />, cell];
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── RecapStorySlide ──────────────────────────────────────────────────────────
 
 /**
@@ -777,10 +775,17 @@ type SlideProps = {
 };
 
 function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: SlideProps & { isParchment: boolean }) {
+  const presentation = presentationForGoal(recap.goal);
   const programLine =
-    recap.header.programWeek !== null
-      ? `WEEK ${recap.header.programWeek} · DAY ${recap.header.dayOfProgram} OF ${recap.header.totalProgramDays}`
-      : null;
+    presentation.headerStyle === "program-week"
+      ? (recap.header.programWeek !== null
+          ? `WEEK ${recap.header.programWeek} · DAY ${recap.header.dayOfProgram} OF ${recap.header.totalProgramDays}`
+          : null)
+      : presentation.headerStyle === "weeks-to-target"
+      ? (recap.header.weeksToTarget !== null
+          ? `${recap.header.weeksToTarget} WEEKS TO ${(recap.header.targetDateLabel ?? "").toUpperCase()}`
+          : null)
+      : null; // "none"
 
   const hasGoal = recap.goal !== null;
   const goalObj = recap.goal?.objective ?? "No focus goal";
@@ -839,7 +844,7 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
           />
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
             <div style={{ fontSize: tok.fontSize.readinessLabel, fontFamily: tok.fontSans, fontWeight: tok.fontWeight.regular, color: tok.mutedText, letterSpacing: 3 }}>
-              READINESS
+              {presentation.ringLabel}
             </div>
             {coverageLine && (
               <div
@@ -933,19 +938,8 @@ function SlideTwo({ tok, recap, displayFont, displayWeight }: SlideProps) {
 
       <div style={{ height: 1, backgroundColor: tok.hairline }} />
 
-      {/* Stat grid */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "row", borderBottom: `1px solid ${tok.statDivider}` }}>
-          <StatCell tok={tok} value={String(recap.workoutsCompleted)} label="WORKOUTS" displayFont={displayFont} displayWeight={displayWeight} isNull={false} />
-          <div style={{ width: 1, backgroundColor: tok.statDivider }} />
-          <StatCell tok={tok} value={fmtVolume(recap.volumeLb)} label="VOLUME" displayFont={displayFont} displayWeight={displayWeight} isNull={recap.volumeLb === null} />
-        </div>
-        <div style={{ flex: 1, display: "flex", flexDirection: "row" }}>
-          <StatCell tok={tok} value={String(recap.prCount)} label="NEW PRs" displayFont={displayFont} displayWeight={displayWeight} isNull={false} />
-          <div style={{ width: 1, backgroundColor: tok.statDivider }} />
-          <StatCell tok={tok} value={fmtElevation(recap.hikeElevationFt)} label="ELEVATION" displayFont={displayFont} displayWeight={displayWeight} isNull={recap.hikeElevationFt === null} />
-        </div>
-      </div>
+      {/* Stat grid (kind-aware) */}
+      <StatGrid tok={tok} statSlots={recap.statSlots} displayFont={displayFont} displayWeight={displayWeight} />
 
       {/* Footer */}
       <div
