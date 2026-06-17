@@ -33,7 +33,7 @@ const dmSerifDisplay = DM_Serif_Display({
 
 export const metadata: Metadata = {
   title: "Goaldmine",
-  description: "Mining for goals — 90-day Mt. Elbert prep, shred, and longevity tracker.",
+  description: "Mining for goals — an honest, goal-generic tracker for any goal, in any domain.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
