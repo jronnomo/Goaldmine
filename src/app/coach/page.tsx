@@ -112,6 +112,16 @@ export default async function CoachPage() {
       : null,
   }));
 
+  // --- staleness query (C-1: only routine-written nudges, identified by [week: prefix) ---
+  const lastRoutineNudge = await prisma.note.findFirst({
+    where: { type: "open_item", body: { startsWith: "[week:" } },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const lastNudgeDaysAgo: number | null = lastRoutineNudge
+    ? Math.floor((now.getTime() - startOfDay(lastRoutineNudge.createdAt).getTime()) / 86_400_000)
+    : null;
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2">
@@ -122,7 +132,7 @@ export default async function CoachPage() {
         </p>
       </header>
 
-      <CoachNudges nudges={nudges} />
+      <CoachNudges nudges={nudges} lastNudgeDaysAgo={lastNudgeDaysAgo} />
 
       <Card title="One-time setup">
         <ol className="text-sm space-y-2 list-decimal list-inside">

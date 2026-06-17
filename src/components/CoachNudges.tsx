@@ -13,8 +13,21 @@ export type CoachNudge = {
   targetDateLabel: string | null;
 };
 
-export function CoachNudges({ nudges }: { nudges: CoachNudge[] }) {
+export function CoachNudges({
+  nudges,
+  lastNudgeDaysAgo,
+}: {
+  nudges: CoachNudge[];
+  lastNudgeDaysAgo: number | null;
+}) {
   const [pending, startTransition] = useTransition();
+
+  const agoLabel =
+    lastNudgeDaysAgo === 0
+      ? "today"
+      : lastNudgeDaysAgo === 1
+        ? "1 day ago"
+        : `${lastNudgeDaysAgo} days ago`;
 
   return (
     <Card title={nudges.length > 0 ? `Coach nudges · ${nudges.length}` : "Coach nudges"}>
@@ -64,6 +77,19 @@ export function CoachNudges({ nudges }: { nudges: CoachNudge[] }) {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Staleness footer — only rendered when a routine nudge has been written at least once */}
+      {lastNudgeDaysAgo !== null && (
+        <p
+          className={`text-xs mt-3 pt-2 border-t border-[var(--border)] ${
+            lastNudgeDaysAgo > 8 ? "text-[var(--warning)]" : "text-[var(--muted)]"
+          }`}
+        >
+          {lastNudgeDaysAgo > 8
+            ? `Last coach brief: ${agoLabel} — the weekly brief may not be running (check claude.ai/code/routines).`
+            : `Last coach brief: ${agoLabel}.`}
+        </p>
       )}
     </Card>
   );
