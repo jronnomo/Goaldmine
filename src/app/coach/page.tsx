@@ -1,5 +1,8 @@
+import { prisma } from "@/lib/db";
+import { startOfDay, USER_TZ } from "@/lib/calendar";
 import { Card } from "@/components/Card";
 import { CopyPromptButton } from "@/components/CopyPromptButton";
+import { CoachNudges } from "@/components/CoachNudges";
 
 export const dynamic = "force-dynamic";
 
@@ -86,7 +89,29 @@ const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string 
   },
 ];
 
-export default function CoachPage() {
+export default async function CoachPage() {
+  // --- open-item query (mirrors tools.ts:502–513) ---
+  const now = startOfDay(new Date());
+  const openItems = await prisma.note.findMany({
+    where: { type: "open_item", resolvedAt: null },
+    orderBy: [{ targetDate: { sort: "asc", nulls: "last" } }, { date: "asc" }],
+    select: { id: true, body: true, targetDate: true, priority: true },
+  });
+
+  const nudges = openItems.map((item) => ({
+    id: item.id,
+    body: item.body,
+    priority: item.priority,
+    overdue: item.targetDate !== null && item.targetDate < now,
+    targetDateLabel: item.targetDate
+      ? new Intl.DateTimeFormat("en-US", {
+          timeZone: USER_TZ,
+          month: "short",
+          day: "numeric",
+        }).format(item.targetDate)
+      : null,
+  }));
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2">
@@ -96,6 +121,8 @@ export default function CoachPage() {
           tool calls.
         </p>
       </header>
+
+      <CoachNudges nudges={nudges} />
 
       <Card title="One-time setup">
         <ol className="text-sm space-y-2 list-decimal list-inside">
