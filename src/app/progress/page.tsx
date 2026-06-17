@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { HistoryChart } from "@/components/HistoryChart";
 import { MilestoneBurnDown } from "@/components/MilestoneBurnDown";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReadinessChart } from "@/components/ReadinessChart";
@@ -49,6 +50,31 @@ export default async function ProgressPage() {
   // REQ-006: identify the focus project goal for burn-down gating.
   // Derived from activeGoals (no extra query); null when fitness is focus.
   const focusProjectGoal = activeGoals.find((g) => g.isFocus && g.kind === "project") ?? null;
+
+  // Weight-card gate: only render when the focus goal tracks body weight (D-1, D-2).
+  const focusGoal = activeGoals.find((g) => g.isFocus) ?? activeGoals[0] ?? null;
+  const focusTargets = (focusGoal?.targets as unknown as GoalTarget[] | null) ?? [];
+  const hasWeightTarget = focusTargets.some((t) => t.metric === "weightLb");
+
+  // MRR trend: only query + render when the focus goal has a "log:mrr" target (D-4).
+  // NOTE: GoalTarget.metric = "log:mrr" (with prefix); LogEntry.metric = "mrr" (bare key).
+  const hasMrrTarget = focusTargets.some((t) => t.metric === "log:mrr");
+  const mrrPoints: { date: string; value: number; tooltip: string }[] =
+    hasMrrTarget && focusGoal
+      ? await prisma.logEntry
+          .findMany({
+            where: { goalId: focusGoal.id, metric: "mrr", value: { not: null } },
+            orderBy: { date: "asc" },
+            select: { date: true, value: true },
+          })
+          .then((rows) =>
+            rows.map((r) => ({
+              date: r.date.toISOString(),
+              value: r.value!,
+              tooltip: `$${r.value!.toLocaleString("en-US", { maximumFractionDigits: 0 })}`,
+            })),
+          )
+      : [];
 
   // Build weight chart aria-label
   const weightAriaLabel =
@@ -168,38 +194,56 @@ export default async function ProgressPage() {
         );
       })}
 
-      {/* REQ-006: milestone burn-down — only when a project goal is in focus.
-          MilestoneBurnDown fetches its own data and self-gates when milestoneCount=0. */}
+      {/* REQ-006: milestone burn-down + MRR trend — only when a project goal is in focus.
+          MilestoneBurnDown self-gates when milestoneCount=0.
+          MRR trend gates on hasMrrTarget; shows honest placeholder when no rows logged. */}
       {focusProjectGoal && (
-        <MilestoneBurnDown goalId={focusProjectGoal.id} />
+        <>
+          <MilestoneBurnDown goalId={focusProjectGoal.id} />
+          {hasMrrTarget && (
+            mrrPoints.length > 0 ? (
+              <Card title="MRR Trend">
+                <HistoryChart data={mrrPoints} units="$" />
+              </Card>
+            ) : (
+              <Card title="MRR Trend">
+                <p className="text-sm text-[var(--muted)]">
+                  No MRR logged yet — log MRR to see your trend.
+                </p>
+              </Card>
+            )
+          )}
+        </>
       )}
 
-      {/* Weight card */}
-      <Card title="Weight">
-        {weights.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">
-            No weight logged yet — tap Log in the nav to record your first weigh-in.
-          </p>
-        ) : (
-          <>
-            <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-              <WeightStat label="Current" value={latest !== undefined ? `${latest} lb` : "—"} />
-              <WeightStat label="Start" value={start !== undefined ? `${start} lb` : "—"} />
-              <WeightStat
-                label="Δ"
-                value={
-                  delta !== null
-                    ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)} lb`
-                    : "—"
-                }
-              />
-            </div>
-            <div aria-label={weightAriaLabel}>
-              <WeightChart data={weights} />
-            </div>
-          </>
-        )}
-      </Card>
+      {/* Weight card — gate on focus goal having a weightLb target (D-3). */}
+      {hasWeightTarget && (
+        <Card title="Weight">
+          {weights.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">
+              No weight logged yet — tap Log in the nav to record your first weigh-in.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2 mb-3 text-center">
+                <WeightStat label="Current" value={latest !== undefined ? `${latest} lb` : "—"} />
+                <WeightStat label="Start" value={start !== undefined ? `${start} lb` : "—"} />
+                <WeightStat
+                  label="Δ"
+                  value={
+                    delta !== null
+                      ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)} lb`
+                      : "—"
+                  }
+                />
+              </div>
+              <div aria-label={weightAriaLabel}>
+                <WeightChart data={weights} />
+              </div>
+            </>
+          )}
+        </Card>
+      )}
 
       {/* Records summary */}
       <RecordsSummary />
