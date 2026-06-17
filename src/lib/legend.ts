@@ -18,6 +18,7 @@
 // tool.
 
 import { z } from "zod";
+import { presentationForGoal } from "@/lib/goal-presentation";
 
 // Why "skipped" is deliberately NOT a LegendKind:
 //
@@ -94,11 +95,12 @@ export function resolveLegend(
   goal: { legend?: unknown; kind?: unknown } | null | undefined,
 ): readonly LegendEntry[] {
   if (!goal || goal.legend == null) {
-    // PRD §3.2.1: project goals with null legend fall back to PROJECT_DEFAULT_LEGEND.
-    if ((goal as { kind?: string } | null | undefined)?.kind === "project") {
-      return PROJECT_DEFAULT_LEGEND;
-    }
-    return DEFAULT_LEGEND;
+    // Route default through the presentation registry so all kind-aware surfaces
+    // share one source of truth (PRD legend-via-registry §3.1).
+    const legendDefault = presentationForGoal(
+      goal && typeof goal.kind === "string" ? { kind: goal.kind } : null,
+    ).legendDefault;
+    return legendDefault === "project" ? PROJECT_DEFAULT_LEGEND : DEFAULT_LEGEND;
   }
   const parsed = LegendSchema.safeParse(goal.legend);
   return parsed.success ? parsed.data : DEFAULT_LEGEND;
