@@ -11,13 +11,15 @@ import { prisma } from "@/lib/db";
 import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar";
 import type { GoalTarget } from "@/lib/metrics-registry";
 import type { FocusGoalRow } from "@/lib/goal-focus";
+import { computeGoalFeasibility } from "@/lib/rarity";
+import { FeasibilityReadout } from "@/components/FeasibilityReadout";
 
 // UXR-s4-13: urgency threshold constant (≤14d → warning, <0 → danger).
 const MILESTONE_WARNING_DAYS = 14;
 const MS_PER_DAY = 1_000 * 60 * 60 * 24;
 
 type ProjectTodayViewProps = {
-  goal: Pick<FocusGoalRow, "id" | "objective" | "targetDate">;
+  goal: Pick<FocusGoalRow, "id" | "objective" | "targetDate" | "kind">;
 };
 
 export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
@@ -65,6 +67,24 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
       select: { targets: true },
     }),
   ]);
+
+  // Feasibility — sequential after Promise.all (D-3): needs goalRow.targets from above.
+  // .catch(() => null) guards against transient per-target query failures (D-4);
+  // the {feasibility && ...} JSX guard absorbs null with no card shown on failure.
+  const feasibility = await computeGoalFeasibility({
+    id: goal.id,
+    targetDate: goal.targetDate,
+    targets: goalRow?.targets,
+    kind: goal.kind,
+  }).catch(() => null);
+  const targetDateLabel =
+    goal.targetDate != null
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone: USER_TZ,
+        }).format(goal.targetDate)
+      : null;
 
   // --- Derived values ---
 
@@ -235,6 +255,16 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
             <p className="mt-1 text-xs text-[var(--muted)]">Monthly recurring revenue</p>
           </Card>
         </div>
+      )}
+
+      {/* ── Feasibility (Reach) card — between MRR and next-milestone. ── */}
+      {/* .catch(() => null) means feasibility can be null on transient DB failure;
+          guard here prevents passing null to FeasibilityReadout's non-nullable prop. */}
+      {feasibility && (
+        <FeasibilityReadout
+          feasibility={feasibility}
+          targetDateLabel={targetDateLabel}
+        />
       )}
 
       {/* ── Next milestone card (UXR-s4-13; hidden when none) ── */}

@@ -5,7 +5,7 @@ import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
 import { NutritionToday } from "@/components/NutritionToday";
 import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
-import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay } from "@/lib/calendar";
+import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay, USER_TZ } from "@/lib/calendar";
 import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { prisma } from "@/lib/db";
 import { computeGameState } from "@/lib/game/engine";
@@ -16,6 +16,8 @@ import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { presentationForGoal } from "@/lib/goal-presentation";
+import { computeGoalFeasibility } from "@/lib/rarity";
+import { FeasibilityReadout } from "@/components/FeasibilityReadout";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +60,7 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails] =
+  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
     await Promise.all([
       prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
       prisma.workout.findMany({
@@ -87,10 +89,35 @@ export default async function HomePage() {
           exercises: { orderBy: { orderIndex: "asc" }, include: { sets: { orderBy: { setIndex: "asc" } } } },
         },
       }),
+      // GoalLike fields for computeGoalFeasibility — guarded because focusGoal can be null.
+      // The project early-return at line 46 already fired so focusGoal is fitness or null here.
+      // A null focusGoal → goalForFeas resolves null → feasibility = null → no card rendered.
+      focusGoal
+        ? prisma.goal.findUnique({
+            where: { id: focusGoal.id },
+            select: { id: true, targetDate: true, targets: true, kind: true },
+          })
+        : Promise.resolve(null),
     ]);
 
   // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
   void latestMeasurement;
+
+  // FeasibilityReadout data — computed sequentially after the Promise.all (D-2).
+  // goalForFeas is null when focusGoal is null → feasibility is null → no card rendered.
+  // .catch(() => null) guards against transient per-target query failures (D-4);
+  // the {feasibility && ...} JSX guard absorbs null cleanly with no card shown.
+  const feasibility = goalForFeas
+    ? await computeGoalFeasibility(goalForFeas).catch(() => null)
+    : null;
+  const targetDateLabel =
+    goalForFeas?.targetDate != null
+      ? new Intl.DateTimeFormat("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone: USER_TZ,
+        }).format(goalForFeas.targetDate)
+      : null;
 
   const baselinesDue = resolved.baselinesDue;
   // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask):
@@ -253,6 +280,16 @@ export default async function HomePage() {
           </p>
         )}
       </section>
+
+      {/* ── Feasibility (Reach) card — server-rendered from computeGoalFeasibility.
+             Null when focusGoal is null (no focus goal set). Fitness hero above is
+             byte-identical whether or not focusGoal is null. ── */}
+      {feasibility && (
+        <FeasibilityReadout
+          feasibility={feasibility}
+          targetDateLabel={targetDateLabel}
+        />
+      )}
 
       {/* ── Baselines due — only when something is still outstanding (a completed
              retest is demoted below the workout). ── */}
