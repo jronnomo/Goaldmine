@@ -7,20 +7,7 @@
 import React from "react";
 import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight } from "@/lib/recap";
 import { getTemplate, type TemplateTokens } from "@/lib/recap-templates";
-
-// ─── Number formatting helpers (ADDENDUM §F) ─────────────────────────────────
-
-function fmtComma(n: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n);
-}
-
-function fmtVolume(v: number | null): string {
-  return v === null ? "—" : `${fmtComma(v)} lb`;
-}
-
-function fmtElevation(v: number | null): string {
-  return v === null ? "—" : `${fmtComma(v)} ft`;
-}
+import { fmtVolume, fmtElevation } from "@/lib/goal-presentation";
 
 /**
  * Formats the coverage/gate sub-line. Returns null when coverage data is absent
