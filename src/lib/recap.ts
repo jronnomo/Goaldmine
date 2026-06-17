@@ -14,8 +14,17 @@ import {
   dateKey,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
+import {
+  presentationForGoal,
+  fmtComma,
+  fmtVolume,
+  fmtElevation,
+  DEFAULT_PRESENTATION,
+  type StatSlot,
+} from "@/lib/goal-presentation";
 import { getActiveProgram } from "@/lib/program";
 import { computeReadiness } from "@/lib/readiness";
+import type { TargetProgress } from "@/lib/readiness";
 import { getExerciseSummaries } from "@/lib/records";
 import { computeGameState } from "@/lib/game/engine";
 import type { GoalTarget } from "@/lib/goal-targets";
@@ -71,6 +80,16 @@ export type RecapProgramHeader = {
   programWeek: number | null; // null when no active plan
   dayOfProgram: number | null; // null when no active plan
   totalProgramDays: number | null; // plan.template.totalWeeks * 7 (dynamic, 84 now). NOT 90.
+  weeksToTarget: number | null; // null for fitness goals or when no targetDate
+  targetDateLabel: string | null; // e.g. "Oct 5"; null for fitness or no targetDate
+};
+
+/** A single resolved stat slot — plain strings/bools, safe to pass to client. */
+export type ResolvedStatSlot = {
+  key: string;
+  label: string;
+  value: string;
+  isNull: boolean;
 };
 
 // ─── WeeklyRecap (the central contract) ──────────────────────────────────────
@@ -104,6 +123,8 @@ export type WeeklyRecap = {
    * Consumed by the card's featuredHighlight callout and the /recap/highlights route.
    */
   highlights: RecapHighlight[];
+  /** Kind-aware stat slots resolved for the active goal's presentation. */
+  statSlots: ResolvedStatSlot[];
 };
 
 // ─── UNIT_FROM_PRIMARY helper ────────────────────────────────────────────────
@@ -133,6 +154,79 @@ function isMobilityName(name: string): boolean {
 // Sort tier for PR units: weighted lifts first, then reps, then duration.
 const prUnitTier = (units: string): number =>
   units === "lb" ? 0 : units === "reps" ? 1 : 2;
+
+// ─── resolveStatSlot ─────────────────────────────────────────────────────────
+
+type StatSlotCtx = {
+  recap: {
+    workoutsCompleted: number;
+    volumeLb: number | null;
+    prCount: number;
+    hikeElevationFt: number | null;
+  };
+  logLatest: Map<string, number | null>;
+  scheduledAgg: Map<string, { done: number; total: number; open: number }>;
+  breakdown: TargetProgress[];
+  targets: GoalTarget[]; // reserved for targetCurrent; not consumed by v1 slots
+};
+
+function fmtByFormat(v: number | null, f: StatSlot["format"]): string {
+  switch (f) {
+    case "int":
+      return v === null ? "—" : String(v);
+    case "volumeLb":
+      return fmtVolume(v);
+    case "elevationFt":
+      return fmtElevation(v);
+    case "currency":
+      return v === null ? "—" : "$" + fmtComma(v);
+    case "percent":
+      return v === null ? "—" : `${v}%`;
+    case "ratioOfTotal":
+      // Never reaches here for scheduledItem (handled inline); defensive fallback.
+      return v === null ? "—" : String(v);
+  }
+}
+
+export function resolveStatSlot(slot: StatSlot, ctx: StatSlotCtx): ResolvedStatSlot {
+  const base = { key: slot.key, label: slot.label };
+  switch (slot.source.from) {
+    case "recapField": {
+      const v = ctx.recap[slot.source.field];
+      return { ...base, value: fmtByFormat(v, slot.format), isNull: v === null };
+    }
+    case "logLatest": {
+      const v = ctx.logLatest.get(slot.source.metricKey) ?? null;
+      return { ...base, value: fmtByFormat(v, slot.format), isNull: v === null };
+    }
+    case "scheduledItem": {
+      const counts = ctx.scheduledAgg.get(slot.source.itemType) ?? {
+        done: 0,
+        total: 0,
+        open: 0,
+      };
+      const agg = slot.source.agg;
+      if (agg === "doneOverTotal") {
+        return {
+          ...base,
+          value: `${counts.done}/${counts.total}`,
+          isNull: counts.total === 0,
+        };
+      }
+      if (agg === "doneCount") {
+        return { ...base, value: String(counts.done), isNull: counts.total === 0 };
+      }
+      // "openCount"
+      return { ...base, value: String(counts.open), isNull: counts.total === 0 };
+    }
+    case "targetCurrent": {
+      const metric = slot.source.metric;
+      const b = ctx.breakdown.find((x) => x.target.metric === metric);
+      const v = b?.current ?? null;
+      return { ...base, value: fmtByFormat(v, slot.format), isNull: v === null };
+    }
+  }
+}
 
 // ─── weekRangeLabel ───────────────────────────────────────────────────────────
 
@@ -176,41 +270,89 @@ export async function computeWeeklyRecap(
     const monday = addDays(thisMonday, weekOffset * 7);
     const sunday = endOfWeekSunday(monday);
 
-    // ── 2. Parallel data fetches ───────────────────────────────────────────
-    const [
-      goal,
-      workouts,
-      allExerciseSummaries,
-      hikes,
-      plan,
-      gameState,
-    ] = await Promise.all([
-      // Focus goal (or specific goal by id)
+    // ── 2. Goal-first fetch ────────────────────────────────────────────────
+    const goal = await (
       opts?.goalId
         ? prisma.goal.findFirst({ where: { id: opts.goalId } })
         : prisma.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
-          }),
-      // Completed workouts in the week
-      prisma.workout.findMany({
-        where: { startedAt: { gte: monday, lte: sunday }, status: "completed" },
-        include: { exercises: { include: { sets: true } } },
-      }),
-      // All-time exercise PRs (filter by bestDate in window after)
-      getExerciseSummaries(),
-      // Completed hikes in the week (select extended for highlight detection)
-      prisma.hike.findMany({
-        where: { date: { gte: monday, lte: sunday }, status: "completed" },
-        select: { elevationFt: true, id: true, route: true, distanceMi: true },
-      }),
-      // Active program for header
-      getActiveProgram(),
-      // Current game streak (always live-now per PRD)
-      computeGameState(),
-    ]);
+          })
+    );
 
-    // ── 3. Volume ─────────────────────────────────────────────────────────
+    // ── 3. Presentation + slot keys ────────────────────────────────────────
+    const presentation = presentationForGoal(goal);
+    const logKeys = presentation.statSlots
+      .filter((s) => s.source.from === "logLatest")
+      .map((s) => (s.source as { from: "logLatest"; metricKey: string }).metricKey);
+    const schedTypes = presentation.statSlots
+      .filter((s) => s.source.from === "scheduledItem")
+      .map(
+        (s) =>
+          (
+            s.source as {
+              from: "scheduledItem";
+              itemType: string;
+              agg: string;
+            }
+          ).itemType,
+      );
+
+    // ── 4. Parallel base fetches (minus goal) ─────────────────────────────
+    const [workouts, allExerciseSummaries, hikes, plan, gameState] =
+      await Promise.all([
+        // Completed workouts in the week
+        prisma.workout.findMany({
+          where: { startedAt: { gte: monday, lte: sunday }, status: "completed" },
+          include: { exercises: { include: { sets: true } } },
+        }),
+        // All-time exercise PRs (filter by bestDate in window after)
+        getExerciseSummaries(),
+        // Completed hikes in the week (select extended for highlight detection)
+        prisma.hike.findMany({
+          where: { date: { gte: monday, lte: sunday }, status: "completed" },
+          select: { elevationFt: true, id: true, route: true, distanceMi: true },
+        }),
+        // Active program for header
+        getActiveProgram(),
+        // Current game streak (always live-now per PRD)
+        computeGameState(),
+      ]);
+
+    // ── 5. Gated project fetch ─────────────────────────────────────────────
+    // Only runs when the presentation has logLatest or scheduledItem slots
+    // (i.e. project goals). Fitness goals have empty logKeys + schedTypes → guard false.
+    const logLatest = new Map<string, number | null>();
+    const scheduledAgg = new Map<string, { done: number; total: number; open: number }>();
+    if (goal && (logKeys.length > 0 || schedTypes.length > 0)) {
+      await Promise.all([
+        ...logKeys.map(async (k) => {
+          const row = await prisma.logEntry.findFirst({
+            where: { goalId: goal.id, metric: k, value: { not: null } },
+            orderBy: { date: "desc" },
+          });
+          logLatest.set(k, row?.value ?? null);
+        }),
+        ...schedTypes.map(async (t) => {
+          const groups = await prisma.scheduledItem.groupBy({
+            by: ["status"],
+            where: { goalId: goal.id, type: t },
+            _count: { _all: true },
+          });
+          let done = 0,
+            total = 0,
+            open = 0;
+          for (const g of groups) {
+            total += g._count._all;
+            if (g.status === "done") done += g._count._all;
+            if (g.status === "planned") open += g._count._all;
+          }
+          scheduledAgg.set(t, { done, total, open });
+        }),
+      ]);
+    }
+
+    // ── 6. Volume ─────────────────────────────────────────────────────────
     let rawVol = 0;
     for (const w of workouts) {
       for (const ex of w.exercises) {
@@ -224,7 +366,7 @@ export async function computeWeeklyRecap(
     // S-5: null whenever rawVol===0 (cardio-only weeks, no workouts, etc.)
     const volumeLb: number | null = rawVol === 0 ? null : rawVol;
 
-    // ── 4. PRs this week (exercise only, CRIT-4) ──────────────────────────
+    // ── 7. PRs this week (exercise only, CRIT-4) ──────────────────────────
     const weekPRSummaries = allExerciseSummaries.filter(
       (s) => s.bestDate >= monday && s.bestDate <= sunday,
     );
@@ -236,15 +378,16 @@ export async function computeWeeklyRecap(
     }));
     const prCount = prs.length;
 
-    // ── 5. Hike elevation ─────────────────────────────────────────────────
+    // ── 8. Hike elevation ─────────────────────────────────────────────────
     const totalElevation = hikes.reduce((acc, h) => acc + h.elevationFt, 0);
     const hikeElevationFt: number | null = hikes.length === 0 ? null : totalElevation;
 
-    // ── 6. Goal + readiness ───────────────────────────────────────────────
+    // ── 9. Goal + readiness ───────────────────────────────────────────────
     const targets = (goal?.targets as unknown as GoalTarget[] | null) ?? [];
 
     let goalBlock: RecapGoalBlock | null = null;
     let goalState: RecapGoalState = "no-goal";
+    let breakdown: TargetProgress[] = [];
 
     if (goal) {
       if (targets.length === 0) {
@@ -260,6 +403,9 @@ export async function computeWeeklyRecap(
         };
       } else {
         const snapshot = await computeReadiness(targets, sunday, goal.id);
+
+        // Capture breakdown for stat slot ctx
+        breakdown = snapshot.breakdown;
 
         // null when all missing:
         const progressPct =
@@ -287,10 +433,38 @@ export async function computeWeeklyRecap(
       }
     }
 
-    // ── 7. Program header (ADDENDUM §B CRIT-1) ────────────────────────────
+    // ── 10. Weeks-to-target ────────────────────────────────────────────────
+    // Only computed when the presentation uses the "weeks-to-target" header style
+    // and the goal has a targetDate. Fitness (program-week) stays null.
+    let weeksToTarget: number | null = null;
+    let targetDateLabel: string | null = null;
+    if (presentation.headerStyle === "weeks-to-target" && goal?.targetDate) {
+      weeksToTarget = Math.max(
+        0,
+        Math.round(
+          (startOfDay(goal.targetDate).getTime() - startOfDay(asOf).getTime()) /
+            (7 * 86_400_000),
+        ),
+      );
+      targetDateLabel = new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: process.env.USER_TZ ?? "America/Denver",
+      }).format(goal.targetDate);
+    }
+
+    // ── 11. Program header (ADDENDUM §B CRIT-1) ───────────────────────────
     let header: RecapProgramHeader;
     if (!plan) {
-      header = { programWeek: null, dayOfProgram: null, totalProgramDays: null };
+      // No fitness plan — project goal or no plan at all.
+      // weeksToTarget/targetDateLabel are populated for project goals (step 10).
+      header = {
+        programWeek: null,
+        dayOfProgram: null,
+        totalProgramDays: null,
+        weeksToTarget,
+        targetDateLabel,
+      };
     } else {
       const totalProgramDays = plan.template.totalWeeks * 7;
       // CRIT-1: current week → today's actual program day; past week → that week's final day
@@ -307,24 +481,42 @@ export async function computeWeeklyRecap(
         Math.floor(daysSinceStart / 7) + 1,
       );
       const dayOfProgram = Math.max(1, Math.min(totalProgramDays, daysSinceStart + 1));
-      header = { programWeek, dayOfProgram, totalProgramDays };
+      // Fitness headerStyle is "program-week" → weeksToTarget/targetDateLabel are null (step 10 guard).
+      header = {
+        programWeek,
+        dayOfProgram,
+        totalProgramDays,
+        weeksToTarget,
+        targetDateLabel,
+      };
     }
 
-    // ── 8. Date range label ───────────────────────────────────────────────
-    const dateRangeLabel = weekRangeLabel(asOf, weekOffset);
-
-    // ── 9. Streak ─────────────────────────────────────────────────────────
-    const streakDays = gameState.streak.current;
-
-    // ── 10. Instagram handle ──────────────────────────────────────────────
-    const instagramHandle = process.env.INSTAGRAM_HANDLE ?? null;
-
-    // ── 11. Derived flags ─────────────────────────────────────────────────
+    // ── 12. Derived flags ─────────────────────────────────────────────────
     const workoutsCompleted = workouts.length;
     const noProgram = plan === null;
     const emptyWeek = workoutsCompleted === 0 && hikeElevationFt === null;
 
-    // ── 12. Highlight detection ────────────────────────────────────────────
+    // ── 13. Stat slots ────────────────────────────────────────────────────
+    const statSlots = presentation.statSlots.map((s) =>
+      resolveStatSlot(s, {
+        recap: { workoutsCompleted, volumeLb, prCount, hikeElevationFt },
+        logLatest,
+        scheduledAgg,
+        breakdown,
+        targets,
+      }),
+    );
+
+    // ── 14. Date range label ──────────────────────────────────────────────
+    const dateRangeLabel = weekRangeLabel(asOf, weekOffset);
+
+    // ── 15. Streak ────────────────────────────────────────────────────────
+    const streakDays = gameState.streak.current;
+
+    // ── 16. Instagram handle ──────────────────────────────────────────────
+    const instagramHandle = process.env.INSTAGRAM_HANDLE ?? null;
+
+    // ── 17. Highlight detection ────────────────────────────────────────────
     // Ordered by flex-worthiness: pr → badge → hike → baseline.
     // Wrapped in its own try/catch — detection failure silently falls back to [].
     let highlights: RecapHighlight[] = [];
@@ -444,6 +636,7 @@ export async function computeWeeklyRecap(
       noProgram,
       emptyWeek,
       highlights,
+      statSlots,
     };
   } catch {
     // Never throw — return a safe fallback
@@ -457,7 +650,13 @@ export async function computeWeeklyRecap(
       weekEnd: sunday,
       weekOffset,
       dateRangeLabel: weekRangeLabel(now, weekOffset),
-      header: { programWeek: null, dayOfProgram: null, totalProgramDays: null },
+      header: {
+        programWeek: null,
+        dayOfProgram: null,
+        totalProgramDays: null,
+        weeksToTarget: null,
+        targetDateLabel: null,
+      },
       goal: null,
       goalState: "no-goal",
       workoutsCompleted: 0,
@@ -470,6 +669,20 @@ export async function computeWeeklyRecap(
       noProgram: true,
       emptyWeek: true,
       highlights: [],
+      statSlots: DEFAULT_PRESENTATION.statSlots.map((s) =>
+        resolveStatSlot(s, {
+          recap: {
+            workoutsCompleted: 0,
+            volumeLb: null,
+            prCount: 0,
+            hikeElevationFt: null,
+          },
+          logLatest: new Map(),
+          scheduledAgg: new Map(),
+          breakdown: [],
+          targets: [],
+        }),
+      ),
     };
   }
 }
