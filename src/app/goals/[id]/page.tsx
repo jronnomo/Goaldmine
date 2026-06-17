@@ -14,6 +14,8 @@ import type { GoalReference } from "@/lib/goal-actions";
 import { setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
+import { FeasibilityReadout } from "@/components/FeasibilityReadout";
+import { USER_TZ } from "@/lib/calendar";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
@@ -115,6 +117,10 @@ export default async function GoalDetail({
   // UXR-64-07/09: trained line near header for hinted goals (no training logged vs trained Nd ago).
   const hasHints = parseAttributionHints(goal.attributionHints).length > 0;
   const lastTrained = hasHints ? (trainedMapDetail.get(goal.id) ?? null) : null;
+
+  const targetDateLabel = goal.targetDate
+    ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: USER_TZ }).format(goal.targetDate)
+    : null;
 
   // Parse coachFeasibility from DB using the shared parser (rarity-core.ts).
   const coachFeasibility = parseCoachFeasibility(goal.coachFeasibility);
@@ -294,7 +300,9 @@ export default async function GoalDetail({
             </ul>
           )}
         </Card>
-      ) : null}
+      ) : (
+        <FeasibilityReadout feasibility={feasibility} targetDateLabel={targetDateLabel} />
+      )}
 
       {/* Plan card — shows when there are any plans (active or paused). REQ-202 */}
       {hasPlan && (
