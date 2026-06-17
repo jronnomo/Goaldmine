@@ -825,7 +825,8 @@ function registerReadTools(server: McpServer) {
         "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision. " +
         "Plan fields (plans[]) are empty for someday goals (targetDate=null — no plan scaffolded; call update_goal with a targetDate to scaffold one). " +
         "attributionHints is the array of canonical exercise names that count as training this goal. " +
-        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints.",
+        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints. " +
+        "feasibility.computed is the honest Reach assessment from the same engine the dashboard shows (Today + the goal page): an overall tier, weeksRemaining, and a perTarget[] with requiredRate vs observedRate + verdict per target — plus unratedReason (someday | no-targets | no-data). A log: metric (e.g. MRR) reads unratedReason='no-data' with null requiredRate at 0 logs and only gets an observedRate once it has >=3 logged entries, so a project goal stays honestly unrated until the metric is logged a few times. feasibility.coach is the optional coach override.",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
       },

@@ -61,9 +61,28 @@ different truths:
 - So a `0/7` milestone card sitting next to a readiness panel that says milestones are untested/0%
   is **correct, not a bug** — it's the honesty engine refusing to credit an un-logged metric.
 
-> Feasibility ("is this date a fantasy?") on Today and the goal page is documented separately —
-> it is the FeasibilityReadout surface shipped in the Sprint 8 feasibility work, not the recap/
-> Today/progress framing covered here.
+### Feasibility ("is this date a fantasy?") — the Reach readout
+
+A goal-generic **FeasibilityReadout** now renders on **Today** (in `ProjectTodayView`, between the
+MRR and next-milestone cards) and on the **goal page** (`/goals/[id]`, when the goal is unrated —
+no tier and no coach override). It reads the SAME data the coach gets from
+`get_goal(goalId).feasibility.computed` (per-target `requiredRate` vs `observedRate` + `verdict`,
+`weeksRemaining`, an overall tier, and `unratedReason`) — the app and the coach can never diverge.
+
+**The honest no-data behavior (important for project goals):**
+- At **0 MRR logs**, `log:mrr` resolves to `null` (a `log:` metric is NOT build-from-zero — verified:
+  `resolveMetricValue` returns `entry?.value ?? null`), so `currentValue=null` and `requiredRate=null`
+  → `unratedReason='no-data'`. The readout says *"Not enough logged data to rate yet — log the metric
+  a few times to see the pace you need."* It makes **no** per-week promise (there's no current value to
+  compute a required pace from).
+- At **1–2 logs**, `requiredRate` populates ("needs ~$X/wk") but `observedRate` is still
+  *"— not yet estimable"* (a 2-point slope is too noisy to trust).
+- At **≥3 logs**, the observed-rate estimate unlocks — the readout shows a real verdict/tier with
+  `rateBasis='observed'`.
+
+**Coaching implication:** when a user asks "am I on track?" on a fresh project goal, the honest answer
+is "not enough data yet." Encourage them to **log MRR a few times** (via Prompt 2) — at 3+ logs the
+Reach readout turns into a real, observed-pace verdict. Don't fabricate a trajectory before then.
 
 ---
 
