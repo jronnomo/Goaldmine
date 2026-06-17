@@ -32,6 +32,10 @@ export function RecapClient({
   const [highlightValue, setHighlightValue] = useState("");
   const [customText, setCustomText] = useState("");
 
+  // ── Share state ──────────────────────────────────────────────────────────
+  const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
   // ── Fetch candidates when weekIdx changes (purely async — no synchronous setState) ──
   useEffect(() => {
     const offset = weeks[weekIdx]?.offset ?? 0;
@@ -51,7 +55,7 @@ export function RecapClient({
     };
   }, [weekIdx, weeks]);
 
-  // ── Week navigation — also resets highlight state ─────────────────────────
+  // ── Week navigation — also resets highlight + share state ───────────────
   function navigateToWeek(newIdx: number) {
     setWeekIdx(newIdx);
     // Reset highlight for the incoming week; null = loading
@@ -59,6 +63,9 @@ export function RecapClient({
     setHighlightValue("");
     setCustomText("");
     setImageLoading(true);
+    // Reset share state so the button is never locked on the new week
+    setSharing(false);
+    setShareError(null);
   }
 
   // ── Derived URLs ─────────────────────────────────────────────────────────
@@ -88,6 +95,61 @@ export function RecapClient({
     : highlightValue;
 
   const highlightLoading = candidates === null;
+
+  // ── Share handler ─────────────────────────────────────────────────────────
+  async function handleShare() {
+    setSharing(true);
+    setShareError(null);
+    try {
+      const captionUrl = `/recap/caption?weekOffset=${currentWeek.offset}${highlightParam}`;
+      const [capRes, imgRes] = await Promise.all([
+        fetch(captionUrl),
+        fetch(cardUrl),
+      ]);
+
+      // Caption is best-effort: if the fetch fails, share with empty caption
+      const { caption } = capRes.ok
+        ? ((await capRes.json()) as { caption: string })
+        : { caption: "" };
+
+      if (!imgRes.ok) {
+        setShareError("Couldn't load the recap card. Try again.");
+        return;
+      }
+      const blob = await imgRes.blob();
+      const file = new File([blob], "recap-card.png", { type: "image/png" });
+
+      if (typeof navigator !== "undefined" && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], text: caption });
+      } else {
+        // Fallback: copy caption to clipboard + trigger PNG download
+        try {
+          if (typeof navigator !== "undefined") {
+            await navigator.clipboard?.writeText(caption);
+          }
+        } catch {
+          // clipboard unavailable — swallow, best-effort copy
+        }
+        // Use the ShareWorkout blob-download pattern (append→click→remove for Safari)
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "recap-card.png";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setShareError("Web Share unavailable — caption copied + card downloaded.");
+      }
+    } catch (e) {
+      // AbortError = user dismissed the OS share sheet → NOT an error
+      if ((e as Error)?.name !== "AbortError") {
+        setShareError("Couldn't prepare the share. Try again.");
+      }
+    } finally {
+      setSharing(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -199,11 +261,28 @@ export function RecapClient({
         )}
       </div>
 
-      {/* Download card (includes highlight param if set) */}
+      {/* Share — primary CTA (accent, full-width) */}
+      <button
+        type="button"
+        onClick={handleShare}
+        disabled={sharing}
+        className="flex items-center justify-center min-h-[44px] w-full rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+      >
+        {sharing ? "Preparing…" : "Share"}
+      </button>
+
+      {/* Share error — muted note, hidden unless set (W-4: role=alert for screen readers) */}
+      {shareError && (
+        <p role="alert" className="text-xs text-[var(--muted)] text-center -mt-2">
+          {shareError}
+        </p>
+      )}
+
+      {/* Download card — secondary action (border style) */}
       <a
         href={cardUrl}
         download="recap-card.png"
-        className="flex items-center justify-center min-h-[44px] w-full rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+        className="flex items-center justify-center min-h-[44px] w-full rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
       >
         Download Card
       </a>
