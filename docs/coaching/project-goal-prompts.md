@@ -36,6 +36,37 @@ at session start. End the session by restoring Mt. Elbert to focus:
 
 ---
 
+## Surfaces the coach can rely on (project-shaped)
+
+As of the multi-domain Sprint 6–7 work, a project goal renders genuinely project-shaped on every
+surface — driven by the goal-presentation registry (`presentationForGoal(goal)`), not the fitness
+defaults. When you reference what the user sees, describe the **project** versions:
+
+| Surface | What a project goal shows | Notes for the coach |
+|---------|---------------------------|---------------------|
+| **Recap card** (`generate_recap_card`, `/recap/card`) | Ring labelled **PROGRESS** (not READINESS); header **"N WEEKS TO `<target>`"** (weeks-to-target, not "Day M of 90"); a **2-cell** stat row: **MRR** + **MILESTONES** (e.g. `$1,200` / `3/7`) | No fitness stats (no WORKOUTS/VOLUME/PRs/ELEVATION) and no fake dash-padded 4-cell grid. MRR shows `—` until logged. |
+| **Today** (`/`, `ProjectTodayView`) | Project-shaped: scheduled items + next milestone, plus an **MRR card when the goal has a `log:mrr` target**. **No Mt. Elbert rest-day recovery tip** (project goals have no rest-day concept). | The rest-day tip is fitness-only; it never appears for a project goal. The MRR card is conditional on a `log:mrr` target. |
+| **Progress** (`/progress`) | **No weight chart** (the weight card gates on a `weightLb` target, which project goals don't have). For a project focus goal: **MilestoneBurnDown** (planned vs done) + — **when the goal has a `log:mrr` target** — an **MRR-over-time trend** chart. | The MRR trend shows an honest "No MRR logged yet" placeholder until `log_metric(metric='mrr')` rows exist. A milestone-only project (no `log:mrr` target) shows the burn-down but no MRR card. |
+
+### The two-truths invariant for milestones (important)
+
+The recap card's **MILESTONES** stat sources the **live ScheduledItem aggregate** (e.g. `0/7` —
+counts `status='done'` over total milestone items). The **readiness score** does NOT read that
+aggregate — it reads the `log:milestones_done` **LogEntry** metric. These are deliberately two
+different truths:
+
+- A freshly-closed milestone shows on the recap card (`1/7`) as soon as `sync_github_milestones`
+  flips the ScheduledItem, **but does not move the readiness score** until you also run
+  `log_metric(metric='milestones_done', value=<cumulative>)` (see Milestone-Completion Rhythm below).
+- So a `0/7` milestone card sitting next to a readiness panel that says milestones are untested/0%
+  is **correct, not a bug** — it's the honesty engine refusing to credit an un-logged metric.
+
+> Feasibility ("is this date a fantasy?") on Today and the goal page is documented separately —
+> it is the FeasibilityReadout surface shipped in the Sprint 8 feasibility work, not the recap/
+> Today/progress framing covered here.
+
+---
+
 ## Prompt 1 — Weekly Launch Review
 
 **Use**: Sunday or Monday; replaces the fitness weekly review cadence for project sessions.
