@@ -114,6 +114,7 @@ export const PROJECT_PRESENTATION: GoalPresentation = {
 export const DEFAULT_PRESENTATION: GoalPresentation = {
   ...FITNESS_PRESENTATION,
   kind: "__default__",
+  restCopy: null, // recovery tip is fitness-specific; unknown kinds get no tip
 };
 
 // ─── Registry + resolver ──────────────────────────────────────────────────────

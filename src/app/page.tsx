@@ -15,6 +15,7 @@ import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { getQuickPickFoods } from "@/lib/food-actions";
+import { presentationForGoal } from "@/lib/goal-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,7 @@ export default async function HomePage() {
     getActiveProgram(),
     getFocusGoal(),
   ]);
+  const presentation = presentationForGoal(focusGoal);
 
   // AC-C: null goal + null program (or fitness focus + no program) → existing NoActiveProgram card.
   if (!program && focusGoal?.kind !== "project") {
@@ -243,13 +245,11 @@ export default async function HomePage() {
           stateLabel={stateLabel}
         />
 
-        {/* Rest-day hike-prep tip */}
-        {isRestDay && (
+        {/* Rest-day recovery tip — driven from presentation registry */}
+        {isRestDay && presentation.restCopy && (
           <p className="text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
             <strong className="text-[var(--foreground)] font-medium">Recovery tip:</strong>{" "}
-            Today is a great day for a short walk or light stretch. Consistent recovery sessions build
-            the aerobic base and joint resilience you&rsquo;ll need for Mt. Elbert — treat it as
-            training, not a day off.
+            {presentation.restCopy}
           </p>
         )}
       </section>

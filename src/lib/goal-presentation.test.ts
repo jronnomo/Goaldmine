@@ -163,6 +163,10 @@ describe("presentationForGoal — default fallback", () => {
   it("DEFAULT_PRESENTATION kind is __default__", () => {
     expect(DEFAULT_PRESENTATION.kind).toBe("__default__");
   });
+
+  it("DEFAULT_PRESENTATION.restCopy is null (recovery tip is fitness-specific)", () => {
+    expect(DEFAULT_PRESENTATION.restCopy).toBeNull();
+  });
 });
 
 // ─── Case 5: Project Chewgether — MRR null + milestones 0/7 ──────────────────
