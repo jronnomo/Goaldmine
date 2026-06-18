@@ -305,7 +305,7 @@ export function RecapClient({
       >
         {isPosted ? (
           <>
-            <span aria-hidden="true">✓ </span>Posted to Instagram
+            <span aria-hidden="true">✓ </span>Shared
           </>
         ) : null}
       </p>
