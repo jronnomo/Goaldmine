@@ -117,6 +117,21 @@ describe("presentationForGoal — fitness kind", () => {
       "ELEVATION",
     ]);
   });
+
+  it("all 4 slots have source.from === 'recapField'", () => {
+    const p = presentationForGoal({ kind: "fitness" });
+    expect(p.statSlots.every((s) => s.source.from === "recapField")).toBe(true);
+  });
+
+  it("restCopy is non-null (fitness has a recovery tip)", () => {
+    const p = presentationForGoal({ kind: "fitness" });
+    expect(p.restCopy).not.toBeNull();
+  });
+
+  it("legendDefault is 'fitness'", () => {
+    const p = presentationForGoal({ kind: "fitness" });
+    expect(p.legendDefault).toBe("fitness");
+  });
 });
 
 // ─── Case 4: Default fallback ─────────────────────────────────────────────────
@@ -169,7 +184,58 @@ describe("presentationForGoal — default fallback", () => {
   });
 });
 
-// ─── Case 5: Project Chewgether — MRR null + milestones 0/7 ──────────────────
+// ─── Case 5a: presentationForGoal project — structural assertions ─────────────
+
+describe("presentationForGoal — project kind (structural)", () => {
+  it("ringLabel is 'PROGRESS', not 'TRACTION'", () => {
+    const p = presentationForGoal({ kind: "project" });
+    expect(p.ringLabel).toBe("PROGRESS");
+    expect(p.ringLabel).not.toBe("TRACTION");
+  });
+
+  it("has exactly 2 statSlots", () => {
+    const p = presentationForGoal({ kind: "project" });
+    expect(p.statSlots).toHaveLength(2);
+  });
+
+  it("MRR slot: source logLatest/mrr, format currency", () => {
+    const p = presentationForGoal({ kind: "project" });
+    const mrr = p.statSlots[0];
+    expect(mrr.key).toBe("mrr");
+    expect(mrr.source.from).toBe("logLatest");
+    expect(
+      (mrr.source as { from: "logLatest"; metricKey: string }).metricKey,
+    ).toBe("mrr");
+    expect(mrr.format).toBe("currency");
+  });
+
+  it("MILESTONES slot: source scheduledItem/milestone/doneOverTotal, format ratioOfTotal", () => {
+    const p = presentationForGoal({ kind: "project" });
+    const milestones = p.statSlots[1];
+    expect(milestones.key).toBe("milestones");
+    expect(milestones.source.from).toBe("scheduledItem");
+    const src = milestones.source as {
+      from: "scheduledItem";
+      itemType: string;
+      agg: string;
+    };
+    expect(src.itemType).toBe("milestone");
+    expect(src.agg).toBe("doneOverTotal");
+    expect(milestones.format).toBe("ratioOfTotal");
+  });
+
+  it("restCopy is null (no recovery tip for project kind)", () => {
+    const p = presentationForGoal({ kind: "project" });
+    expect(p.restCopy).toBeNull();
+  });
+
+  it("legendDefault is 'project'", () => {
+    const p = presentationForGoal({ kind: "project" });
+    expect(p.legendDefault).toBe("project");
+  });
+});
+
+// ─── Case 5b: Project Chewgether — MRR null + milestones 0/7 ─────────────────
 
 describe("resolveStatSlot — project Chewgether (mrr null, milestones 0/7)", () => {
   it("presentationForGoal returns PROGRESS ring + weeks-to-target header", () => {
@@ -236,5 +302,17 @@ describe("resolveStatSlot — milestone progress 3/7", () => {
       value: "3/7",
       isNull: false,
     });
+  });
+});
+
+// ─── Case 7: Anti-vertical guardrail — project NEVER grows Subs/Conversion ───
+
+describe("PROJECT_PRESENTATION anti-vertical guardrail", () => {
+  it("does not declare Subs or Conversion slots — only data-backed slots exist", () => {
+    const keys = PROJECT_PRESENTATION.statSlots.map((s) => s.key);
+    expect(keys).not.toContain("subs");
+    expect(keys).not.toContain("conversion");
+    // Positive sanity: only the two declared slots are present
+    expect(keys).toEqual(["mrr", "milestones"]);
   });
 });
