@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<!--
+  UX-RESEARCH MOCKUP — issue #95 / recap-post-state-tracking
+  ============================================================
+  Static, single-file mockup of the chosen "Posted ✓" UX direction for the
+  /recap page of the goaldmine PWA. NOT production code — it exists so a
+  reviewer can eyeball contrast + layout across all four theme/state combos
+  before implementation.
+
+  Design tokens below MIRROR src/app/globals.css (light :root + dark scope).
+  Every color on a rendered element references a var(--…); raw hex appears
+  ONLY in the :root / .dark token definitions (and neutral page chrome).
+
+  Accessibility notes for the real implementation:
+    - The ✓ glyph is DECORATIVE (aria-hidden="true"). The literal word
+      "Posted" carries the state for screen readers.
+    - The real status line announces changes via aria-live="polite".
+    - The status line reserves min-height so toggling posted/not-posted
+      causes NO layout shift.
+
+  Real font is Geist (var(--font-geist-sans)); system-ui is a stand-in.
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recap · Posted ✓ direction — UXR mockup (#95)</title>
+  <style>
+    /* ---- LIGHT TOKENS (mirror src/app/globals.css :root) ---- */
+    :root {
+      --background: #FAF3E3;
+      --foreground: #1F1408;
+      --muted: #7A5E3A;
+      --card: #FFFBF0;
+      --border: #D9C8A2;
+      --accent: #8A6212;
+      --accent-fg: #FFFBF0;
+      --accent-soft: rgba(138, 98, 18, 0.14);
+      --target: #A82A1F;
+      --success: #4E6B36;
+    }
+    /* ---- DARK TOKENS (mirror src/app/globals.css dark scope) ---- */
+    .dark {
+      --background: #0F0B07;
+      --foreground: #F4E9D4;
+      --muted: #9C8866;
+      --card: #1A130C;
+      --border: #3A2E1F;
+      --accent: #D4A437;
+      --accent-fg: #0F0B07;
+      --accent-soft: rgba(212, 164, 55, 0.12);
+      --target: #C0392B;
+      --success: #7FA45C;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #6b6b70;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f4f4f5;
+      padding: 32px 16px 64px;
+    }
+    .page-head { max-width: 960px; margin: 0 auto 28px; }
+    .page-head h1 { font-size: 18px; font-weight: 650; margin: 0 0 4px; }
+    .page-head p { font-size: 13px; margin: 0; color: #d4d4d8; line-height: 1.5; }
+    .panels { display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; align-items: flex-start; }
+    .panel-wrap { display: flex; flex-direction: column; gap: 8px; }
+    .caption { font-size: 12px; font-weight: 600; color: #e4e4e7; text-align: center; letter-spacing: 0.01em; }
+    .phone {
+      width: 390px; max-width: 390px; background: var(--background); color: var(--foreground);
+      border-radius: 24px; padding: 20px 16px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .recap-preview {
+      width: 100%; height: 200px; background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    }
+    .recap-preview span { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+    .week-row { display: flex; align-items: center; gap: 10px; }
+    .icon-btn {
+      flex: 0 0 auto; width: 44px; min-height: 44px; height: 44px; border: 1px solid var(--border);
+      background: transparent; color: var(--foreground); border-radius: 8px; font-size: 16px;
+      line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
+    }
+    .week-label { flex: 1 1 auto; text-align: center; font-size: 14px; font-weight: 600; color: var(--foreground); }
+    .pill-row { display: flex; gap: 10px; }
+    .pill {
+      flex: 1 1 0; min-height: 44px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    .pill--selected { border: 1px solid var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .pill--unselected { border: 1px solid var(--border); color: var(--muted); background: transparent; }
+    .field-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+    .select-box {
+      width: 100%; min-height: 44px; border: 1px solid var(--border); background: var(--card);
+      color: var(--foreground); border-radius: 8px; padding: 0 12px; font-size: 14px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .select-box .chev { color: var(--muted); font-size: 12px; }
+    /* inline posted status line — reserved min-height = no layout shift */
+    .status-line {
+      min-height: 18px; display: flex; align-items: center; gap: 6px; font-size: 12px;
+      line-height: 1.2; color: var(--success);
+    }
+    .status-line .check { color: var(--success); font-weight: 700; }
+    .btn {
+      width: 100%; min-height: 44px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn--primary { background: var(--accent); color: var(--accent-fg); border: 1px solid var(--accent); }
+    /* demoted: secondary border style, NOT opacity — still clearly tappable */
+    .btn--secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .story-row { display: flex; gap: 10px; }
+    .story-row .btn { flex: 1 1 0; }
+    @media (max-width: 880px) { .phone { width: 100%; max-width: 390px; } }
+  </style>
+</head>
+<body>
+  <div class="page-head">
+    <h1>/recap — "Posted ✓" direction · UXR mockup (#95)</h1>
+    <p>
+      Four panels: light/dark × not-posted/posted. Inline status line above the
+      Share button (reserved height, no layout shift); Share demotes to a
+      secondary border style and relabels to "Share again" once posted.
+      Tokens mirror <code>src/app/globals.css</code>.
+    </p>
+  </div>
+  <div class="panels">
+
+    <!-- (1) LIGHT — NOT POSTED -->
+    <div class="panel-wrap">
+      <div class="caption">Light — Not posted</div>
+      <div class="phone">
+        <div class="recap-preview"><span>recap card preview</span></div>
+        <div class="week-row">
+          <button class="icon-btn" aria-label="Previous week">&#9664;</button>
+          <div class="week-label">Jun 9 – Jun 15</div>
+          <button class="icon-btn" aria-label="Next week">&#9654;</button>
+        </div>
+        <div class="pill-row">
+          <button class="pill pill--selected">Coal</button>
+          <button class="pill pill--unselected">Parchment</button>
+        </div>
+        <div>
+          <div class="field-label">Featured Highlight</div>
+          <div class="select-box"><span>Longest run yet</span><span class="chev">&#9662;</span></div>
+        </div>
+        <div class="status-line" aria-live="polite"><!-- empty: not posted --></div>
+        <button class="btn btn--primary">Share</button>
+        <button class="btn btn--secondary">Download Card</button>
+        <div class="story-row">
+          <button class="btn btn--secondary">Story 1</button>
+          <button class="btn btn--secondary">Story 2</button>
+          <button class="btn btn--secondary">Story 3</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- (2) LIGHT — POSTED -->
+    <div class="panel-wrap">
+      <div class="caption">Light — Posted</div>
+      <div class="phone">
+        <div class="recap-preview"><span>recap card preview</span></div>
+        <div class="week-row">
+          <button class="icon-btn" aria-label="Previous week">&#9664;</button>
+          <div class="week-label">Jun 9 – Jun 15</div>
+          <button class="icon-btn" aria-label="Next week">&#9654;</button>
+        </div>
+        <div class="pill-row">
+          <button class="pill pill--selected">Coal</button>
+          <button class="pill pill--unselected">Parchment</button>
+        </div>
+        <div>
+          <div class="field-label">Featured Highlight</div>
+          <div class="select-box"><span>Longest run yet</span><span class="chev">&#9662;</span></div>
+        </div>
+        <div class="status-line" aria-live="polite">
+          <span class="check" aria-hidden="true">&#10003;</span>
+          <span>Posted to Instagram</span>
+        </div>
+        <button class="btn btn--secondary">Share again</button>
+        <button class="btn btn--secondary">Download Card</button>
+        <div class="story-row">
+          <button class="btn btn--secondary">Story 1</button>
+          <button class="btn btn--secondary">Story 2</button>
+          <button class="btn btn--secondary">Story 3</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- (3) DARK — NOT POSTED -->
+    <div class="panel-wrap">
+      <div class="caption">Dark — Not posted</div>
+      <div class="phone dark">
+        <div class="recap-preview"><span>recap card preview</span></div>
+        <div class="week-row">
+          <button class="icon-btn" aria-label="Previous week">&#9664;</button>
+          <div class="week-label">Jun 9 – Jun 15</div>
+          <button class="icon-btn" aria-label="Next week">&#9654;</button>
+        </div>
+        <div class="pill-row">
+          <button class="pill pill--selected">Coal</button>
+          <button class="pill pill--unselected">Parchment</button>
+        </div>
+        <div>
+          <div class="field-label">Featured Highlight</div>
+          <div class="select-box"><span>Longest run yet</span><span class="chev">&#9662;</span></div>
+        </div>
+        <div class="status-line" aria-live="polite"><!-- empty: not posted --></div>
+        <button class="btn btn--primary">Share</button>
+        <button class="btn btn--secondary">Download Card</button>
+        <div class="story-row">
+          <button class="btn btn--secondary">Story 1</button>
+          <button class="btn btn--secondary">Story 2</button>
+          <button class="btn btn--secondary">Story 3</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- (4) DARK — POSTED -->
+    <div class="panel-wrap">
+      <div class="caption">Dark — Posted</div>
+      <div class="phone dark">
+        <div class="recap-preview"><span>recap card preview</span></div>
+        <div class="week-row">
+          <button class="icon-btn" aria-label="Previous week">&#9664;</button>
+          <div class="week-label">Jun 9 – Jun 15</div>
+          <button class="icon-btn" aria-label="Next week">&#9654;</button>
+        </div>
+        <div class="pill-row">
+          <button class="pill pill--selected">Coal</button>
+          <button class="pill pill--unselected">Parchment</button>
+        </div>
+        <div>
+          <div class="field-label">Featured Highlight</div>
+          <div class="select-box"><span>Longest run yet</span><span class="chev">&#9662;</span></div>
+        </div>
+        <div class="status-line" aria-live="polite">
+          <span class="check" aria-hidden="true">&#10003;</span>
+          <span>Posted to Instagram</span>
+        </div>
+        <button class="btn btn--secondary">Share again</button>
+        <button class="btn btn--secondary">Download Card</button>
+        <div class="story-row">
+          <button class="btn btn--secondary">Story 1</button>
+          <button class="btn btn--secondary">Story 2</button>
+          <button class="btn btn--secondary">Story 3</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>
