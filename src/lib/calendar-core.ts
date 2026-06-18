@@ -175,3 +175,30 @@ export function toDatetimeLocalValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}`;
 }
+
+// ─── weekRangeLabel ───────────────────────────────────────────────────────────
+
+/**
+ * Pure label, no DB. USER_TZ-aware via the exported USER_TZ constant + Intl.
+ * e.g. "Jun 9 – Jun 15"
+ *
+ * weekOffset: 0 = current week, -1 = last week, etc.
+ * Uses startOfWeekMonday / endOfWeekSunday / addDays — no raw Date primitives.
+ *
+ * Moved here from recap.ts (REV-3/DC-1) so recap-actions.ts can import it from
+ * @/lib/calendar without pulling the full recap engine (prisma, records, game)
+ * into the server-action module graph. Re-exported from recap.ts for backward compat.
+ */
+export function weekRangeLabel(asOf: Date, weekOffset: number): string {
+  const thisMonday = startOfWeekMonday(asOf);
+  const monday = addDays(thisMonday, weekOffset * 7);
+  const sunday = endOfWeekSunday(monday);
+
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: USER_TZ,
+  });
+
+  return `${fmt.format(monday)} – ${fmt.format(sunday)}`;
+}

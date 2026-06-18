@@ -12,6 +12,7 @@ import {
   addDays,
   startOfDay,
   dateKey,
+  weekRangeLabel,
 } from "@/lib/calendar";
 import { prisma } from "@/lib/db";
 import {
@@ -229,24 +230,10 @@ export function resolveStatSlot(slot: StatSlot, ctx: StatSlotCtx): ResolvedStatS
 }
 
 // ─── weekRangeLabel ───────────────────────────────────────────────────────────
-
-/**
- * Pure label, no DB. USER_TZ via @/lib/calendar + Intl.
- * e.g. "Jun 9 – Jun 15"
- */
-export function weekRangeLabel(asOf: Date, weekOffset: number): string {
-  const thisMonday = startOfWeekMonday(asOf);
-  const monday = addDays(thisMonday, weekOffset * 7);
-  const sunday = endOfWeekSunday(monday);
-
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: process.env.USER_TZ ?? "America/Denver",
-  });
-
-  return `${fmt.format(monday)} – ${fmt.format(sunday)}`;
-}
+// Moved to calendar-core.ts (REV-3/DC-1) so recap-actions.ts can import it from
+// @/lib/calendar without pulling the full recap engine into its module graph.
+// Re-exported here so existing @/lib/recap consumers keep working unchanged.
+export { weekRangeLabel };
 
 // ─── computeWeeklyRecap ───────────────────────────────────────────────────────
 
