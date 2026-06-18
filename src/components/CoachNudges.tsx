@@ -34,11 +34,14 @@ export function CoachNudges({
   return (
     <Card title={nudges.length > 0 ? `Coach nudges · ${nudges.length}` : "Coach nudges"}>
       {/* Positive confirmation — shown all week once you've shared this week's recap.
-          Data-derived from the shared_recap marker (not a transient toast). */}
+          Data-derived from the shared_recap marker (not a transient toast). Contained
+          in its own tinted row so it reads as a standalone status, NOT a header on the
+          first nudge below it. */}
       {recapPostedThisWeek && (
-        <p className="text-sm text-[var(--success)] mb-3">
-          <span aria-hidden="true">✓ </span>You&rsquo;ve shared this week&rsquo;s recap
-        </p>
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 px-3 py-2 text-sm text-[var(--success)]">
+          <span aria-hidden="true">✓</span>
+          <span>You&rsquo;ve shared this week&rsquo;s recap</span>
+        </div>
       )}
       {nudges.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">
