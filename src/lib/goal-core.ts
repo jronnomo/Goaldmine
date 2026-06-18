@@ -116,6 +116,12 @@ export async function createGoalCore(
   // string.
   const normalizedNotes = input.notes?.trim() || null;
 
+  // Plans are scaffolded from the FITNESS program template (baseline week + phases),
+  // so only fitness goals get one. Project (and any non-fitness) goals track via
+  // metrics + scheduled items — scaffolding a fitness plan onto them bleeds a default
+  // baseline battery onto the calendar (see the rhino.the.grey regression, 2026-06-18).
+  const kind = input.kind ?? "fitness";
+
   let targets: GoalTarget[] | null = input.targets ?? null;
   if (!targets && copyFromGoalId) {
     const source = await prisma.goal.findUnique({ where: { id: copyFromGoalId } });
@@ -163,7 +169,8 @@ export async function createGoalCore(
     const shouldBecomeFocus = existingFocusCount === 0;
 
     // D1 someday-no-plan: only scaffold a plan when targetDate is set.
-    const plansCreate = targetDate !== null
+    // kind-gate: only fitness goals scaffold a (fitness-template) plan.
+    const plansCreate = targetDate !== null && kind === "fitness"
       ? {
           create: (() => {
             const now = new Date();
@@ -180,7 +187,7 @@ export async function createGoalCore(
         targetDate,
         notes: normalizedNotes,
         targets: targets ?? undefined,
-        kind: input.kind ?? "fitness",
+        kind,
         active: true,
         isFocus: shouldBecomeFocus,
         ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
@@ -206,7 +213,7 @@ export async function createGoalCore(
 // ---------------------------------------------------------------------------
 
 export interface EnsurePlanResult {
-  planId: string;
+  planId: string | null;
   created: boolean;
 }
 
@@ -214,6 +221,18 @@ export async function ensurePlanForGoalCore(
   goalId: string,
   targetDate: Date,
 ): Promise<EnsurePlanResult> {
+  // kind-gate: plans are fitness-template-based, so only fitness goals scaffold one.
+  // Checked before the past-date guard so a non-fitness goal never throws on a stale
+  // date for a plan it would never get. (rhino.the.grey regression, 2026-06-18.)
+  const kindRow = await prisma.goal.findUnique({
+    where: { id: goalId },
+    select: { kind: true },
+  });
+  if (!kindRow) throw new Error(`Goal ${goalId} not found`);
+  if (kindRow.kind !== "fitness") {
+    return { planId: null, created: false };
+  }
+
   // H2 guard (upgrade path only): cannot scaffold a plan for a date already in the past.
   // Today is valid (targetKey === nowKey) — weeksBetween floors at 1 so a same-day upgrade
   // gets a 1-week plan rather than throwing. This guards only ensurePlanForGoalCore, not
