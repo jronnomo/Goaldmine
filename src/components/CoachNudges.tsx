@@ -16,9 +16,11 @@ export type CoachNudge = {
 export function CoachNudges({
   nudges,
   lastNudgeDaysAgo,
+  recapPostedThisWeek = false,
 }: {
   nudges: CoachNudge[];
   lastNudgeDaysAgo: number | null;
+  recapPostedThisWeek?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -31,6 +33,13 @@ export function CoachNudges({
 
   return (
     <Card title={nudges.length > 0 ? `Coach nudges · ${nudges.length}` : "Coach nudges"}>
+      {/* Positive confirmation — shown all week once you've shared this week's recap.
+          Data-derived from the shared_recap marker (not a transient toast). */}
+      {recapPostedThisWeek && (
+        <p className="text-sm text-[var(--success)] mb-3">
+          <span aria-hidden="true">✓ </span>You&rsquo;ve shared this week&rsquo;s recap
+        </p>
+      )}
       {nudges.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">
           No coach nudges right now — your coach will surface gate alerts, staleness, and the

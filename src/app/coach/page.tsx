@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { startOfDay, USER_TZ } from "@/lib/calendar";
+import { startOfDay, USER_TZ, startOfWeekMonday, addDays } from "@/lib/calendar";
 import { Card } from "@/components/Card";
 import { CopyPromptButton } from "@/components/CopyPromptButton";
 import { CoachNudges } from "@/components/CoachNudges";
@@ -122,6 +122,16 @@ export default async function CoachPage() {
     ? Math.floor((now.getTime() - startOfDay(lastRoutineNudge.createdAt).getTime()) / 86_400_000)
     : null;
 
+  // --- has this week's recap been shared? (positive confirmation, data-derived) ---
+  const thisMonday = startOfWeekMonday(now);
+  const recapPostedThisWeek =
+    (await prisma.note.count({
+      where: {
+        type: "shared_recap",
+        targetDate: { gte: thisMonday, lt: addDays(thisMonday, 1) },
+      },
+    })) > 0;
+
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2">
@@ -132,7 +142,11 @@ export default async function CoachPage() {
         </p>
       </header>
 
-      <CoachNudges nudges={nudges} lastNudgeDaysAgo={lastNudgeDaysAgo} />
+      <CoachNudges
+        nudges={nudges}
+        lastNudgeDaysAgo={lastNudgeDaysAgo}
+        recapPostedThisWeek={recapPostedThisWeek}
+      />
 
       <Card title="One-time setup">
         <ol className="text-sm space-y-2 list-decimal list-inside">
