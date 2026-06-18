@@ -4,21 +4,24 @@
 // Client component for the /recap page.
 // Owns: week selector, template toggle, highlight picker, preview image, download links.
 //
-// CRIT-2 compliance: receives ONLY {offset, label}[] from the server.
+// CRIT-2 compliance: receives ONLY {offset, label}[] + postedWeeks: number[] from the server.
 // No Date objects, no WeeklyRecap, no client-side TZ math. Label always
 // comes from weeks[weekIdx].label (pre-computed server-side by weekRangeLabel).
 
 import { useState, useEffect } from "react";
 import type { RecapTemplate, RecapHighlight } from "@/lib/recap";
+import { markRecapPosted } from "@/lib/recap-actions";
 
 type WeekItem = { offset: number; label: string };
 
 export function RecapClient({
   weeks,
   defaultTemplate = "coal",
+  postedWeeks = [],
 }: {
   weeks: WeekItem[];
   defaultTemplate?: RecapTemplate;
+  postedWeeks?: number[]; // plain offsets — no Date objects (CRIT-2)
 }) {
   // weekIdx: 0 = current week, 1 = one week ago, etc.
   const [weekIdx, setWeekIdx] = useState(0);
@@ -35,6 +38,25 @@ export function RecapClient({
   // ── Share state ──────────────────────────────────────────────────────────
   const [sharing, setSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+
+  // ── Posted state ─────────────────────────────────────────────────────────
+  // Seeded from server-derived postedWeeks; persists across week navigation.
+  // Never reset in navigateToWeek — posted state is sticky within the session.
+  const [locallyPosted, setLocallyPosted] = useState<Set<number>>(
+    () => new Set(postedWeeks),
+  );
+
+  // REV-4 (DC-2): re-sync when the prop changes (e.g. after revalidatePath lands).
+  // Keeps optimistic additions; never un-posts.
+  // This controlled state-merge is intentional; suppress the cascading-render rule.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLocallyPosted((prev) => {
+      const merged = new Set(postedWeeks);
+      prev.forEach((o) => merged.add(o));
+      return merged;
+    });
+  }, [postedWeeks]);
 
   // ── Fetch candidates when weekIdx changes (purely async — no synchronous setState) ──
   useEffect(() => {
@@ -56,6 +78,7 @@ export function RecapClient({
   }, [weekIdx, weeks]);
 
   // ── Week navigation — also resets highlight + share state ───────────────
+  // locallyPosted is intentionally NOT reset here; posted state persists across week nav.
   function navigateToWeek(newIdx: number) {
     setWeekIdx(newIdx);
     // Reset highlight for the incoming week; null = loading
@@ -68,8 +91,13 @@ export function RecapClient({
     setShareError(null);
   }
 
-  // ── Derived URLs ─────────────────────────────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────
   const currentWeek = weeks[weekIdx];
+  // isPosted: true when this week's offset is in the server list OR locally optimistic
+  const isPosted =
+    postedWeeks.includes(currentWeek.offset) ||
+    locallyPosted.has(currentWeek.offset);
+
   const highlightParam = highlightValue
     ? `&highlight=${encodeURIComponent(highlightValue)}`
     : "";
@@ -121,6 +149,9 @@ export function RecapClient({
 
       if (typeof navigator !== "undefined" && navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file], text: caption });
+        // Native share completed — optimistic ✓ first (instant), then await server action
+        setLocallyPosted((prev) => new Set([...prev, currentWeek.offset]));
+        await markRecapPosted(currentWeek.offset);
       } else {
         // Fallback: copy caption to clipboard + trigger PNG download
         try {
@@ -139,13 +170,17 @@ export function RecapClient({
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        // Fallback download completed — optimistic ✓ first (instant), then await server action
+        setLocallyPosted((prev) => new Set([...prev, currentWeek.offset]));
+        await markRecapPosted(currentWeek.offset);
         setShareError("Web Share unavailable — caption copied + card downloaded.");
       }
     } catch (e) {
-      // AbortError = user dismissed the OS share sheet → NOT an error
+      // AbortError = user dismissed the OS share sheet → NOT an error; NOT posted
       if ((e as Error)?.name !== "AbortError") {
         setShareError("Couldn't prepare the share. Try again.");
       }
+      // markRecapPosted is NOT called on AbortError or on other errors
     } finally {
       setSharing(false);
     }
@@ -261,14 +296,33 @@ export function RecapClient({
         )}
       </div>
 
-      {/* Share — primary CTA (accent, full-width) */}
+      {/* Posted status — persistent polite live region, reserved height, no layout shift.
+          Mounted empty so the optimistic text mutation announces (LogNoteForm.tsx:83 pattern).
+          aria-live="polite" only — no role="status", no .focus(). */}
+      <p
+        className="text-sm min-h-[1.25rem] text-center text-[var(--success)]"
+        aria-live="polite"
+      >
+        {isPosted ? (
+          <>
+            <span aria-hidden="true">✓ </span>Posted to Instagram
+          </>
+        ) : null}
+      </p>
+
+      {/* Share — primary accent CTA when not posted; secondary border + "Share again" when posted.
+          disabled only while sharing (never on isPosted); focus ring preserved. */}
       <button
         type="button"
         onClick={handleShare}
         disabled={sharing}
-        className="flex items-center justify-center min-h-[44px] w-full rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+        className={`flex items-center justify-center min-h-[44px] w-full rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+          isPosted
+            ? "border border-[var(--border)] text-[var(--muted)] hover:text-foreground" // secondary
+            : "bg-[var(--accent)] text-[var(--accent-fg)] hover:opacity-90" // primary
+        }`}
       >
-        {sharing ? "Preparing…" : "Share"}
+        {sharing ? "Preparing…" : isPosted ? "Share again" : "Share"}
       </button>
 
       {/* Share error — muted note, hidden unless set (W-4: role=alert for screen readers) */}
