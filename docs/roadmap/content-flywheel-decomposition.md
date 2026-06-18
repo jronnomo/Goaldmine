@@ -59,6 +59,8 @@ Mark a week's recap "posted" so the nudge clears and `/recap` shows a "posted �
 ### 3.4-e — DEFERRED v2: Instagram Graph API auto-post
 Tracking stub. True automation: IG Graph API (Business/Creator account, Facebook app, long-lived token via env, the `media` container → `media_publish` 2-step), the card hosted at a public URL (`/recap/card` is already a public route). Heavy + fragile (token refresh, app review, rate limits). **Build ONLY if** the manual-assisted loop (3.4-a..d) proves the habit. **AC (when taken):** documented requirements + a behind-a-flag publish path; until then, not built.
 
+📄 **Full requirements + readiness + go/no-go gate:** [`instagram-autopost-requirements.md`](./instagram-autopost-requirements.md) — captures the two hard non-code blockers (Meta app/App Review, long-lived token), the 2-step publish flow, the two artifact gaps (card is PNG not JPEG; 9:16 is Stories-only, feed needs a new aspect variant), the proposed flagged shape, and the "≥6 of last 8 weeks posted" build trigger.
+
 ### 3.4-f — Flywheel QA
 End-to-end: caption composer (fitness + project + empty week), Share at 390px (Web Share + fallback), the routine nudge loop, post-state clearing. **AC:** both verticals produce a sensible card + caption; share works on mobile width; nudge appears + clears; no production code touched by QA.
 
