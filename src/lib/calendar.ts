@@ -42,6 +42,7 @@ export {
   addDays,
   shiftWallClock,
   toDatetimeLocalValue,
+  weekRangeLabel,
 } from "./calendar-core";
 
 export type CalendarDayCell = {

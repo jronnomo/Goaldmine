@@ -93,7 +93,10 @@ const DateKeyShape = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "use yyyy-mm-dd")
   .describe("ISO date yyyy-mm-dd in the user's local time zone");
 
-const NoteTypeShape = z.enum(["journal", "audible", "feedback", "standing_rule", "review"]);
+// NOTE: a log_note with type:"shared_recap" SHOULD pass targetDate = the week's
+// Monday (yyyy-mm-dd), otherwise the web idempotency guard in recap-actions.ts
+// (calendar-day range query) won't match the MCP-written marker and may duplicate it.
+const NoteTypeShape = z.enum(["journal", "audible", "feedback", "standing_rule", "review", "shared_recap"]);
 
 /** Note types surfaced by recent_history. First-class types (review, open_item,
  *  standing_rule) are excluded — they have dedicated read tools. */

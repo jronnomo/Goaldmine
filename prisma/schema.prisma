@@ -86,7 +86,7 @@ model Note {
   id                 String    @id @default(cuid())
   date               DateTime  @default(now())
   body               String
-  type               String    @default("journal") // audible | journal | feedback | standing_rule | review | open_item
+  type               String    @default("journal") // audible | journal | feedback | standing_rule | review | open_item | shared_recap
   // Optional: which future date this note is *about* (vs. when it was written).
   // Lets Claude know "the user wants the May 8 plan adjusted because of this."
   targetDate         DateTime?
