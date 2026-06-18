@@ -59,6 +59,16 @@ const ThemeIcon = () => (
   </svg>
 );
 
+// Recap icon — a card with a progress line + highlight dot, 20px / stroke 1.5,
+// house style. Evokes the weekly recap card you share.
+const RecapIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="7" cy="7.5" r="1.25" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M6 13l2.5-3 2 2L15 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // Character icon — bust silhouette (head + shoulders), 20px / stroke 1.5, house style.
 // Reads as "RPG character sheet" at a glance alongside the other line icons.
 const CharacterIcon = () => (
@@ -93,6 +103,12 @@ const navRows: NavRow[] = [
     label: "Coach prompts",
     sub: "Coaching tips and workout cues",
     icon: <CoachIcon />,
+  },
+  {
+    href: "/recap",
+    label: "Recap",
+    sub: "Weekly recap card — share your progress",
+    icon: <RecapIcon />,
   },
   {
     href: "/nutrition",
