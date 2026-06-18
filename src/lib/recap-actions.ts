@@ -63,14 +63,18 @@ export async function markRecapPosted(
       });
     }
 
-    // 4. Clear the active routine nudge (newest unresolved [week: open_item)
-    //    Resolves regardless of which historical week was shared — clears the
-    //    current active nudge (per locked PRD decision).
+    // 4. Clear the active recap-ready nudge (newest unresolved [recap: open_item).
+    //    This is the nudge that posting actually satisfies — written each Sunday
+    //    by the proactive-coach routine's recap-ready step (#94, prefix
+    //    "[recap:YYYY-Www]"). We deliberately do NOT touch "[week:" coaching-brief
+    //    nudges — those carry unrelated weekly guidance the user may not have acted on.
+    //    Resolves regardless of which historical week was shared (clear the current
+    //    active recap nudge, per the #95 "stop nagging" decision).
     const nudge = await prisma.note.findFirst({
       where: {
         type: "open_item",
         resolvedAt: null,
-        body: { startsWith: "[week:" },
+        body: { startsWith: "[recap:" },
       },
       orderBy: { createdAt: "desc" },
       select: { id: true },
@@ -84,7 +88,7 @@ export async function markRecapPosted(
         },
       });
     }
-    // No active nudge → silent no-op; the shared_recap marker is still created.
+    // No active recap-ready nudge → silent no-op; the shared_recap marker is still created.
 
     // 5. Revalidate both affected paths (unconditional).
     //    revalidatePath clears the client-side router cache; both pages are
