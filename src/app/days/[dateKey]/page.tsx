@@ -9,6 +9,7 @@ import {
   resolveDay,
   deriveDayDisplay,
   startOfDay,
+  endOfDay,
   USER_TZ,
 } from "@/lib/calendar";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
@@ -18,6 +19,9 @@ import { SkipDayControl } from "@/components/days/SkipDayControl";
 import { HikeLogForm } from "@/components/days/HikeLogForm";
 import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
+import { FootageForm } from "@/components/days/FootageForm";
+import { FootageList, type SerializedMarker } from "@/components/days/FootageList";
+import { canonicalExerciseName } from "@/lib/records";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -119,6 +123,40 @@ export default async function DayDetail({
         orderBy: { startedAt: "asc" },
       })
     : [];
+
+  // ── Footage markers ──────────────────────────────────────────────────────────
+  // CRIT: rawMarkers contains Date objects — serialize capturedAt to ISO string
+  // before passing to client components. Never send Date objects to client.
+  const rawMarkers = await prisma.footageMarker.findMany({
+    where: { date: { gte: date, lte: endOfDay(date) } },
+    orderBy: [{ highlight: "desc" }, { capturedAt: "asc" }, { createdAt: "asc" }],
+  });
+  const footageMarkers: SerializedMarker[] = rawMarkers.map((m) => ({
+    id: m.id,
+    label: m.label,
+    kind: m.kind,
+    filename: m.filename,
+    externalRef: m.externalRef,
+    capturedAt: m.capturedAt?.toISOString() ?? null, // no Date to client
+    exerciseName: m.exerciseName,
+    highlight: m.highlight,
+  }));
+
+  // Exercise picker — completed workout first, template fallback
+  const footageExercises: { name: string }[] =
+    completedDetails.length > 0
+      ? Array.from(
+          new Map(
+            completedDetails
+              .flatMap((w) =>
+                w.exercises.map((ex) => ({ name: canonicalExerciseName(ex.name) })),
+              )
+              .map((ex) => [ex.name, ex]),
+          ).values(),
+        )
+      : (shownTemplate?.blocks.flatMap((b) =>
+          b.exercises.map((ex) => ({ name: ex.name })),
+        ) ?? []);
 
   // REQ-106: separate target-date events (banner) from other types (inline header lines).
   const targetDateEvents = r.otherGoalEvents.filter((e) => e.type === "target-date");
@@ -275,6 +313,15 @@ export default async function DayDetail({
           />
         </div>
       )}
+
+      {/* Footage card — all days (footage can be tagged retroactively or pre-tagged) */}
+      <CollapsibleCard
+        title={`Footage${footageMarkers.length > 0 ? ` (${footageMarkers.length})` : ""}`}
+        defaultOpen={footageMarkers.length > 0}
+      >
+        <FootageList dateKey={dateKey} markers={footageMarkers} />
+        <FootageForm date={dateKey} exercises={footageExercises} />
+      </CollapsibleCard>
 
       {(r.nutritionPlan || r.loggedNutrition.length > 0) && (
         <Card title="Nutrition">
