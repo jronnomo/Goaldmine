@@ -87,6 +87,7 @@ import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
 import { GoalTargetSchema } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
+import { resolveWorkoutIdForDay } from "@/lib/footage-core";
 
 const DateKeyShape = z
   .string()
@@ -3566,6 +3567,215 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         await prisma.hike.delete({ where: { id } });
         return { id, message: "Hike deleted" };
+      }),
+  );
+
+  // ── Footage tools ─────────────────────────────────────────────────────────
+
+  server.registerTool(
+    "log_footage",
+    {
+      title: "Tag a footage clip to a day / exercise",
+      description:
+        "Create a FootageMarker — metadata only, never media bytes. " +
+        "Associates a clip (by filename / capturedAt) to a day and optionally an exercise. " +
+        "workoutId is resolved automatically from the day's completed workout — " +
+        "call this AFTER log_workout so the FK is set. " +
+        "exerciseName is canonicalized via the exercise alias map. " +
+        "externalRef is stored as-is and NEVER fetched — goaldmine has zero SSRF surface. " +
+        "Use get_day_footage to read markers back.",
+      inputSchema: {
+        date: DateKeyShape,
+        label: z
+          .string()
+          .min(1)
+          .describe("Human caption for the clip, e.g. '24-pull-up PR — hero shot'"),
+        kind: z
+          .enum(["video", "photo"])
+          .default("video")
+          .describe("Media type: 'video' or 'photo'. Default: video."),
+        filename: z
+          .string()
+          .optional()
+          .describe(
+            "Original filename, e.g. 'IMG_4412.mov'. Primary match key ClipForge uses to locate the file on disk.",
+          ),
+        externalRef: z
+          .string()
+          .optional()
+          .describe(
+            "Optional URI, cloud link, or ClipForge clip id. " +
+            "STORED ONLY — this server never fetches or dereferences this value.",
+          ),
+        capturedAt: z
+          .string()
+          .datetime()
+          .optional()
+          .describe(
+            "ISO 8601 datetime for when the clip was shot (camera EXIF / capture timestamp), " +
+            "e.g. '2026-06-18T09:15:00.000Z'. Blank if camera metadata unavailable. " +
+            "Used as ClipForge disambiguation key when filename collides. Pass verbatim from camera metadata.",
+          ),
+        exerciseName: z
+          .string()
+          .optional()
+          .describe(
+            "Exercise this clip captures, e.g. 'Pull-Up'. Canonicalized via the exercise alias map before storage. " +
+            "Omit for whole-day / non-exercise footage.",
+          ),
+        taskType: z
+          .enum(["workout", "hike", "baseline", "other"])
+          .optional()
+          .describe(
+            "What kind of session this clip belongs to. " +
+            "Omit when the day is a standard workout day — it will be clear from context.",
+          ),
+        highlight: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Mark this as the hero / featured shot — the clip ClipForge leads the Reel with. " +
+            "At most one marker per day should be highlighted, but this is not enforced.",
+          ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const dayStart     = startOfDay(parseDateInput(input.date));
+        const workoutId    = await resolveWorkoutIdForDay(dayStart); // footage-core.ts
+        const exerciseName = input.exerciseName
+          ? canonicalExerciseName(input.exerciseName)
+          : null;
+
+        // CRIT-1: guard against Invalid Date from the datetime string
+        let capturedAt: Date | null = null;
+        if (input.capturedAt) {
+          const d = new Date(input.capturedAt);
+          capturedAt = isNaN(d.getTime()) ? null : d;
+        }
+
+        const marker = await prisma.footageMarker.create({
+          data: {
+            date:        dayStart,
+            label:       input.label,
+            kind:        input.kind ?? "video",
+            filename:    input.filename ?? null,
+            externalRef: input.externalRef ?? null,
+            capturedAt,
+            exerciseName,
+            taskType:    input.taskType ?? null,
+            highlight:   input.highlight ?? false,
+            workoutId,
+          },
+        });
+
+        return { id: marker.id, message: "Footage marker logged" };
+      }),
+  );
+
+  server.registerTool(
+    "get_day_footage",
+    {
+      title: "Get day structure + footage markers",
+      description:
+        "Return the ordered day structure (programWeek/Day, goal narrative, exercises with PR flags, taskType) " +
+        "plus all FootageMarkers for the given date — the exact shape ClipForge consumes to assemble a Reel. " +
+        "Markers are ordered: highlight-first, then capturedAt ascending, then createdAt ascending. " +
+        "exercises[] comes from the day's completed workout (orderIndex order); " +
+        "isPR=true when the exercise's all-time best was set on this day. " +
+        "NOTE: this tool runs a full exercise-summaries scan for PR detection — call once per day, not per marker. " +
+        "Use log_footage to add markers; delete_footage to remove them.",
+      inputSchema: {
+        date: DateKeyShape,
+      },
+    },
+    async ({ date }) =>
+      safe(async () => {
+        const dayStart = startOfDay(parseDateInput(date));
+        const dayEnd   = endOfDay(dayStart);
+        const dateStr  = toDateKey(dayStart);
+
+        // 1. Completed workout + exercises ordered by orderIndex
+        const workout = await prisma.workout.findFirst({
+          where: { startedAt: { gte: dayStart, lte: dayEnd }, status: "completed" },
+          orderBy: { startedAt: "desc" },
+          include: { exercises: { orderBy: { orderIndex: "asc" } } },
+        });
+
+        // 2. PR detection — getExerciseSummaries full scan (single-user, acceptable for v1)
+        const summaries = await getExerciseSummaries();
+        const summaryByName = new Map(summaries.map(s => [s.name, s]));
+
+        // 3. Day context for weekIndex + todayTask
+        const r = await resolveDay(dayStart);
+
+        // 4. Focus goal for narrative caption
+        const focusGoal = await prisma.goal.findFirst({
+          where: { isFocus: true, active: true },
+          select: { objective: true, kind: true },
+        });
+
+        // 5. Footage markers — highlight-first, then capturedAt asc, then createdAt asc
+        const rawMarkers = await prisma.footageMarker.findMany({
+          where: { date: { gte: dayStart, lte: dayEnd } },
+          orderBy: [
+            { highlight: "desc" },
+            { capturedAt: "asc" },
+            { createdAt: "asc" },
+          ],
+        });
+
+        // 6. Build exercises[] with canonicalized names + PR flags
+        const exercises = (workout?.exercises ?? []).map(ex => {
+          const canonical = canonicalExerciseName(ex.name);
+          const s         = summaryByName.get(canonical);
+          const isPR      = s != null && s.bestDate >= dayStart && s.bestDate <= dayEnd;
+          return { name: canonical, order: ex.orderIndex, isPR };
+        });
+
+        return {
+          date: dateStr,
+          day: {
+            programWeek: r.weekIndex,
+            programDay:  r.rotationDay,
+            goal: focusGoal
+              ? { objective: focusGoal.objective, kind: focusGoal.kind }
+              : null,
+            exercises,
+            taskType: r.todayTask,
+          },
+          markers: rawMarkers.map(m => ({
+            id:           m.id,
+            label:        m.label,
+            kind:         m.kind,
+            filename:     m.filename,
+            externalRef:  m.externalRef,
+            capturedAt:   m.capturedAt?.toISOString() ?? null, // ISO string — no Date objects
+            exerciseName: m.exerciseName,
+            highlight:    m.highlight,
+          })),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "delete_footage",
+    {
+      title: "Delete a footage marker",
+      description:
+        "Remove a FootageMarker by id. " +
+        "Use get_day_footage to find marker ids. " +
+        "Deletion is permanent — there is no undo.",
+      inputSchema: {
+        id: z
+          .string()
+          .describe("FootageMarker id to delete — find via get_day_footage"),
+      },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        await prisma.footageMarker.delete({ where: { id } });
+        return { id, message: "Footage marker deleted" };
       }),
   );
 

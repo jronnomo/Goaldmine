@@ -23,7 +23,8 @@ model Workout {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  exercises WorkoutExercise[]
+  exercises      WorkoutExercise[]
+  footageMarkers FootageMarker[]
 
   @@index([startedAt])
 }
@@ -67,6 +68,27 @@ model Measurement {
   createdAt  DateTime @default(now())
 
   @@index([date])
+}
+
+model FootageMarker {
+  id           String    @id @default(cuid())
+  date         DateTime  // USER_TZ midnight — the day the footage is bucketed to (parseDateInput)
+  capturedAt   DateTime? // when the clip was shot (camera metadata); match/disambiguation key
+  kind         String    @default("video") // "video" | "photo"
+  filename     String?   // original filename — primary match key for ClipForge
+  externalRef  String?   // optional URI / cloud link / ClipForge clip id — STORED ONLY, never fetched
+  label        String    // human caption, e.g. "24-pull-up PR — hero shot"
+  workoutId    String?   // optional link to the day's Workout (resolved by date range)
+  exerciseName String?   // canonicalExerciseName — links the clip to an exercise
+  taskType     String?   // optional: "workout" | "hike" | "baseline" | "other"
+  highlight    Boolean   @default(false) // the hero / featured shot
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  workout      Workout?  @relation(fields: [workoutId], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([workoutId])
 }
 
 model Baseline {
