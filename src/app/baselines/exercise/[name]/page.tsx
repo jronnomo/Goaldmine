@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { HistoryChart } from "@/components/HistoryChart";
-import { getExerciseHistory } from "@/lib/records";
+import { getExerciseHistory, type MetricKind } from "@/lib/records";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,9 @@ export default async function ExerciseRecordDetail({
               ? `~${Math.round(summary.bestValue)} lb 1RM (${summary.bestRaw.weightLb} × ${summary.bestRaw.reps})`
               : summary.primary === "reps"
                 ? `${summary.bestValue} reps`
-                : formatDuration(summary.bestValue)}
+                : summary.primary === "distance"
+                  ? `${summary.bestValue.toFixed(2)} mi`
+                  : formatDuration(summary.bestValue)}
             {" · "}
             {new Date(summary.bestDate).toLocaleDateString()}
             {" · "}
@@ -70,7 +72,7 @@ export default async function ExerciseRecordDetail({
                 className="flex justify-between items-baseline gap-3"
               >
                 <div>
-                  <p className="font-mono text-sm">{rawText(h)}</p>
+                  <p className="font-mono text-sm">{rawText(h, summary?.primary)}</p>
                   {h.workoutTitle && (
                     <p className="text-xs text-[var(--muted)]">{h.workoutTitle}</p>
                   )}
@@ -87,14 +89,16 @@ export default async function ExerciseRecordDetail({
   );
 }
 
-function rawText(h: { rawWeight: number | null; rawReps: number | null; rawDuration: number | null }): string {
+function rawText(h: { rawWeight: number | null; rawReps: number | null; rawDuration: number | null; rawDistance: number | null }, primary?: MetricKind): string {
   if (h.rawWeight !== null && h.rawReps !== null) return `${h.rawWeight} lb × ${h.rawReps}`;
   if (h.rawReps !== null) return `${h.rawReps} reps`;
+  if (primary === "time" && h.rawDuration !== null) return formatDuration(h.rawDuration);
+  if (h.rawDistance !== null) return `${h.rawDistance.toFixed(2)} mi`;
   if (h.rawDuration !== null) return formatDuration(h.rawDuration);
   return "—";
 }
 
-function chartTitleFor(p?: "rm" | "reps" | "duration"): string {
+function chartTitleFor(p?: MetricKind): string {
   switch (p) {
     case "rm":
       return "Estimated 1RM over time";
@@ -102,12 +106,16 @@ function chartTitleFor(p?: "rm" | "reps" | "duration"): string {
       return "Max reps over time";
     case "duration":
       return "Longest duration over time";
+    case "distance":
+      return "Distance over time";
+    case "time":
+      return "Best time over time";
     default:
       return "History";
   }
 }
 
-function unitsFor(p?: "rm" | "reps" | "duration"): string {
+function unitsFor(p?: MetricKind): string {
   switch (p) {
     case "rm":
       return "lb (Epley 1RM)";
@@ -115,18 +123,24 @@ function unitsFor(p?: "rm" | "reps" | "duration"): string {
       return "reps";
     case "duration":
       return "sec";
+    case "distance":
+      return "mi";
+    case "time":
+      return "sec";
     default:
       return "";
   }
 }
 
 function tooltipFor(
-  p: "rm" | "reps" | "duration" | undefined,
-  h: { best: number; rawWeight: number | null; rawReps: number | null; rawDuration: number | null },
+  p: MetricKind | undefined,
+  h: { best: number; rawWeight: number | null; rawReps: number | null; rawDuration: number | null; rawDistance: number | null },
 ): string {
   if (p === "rm") return `~${Math.round(h.best)} lb 1RM (${h.rawWeight} × ${h.rawReps})`;
   if (p === "reps") return `${h.best} reps`;
   if (p === "duration") return formatDuration(h.best);
+  if (p === "distance") return `${h.best.toFixed(2)} mi`;
+  if (p === "time") return formatDuration(h.best);
   return String(h.best);
 }
 

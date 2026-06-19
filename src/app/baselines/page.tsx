@@ -217,6 +217,8 @@ function formatBest(e: { primary: string; bestValue: number; bestRaw: { weightLb
   if (e.primary === "rm") return `~${Math.round(e.bestValue)} lb 1RM (${e.bestRaw.weightLb} × ${e.bestRaw.reps})`;
   if (e.primary === "reps") return `${e.bestValue} reps`;
   if (e.primary === "duration") return formatDuration(e.bestValue);
+  if (e.primary === "distance") return `${e.bestValue.toFixed(2)} mi`;
+  if (e.primary === "time") return formatDuration(e.bestValue);
   return String(e.bestValue);
 }
 

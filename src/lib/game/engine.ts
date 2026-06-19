@@ -18,7 +18,7 @@ import { cache } from "react";
 import { prisma } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import { dateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
-import { canonicalExerciseName, bestSetSummary } from "@/lib/records";
+import { canonicalExerciseName, bestSetSummary, isBetter, type MetricKind, type MetricDirection } from "@/lib/records";
 import {
   OVERALL_LEVEL_BASE,
   ATTR_LEVEL_BASE,
@@ -59,6 +59,7 @@ type WorkoutWithSets = {
       weightLb: number | null;
       reps: number | null;
       durationSec: number | null;
+      distanceMi: number | null;
     }>;
   }>;
 };
@@ -263,7 +264,7 @@ function buildDayLedger(
 // - 3/day cap on pr.set events
 
 function buildPrEvents(workouts: WorkoutWithSets[]): XpEvent[] {
-  const prBestByExercise = new Map<string, { primary: "rm" | "reps" | "duration"; value: number }>();
+  const prBestByExercise = new Map<string, { primary: MetricKind; direction: MetricDirection; value: number }>();
   const prEventsByDay = new Map<string, XpEvent[]>();
   const allPrEvents: XpEvent[] = [];
 
@@ -271,14 +272,18 @@ function buildPrEvents(workouts: WorkoutWithSets[]): XpEvent[] {
     if (workout.status !== "completed") continue;
 
     // Step 1: Build this workout's per-canonical best
-    const workoutBestByExercise = new Map<string, { primary: "rm" | "reps" | "duration"; value: number }>();
+    const workoutBestByExercise = new Map<string, { primary: MetricKind; direction: MetricDirection; value: number }>();
     for (const exercise of workout.exercises) {
       const canon = canonicalExerciseName(exercise.name);
-      const summary = bestSetSummary(exercise.sets);
+      const summary = bestSetSummary(exercise.sets, canon);
       if (summary === null) continue;
-      const existing = workoutBestByExercise.get(canon);
-      if (!existing || summary.value > existing.value) {
-        workoutBestByExercise.set(canon, { primary: summary.primary, value: summary.value });
+      const existingBest = workoutBestByExercise.get(canon);
+      if (!existingBest || isBetter(summary.direction, summary.value, existingBest.value)) {
+        workoutBestByExercise.set(canon, {
+          primary: summary.primary,
+          direction: summary.direction,
+          value: summary.value,
+        });
       }
     }
 
@@ -293,7 +298,7 @@ function buildPrEvents(workouts: WorkoutWithSets[]): XpEvent[] {
         continue;
       }
 
-      if (workoutBest.primary === prior.primary && workoutBest.value > prior.value) {
+      if (workoutBest.primary === prior.primary && isBetter(workoutBest.direction, workoutBest.value, prior.value)) {
         // Strict same-primary improvement — PR!
         const attr = prAttributeForExercise(canon);
         const event: XpEvent = {
@@ -947,7 +952,7 @@ async function _computeGameState(): Promise<GameState> {
           select: {
             name: true,
             sets: {
-              select: { weightLb: true, reps: true, durationSec: true },
+              select: { weightLb: true, reps: true, durationSec: true, distanceMi: true },
             },
           },
         },

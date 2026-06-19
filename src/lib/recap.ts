@@ -134,6 +134,8 @@ const UNIT_FROM_PRIMARY: Record<ExerciseSummary["primary"], string> = {
   rm: "lb",
   reps: "reps",
   duration: "sec",
+  distance: "mi",
+  time: "sec",
 };
 
 // Exercise-name keywords marking mobility / stretch / warmup work. These are
@@ -152,9 +154,25 @@ function isMobilityName(name: string): boolean {
   const n = name.toLowerCase();
   return MOBILITY_KEYWORDS.some((k) => n.includes(k));
 }
-// Sort tier for PR units: weighted lifts first, then reps, then duration.
+// Sort tier for PR units: weighted lifts first, then reps, then duration/distance/time.
 const prUnitTier = (units: string): number =>
   units === "lb" ? 0 : units === "reps" ? 1 : 2;
+
+/**
+ * Format a PR best value for the highlight card label, branching on units.
+ * - "mi" → toFixed(2) (preserve decimal precision, e.g. "6.60")
+ * - "sec" → M:SS (human-readable time, e.g. "8:00")
+ * - everything else → Math.round (same as before)
+ */
+function formatPrValue(value: number, units: string): string {
+  if (units === "mi") return value.toFixed(2);
+  if (units === "sec") {
+    const m = Math.floor(value / 60);
+    const s = value % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+  return String(Math.round(value));
+}
 
 // ─── resolveStatSlot ─────────────────────────────────────────────────────────
 
@@ -524,7 +542,7 @@ export async function computeWeeklyRecap(
           id: `pr:${pr.name}`,
           kind: "pr" as const,
           icon: "🏆",
-          label: `${pr.name} — ${Math.round(pr.bestValue)} ${pr.units}`,
+          label: `${pr.name} — ${formatPrValue(pr.bestValue, pr.units)} ${pr.units}`,
           sub: "new PR",
         }));
 

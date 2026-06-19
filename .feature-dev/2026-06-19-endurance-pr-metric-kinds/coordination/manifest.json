@@ -1,0 +1,17 @@
+{
+  "feature": "Endurance PR Metric Kinds (distance + time-to-complete)",
+  "branch": "feature/endurance-pr-metric-kinds",
+  "prd_path": "docs/prds/PRD-endurance-pr-metric-kinds.md",
+  "prd_issue": null,
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"],
+  "agents": [],
+  "iteration": 2,
+  "status": "complete",
+  "decisions": {
+    "disambiguation": "curated name->metric registry",
+    "retroactivity": "retroactive grant (no cold start)",
+    "surface_scope": "XP + all read surfaces",
+    "delivery": "feature branch + PR",
+    "ux_research": "skipped — backend/lib only"
+  }
+}
