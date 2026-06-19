@@ -52,15 +52,25 @@ export type BaselineSummary = {
   delta: number;
 };
 
+// ── Metric kind + direction ──────────────────────────────────────────────────
+// Single source of truth for the PR engine and all read surfaces.
+// "rm"       — Epley 1RM (lb); higher is better
+// "reps"     — max reps; higher is better
+// "duration" — max hold/work time (sec); higher is better
+// "distance" — max covered distance (mi); higher is better
+// "time"     — time-to-complete (sec); LOWER is better
+export type MetricKind = "rm" | "reps" | "duration" | "distance" | "time";
+export type MetricDirection = "higher" | "lower";
+
 export type ExerciseSummary = {
   name: string;
   equipment: string | null;
   sessionCount: number;
   totalSets: number;
   /** What kind of "best" this exercise tracks. */
-  primary: "rm" | "reps" | "duration";
-  bestValue: number; // estimated 1RM (lb), max reps, or max duration sec
-  bestRaw: { weightLb: number | null; reps: number | null; durationSec: number | null };
+  primary: MetricKind;
+  bestValue: number; // estimated 1RM (lb), max reps, max duration sec, max distanceMi, or min durationSec
+  bestRaw: { weightLb: number | null; reps: number | null; durationSec: number | null; distanceMi: number | null };
   bestDate: Date;
 };
 
@@ -73,6 +83,7 @@ export type ExerciseHistoryPoint = {
   rawWeight: number | null;
   rawReps: number | null;
   rawDuration: number | null;
+  rawDistance: number | null;
 };
 
 /**
@@ -83,8 +94,8 @@ export type RecordSet = {
   name: string;
   equipment: string | null;
   /** Which metric determined this is a PR. */
-  kind: "rm" | "reps" | "duration";
-  /** New personal best: Epley 1RM (lb), max reps, or max durationSec. */
+  kind: MetricKind;
+  /** New personal best: Epley 1RM (lb), max reps, max durationSec, max distanceMi, or min durationSec (time). */
   value: number;
   /** Previous all-time best (same metric, excluding this workout). */
   prior: number;
@@ -93,6 +104,7 @@ export type RecordSet = {
     weightLb: number | null;
     reps: number | null;
     durationSec: number | null;
+    distanceMi: number | null;
   };
 };
 
@@ -153,6 +165,55 @@ export function canonicalExerciseName(name: string): string {
  */
 export function aliasVariantsFor(canonical: string): string[] {
   return [canonical, ...(EXERCISE_ALIAS_GROUPS[canonical] ?? [])];
+}
+
+// ── Endurance metric-kind registry ──────────────────────────────────────────
+// Keyed by CANONICAL exercise name (post-canonicalExerciseName).
+// Only entries whose kind and direction differ from the default cascade
+// (weighted → reps → duration, all higher-better) appear here.
+// Unmapped exercises use the default cascade; zero behavior change.
+//
+// !! MAINTENANCE COVENANT !!
+// Any exercise that measures time-to-complete (lower seconds = better) MUST be
+// registered here. Unmapped durationSec exercises default to duration/higher-better
+// (longer hold = better). Forgetting this registry entry means a faster sprint
+// looks like a regression and never earns a PR.
+// Check this list whenever a new timed endurance test is added to program-template.ts.
+//
+// Seed validation against program-template.ts (2026-06-19):
+//   "20 Min Bike Distance"          units=mi  → distance/higher ✓ (phantom durationSec via minMatch: suppressed)
+//   "1.5 Mile Run"                  units=sec → time/lower      ✓ (phantom distanceMi=1.5 via distMatch: suppressed)
+//   "60 Min Steady Effort Distance" units=mi  → distance/higher ✓ (phantom durationSec=3600 via minMatch: suppressed)
+//   "40-Yard Sprint"                units=sec → time/lower      ✓ (no phantom)
+//   "5-10-5 Shuttle"                units=sec → time/lower      ✓ (no phantom)
+// All five names pass through canonicalExerciseName unchanged (not in EXERCISE_ALIAS_GROUPS).
+export const METRIC_KIND_OVERRIDES: Record<string, { kind: MetricKind; direction: MetricDirection }> = {
+  "20 Min Bike Distance":           { kind: "distance", direction: "higher" },
+  "1.5 Mile Run":                   { kind: "time",     direction: "lower"  },
+  "60 Min Steady Effort Distance":  { kind: "distance", direction: "higher" },
+  "40-Yard Sprint":                 { kind: "time",     direction: "lower"  },
+  "5-10-5 Shuttle":                 { kind: "time",     direction: "lower"  },
+};
+
+/**
+ * Look up the metric kind + direction for a canonical exercise name.
+ * Resolves through canonicalExerciseName first so callers may pass either
+ * a raw logged name or a pre-canonicalized name.
+ * Returns null for unmapped exercises (use the default cascade).
+ */
+export function metricKindFor(name: string): { kind: MetricKind; direction: MetricDirection } | null {
+  const canonical = canonicalExerciseName(name);
+  return METRIC_KIND_OVERRIDES[canonical] ?? null;
+}
+
+/**
+ * Strict improvement check, direction-aware.
+ * For "higher" kinds (rm, reps, duration, distance): candidate > incumbent.
+ * For "lower" kinds (time): candidate < incumbent.
+ * Ties are never PRs.
+ */
+export function isBetter(direction: MetricDirection, candidate: number, incumbent: number): boolean {
+  return direction === "lower" ? candidate < incumbent : candidate > incumbent;
 }
 
 export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
@@ -435,7 +496,7 @@ export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
 
   const out: ExerciseSummary[] = [];
   for (const [, bucket] of byKey) {
-    const summary = bestSetSummary(bucket.sets);
+    const summary = bestSetSummary(bucket.sets, bucket.name);
     if (!summary) continue;
 
     // Representative equipment + date = the source exercise holding the best set.
@@ -475,7 +536,7 @@ export async function getExerciseHistory(name: string): Promise<{ summary: Exerc
   const exercises = all.filter((ex) => canonicalExerciseName(ex.name) === canonical);
 
   const allSets = exercises.flatMap((ex) => ex.sets);
-  const summary = bestSetSummary(allSets);
+  const summary = bestSetSummary(allSets, canonical);
   if (!summary) return { summary: null, history: [] };
 
   // Representative equipment + date = the source exercise holding the best set.
@@ -507,7 +568,10 @@ export async function getExerciseHistory(name: string): Promise<{ summary: Exerc
         .map((s) => ({ s, m: metricValue(s, summary.primary) }))
         .filter((p) => p.m !== null) as { s: typeof ex.sets[number]; m: number }[];
       if (setsWithMetric.length === 0) return null;
-      const best = setsWithMetric.reduce((a, b) => (b.m > a.m ? b : a));
+      // Direction-aware: for "lower" kinds (time), best = minimum value; for others, maximum.
+      const best = setsWithMetric.reduce((a, b) =>
+        summary.direction === "lower" ? (b.m < a.m ? b : a) : (b.m > a.m ? b : a)
+      );
       return {
         date: ex.workout.startedAt,
         workoutId: ex.workout.id,
@@ -516,6 +580,7 @@ export async function getExerciseHistory(name: string): Promise<{ summary: Exerc
         rawWeight: best.s.weightLb,
         rawReps: best.s.reps,
         rawDuration: best.s.durationSec,
+        rawDistance: best.s.distanceMi ?? null,
       } satisfies ExerciseHistoryPoint;
     })
     .filter((p): p is ExerciseHistoryPoint => p !== null);
@@ -585,16 +650,19 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
 
   for (const [key, bucket] of byKey) {
     // 4. This session's best.
-    const thisSummary = bestSetSummary(bucket.sets);
+    const thisSummary = bestSetSummary(bucket.sets, bucket.name);
     if (!thisSummary) continue; // no metric at all — skip
 
     const priorSets = priorByKey.get(key) ?? [];
-    const priorSummary = bestSetSummary(priorSets);
+    const priorSummary = bestSetSummary(priorSets, key);
 
     // 5. Brand-new movement (no prior history) → NOT a PR per PRD §6.
     if (!priorSummary) continue;
 
     // 6. Use this session's primary to compare apples-to-apples.
+    // When kinds differ, recompute the prior value using this session's primary field.
+    // If the prior sets have no data for that field (e.g. prior is purely duration and
+    // there's no distanceMi), skip. Otherwise, compare direction-aware against recomputed prior.
     let priorValue: number;
     if (priorSummary.primary === thisSummary.primary) {
       priorValue = priorSummary.value;
@@ -603,11 +671,14 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
         .map((s) => metricValue(s, thisSummary.primary))
         .filter((v): v is number => v !== null);
       if (recomputed.length === 0) continue; // no comparable prior data
-      priorValue = Math.max(...recomputed);
+      // Direction-aware aggregate: for "lower" kinds, best prior = min; for "higher" kinds = max.
+      priorValue = thisSummary.direction === "lower"
+        ? Math.min(...recomputed)
+        : Math.max(...recomputed);
     }
 
-    // 7. Strict improvement only.
-    if (thisSummary.value <= priorValue) continue;
+    // 7. Strict improvement only — direction-aware.
+    if (!isBetter(thisSummary.direction, thisSummary.value, priorValue)) continue;
 
     // Representative equipment = the source exercise holding the best set.
     let equipment: string | null = null;
@@ -631,46 +702,144 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
   return results;
 }
 
-export function bestSetSummary(sets: { weightLb: number | null; reps: number | null; durationSec: number | null }[]): {
-  primary: "rm" | "reps" | "duration";
+// ── Local types for bestSetSummary ───────────────────────────────────────────
+
+type BestSetInput = {
+  weightLb: number | null;
+  reps: number | null;
+  durationSec: number | null;
+  distanceMi?: number | null;
+};
+
+type BestSetSummary = {
+  primary: MetricKind;
+  direction: MetricDirection;
   value: number;
-  raw: { weightLb: number | null; reps: number | null; durationSec: number | null };
-} | null {
+  raw: {
+    weightLb: number | null;
+    reps: number | null;
+    durationSec: number | null;
+    distanceMi: number | null;
+  };
+};
+
+export function bestSetSummary(
+  sets: BestSetInput[],
+  canonicalName?: string,
+): BestSetSummary | null {
   if (sets.length === 0) return null;
+
+  // ── Registry-mapped path ──────────────────────────────────────────────────
+  // The registry dispatch runs BEFORE the default cascade. A distance test that
+  // also has a phantom durationSec in old rows will hit the registry path and
+  // return "distance" — the stale durationSec is never visible to the comparator.
+  if (canonicalName) {
+    const override = metricKindFor(canonicalName);
+    if (override) {
+      if (override.kind === "distance") {
+        // Field: distanceMi. Direction: higher. Pick max.
+        const candidates = sets.filter((s) => (s.distanceMi ?? null) !== null);
+        if (candidates.length > 0) {
+          const best = candidates.reduce((a, b) =>
+            (b.distanceMi! > a.distanceMi! ? b : a)
+          );
+          return {
+            primary: "distance",
+            direction: "higher",
+            value: best.distanceMi!,
+            raw: {
+              weightLb: null,
+              reps: null,
+              durationSec: null,
+              distanceMi: best.distanceMi!,
+            },
+          };
+        }
+        // distanceMi is null/absent on all sets — no metric available
+        return null;
+      }
+
+      if (override.kind === "time") {
+        // Field: durationSec. Direction: lower. Pick min.
+        const candidates = sets.filter((s) => (s.durationSec ?? null) !== null);
+        if (candidates.length > 0) {
+          const best = candidates.reduce((a, b) =>
+            (b.durationSec! < a.durationSec! ? b : a)
+          );
+          return {
+            primary: "time",
+            direction: "lower",
+            value: best.durationSec!,
+            raw: {
+              weightLb: null,
+              reps: null,
+              durationSec: best.durationSec!,
+              distanceMi: null,
+            },
+          };
+        }
+        return null;
+      }
+    }
+  }
+
+  // ── Default cascade (unchanged — all higher-better) ───────────────────────
   const weighted = sets.filter((s) => s.weightLb !== null && s.reps !== null);
   if (weighted.length > 0) {
-    const best = weighted.reduce((a, b) => (epley1RM(b.weightLb!, b.reps!) > epley1RM(a.weightLb!, a.reps!) ? b : a));
+    const best = weighted.reduce((a, b) =>
+      (epley1RM(b.weightLb!, b.reps!) > epley1RM(a.weightLb!, a.reps!) ? b : a)
+    );
     return {
       primary: "rm",
+      direction: "higher",
       value: epley1RM(best.weightLb!, best.reps!),
-      raw: { weightLb: best.weightLb, reps: best.reps, durationSec: null },
+      raw: { weightLb: best.weightLb, reps: best.reps, durationSec: null, distanceMi: null },
     };
   }
-  const reps = sets.filter((s) => s.reps !== null);
-  if (reps.length > 0) {
-    const best = reps.reduce((a, b) => (b.reps! > a.reps! ? b : a));
-    return { primary: "reps", value: best.reps!, raw: { weightLb: null, reps: best.reps, durationSec: null } };
+  const repsOnly = sets.filter((s) => s.reps !== null);
+  if (repsOnly.length > 0) {
+    const best = repsOnly.reduce((a, b) => (b.reps! > a.reps! ? b : a));
+    return {
+      primary: "reps",
+      direction: "higher",
+      value: best.reps!,
+      raw: { weightLb: null, reps: best.reps, durationSec: null, distanceMi: null },
+    };
   }
-  const duration = sets.filter((s) => s.durationSec !== null);
-  if (duration.length > 0) {
-    const best = duration.reduce((a, b) => (b.durationSec! > a.durationSec! ? b : a));
-    return { primary: "duration", value: best.durationSec!, raw: { weightLb: null, reps: null, durationSec: best.durationSec } };
+  const durationSets = sets.filter((s) => s.durationSec !== null);
+  if (durationSets.length > 0) {
+    const best = durationSets.reduce((a, b) => (b.durationSec! > a.durationSec! ? b : a));
+    return {
+      primary: "duration",
+      direction: "higher",
+      value: best.durationSec!,
+      raw: { weightLb: null, reps: null, durationSec: best.durationSec, distanceMi: null },
+    };
   }
+
   return null;
 }
 
-function metricValue(s: { weightLb: number | null; reps: number | null; durationSec: number | null }, primary: "rm" | "reps" | "duration"): number | null {
+function metricValue(
+  s: { weightLb: number | null; reps: number | null; durationSec: number | null; distanceMi?: number | null },
+  primary: MetricKind,
+): number | null {
   if (primary === "rm") {
     if (s.weightLb !== null && s.reps !== null) return epley1RM(s.weightLb, s.reps);
     return null;
   }
   if (primary === "reps") return s.reps;
-  return s.durationSec;
+  if (primary === "duration") return s.durationSec;
+  if (primary === "distance") return s.distanceMi ?? null;
+  if (primary === "time") return s.durationSec; // same field as duration; direction handled by isBetter
+  return null;
 }
 
-function matchesBest(s: { weightLb: number | null; reps: number | null; durationSec: number | null }, summary: { primary: "rm" | "reps" | "duration"; value: number }): boolean {
+function matchesBest(
+  s: { weightLb: number | null; reps: number | null; durationSec: number | null; distanceMi?: number | null },
+  summary: BestSetSummary,
+): boolean {
   const v = metricValue(s, summary.primary);
   if (v === null) return false;
   return Math.abs(v - summary.value) < 0.01;
 }
-

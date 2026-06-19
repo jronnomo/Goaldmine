@@ -6,6 +6,7 @@
 
 import { prisma } from "@/lib/db";
 import { endOfDay, startOfDay } from "@/lib/calendar";
+import { metricKindFor, canonicalExerciseName } from "@/lib/records";
 
 type SetData = {
   reps?: number;
@@ -46,16 +47,30 @@ export function mapBaselineToSet(testName: string, value: number, units: string)
   // the baseline row keeps the original value+units for reasoning.
 
   // Implicit: parse the test name for the *other* dimension.
+  // Suppressed for registry-mapped tests: their primary metric is already
+  // written by the direct path above; name-regex back-fills inject phantom
+  // secondary metrics (e.g. durationSec=1200 on "20 Min Bike Distance" from "20 Min").
+  //
+  // Note: stale rows already in the DB with phantom durationSec (e.g. existing
+  // baseline Sets for "20 Min Bike Distance" that have durationSec=1200) are left
+  // as-is. The METRIC_KIND_OVERRIDES registry forces "distance" as primary, so
+  // bestSetSummary reads distanceMi exclusively — the stale durationSec is inert.
+  //
+  // Covenant: if an unmapped time-to-complete test is accidentally mapped through
+  // this function, it defaults to higher-better "duration" behavior, which inverts
+  // the PR semantics. Register any timed endurance test in METRIC_KIND_OVERRIDES.
+  const isMapped = metricKindFor(canonicalExerciseName(testName)) !== null;
+
   const distMatch = testName.match(/(\d+(?:\.\d+)?)\s*(?:mi|mile|miles)\b/i);
-  if (distMatch && set.distanceMi === undefined) {
+  if (distMatch && set.distanceMi === undefined && !isMapped) {
     set.distanceMi = parseFloat(distMatch[1]!);
   }
   const minMatch = testName.match(/(\d+(?:\.\d+)?)\s*(?:min|minute|minutes)\b/i);
-  if (minMatch && set.durationSec === undefined) {
+  if (minMatch && set.durationSec === undefined && !isMapped) {
     set.durationSec = Math.round(parseFloat(minMatch[1]!) * 60);
   }
   const meterMatch = testName.match(/(\d+(?:\.\d+)?)\s*m(?:eter|eters)?\b/i);
-  if (meterMatch && set.distanceMi === undefined) {
+  if (meterMatch && set.distanceMi === undefined && !isMapped) {
     set.distanceMi = parseFloat(meterMatch[1]!) / METERS_PER_MILE;
   }
 
