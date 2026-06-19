@@ -140,6 +140,7 @@ model Hike {
   route        String
   distanceMi   Float
   elevationFt  Int
+  summitFt     Int? // summit / high-point altitude in ft; null = unknown. Distinct from elevationFt (GAIN).
   packWeightLb Float?
   durationMin  Int
   status       String   @default("completed") // planned | completed | skipped

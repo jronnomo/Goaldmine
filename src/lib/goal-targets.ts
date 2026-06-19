@@ -56,9 +56,14 @@ export async function resolveMetricValue(
     return b?.value ?? null;
   }
 
+  // All hike:* metrics scope to the goal under evaluation. Plan-scaffolded and
+  // legacy rows are now goalId-stamped (backfill 6/19), so the Elbert headline
+  // numbers are unchanged — this just stops a second goal with hike targets
+  // (e.g. a future Longs Peak) from cross-counting the same hikes.
   if (metric === "hike:prep_completion") {
     return prisma.hike.count({
       where: {
+        goalId,
         date: { lte: cutoff },
         status: "completed",
         distanceMi: { gte: 5 },
@@ -70,7 +75,7 @@ export async function resolveMetricValue(
   if (metric === "hike:max_elevation_single") {
     const r = await prisma.hike.aggregate({
       _max: { elevationFt: true },
-      where: { date: { lte: cutoff }, status: "completed" },
+      where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
     return r._max.elevationFt ?? 0;
   }
@@ -78,7 +83,7 @@ export async function resolveMetricValue(
   if (metric === "hike:total_elevation_ft") {
     const r = await prisma.hike.aggregate({
       _sum: { elevationFt: true },
-      where: { date: { lte: cutoff }, status: "completed" },
+      where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
     return r._sum.elevationFt ?? 0;
   }
@@ -86,7 +91,7 @@ export async function resolveMetricValue(
   if (metric === "hike:total_distance_mi") {
     const r = await prisma.hike.aggregate({
       _sum: { distanceMi: true },
-      where: { date: { lte: cutoff }, status: "completed" },
+      where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
     return r._sum.distanceMi ?? 0;
   }

@@ -10,6 +10,7 @@
 //   - Server actions call these cores and then add revalidatePath.
 //   - MCP tools (tools.ts) call these cores directly — no revalidatePath needed.
 
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { startOfDay, endOfDay } from "@/lib/calendar";
 
@@ -186,4 +187,105 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
     },
   });
   return { id: h.id, finalized: false, deduped: false, message: "Hike logged" };
+}
+
+// ---------------------------------------------------------------------------
+// updateHikeCore — PATCH any existing hike row in place.
+//
+// Mirrors apply_day_override's PATCH envelope ({ updatedFields, preservedFields }).
+// Distinct from logHikeCore's replacesPlannedHikeId, which finalizes a *planned*
+// row into completed — update_hike edits a row in place WITHOUT changing what it
+// represents (fix attribution / backfill summitFt / correct fields without
+// losing splits, rpe, or notes via delete-and-relog).
+// ---------------------------------------------------------------------------
+
+// Columns update_hike can patch, in stable display order (drives the envelope).
+const HIKE_PATCH_FIELDS = [
+  "date",
+  "route",
+  "distanceMi",
+  "elevationFt",
+  "summitFt",
+  "packWeightLb",
+  "durationMin",
+  "status",
+  "rpe",
+  "notes",
+  "goalId",
+] as const;
+type HikePatchField = (typeof HIKE_PATCH_FIELDS)[number];
+
+export interface UpdateHikeCoreInput {
+  id: string;
+  date?: string;
+  route?: string;
+  distanceMi?: number;
+  elevationFt?: number;
+  summitFt?: number | null;
+  packWeightLb?: number | null;
+  durationMin?: number;
+  status?: string;
+  rpe?: number | null;
+  notes?: string | null;
+  goalId?: string | null;
+}
+
+export type UpdateHikeCoreResult =
+  | { ok: false; error: "hike_not_found"; id: string }
+  | { ok: false; error: "goal_not_found"; goalId: string }
+  | {
+      ok: true;
+      id: string;
+      updatedFields: string[];
+      preservedFields: string[];
+      hike: Awaited<ReturnType<typeof prisma.hike.update>>;
+    };
+
+export async function updateHikeCore(
+  input: UpdateHikeCoreInput,
+  parseDate: (s: string) => Date,
+): Promise<UpdateHikeCoreResult> {
+  // THE correctness detail: a key is "present" if it was supplied in the
+  // payload — INCLUDING an explicit null (= clear a nullable field). Absent OR
+  // undefined means preserve. Because null !== undefined, summitFt:null and
+  // rpe:0 both count as present and round-trip correctly. We test presence,
+  // never truthiness.
+  const present = (k: HikePatchField) => k in input && input[k] !== undefined;
+
+  const existing = await prisma.hike.findUnique({ where: { id: input.id } });
+  if (!existing) return { ok: false, error: "hike_not_found", id: input.id };
+
+  // Validate goalId BEFORE writing so a bad ref never leaves a partial update.
+  // `!= null` is exactly "present and non-null" — null (clear) and absent
+  // (preserve) both legitimately skip the existence check.
+  if (input.goalId != null) {
+    const goal = await prisma.goal.findUnique({
+      where: { id: input.goalId },
+      select: { id: true },
+    });
+    if (!goal) return { ok: false, error: "goal_not_found", goalId: input.goalId };
+  }
+
+  // Unchecked update lets us assign the goalId scalar (incl. null = clear)
+  // directly instead of relation connect/disconnect.
+  const data: Prisma.HikeUncheckedUpdateInput = {};
+  const updatedFields: string[] = [];
+
+  for (const f of HIKE_PATCH_FIELDS) {
+    if (!present(f)) continue;
+    if (f === "date") {
+      data.date = parseDate(input.date!);
+    } else {
+      // Non-nullable columns already had null rejected by Zod; nullable ones
+      // pass null through to clear. Scalar assignment via unchecked input.
+      (data as Record<string, unknown>)[f] = input[f];
+    }
+    updatedFields.push(f);
+  }
+
+  const hike = await prisma.hike.update({ where: { id: input.id }, data });
+  const preservedFields = HIKE_PATCH_FIELDS.filter(
+    (f) => !updatedFields.includes(f),
+  );
+  return { ok: true, id: hike.id, updatedFields, preservedFields, hike };
 }
