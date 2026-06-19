@@ -89,6 +89,9 @@ Builtin macros come from USDA FoodData Central reference data (curated in `src/l
 ### 6. Operating rules live in THREE places — change them together
 `docs/server-instructions/goaldmine-rules.md` ↔ `COACH_INSTRUCTIONS` in `src/app/api/mcp/[token]/route.ts` ↔ the deployed connector text. Edit all in the same PR or they drift.
 
+### 7. A running `next dev` bundles the OLD Prisma client — restart after a migration
+`prisma migrate dev` / `prisma generate` rewrites `src/generated/prisma`, but a dev server that was already running keeps serving the **previously bundled** client. Symptom: a brand-new column reads/writes fail at runtime with `Unknown argument "<col>". Available options are marked with ?` — listing every field **except** the one you just added — while `npx tsc --noEmit` passes clean (tsc reads the fresh types off disk; the Turbopack chunk is stale). This bit us adding `Hike.summitFt` (2026-06-19): `update_hike` rejected `summitFt` until the server was bounced. Fix: after any `migrate dev`/`generate`, **kill and restart `npm run dev`** (HMR does not re-bundle the generated client). The production analog is the connector cache (§C) — different cache, same "schema changed, consumer didn't notice" shape.
+
 ---
 
 ## E. RPG game engine gotchas (dev)

@@ -12,7 +12,7 @@ import {
   deleteWorkoutCore,
   WorkoutOpSchema,
 } from "@/lib/workout-core";
-import { logHikeCore } from "@/lib/hike-core";
+import { logHikeCore, updateHikeCore } from "@/lib/hike-core";
 import {
   appendBaselineToDayWorkout,
   removeBaselineFromDayWorkout,
@@ -927,6 +927,7 @@ function registerReadTools(server: McpServer) {
         "Coverage = { tested, total } showing how many targets have any data. " +
         "Gating: targets with gating:true cap the score at 80 until cleared (progress ≥ 1). " +
         "gates[] lists each gating target with its cleared status; openGateCount is the number still open. " +
+        "Compound gates carry a subConditions readout — e.g. the hike prep gate exposes { qualifyingCount, packHikes, above12k } so you can see WHICH sub-condition is still blocking (a full progress bar alone does not clear it). " +
         "ceiling is 80 when any gate is open, 100 when all are cleared. " +
         "Use it to answer 'how ready am I for the goal', 'which gates are still open', or to check if a logged result moved the needle. " +
         "Read-only — never writes. To change targets/weights/gate flags, use update_goal_targets.",
@@ -2388,6 +2389,39 @@ function registerWriteTools(server: McpServer) {
           replacesPlannedHikeId: input.replacesPlannedHikeId,
         }),
       ),
+  );
+
+  server.registerTool(
+    "update_hike",
+    {
+      title: "PATCH an existing hike row in place (any field, any status)",
+      description:
+        "General PATCH on any existing Hike row (completed/planned/skipped) by id. " +
+        "Unlike log_hike's replacesPlannedHikeId (which finalizes a *planned* row into completed), " +
+        "update_hike edits a row in place WITHOUT changing what it represents — use it to fix attribution " +
+        "(goalId), backfill summit altitude (summitFt — the high-point altitude, distinct from elevationFt which is GAIN), " +
+        "or correct route/distance/rpe/notes without losing splits or RPE via delete-and-relog. " +
+        "PATCH semantics: omit a field to preserve it; pass an explicit null to CLEAR a nullable field " +
+        "(summitFt, packWeightLb, rpe, notes, goalId). Non-nullable fields (date, route, distanceMi, " +
+        "elevationFt, durationMin, status) reject null. " +
+        "Returns { ok, updatedFields, preservedFields, hike }; ok:false with error 'hike_not_found' or " +
+        "'goal_not_found' (with no write performed) when the id or a non-null goalId doesn't resolve.",
+      inputSchema: {
+        id: z.string(),
+        date: z.string().optional(),
+        route: z.string().min(1).optional(),
+        distanceMi: z.number().min(0).optional(),
+        elevationFt: z.number().int().min(0).optional(),
+        summitFt: z.number().int().min(0).nullish(),
+        packWeightLb: z.number().min(0).nullish(),
+        durationMin: z.number().int().min(0).optional(),
+        rpe: z.number().min(0).max(10).nullish(),
+        notes: z.string().nullish(),
+        status: z.enum(["completed", "planned", "skipped"]).optional(),
+        goalId: z.string().nullish(),
+      },
+    },
+    async (input) => safe(() => updateHikeCore(input, parseDateInput)),
   );
 
   server.registerTool(

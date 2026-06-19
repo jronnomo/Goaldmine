@@ -9,7 +9,11 @@ import type { GoalTarget } from "@/lib/metrics-registry";
 // vi.mock is hoisted above imports by Vitest — the DB stub prevents the
 // "DATABASE_URL is not set" throw that readiness.ts would trigger via
 // its `import { prisma } from "@/lib/db"`.
-vi.mock("@/lib/db", () => ({ prisma: {} }));
+// prisma.hike is stubbed so the compound prep-gate path (resolveHikePrepGateExtras)
+// can be driven per-test; generic gating tests use non-prep metrics and never hit it.
+vi.mock("@/lib/db", () => ({
+  prisma: { hike: { count: vi.fn(), findFirst: vi.fn() } },
+}));
 
 // Replace the Prisma-backed async helpers with controllable vi.fn stubs.
 // LOG_METRIC_PREFIX is kept at its real value ("log:") so the routing logic
@@ -22,6 +26,7 @@ vi.mock("@/lib/goal-targets", () => ({
 
 import { progressFor, computeReadiness, GATE_CEILING } from "@/lib/readiness";
 import { resolveMetricValue, resolveMetricStart } from "@/lib/goal-targets";
+import { prisma } from "@/lib/db";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,7 +148,7 @@ describe("computeReadiness — gating behavior", () => {
 
   it("open gating target (progress < 1): ceiling=80, score=Math.min(rawScore,80)", async () => {
     const targets: GoalTarget[] = [
-      mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 6, weight: 1, gating: true }),
+      mkTarget({ metric: "hike:max_elevation_single", direction: "increase", target: 6, weight: 1, gating: true }),
     ];
     // current=3 → build-from-zero progress = 3/6 = 0.5 → rawScore=50 → score=min(50,80)=50
     vi.mocked(resolveMetricValue).mockResolvedValue(3);
@@ -161,7 +166,7 @@ describe("computeReadiness — gating behavior", () => {
 
   it("rawScore above ceiling is capped at 80 while gate is open", async () => {
     const targets: GoalTarget[] = [
-      mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 10, weight: 1, gating: true }),
+      mkTarget({ metric: "hike:max_elevation_single", direction: "increase", target: 10, weight: 1, gating: true }),
     ];
     // current=9 → progress=0.9 → rawScore=90; gate not cleared (0.9<1) → cap at 80
     vi.mocked(resolveMetricValue).mockResolvedValue(9);
@@ -176,7 +181,7 @@ describe("computeReadiness — gating behavior", () => {
 
   it("all gating targets cleared: ceiling=100, score===rawScore", async () => {
     const targets: GoalTarget[] = [
-      mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 6, weight: 1, gating: true }),
+      mkTarget({ metric: "hike:max_elevation_single", direction: "increase", target: 6, weight: 1, gating: true }),
     ];
     // current=6 → progress = 6/6 = 1.0 → cleared
     vi.mocked(resolveMetricValue).mockResolvedValue(6);
@@ -193,7 +198,7 @@ describe("computeReadiness — gating behavior", () => {
 
   it("untested gating target (null current) is not cleared — still forces ceiling=80", async () => {
     const targets: GoalTarget[] = [
-      mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 6, weight: 1, gating: true }),
+      mkTarget({ metric: "hike:max_elevation_single", direction: "increase", target: 6, weight: 1, gating: true }),
     ];
     vi.mocked(resolveMetricValue).mockResolvedValue(null); // no data yet
     vi.mocked(resolveMetricStart).mockResolvedValue(0);
@@ -204,6 +209,71 @@ describe("computeReadiness — gating behavior", () => {
     expect(snap.openGateCount).toBe(1);
     expect(snap.gates[0]!.cleared).toBe(false);
     expect(snap.gates[0]!.progress).toBeNull();
+  });
+});
+
+// ── computeReadiness — compound hike prep gate (summitFt / pack sub-conditions) ─
+
+describe("computeReadiness — compound hike prep gate", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const prepTarget = (): GoalTarget[] => [
+    mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 6, weight: 1, gating: true }),
+  ];
+
+  it("attaches subConditions { qualifyingCount, packHikes, above12k } to the prep gate", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(3); // 3/6 qualifying
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+    vi.mocked(prisma.hike.count).mockResolvedValue(1);        // 1 pack hike
+    vi.mocked(prisma.hike.findFirst).mockResolvedValue({ id: "h1" } as never); // a 12k+ hike exists
+
+    const snap = await computeReadiness(prepTarget(), FIXED_DATE, GOAL_ID);
+
+    expect(snap.gates[0]!.subConditions).toEqual({
+      qualifyingCount: { have: 3, need: 6 },
+      packHikes: { have: 1, need: 2 },
+      above12k: { have: true },
+    });
+  });
+
+  it("does NOT clear while pack/12k unmet even when qualifyingCount ≥ need (full progress bar)", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(6); // 6/6 → progress 1.0
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+    vi.mocked(prisma.hike.count).mockResolvedValue(0);        // 0 pack hikes
+    vi.mocked(prisma.hike.findFirst).mockResolvedValue(null); // no 12k hike
+
+    const snap = await computeReadiness(prepTarget(), FIXED_DATE, GOAL_ID);
+
+    expect(snap.gates[0]!.progress).toBe(1);      // bar is full…
+    expect(snap.gates[0]!.cleared).toBe(false);   // …but gate stays closed
+    expect(snap.ceiling).toBe(GATE_CEILING);      // ceiling still capped
+  });
+
+  it("clears only when all three sub-conditions hold", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(6); // 6/6 qualifying
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+    vi.mocked(prisma.hike.count).mockResolvedValue(2);        // 2 pack hikes
+    vi.mocked(prisma.hike.findFirst).mockResolvedValue({ id: "h1" } as never); // 12k hike exists
+
+    const snap = await computeReadiness(prepTarget(), FIXED_DATE, GOAL_ID);
+
+    expect(snap.gates[0]!.cleared).toBe(true);
+    expect(snap.ceiling).toBe(100);
+    expect(snap.openGateCount).toBe(0);
+  });
+
+  it("above12k reads summitFt via findFirst — false when no qualifying summit", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(6);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+    vi.mocked(prisma.hike.count).mockResolvedValue(5);        // pack OK
+    vi.mocked(prisma.hike.findFirst).mockResolvedValue(null); // no summit ≥ 12k
+
+    const snap = await computeReadiness(prepTarget(), FIXED_DATE, GOAL_ID);
+
+    expect(snap.gates[0]!.subConditions!.above12k).toEqual({ have: false });
+    expect(snap.gates[0]!.cleared).toBe(false); // blocked solely by above12k
   });
 });
 
@@ -276,11 +346,11 @@ describe("computeReadiness — coverage and missing", () => {
 
   it("openGateCount: two gating targets, one cleared → openGateCount=1", async () => {
     const targets: GoalTarget[] = [
-      mkTarget({ metric: "hike:prep_completion", direction: "increase", target: 6, weight: 0.5, gating: true }),
+      mkTarget({ metric: "hike:total_elevation_ft", direction: "increase", target: 6, weight: 0.5, gating: true }),
       mkTarget({ metric: "hike:max_elevation_single", direction: "increase", target: 4000, weight: 0.5, gating: true }),
     ];
     vi.mocked(resolveMetricValue)
-      .mockResolvedValueOnce(6)    // prep_completion=6/6=1 → cleared
+      .mockResolvedValueOnce(6)    // total_elevation=6/6=1 → cleared
       .mockResolvedValueOnce(2000); // max_elevation=2000/4000=0.5 → not cleared
     vi.mocked(resolveMetricStart).mockResolvedValue(0);
 
