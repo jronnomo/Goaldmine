@@ -29,7 +29,7 @@ import type { TargetProgress } from "@/lib/readiness";
 import { getExerciseSummaries } from "@/lib/records";
 import { computeGameState } from "@/lib/game/engine";
 import type { GoalTarget } from "@/lib/goal-targets";
-import type { ExerciseSummary, MetricKind } from "@/lib/records";
+import type { ExerciseSummary } from "@/lib/records";
 
 // ─── Template ────────────────────────────────────────────────────────────────
 
