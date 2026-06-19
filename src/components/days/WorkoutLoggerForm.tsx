@@ -151,6 +151,16 @@ function SetRowInputs({
 }
 
 // ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
+function formatDuration(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
 // PR Strip — shown after successful log
 // ---------------------------------------------------------------------------
 
@@ -175,7 +185,11 @@ function RecordStrip({ records, workoutId }: { records: RecordSet[]; workoutId: 
               ? `${Math.round(r.value)} lb (1RM)`
               : r.kind === "reps"
                 ? `${r.value} reps`
-                : `${r.value}s`}
+                : r.kind === "distance"
+                  ? `${r.value.toFixed(2)} mi`
+                  : r.kind === "time"
+                    ? formatDuration(r.value)
+                    : `${r.value}s`}
           </span>
         </div>
       ))}
