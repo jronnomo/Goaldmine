@@ -379,7 +379,7 @@ export async function computeWeeklyRecap(
       source: "exercise" as const,
       name: s.name,
       bestValue: s.bestValue,
-      units: UNIT_FROM_PRIMARY[s.primary as MetricKind],
+      units: UNIT_FROM_PRIMARY[s.primary],
     }));
     const prCount = prs.length;
 

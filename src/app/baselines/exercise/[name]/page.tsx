@@ -72,7 +72,7 @@ export default async function ExerciseRecordDetail({
                 className="flex justify-between items-baseline gap-3"
               >
                 <div>
-                  <p className="font-mono text-sm">{rawText(h)}</p>
+                  <p className="font-mono text-sm">{rawText(h, summary?.primary)}</p>
                   {h.workoutTitle && (
                     <p className="text-xs text-[var(--muted)]">{h.workoutTitle}</p>
                   )}
@@ -89,9 +89,10 @@ export default async function ExerciseRecordDetail({
   );
 }
 
-function rawText(h: { rawWeight: number | null; rawReps: number | null; rawDuration: number | null; rawDistance: number | null }): string {
+function rawText(h: { rawWeight: number | null; rawReps: number | null; rawDuration: number | null; rawDistance: number | null }, primary?: MetricKind): string {
   if (h.rawWeight !== null && h.rawReps !== null) return `${h.rawWeight} lb × ${h.rawReps}`;
   if (h.rawReps !== null) return `${h.rawReps} reps`;
+  if (primary === "time" && h.rawDuration !== null) return formatDuration(h.rawDuration);
   if (h.rawDistance !== null) return `${h.rawDistance.toFixed(2)} mi`;
   if (h.rawDuration !== null) return formatDuration(h.rawDuration);
   return "—";
