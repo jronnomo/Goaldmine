@@ -1,0 +1,127 @@
+[
+  [
+    "67",
+    "Sprint 6",
+    "fields-rc:0000 | Create the pure goal-presentation registry mo"
+  ],
+  [
+    "68",
+    "Sprint 6",
+    "fields-rc:0000 | Add statSlots, resolveStatSlot, gated project"
+  ],
+  [
+    "69",
+    "Sprint 6",
+    "fields-rc:0000 | Drive recap-card ring labels, headers, and st"
+  ],
+  [
+    "70",
+    "Sprint 6",
+    "fields-rc:0000 | Add Vitest coverage pinning fitness statSlots"
+  ],
+  [
+    "71",
+    "Sprint 6",
+    "fields-rc:0000 | Sprint 6 QA: typecheck, build, MCP recap shap"
+  ],
+  [
+    "72",
+    "Sprint 7",
+    "fields-rc:0000 | Drive Today rest-day copy from presentation.r"
+  ],
+  [
+    "73",
+    "Sprint 7",
+    "fields-rc:0000 | Route legend.ts resolveLegend kind selection "
+  ],
+  [
+    "74",
+    "Sprint 7",
+    "fields-rc:0000 | Gate the progress-page weight chart on weight"
+  ],
+  [
+    "75",
+    "Sprint 7",
+    "fields-rc:0000 | Add a fitness counterpart coaching doc (docs/"
+  ],
+  [
+    "76",
+    "Sprint 7",
+    "fields-rc:0000 | Sprint 7 QA \u2014 fitness un-regressed + project "
+  ],
+  [
+    "77",
+    "Sprint 8",
+    "fields-rc:0000 | Build the goal-generic FeasibilityReadout ser"
+  ],
+  [
+    "78",
+    "Sprint 8",
+    "fields-rc:0000 | Surface FeasibilityReadout on Today (fitness "
+  ],
+  [
+    "79",
+    "Sprint 8",
+    "fields-rc:0000 | Surface FeasibilityReadout on the goal detail"
+  ],
+  [
+    "80",
+    "Sprint 8",
+    "fields-rc:0000 | Advertise feasibility in get_goal's descripti"
+  ],
+  [
+    "81",
+    "Sprint 8",
+    "fields-rc:0000 | Verify the feasibility surface end-to-end acr"
+  ],
+  [
+    "82",
+    "Sprint 9",
+    "fields-rc:0000 | Unit-test progressFor + computeReadiness: gat"
+  ],
+  [
+    "83",
+    "Sprint 9",
+    "fields-rc:0000 | Unit-test computeTargetFeasibility: log: obse"
+  ],
+  [
+    "84",
+    "Sprint 9",
+    "fields-rc:0000 | Unit-test the goal-presentation registry: per"
+  ],
+  [
+    "85",
+    "Sprint 9",
+    "fields-rc:0000 | Unit-test resolveStatSlot + recap statSlots d"
+  ],
+  [
+    "86",
+    "Backlog",
+    "fields-rc:0000 | SPIKE: Proactive coach mechanism (scheduled r"
+  ],
+  [
+    "87",
+    "Backlog",
+    "fields-rc:0000 | EPIC: Close the content flywheel \u2014 auto Sunda"
+  ],
+  [
+    "88",
+    "Backlog",
+    "fields-rc:0000 | EPIC: Goal onboarding / the 'goal interview' "
+  ],
+  [
+    "89",
+    "Sprint 7",
+    "fields-rc:0000 | Update project-goal-prompts.md for the kind-a"
+  ],
+  [
+    "90",
+    "Backlog",
+    "fields-rc:0000 | DEFERRED: Goal.presentation Json? per-goal la"
+  ],
+  [
+    "91",
+    "Sprint 9",
+    "fields-rc:0000 | Sprint 9 QA \u2014 full Vitest suite green + build"
+  ]
+]

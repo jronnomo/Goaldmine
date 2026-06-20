@@ -1,0 +1,85 @@
+{
+  "epic": "Sprint 9 — Honesty-math tests",
+  "notes": "Decomposed from multi-domain-goal-engine-plan.md §4.7 / §5 Sprint 4 and plan-blueprint.md §7 Sprint 4. Vitest already landed (vitest.config.ts with @/ alias, src/**/*.test.ts include, node env; first test src/lib/food-units.test.ts) so no config work is needed for any story. These stories add unit tests on the load-bearing 'honesty engine' math so the multi-domain surfaces can never silently show a false-ready signal. progressFor and computeTargetFeasibility are pure (no DB); computeReadiness reaches Prisma via resolveMetricValue/resolveMetricStart and must have those resolvers mocked; resolveStatSlot + the goal-presentation registry are introduced in Sprint 6 and are prerequisites for the recap/stat-slot test stories.",
+  "stories": [
+    {
+      "epic": "Sprint 9 — Honesty-math tests",
+      "title": "Unit-test progressFor + computeReadiness: gating ceiling 80, untested=0, coverage, decrease, already-met, build-from-zero",
+      "value": "so that the readiness score is provably honest — a partially-logged or untested goal can never display a false 100%, gating targets verifiably cap the headline at 80, and every metric direction is scored correctly.",
+      "acceptanceCriteria": [
+        "New file src/lib/readiness.test.ts; `npx vitest run` is green",
+        "progressFor: build-from-zero increase metrics (log:*, hike:*, workout:count) return current/target (covers the no-start accumulation path); target===0 returns null",
+        "progressFor: already-met case — increase current>=target returns 1, decrease current<=target returns 1 (even when start is below target)",
+        "progressFor: decrease comparative metric returns clamped (start-current)/(start-target); start===target returns 0; current===null returns null (untested)",
+        "computeReadiness: an open gating target forces ceiling=80 and score=Math.min(rawScore,80) — covers the gating-cap → ceiling 80 case; all gates cleared yields ceiling=100",
+        "computeReadiness: an untested target counts as 0 progress at full weight in the denominator (covers untested=0 — asserts NO false-100% when one of two equally-weighted targets is unlogged)",
+        "computeReadiness: coverage returns {tested,total} where tested counts only breakdown rows with progress!==null; missing[] and openGateCount are correct",
+        "computeReadiness: totalWeight===0 returns score 0 / rawScore 0 (no NaN)",
+        "resolveMetricValue/resolveMetricStart from @/lib/goal-targets are mocked (vi.mock) so cases are deterministic without a live DB; goalId/asOf are passed but never hit Prisma"
+      ],
+      "touches": ["src/lib/readiness.test.ts"],
+      "effort": "Medium",
+      "priority": "P1 - High",
+      "dependsOn": [],
+      "sprint": "Sprint 9 — Honesty-math tests"
+    },
+    {
+      "epic": "Sprint 9 — Honesty-math tests",
+      "title": "Unit-test computeTargetFeasibility: log: observed path (>=3pts), <3pts unknown, met-check, ratioCap stall, decrease-sign",
+      "value": "so that the feasibility verdict is provably honest for any numeric goal — a thin data set reads 'unknown / does not count' instead of a confident tier, a stalled metric reads as a fantasy rather than easy, and decrease metrics are not silently inverted.",
+      "acceptanceCriteria": [
+        "New file src/lib/rarity-core.test.ts; `npx vitest run` is green",
+        "Tests the EXISTING engine (computeTargetFeasibility in rarity-core.ts) — pure function, no source change and no mocking required",
+        "log: observed path: observedPoints>=3 with positive observedWeeklyRate (null norm family) yields rateBasis 'observed', plausibleRate===observedWeeklyRate, a real numeric ratio and a non-unknown verdict, countsTowardTier:true",
+        "Honest <3-points path: observedPoints of 0/1/2 with a null-norm family returns verdict 'unknown', countsTowardTier:false, ratio null, rateBasis 'none' (asserts minObservedPoints stays 3 — no false confidence from a 2-point slope)",
+        "Met-check: gap<=0 (current already at/past target, both directions) returns verdict 'met', ratio 0, requiredRate 0, countsTowardTier:true",
+        "ratioCap stall path: observedPoints>=3 with observedWeeklyRate<=0 and null norm returns ratio===ratioCap (99), verdict 'legendary', countsTowardTier:true (stalled = effectively impossible)",
+        "Decrease-sign normalization: a decrease metric passed a pre-normalized positive observedWeeklyRate is treated as improving (real ratio, not regression) — documents the caller's negate convention",
+        "Never-measured guard: current===null with no explicit target.start returns verdict 'unknown', countsTowardTier:false, requiredRate null"
+      ],
+      "touches": ["src/lib/rarity-core.test.ts"],
+      "effort": "Medium",
+      "priority": "P2 - Medium",
+      "dependsOn": [],
+      "sprint": "Sprint 9 — Honesty-math tests"
+    },
+    {
+      "epic": "Sprint 9 — Honesty-math tests",
+      "title": "Unit-test the goal-presentation registry: per-kind config + __default__ fallback",
+      "value": "so that the kind→presentation seam is pinned — fitness keeps its 4 recapField slots and READINESS ring, project resolves exactly 2 data-backed slots (MRR/MILESTONES) and a PROGRESS ring, and an unknown/null kind falls back to the labeled __default__ clone rather than mislabeling.",
+      "acceptanceCriteria": [
+        "New file src/lib/goal-presentation.test.ts; `npx vitest run` is green",
+        "presentationForGoal({kind:'fitness'}) returns ringLabel 'READINESS', headerStyle 'program-week', 4 statSlots (WORKOUTS/VOLUME/NEW PRs/ELEVATION) all source.from 'recapField', restCopy non-null, legendDefault 'fitness'",
+        "presentationForGoal({kind:'project'}) returns ringLabel 'PROGRESS' (NOT 'TRACTION'), headerStyle 'weeks-to-target', exactly 2 statSlots — MRR (logLatest 'mrr', currency) and MILESTONES (scheduledItem milestone doneOverTotal, ratioOfTotal), restCopy null, legendDefault 'project'",
+        "Unknown kind, null kind, and undefined goal all return the DEFAULT_PRESENTATION whose kind === '__default__' and whose slots match fitness (default-by-omission is the explicit labeled safety net, not 'fitness is universal')",
+        "Asserts project does NOT declare Subs/Conversion slots (the anti-vertical guardrail — only data-backed slots exist)"
+      ],
+      "touches": ["src/lib/goal-presentation.test.ts"],
+      "effort": "Small",
+      "priority": "P2 - Medium",
+      "dependsOn": ["Create the pure goal-presentation registry module (goal-presentation.ts)"],
+      "sprint": "Sprint 9 — Honesty-math tests"
+    },
+    {
+      "epic": "Sprint 9 — Honesty-math tests",
+      "title": "Unit-test resolveStatSlot + recap statSlots derivation per kind (fitness byte-identical, project —/0/7)",
+      "value": "so that the recap aggregator's per-kind stat derivation is provably correct — fitness slots resolve to byte-identical strings (no pixel regression on the live card) and a project goal honestly resolves MRR '—' (no logs) and MILESTONES '0/7' from ScheduledItem, never a fake $0 or a misleading dash for real milestones.",
+      "acceptanceCriteria": [
+        "New file src/lib/recap.test.ts; `npx vitest run` is green",
+        "resolveStatSlot (pure, fed a fabricated ctx — no DB): fitness recapField slots produce exactly the current strings via the hoisted formatters — String(n) for int, fmtVolume '2,370 lb' / '—', fmtElevation '5,200 ft' / '—' — with the same isNull flags (volumeLb===null, hikeElevationFt===null)",
+        "resolveStatSlot: project logLatest('mrr') with no logged value resolves to '—' isNull:true (honest dash, not '$0'); a present value formats as currency '$1,000'",
+        "resolveStatSlot: project scheduledItem(milestone, doneOverTotal) with {done:0,total:7} resolves to '0/7' isNull:false (sourced from the ScheduledItem aggregate, NOT log:milestones_done — the two-truths invariant)",
+        "Recap aggregator derivation: computeWeeklyRecap (Prisma mocked) emits statSlots whose length and values match the goal's presentation per kind — 4 fitness slots byte-identical to the legacy workoutsCompleted/volumeLb/prCount/hikeElevationFt fields (snapshot), 2 project slots resolving '—' and '0/7'",
+        "Legacy recap fields (workoutsCompleted/volumeLb/prCount/hikeElevationFt) remain present on the bundle alongside statSlots"
+      ],
+      "touches": ["src/lib/recap.test.ts"],
+      "effort": "Medium",
+      "priority": "P2 - Medium",
+      "dependsOn": [
+        "Create the pure goal-presentation registry module (goal-presentation.ts)",
+        "Add resolveStatSlot + statSlots to the recap aggregator (recap.ts)"
+      ],
+      "sprint": "Sprint 9 — Honesty-math tests"
+    }
+  ]
+}

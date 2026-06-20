@@ -1,0 +1,126 @@
+{
+  "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+  "stories": [
+    {
+      "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+      "title": "Drive Today rest-day copy from presentation.restCopy instead of hardcoded Mt. Elbert text",
+      "value": "so that the rest-day recovery tip reflects each goal's kind (and project goals, which have no rest-day concept, show no tip) instead of always naming Mt. Elbert",
+      "acceptanceCriteria": [
+        "In src/app/page.tsx, resolve `const presentation = presentationForGoal(focusGoal)` near the existing focus-goal resolution (~line 23) and render the rest-day block body from `presentation.restCopy`.",
+        "The hardcoded 'Mt. Elbert' / aerobic-base literal string (page.tsx lines 247–254) is removed; copy text now comes from the registry (FITNESS_PRESENTATION.restCopy).",
+        "When `presentation.restCopy` is null (project kind / __default__ with null), the entire rest-day tip block is omitted — no empty `<p>`, no stray border.",
+        "Fitness un-regressed: for the fitness focus goal the rendered rest-day tip is pixel-identical to current production (same copy text via FITNESS_PRESENTATION.restCopy, same `isRestDay` gating, same Tailwind classes/border).",
+        "Project surfaces no longer mislabel: a project (Chewgether-kind) focus goal never renders the Mt. Elbert recovery tip on Today.",
+        "page.tsx stays a server component (no new `\"use client\"`); any date math continues through `@/lib/calendar` USER_TZ.",
+        "`npx tsc --noEmit` and `npm run lint` pass."
+      ],
+      "touches": [
+        "src/app/page.tsx",
+        "src/lib/goal-presentation.ts"
+      ],
+      "effort": "Small",
+      "priority": "P1 - High",
+      "dependsOn": [
+        "Create the pure goal-presentation registry module"
+      ],
+      "sprint": "Sprint 7 — Today + progress + legend kind-awareness"
+    },
+    {
+      "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+      "title": "Route legend.ts resolveLegend kind selection through presentation.legendDefault",
+      "value": "so that the legend default and every other kind-aware surface share one source of kind→config truth instead of legend.ts carrying its own `kind === 'project'` branch",
+      "acceptanceCriteria": [
+        "In src/lib/legend.ts, `resolveLegend` selects its default via `presentationForGoal(goal).legendDefault` ('fitness' → DEFAULT_LEGEND, 'project' → PROJECT_DEFAULT_LEGEND) rather than the inline `kind === 'project'` check (current lines ~98).",
+        "The stored-legend path is unchanged: a goal whose `legend` parses against LegendSchema still returns its own legend; a present-but-invalid legend still falls back to DEFAULT_LEGEND.",
+        "Fitness un-regressed: a fitness/null-kind goal with null legend still resolves to DEFAULT_LEGEND (byte-identical entries/order); the LegendKind enum and CalendarMonth.tsx coupling are untouched.",
+        "Project surfaces no longer mislabel: a project goal with null legend still resolves to PROJECT_DEFAULT_LEGEND via the registry.",
+        "goal-presentation.ts purity is preserved (legend.ts imports from it, not vice-versa; no Prisma/@lib/calendar pulled into the registry).",
+        "`npx tsc --noEmit` and `npm run lint` pass."
+      ],
+      "touches": [
+        "src/lib/legend.ts",
+        "src/lib/goal-presentation.ts"
+      ],
+      "effort": "Small",
+      "priority": "P1 - High",
+      "dependsOn": [
+        "Create the pure goal-presentation registry module"
+      ],
+      "sprint": "Sprint 7 — Today + progress + legend kind-awareness"
+    },
+    {
+      "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+      "title": "Gate the progress-page weight chart on weight-target presence and render an MRR trend for project goals",
+      "value": "so that the progress page shows a weight chart only when a goal actually tracks weight, and shows a project-appropriate MRR-over-time trend for project goals instead of always rendering the fitness weight card",
+      "acceptanceCriteria": [
+        "In src/app/progress/page.tsx, the Weight card (lines ~177–202) renders only when the focus goal has a weight-backed target — concretely when its `targets[]` contains a `weightLb` metric (equivalently a fitness presentation slot), NOT a bare `kind === 'fitness'` check.",
+        "A fitness goal that has no `weightLb` target does NOT render an empty weight chart (the §8.5 mis-gate guardrail).",
+        "For a project focus goal, an MRR-over-time trend renders in place of the weight card: reuse MilestoneBurnDown (already self-gating at line ~173) and add an MRR sparkline sourced from a `logEntry` query on metric 'mrr' for the focus goal.",
+        "Chewgether (0 MRR LogEntry rows) renders the MRR trend in its honest empty state (no rows → 'no MRR logged yet'-style placeholder, not a broken/empty chart); milestone burn-down still shows 0/7.",
+        "Any date bucketing / axis math for the MRR trend goes through `@/lib/calendar` (USER_TZ), never raw Date/getDate/setHours.",
+        "Fitness un-regressed: for the fitness focus goal (with a weightLb target) the Weight card, WeightChart, current/start/Δ stats, and MilestoneBurnDown gating are pixel-identical to current production.",
+        "progress/page.tsx stays a server component; the MRR sparkline is a server-rendered (or already-client) chart with no Date instances crossing the server→client boundary.",
+        "`npx tsc --noEmit` and `npm run lint` pass."
+      ],
+      "touches": [
+        "src/app/progress/page.tsx",
+        "src/lib/goal-presentation.ts",
+        "src/components/MilestoneBurnDown.tsx"
+      ],
+      "effort": "Medium",
+      "priority": "P1 - High",
+      "dependsOn": [
+        "Create the pure goal-presentation registry module"
+      ],
+      "sprint": "Sprint 7 — Today + progress + legend kind-awareness"
+    },
+    {
+      "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+      "title": "Add a fitness counterpart coaching doc (docs/coaching/fitness-goal-prompts.md)",
+      "value": "so that the coach's mental model is symmetric across verticals — documenting the fitness-shaped surfaces (ring=READINESS, stats=WORKOUTS/VOLUME/PRs/ELEVATION, rest-day copy, feasibility on Today/goal) the same way project-goal-prompts.md documents the project ones",
+      "acceptanceCriteria": [
+        "New file docs/coaching/fitness-goal-prompts.md exists, mirroring the structure of the existing docs/coaching/project-goal-prompts.md.",
+        "It documents the fitness Today/progress/recap surfaces in fitness framing: ring label READINESS, recap stats WORKOUTS/VOLUME/PRs/ELEVATION, the rest-day recovery tip, the weight chart on progress, and that feasibility is surfaced on Today and the goal page.",
+        "It states (matching the registry) that fitness is the `__default__` clone, i.e. null/unknown-kind goals render fitness-shaped — without implying fitness is the universal 'correct' default.",
+        "Documentation only: no production code is touched; markdown is internally consistent with the surfaces this sprint ships.",
+        "Fitness un-regressed and project unaffected (doc-only change; no runtime impact)."
+      ],
+      "touches": [
+        "docs/coaching/fitness-goal-prompts.md"
+      ],
+      "effort": "Small",
+      "priority": "P2 - Medium",
+      "dependsOn": [],
+      "sprint": "Sprint 7 — Today + progress + legend kind-awareness"
+    },
+    {
+      "epic": "Sprint 7 — Today + progress + legend kind-awareness",
+      "title": "Sprint 7 QA — fitness un-regressed + project surfaces correct at 390px (Today, progress, legend)",
+      "value": "so that the kind-aware Today/progress/legend changes are verified to leave fitness pixel-identical and to render project goals correctly on a phone before the sprint is called done",
+      "acceptanceCriteria": [
+        "With `npm run dev`, at ≤390px mobile width, walk Today and /progress for BOTH the fitness focus goal and the Chewgether project goal (switch focus goal as needed).",
+        "Fitness Today: rest-day tip copy/border identical to pre-sprint production. Fitness /progress: weight card + WeightChart + stats + MilestoneBurnDown gating identical. Fitness legend (CalendarMonth) entries identical.",
+        "Project Today: no Mt. Elbert rest-day tip appears. Project /progress: no empty weight chart; MRR trend + milestone burn-down (0/7) render with honest empty states. Project legend resolves to PROJECT_DEFAULT_LEGEND.",
+        "Weight chart confirmed to gate on weight-target presence, not bare kind: a fitness goal without a weightLb target shows no empty weight card.",
+        "`npx tsc --noEmit` clean, `npm run lint` clean, `npm run build` succeeds (SSR for / and /progress).",
+        "Cross-check Today against `get_today_plan` MCP output via the curl smoke for the active goal; UI and MCP agree.",
+        "Any defects found are filed back to the owning Sprint 7 story; no production code is modified by QA itself."
+      ],
+      "touches": [
+        "src/app/page.tsx",
+        "src/app/progress/page.tsx",
+        "src/lib/legend.ts",
+        "docs/coaching/fitness-goal-prompts.md"
+      ],
+      "effort": "Small",
+      "priority": "P1 - High",
+      "dependsOn": [
+        "Drive Today rest-day copy from presentation.restCopy instead of hardcoded Mt. Elbert text",
+        "Route legend.ts resolveLegend kind selection through presentation.legendDefault",
+        "Gate the progress-page weight chart on weight-target presence and render an MRR trend for project goals",
+        "Add a fitness counterpart coaching doc (docs/coaching/fitness-goal-prompts.md)"
+      ],
+      "sprint": "Sprint 7 — Today + progress + legend kind-awareness"
+    }
+  ]
+}

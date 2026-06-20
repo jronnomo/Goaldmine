@@ -1,0 +1,15 @@
+{
+  "feature": "Footage Markers — tag clips to day/task/exercise for ClipForge",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-footage-markers.md",
+  "prd_issue": null,
+  "main_head": "3be34682251725063fcad4b332bdb3db53924b0c",
+  "status": "architecting",
+  "decisions": {
+    "storage": "refs only (filename + capturedAt); no media bytes; ClipForge matches by filename/time",
+    "granularity": "day + optional task + optional exercise (by canonical name) + highlight flag",
+    "input_paths": "MCP log_footage + Day-page form",
+    "scope": "goaldmine side (model + UI + MCP read) + ClipForge consumer spec doc"
+  },
+  "migration_policy": "backend agent edits schema + prisma generate + typecheck; orchestrator runs `migrate dev` on main after SQL review (Neon = prod)"
+}

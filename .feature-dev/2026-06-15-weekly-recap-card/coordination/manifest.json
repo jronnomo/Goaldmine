@@ -1,0 +1,55 @@
+{
+  "feature": "Weekly Recap Card",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-weekly-recap-card.md",
+  "prd_issue": null,
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005"],
+  "agents": [
+    { "role": "research", "id": "aeafdd3aa994ad009", "status": "completed", "output": "agents/research-output.md" },
+    { "role": "ux-research", "id": "aa9cb955a48c3afa0", "status": "completed", "output": "docs/ux-research/weekly-recap-card.md", "commit": "9b7cae8" },
+    { "role": "architect", "id": "a2ecbbae89037c15e", "status": "completed", "output": "agents/architecture-blueprint.md" },
+    { "role": "devils-advocate", "id": "a20057d6253cf71dc", "status": "completed", "output": "agents/architecture-critique.md", "verdict": "NEEDS REVISION (4 crit) — resolved in v2 addendum" },
+    { "role": "dev-stream-A", "id": "af4873bb1b8eccb01", "status": "merged", "merged_sha": "4670bfe", "note": "cherry-picked onto main (worktree was stale pre-UX base); tsc+lint green; engine reviewed" },
+    { "role": "dev-stream-B", "id": "af817fff4693e8a83", "status": "merged", "merged_sha": "79bdacc" },
+    { "role": "qa", "id": "a64c6e56aa0a7714e", "status": "completed", "output": "agents/qa-report.md", "verdict": "MINOR FIXES — all CRITs PASS" },
+    { "role": "fix-slide1-satori", "id": "aee642ec7af41a038", "status": "merged", "merged_sha": "7b11ffb" },
+    { "role": "fix-card-layout", "id": "a0cbe14c83568a91d", "status": "running", "note": "iter2: card header overlap + vertical fill (visual finding) + font tracing in next.config.ts" }
+  ],
+  "iteration": 2,
+  "status": "iter2-layout-fix-running",
+  "visual_inspection": {
+    "card_coal": "body excellent (bullseye/goal/bar/streak/stats/fonts OK); BUGS: header counter+daterange overlap; footer crammed under stats with ~500px dead space at bottom",
+    "story_slide_1": "renders correctly — header clean, full layout good; do not touch slides",
+    "qa_findings": "header box-model (moderate, fixing), font Vercel-tracing (low, fixing), PRD AC-9 download-count wording (doc, fixed), all-caps header + overflow:hidden (cosmetic, leaving)"
+  },
+  "smoke_results": {
+    "card_coal": "200 image/png 1080x1920 OK",
+    "card_parchment": "200 image/png 1080x1920 OK",
+    "story_2_3": "200 1080x1920 OK",
+    "story_1": "FAIL satori multi-child div — fix in progress",
+    "bad_params": "400 OK",
+    "mcp_tools_list": "generate_recap_card present (89 tools)",
+    "mcp_tools_call": "image(valid PNG, no data: prefix)+text blocks; goalState has-data, 2 workouts — DB reachable at runtime",
+    "build": "compiles+bundles OK; static prerender of DB pages fails (no Neon in sandbox) — environmental, not a recap defect"
+  },
+  "known_followups": ["Geist-SemiBold.ttf is a temp copy of Regular (true SemiBold 404'd) — swap real file later; bold renders as regular until then"],
+  "blueprint_addendum": "agents/architecture-blueprint-v2-addendum.md (overrides blueprint on conflict)",
+  "dev_sequencing": "A (engine/render/MCP) → merge → B (routes/page); B imports A so sequential per dependency",
+  "decisions_addendum": {
+    "header_denominator": "dynamic plan.totalWeeks*7 (currently 84), NOT fixed 90 — user sign-off",
+    "ux_direction": "Bullseye Hero; templates Coal (default) + Parchment; pure-flexbox div-stack; fonts Geist + DM Serif Display"
+  },
+  "ux_research": {
+    "invoked": true,
+    "agent_id": "aa9cb955a48c3afa0",
+    "output_path": "docs/ux-research/weekly-recap-card.md",
+    "status": "running"
+  },
+  "decisions": {
+    "header": "Week N · Day M of 90 (program week + day-of-90, anchored to plan startedOn)",
+    "progress_bar": "goal-generic via computeReadiness(focusGoal.targets, weekEnd, focusGoal.id); dynamic goal label; never hardcode Elbert",
+    "week_scope": "current week through today (weekOffset 0 default), selectable backward",
+    "mcp_output": "generate_recap_card returns inline PNG + structured stats; defaults focus goal + current week; accepts goalId/weekOffset",
+    "render": "next/og ImageResponse, 1080x1920 PNG + 3-slide Stories set; no Prisma migration"
+  }
+}

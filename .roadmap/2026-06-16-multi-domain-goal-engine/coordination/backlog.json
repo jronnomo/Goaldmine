@@ -1,0 +1,574 @@
+[
+  {
+    "epic": "Sprint 6 \u2014 Presentation registry + recap card",
+    "title": "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters",
+    "value": "so that every recap/Today/progress/legend surface resolves kind-aware labels and stat slots from one client-safe seam instead of hardcoded fitness strings \u2014 the seam that unblocks the rest of the multi-domain work",
+    "acceptanceCriteria": [
+      "New file src/lib/goal-presentation.ts is pure / client-safe: no Prisma import, no @/lib/calendar import, no Node built-ins (same purity class as src/lib/rarity-core.ts) \u2014 confirmed by importing it from a Satori JSX context with no server-only resolution error",
+      "Exports the TypeScript shapes exactly per plan-blueprint.md \u00a71.3: StatFormat union (int|volumeLb|elevationFt|currency|ratioOfTotal|percent), StatSource declarative union (recapField|logLatest|scheduledItem|targetCurrent \u2014 NO closures, NO DB), StatSlot, HeaderStyle (program-week|weeks-to-target|none), GoalPresentation { kind, ringLabel, headerStyle, statSlots, restCopy, legendDefault }",
+      "Exports FITNESS_PRESENTATION per \u00a71.4: ringLabel \"READINESS\", headerStyle \"program-week\", exactly 4 recapField statSlots keyed workouts/volume/prs/elevation with labels WORKOUTS/VOLUME/NEW PRs/ELEVATION and formats int/volumeLb/int/elevationFt, restCopy set to the generic recovery copy, legendDefault \"fitness\"",
+      "Exports PROJECT_PRESENTATION per \u00a71.4: ringLabel \"PROGRESS\" (NOT \"TRACTION\" \u2014 that re-narrows the engine to startups), headerStyle \"weeks-to-target\", restCopy null, legendDefault \"project\", and exactly 2 statSlots \u2014 { key:\"mrr\", label:\"MRR\", source:{from:\"logLatest\", metricKey:\"mrr\"}, format:\"currency\" } and { key:\"milestones\", label:\"MILESTONES\", source:{from:\"scheduledItem\", itemType:\"milestone\", agg:\"doneOverTotal\"}, format:\"ratioOfTotal\" } \u2014 NO Subs/Conversion cells",
+      "presentationForGoal(goal) returns REGISTRY[goal.kind] when present, else a DEFAULT_PRESENTATION that is a clone of FITNESS_PRESENTATION with kind relabeled \"__default__\" (never \"fitness\") \u2014 matches the existing goal.kind ?? \"fitness\" defaulting in recap.ts and legend.ts while keeping neither vertical default-by-omission",
+      "fmtVolume and fmtElevation are defined and exported here (hoisted from recap-card.tsx:17-23) and produce byte-identical output: \"2,370 lb\" / \"5,200 ft\" for numbers and \"\u2014\" for null \u2014 verified against the current recap-card.tsx implementations",
+      "Chewgether acceptance criterion: presentationForGoal({ kind: \"project\" }) returns ringLabel \"PROGRESS\" and statSlots of length 2 keyed exactly [mrr, milestones]; presentationForGoal({ kind: null }) returns kind \"__default__\" with the fitness 4-slot grid",
+      "npx tsc --noEmit passes, npm run lint passes, npm run build passes"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.ts"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 6 \u2014 Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 \u2014 Presentation registry + recap card",
+    "title": "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap",
+    "value": "so that the recap bundle carries kind-aware resolved stat slots plus a weeks-to-target header for project goals, while the fitness numbers and legacy fields stay byte-identical and no project query runs for a fitness goal",
+    "acceptanceCriteria": [
+      "computeWeeklyRecap is restructured to goal-first fetch \u2192 presentationForGoal(goal) \u2192 a single gated Promise.all that runs the project queries ONLY when presentation.statSlots declare them (the existing Promise.all at recap.ts:180-211 cannot gate inside the block that fetches the goal itself \u2014 fetch order fix per blueprint \u00a72.2)",
+      "Adds resolveStatSlot(slot, ctx) that switches on slot.source.from over already-fetched data (ctx: { recap legacy fields, logLatest Map, scheduledAgg Map, breakdown, targets }) and returns { key, label, value, isNull } \u2014 handling all four sources recapField / logLatest / scheduledItem / targetCurrent; no Prisma access inside the pure registry",
+      "WeeklyRecap gains statSlots: ResolvedStatSlot[]; the four legacy fields workoutsCompleted, volumeLb, prCount, hikeElevationFt REMAIN on the bundle (the MCP generate_recap_card stats JSON and the highlight logic at recap.ts:327-424 still read them)",
+      "logLatest source uses prisma.logEntry.findFirst({ where:{ goalId, metric:<key>, value:{not:null} }, orderBy:{ date:\"desc\" } }); scheduledAgg source uses prisma.scheduledItem.groupBy({ by:[\"status\"], where:{ goalId, type:<itemType> } }) reduced to { done, total } \u2014 the Milestones stat sources from this ScheduledItem aggregate, NOT log:milestones_done (avoids the \u00a70.2 desync; matches MilestoneBurnDown)",
+      "RecapProgramHeader gains weeksToTarget (number) and targetDateLabel (string) computed via @/lib/calendar (USER_TZ-correct), never raw Date math; populated only when headerStyle is weeks-to-target",
+      "Fitness byte-identical: for the Mt. Elbert goal, statSlots resolve to the same strings the card prints today (e.g. \"2\", \"2,370 lb\", \"1\", \"5,200 ft\") with isNull flags matching volumeLb===null / hikeElevationFt===null; the four legacy fields are unchanged",
+      "No project query (logEntry.findFirst / scheduledItem.groupBy) executes for a fitness focus goal \u2014 the gated Promise.all skips them",
+      "Chewgether acceptance criterion: computeWeeklyRecap for goal cmqbfseel0000cgdn3oz1uz2u yields statSlots [{ key:\"mrr\", value:\"\u2014\", isNull:true }, { key:\"milestones\", value:\"0/7\", isNull:false }] and header weeksToTarget \u2248 15 with targetDateLabel reflecting 2026-09-30",
+      "npx tsc --noEmit, npm run lint, npm run build pass; MCP curl weekly_summary_data for the fitness goal returns the unchanged stats shape (4 legacy fields intact)"
+    ],
+    "touches": [
+      "src/lib/recap.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 6 \u2014 Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 \u2014 Presentation registry + recap card",
+    "title": "Drive recap-card ring labels, headers, and stat grids from the presentation registry",
+    "value": "so that the OG recap card renders the kind-correct ring label, header style, and stat grid for any goal from one presentation source \u2014 and the fitness card stays pixel-identical",
+    "acceptanceCriteria": [
+      "recap-card.tsx resolves const presentation = presentationForGoal(recap.goal) once per slide (near line 300 and the SlideOne path) and imports fmtVolume/fmtElevation from goal-presentation.ts \u2014 the local copies at recap-card.tsx:17-23 are removed (one shared formatter, byte-identical fitness)",
+      "Both ring labels (lines 426 and 855) read presentation.ringLabel \u2014 \"READINESS\" for fitness, \"PROGRESS\" for project",
+      "Both program lines (lines 304-307 and 793-795) switch on presentation.headerStyle: program-week renders the current \"WEEK n \u00b7 DAY m OF d\" string; weeks-to-target renders e.g. \"15 WEEKS TO SEP 30\" from recap.header.weeksToTarget / targetDateLabel; none omits the line",
+      "Both stat grids (lines 588-651 and 950-961) map recap.statSlots into StatCell (StatCell itself unchanged), rendering a single centered row when length 2 and a 2\u00d72 when length 4 \u2014 no dash-padded fake 4-cell grid",
+      "Satori re-render verified: card renders with no Satori error, flex-only layout, inline styles, no conic-gradient, no CSS vars, SVG stroke-dasharray progress ring intact (per memory satori-no-conic-use-svg-arc)",
+      "Fitness byte-identical: the Mt. Elbert recap card at \u2264390px is visually identical to pre-change \u2014 same ring label READINESS, same 2\u00d72 WORKOUTS/VOLUME/NEW PRs/ELEVATION values and isNull dashes, same WEEK n \u00b7 DAY m OF d header string",
+      "Chewgether acceptance criterion: the card for goal cmqbfseel0000cgdn3oz1uz2u renders a PROGRESS ring, a \"weeks to SEP 30\" header, and a single 2-cell row showing MRR \"\u2014\" and MILESTONES \"0/7\"",
+      "npx tsc --noEmit, npm run lint, npm run build pass"
+    ],
+    "touches": [
+      "src/lib/recap-card.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters",
+      "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap"
+    ],
+    "sprint": "Sprint 6 \u2014 Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 \u2014 Presentation registry + recap card",
+    "title": "Add Vitest coverage pinning fitness statSlots byte-identical and project MRR/milestones slots",
+    "value": "so that the registry refactor can never silently drift the fitness card strings, and the project path's \u2014/0/7 derivation is locked against regression",
+    "acceptanceCriteria": [
+      "A Vitest spec (e.g. src/lib/goal-presentation.test.ts) drives resolveStatSlot per kind with synthetic ctx (no DB), asserting the fitness 4 slots resolve to the exact strings + isNull flags the card prints today (e.g. \"2\", \"2,370 lb\", \"1\", \"5,200 ft\"; null volume/elevation \u2192 \"\u2014\" isNull:true)",
+      "Test asserts presentationForGoal for fitness returns ringLabel \"READINESS\", headerStyle \"program-week\", and slot order WORKOUTS/VOLUME/NEW PRs/ELEVATION; and that null/unknown kind returns kind \"__default__\" with the same 4 slots",
+      "Chewgether acceptance criterion: a project fixture (kind \"project\", targets log:mrr + log:milestones_done, logLatest mrr=null, scheduledAgg milestone {done:0,total:7}) resolves statSlots to [{ key:\"mrr\", value:\"\u2014\", isNull:true }, { key:\"milestones\", value:\"0/7\", isNull:false }] with ringLabel \"PROGRESS\" and headerStyle \"weeks-to-target\"",
+      "Test confirms a milestone-progress fixture ({done:3,total:7}) resolves the milestones slot to \"3/7\" isNull:false, proving the ScheduledItem aggregate (not log:milestones_done) backs the stat",
+      "npx vitest run passes and the committed suite includes these cases alongside the existing food-units.test.ts setup",
+      "npx tsc --noEmit, npm run lint, npm run build pass"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap",
+      "Drive recap-card ring labels, headers, and stat grids from the presentation registry"
+    ],
+    "sprint": "Sprint 6 \u2014 Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 \u2014 Presentation registry + recap card",
+    "title": "Sprint 6 QA: typecheck, build, MCP recap shape, and 390px render for fitness and Chewgether",
+    "value": "so that Sprint 6 lands on main deployable with the Mt. Elbert surfaces un-regressed and the Chewgether recap card correctly relabeled and rendering without Satori errors",
+    "acceptanceCriteria": [
+      "npx tsc --noEmit, npm run lint, and npm run build are all green on the integrated Sprint 6 changes",
+      "MCP curl tools/list succeeds; weekly_summary_data / generate_recap_card for the fitness Mt. Elbert goal returns the unchanged stats JSON (4 legacy fields workoutsCompleted/volumeLb/prCount/hikeElevationFt intact)",
+      "Browser/OG smoke at \u2264390px: the fitness recap card is visually identical to pre-sprint \u2014 READINESS ring, 2\u00d72 WORKOUTS/VOLUME/NEW PRs/ELEVATION grid, \"WEEK n \u00b7 DAY m OF d\" header",
+      "Chewgether acceptance criterion: the recap card for goal cmqbfseel0000cgdn3oz1uz2u renders a PROGRESS ring, a weeks-to-target header (~15 weeks to SEP 30), and a 2-cell row of MRR \"\u2014\" + MILESTONES \"0/7\" \u2014 verified via the OG render route",
+      "Satori produces no render error for either goal (flex-only, no conic-gradient, SVG stroke-dasharray ring) per memory satori-no-conic-use-svg-arc",
+      "npx vitest run (the Sprint 6 snapshot/coverage suite) passes",
+      "No production files outside Sprint 6 scope were modified \u2014 only goal-presentation.ts, recap.ts, recap-card.tsx, and the test file"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.ts",
+      "src/lib/recap.ts",
+      "src/lib/recap-card.tsx",
+      "src/lib/goal-presentation.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Drive recap-card ring labels, headers, and stat grids from the presentation registry",
+      "Add Vitest coverage pinning fitness statSlots byte-identical and project MRR/milestones slots"
+    ],
+    "sprint": "Sprint 6 \u2014 Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Drive Today rest-day copy from presentation.restCopy instead of hardcoded Mt. Elbert text",
+    "value": "so that the rest-day recovery tip reflects each goal's kind (and project goals, which have no rest-day concept, show no tip) instead of always naming Mt. Elbert",
+    "acceptanceCriteria": [
+      "In src/app/page.tsx, resolve `const presentation = presentationForGoal(focusGoal)` near the existing focus-goal resolution (~line 23) and render the rest-day block body from `presentation.restCopy`.",
+      "The hardcoded 'Mt. Elbert' / aerobic-base literal string (page.tsx lines 247\u2013254) is removed; copy text now comes from the registry (FITNESS_PRESENTATION.restCopy).",
+      "When `presentation.restCopy` is null (project kind / __default__ with null), the entire rest-day tip block is omitted \u2014 no empty `<p>`, no stray border.",
+      "Fitness un-regressed: for the fitness focus goal the rendered rest-day tip is pixel-identical to current production (same copy text via FITNESS_PRESENTATION.restCopy, same `isRestDay` gating, same Tailwind classes/border).",
+      "Project surfaces no longer mislabel: a project (Chewgether-kind) focus goal never renders the Mt. Elbert recovery tip on Today.",
+      "page.tsx stays a server component (no new `\"use client\"`); any date math continues through `@/lib/calendar` USER_TZ.",
+      "`npx tsc --noEmit` and `npm run lint` pass."
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/lib/goal-presentation.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Route legend.ts resolveLegend kind selection through presentation.legendDefault",
+    "value": "so that the legend default and every other kind-aware surface share one source of kind\u2192config truth instead of legend.ts carrying its own `kind === 'project'` branch",
+    "acceptanceCriteria": [
+      "In src/lib/legend.ts, `resolveLegend` selects its default via `presentationForGoal(goal).legendDefault` ('fitness' \u2192 DEFAULT_LEGEND, 'project' \u2192 PROJECT_DEFAULT_LEGEND) rather than the inline `kind === 'project'` check (current lines ~98).",
+      "The stored-legend path is unchanged: a goal whose `legend` parses against LegendSchema still returns its own legend; a present-but-invalid legend still falls back to DEFAULT_LEGEND.",
+      "Fitness un-regressed: a fitness/null-kind goal with null legend still resolves to DEFAULT_LEGEND (byte-identical entries/order); the LegendKind enum and CalendarMonth.tsx coupling are untouched.",
+      "Project surfaces no longer mislabel: a project goal with null legend still resolves to PROJECT_DEFAULT_LEGEND via the registry.",
+      "goal-presentation.ts purity is preserved (legend.ts imports from it, not vice-versa; no Prisma/@lib/calendar pulled into the registry).",
+      "`npx tsc --noEmit` and `npm run lint` pass."
+    ],
+    "touches": [
+      "src/lib/legend.ts",
+      "src/lib/goal-presentation.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Gate the progress-page weight chart on weight-target presence and render an MRR trend for project goals",
+    "value": "so that the progress page shows a weight chart only when a goal actually tracks weight, and shows a project-appropriate MRR-over-time trend for project goals instead of always rendering the fitness weight card",
+    "acceptanceCriteria": [
+      "In src/app/progress/page.tsx, the Weight card (lines ~177\u2013202) renders only when the focus goal has a weight-backed target \u2014 concretely when its `targets[]` contains a `weightLb` metric (equivalently a fitness presentation slot), NOT a bare `kind === 'fitness'` check.",
+      "A fitness goal that has no `weightLb` target does NOT render an empty weight chart (the \u00a78.5 mis-gate guardrail).",
+      "For a project focus goal, an MRR-over-time trend renders in place of the weight card: reuse MilestoneBurnDown (already self-gating at line ~173) and add an MRR sparkline sourced from a `logEntry` query on metric 'mrr' for the focus goal.",
+      "Chewgether (0 MRR LogEntry rows) renders the MRR trend in its honest empty state (no rows \u2192 'no MRR logged yet'-style placeholder, not a broken/empty chart); milestone burn-down still shows 0/7.",
+      "Any date bucketing / axis math for the MRR trend goes through `@/lib/calendar` (USER_TZ), never raw Date/getDate/setHours.",
+      "Fitness un-regressed: for the fitness focus goal (with a weightLb target) the Weight card, WeightChart, current/start/\u0394 stats, and MilestoneBurnDown gating are pixel-identical to current production.",
+      "progress/page.tsx stays a server component; the MRR sparkline is a server-rendered (or already-client) chart with no Date instances crossing the server\u2192client boundary.",
+      "`npx tsc --noEmit` and `npm run lint` pass."
+    ],
+    "touches": [
+      "src/app/progress/page.tsx",
+      "src/lib/goal-presentation.ts",
+      "src/components/MilestoneBurnDown.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Add a fitness counterpart coaching doc (docs/coaching/fitness-goal-prompts.md)",
+    "value": "so that the coach's mental model is symmetric across verticals \u2014 documenting the fitness-shaped surfaces (ring=READINESS, stats=WORKOUTS/VOLUME/PRs/ELEVATION, rest-day copy, feasibility on Today/goal) the same way project-goal-prompts.md documents the project ones",
+    "acceptanceCriteria": [
+      "New file docs/coaching/fitness-goal-prompts.md exists, mirroring the structure of the existing docs/coaching/project-goal-prompts.md.",
+      "It documents the fitness Today/progress/recap surfaces in fitness framing: ring label READINESS, recap stats WORKOUTS/VOLUME/PRs/ELEVATION, the rest-day recovery tip, the weight chart on progress, and that feasibility is surfaced on Today and the goal page.",
+      "It states (matching the registry) that fitness is the `__default__` clone, i.e. null/unknown-kind goals render fitness-shaped \u2014 without implying fitness is the universal 'correct' default.",
+      "Documentation only: no production code is touched; markdown is internally consistent with the surfaces this sprint ships.",
+      "Fitness un-regressed and project unaffected (doc-only change; no runtime impact)."
+    ],
+    "touches": [
+      "docs/coaching/fitness-goal-prompts.md"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Sprint 7 QA \u2014 fitness un-regressed + project surfaces correct at 390px (Today, progress, legend)",
+    "value": "so that the kind-aware Today/progress/legend changes are verified to leave fitness pixel-identical and to render project goals correctly on a phone before the sprint is called done",
+    "acceptanceCriteria": [
+      "With `npm run dev`, at \u2264390px mobile width, walk Today and /progress for BOTH the fitness focus goal and the Chewgether project goal (switch focus goal as needed).",
+      "Fitness Today: rest-day tip copy/border identical to pre-sprint production. Fitness /progress: weight card + WeightChart + stats + MilestoneBurnDown gating identical. Fitness legend (CalendarMonth) entries identical.",
+      "Project Today: no Mt. Elbert rest-day tip appears. Project /progress: no empty weight chart; MRR trend + milestone burn-down (0/7) render with honest empty states. Project legend resolves to PROJECT_DEFAULT_LEGEND.",
+      "Weight chart confirmed to gate on weight-target presence, not bare kind: a fitness goal without a weightLb target shows no empty weight card.",
+      "`npx tsc --noEmit` clean, `npm run lint` clean, `npm run build` succeeds (SSR for / and /progress).",
+      "Cross-check Today against `get_today_plan` MCP output via the curl smoke for the active goal; UI and MCP agree.",
+      "Any defects found are filed back to the owning Sprint 7 story; no production code is modified by QA itself."
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/app/progress/page.tsx",
+      "src/lib/legend.ts",
+      "docs/coaching/fitness-goal-prompts.md"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Drive Today rest-day copy from presentation.restCopy instead of hardcoded Mt. Elbert text",
+      "Route legend.ts resolveLegend kind selection through presentation.legendDefault",
+      "Gate the progress-page weight chart on weight-target presence and render an MRR trend for project goals",
+      "Add a fitness counterpart coaching doc (docs/coaching/fitness-goal-prompts.md)",
+      "Update project-goal-prompts.md for the kind-aware recap card and Today/progress project surfaces"
+    ],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Sprint 8 \u2014 Feasibility surface",
+    "title": "Build the goal-generic FeasibilityReadout server component",
+    "value": "so that any goal's feasibility can be rendered honestly in the dashboard from a single GoalFeasibility, without an MCP round-trip and without re-hardcoding a vertical",
+    "acceptanceCriteria": [
+      "New file src/components/FeasibilityReadout.tsx is a server component (no \"use client\" directive, no React hooks/state).",
+      "Component accepts an already-serialized GoalFeasibility prop; it never accepts or constructs a Date instance (GoalFeasibility.computedAt is already a string, weeksRemaining a number) \u2014 no Date crosses the server/client boundary.",
+      "Renders exactly four honest states selected purely from the GoalFeasibility value: (1) unratedReason===\"someday\" -> \"No deadline set \u2014 feasibility unrated.\"; (2) unratedReason===\"no-targets\" -> \"Add targets to rate feasibility.\"; (3) unratedReason===\"no-data\" (see two sub-states below); (4) tier set -> full readout with per-target requiredRate vs observedRate, weeksRemaining, verdict tier, and rateBasis.",
+      "The no-data state renders TWO distinct sub-states keyed on requiredRate===null: 0-log sub-state (requiredRate===null AND observedRate===null) -> copy can only say e.g. \"Not enough logged data to rate yet \u2014 log the metric a few times\" / \"Add at least one entry to compute the pace you need\" (it must NOT promise a per-week target, because requiredRate is null at zero logs per plan-critique C-1); 1\u20132-log sub-state (requiredRate populated, observedRate null) -> shows requiredRate (e.g. \"needs ~$66/wk to hit $1,000 by 9/30\") with observedRate rendered as \"\u2014 not yet estimable\".",
+      "Goal-generic: zero hardcoded references to fitness, Elbert, Chewgether, MRR, or any vertical-specific label \u2014 all labels derive from the GoalFeasibility perTarget entries.",
+      "Any date label (e.g. target date) is formatted via @/lib/calendar USER_TZ helpers, never a raw new Date()/toLocaleString without timeZone.",
+      "NO change to src/lib/rarity-core.ts: git diff --stat shows src/lib/rarity-core.ts is untouched by this story.",
+      "Chewgether criterion: rendered against the live Chewgether GoalFeasibility (0 logs) the component shows 'not enough logged data to rate' honestly today; rendered against a >=3-MRR-log fixture GoalFeasibility it shows a real verdict (tier + rateBasis \"observed\").",
+      "npx tsc --noEmit and npm run lint pass."
+    ],
+    "touches": [
+      "src/components/FeasibilityReadout.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 8 \u2014 Feasibility surface"
+  },
+  {
+    "epic": "Sprint 8 \u2014 Feasibility surface",
+    "title": "Surface FeasibilityReadout on Today (fitness hero + ProjectTodayView)",
+    "value": "so that the user sees an honest feasibility readout on the Today page for both fitness and project focus goals, computed server-side from the same function the coach's get_goal reads",
+    "acceptanceCriteria": [
+      "src/app/page.tsx fitness hero renders <FeasibilityReadout> with feasibility resolved server-side via computeGoalFeasibility(focusGoal) (the same fn get_goal calls) \u2014 NOT via an MCP round-trip.",
+      "src/components/ProjectTodayView.tsx renders <FeasibilityReadout> (placed between the MRR card and the next-milestone card), resolving feasibility server-side from its already-fetched targets + goal.targetDate; ProjectTodayView stays a server component (no \"use client\").",
+      "No Date instance is passed into FeasibilityReadout or any client child; feasibility is passed already-serialized.",
+      "Chewgether criterion: with a project focus goal, Today shows the honest no-data readout ('not enough logged data to rate') today; with the fitness focus goal, Today shows that goal's feasibility readout. Fitness Today is otherwise visually unchanged.",
+      "NO change to src/lib/rarity-core.ts (git diff --stat confirms).",
+      "npx tsc --noEmit, npm run lint, and npm run build pass."
+    ],
+    "touches": [
+      "src/app/page.tsx",
+      "src/components/ProjectTodayView.tsx",
+      "src/components/FeasibilityReadout.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Build the goal-generic FeasibilityReadout server component"
+    ],
+    "sprint": "Sprint 8 \u2014 Feasibility surface"
+  },
+  {
+    "epic": "Sprint 8 \u2014 Feasibility surface",
+    "title": "Surface FeasibilityReadout on the goal detail page",
+    "value": "so that opening any goal shows its honest feasibility readout, consistent with Today and the coach's get_goal view",
+    "acceptanceCriteria": [
+      "src/app/goals/[id]/page.tsx renders <FeasibilityReadout> for the viewed goal, with feasibility resolved server-side via computeGoalFeasibility(goal) (no MCP round-trip).",
+      "Works for both a fitness goal (real readout) and the Chewgether project goal (honest no-data sub-state today).",
+      "No Date instance is passed to FeasibilityReadout; feasibility is passed already-serialized; any date label uses @/lib/calendar USER_TZ.",
+      "NO change to src/lib/rarity-core.ts (git diff --stat confirms).",
+      "npx tsc --noEmit and npm run lint pass."
+    ],
+    "touches": [
+      "src/app/goals/[id]/page.tsx",
+      "src/components/FeasibilityReadout.tsx"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Build the goal-generic FeasibilityReadout server component"
+    ],
+    "sprint": "Sprint 8 \u2014 Feasibility surface"
+  },
+  {
+    "epic": "Sprint 8 \u2014 Feasibility surface",
+    "title": "Advertise feasibility in get_goal's description and update the coaching doc",
+    "value": "so that the coach discovers (from the tool description) that get_goal already carries per-target feasibility, and the coaching prompt explains the readout + that logging MRR unlocks the rate estimate",
+    "acceptanceCriteria": [
+      "The get_goal tool *description* in src/lib/mcp/tools.ts gains one sentence advertising feasibility.computed \u2014 per-target requiredRate/observedRate/verdict, weeksRemaining, and unratedReason (someday|no-targets|no-data).",
+      "Only the description string changes for get_goal: its returned shape, handler logic, and computeGoalFeasibility are untouched.",
+      "docs/coaching/project-goal-prompts.md is updated to mention the FeasibilityReadout surface (Today + goal page) and that logging MRR >=3 times unlocks the observed-rate estimate (no-data is honest until then).",
+      "MCP curl tools/list shows the updated get_goal description and the same total tool count/names as before.",
+      "NO change to src/lib/rarity-core.ts (git diff --stat confirms).",
+      "npx tsc --noEmit and npm run lint pass."
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts",
+      "docs/coaching/project-goal-prompts.md"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [],
+    "sprint": "Sprint 8 \u2014 Feasibility surface"
+  },
+  {
+    "epic": "Sprint 8 \u2014 Feasibility surface",
+    "title": "Verify the feasibility surface end-to-end across both verticals with no engine change",
+    "value": "so that we prove Chewgether reads honestly today, a >=3-MRR-log fixture flips to a real verdict, fitness is un-regressed, and rarity-core.ts was never touched",
+    "acceptanceCriteria": [
+      "npx tsc --noEmit, npm run lint, and npm run build all pass on the integrated sprint.",
+      "MCP curl smoke (dev server running): get_goal on Chewgether returns feasibility.computed with unratedReason \"no-data\" (unchanged honest behavior) and the updated tool description.",
+      "Browser smoke at <=390px: Chewgether Today + goal detail page show 'not enough logged data to rate' honestly; the fitness goal's Today + goal detail page show its feasibility readout; fitness Today is visually unchanged.",
+      "Chewgether criterion proven: inserting a synthetic >=3-row MRR LogEntry fixture for Chewgether makes FeasibilityReadout render a real verdict (tier + rateBasis \"observed\"); the fixture is removed afterward and the surface returns to the honest no-data sub-state.",
+      "Both no-data sub-states are observed: 0-log (requiredRate null) and a 1\u20132-log fixture (requiredRate populated, observedRate '\u2014 not yet estimable').",
+      "Final guardrail: git diff against the sprint base shows NO change to src/lib/rarity-core.ts anywhere in Sprint 8.",
+      "Connector note: because only the get_goal *description* changed (tool count/names unchanged), no claude.ai connector disconnect/reconnect is required; the new description goes live only after a Vercel redeploy"
+    ],
+    "touches": [
+      "src/components/FeasibilityReadout.tsx",
+      "src/app/page.tsx",
+      "src/components/ProjectTodayView.tsx",
+      "src/app/goals/[id]/page.tsx",
+      "src/lib/mcp/tools.ts",
+      "docs/coaching/project-goal-prompts.md"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Build the goal-generic FeasibilityReadout server component",
+      "Surface FeasibilityReadout on Today (fitness hero + ProjectTodayView)",
+      "Surface FeasibilityReadout on the goal detail page",
+      "Advertise feasibility in get_goal's description and update the coaching doc"
+    ],
+    "sprint": "Sprint 8 \u2014 Feasibility surface"
+  },
+  {
+    "epic": "Sprint 9 \u2014 Honesty-math tests",
+    "title": "Unit-test progressFor + computeReadiness: gating ceiling 80, untested=0, coverage, decrease, already-met, build-from-zero",
+    "value": "so that the readiness score is provably honest \u2014 a partially-logged or untested goal can never display a false 100%, gating targets verifiably cap the headline at 80, and every metric direction is scored correctly.",
+    "acceptanceCriteria": [
+      "New file src/lib/readiness.test.ts; `npx vitest run` is green",
+      "progressFor: build-from-zero increase metrics (log:*, hike:*, workout:count) return current/target (covers the no-start accumulation path); target===0 returns null",
+      "progressFor: already-met case \u2014 increase current>=target returns 1, decrease current<=target returns 1 (even when start is below target)",
+      "progressFor: decrease comparative metric returns clamped (start-current)/(start-target); start===target returns 0; current===null returns null (untested)",
+      "computeReadiness: an open gating target forces ceiling=80 and score=Math.min(rawScore,80) \u2014 covers the gating-cap \u2192 ceiling 80 case; all gates cleared yields ceiling=100",
+      "computeReadiness: an untested target counts as 0 progress at full weight in the denominator (covers untested=0 \u2014 asserts NO false-100% when one of two equally-weighted targets is unlogged)",
+      "computeReadiness: coverage returns {tested,total} where tested counts only breakdown rows with progress!==null; missing[] and openGateCount are correct",
+      "computeReadiness: totalWeight===0 returns score 0 / rawScore 0 (no NaN)",
+      "resolveMetricValue/resolveMetricStart from @/lib/goal-targets are mocked (vi.mock) so cases are deterministic without a live DB; goalId/asOf are passed but never hit Prisma"
+    ],
+    "touches": [
+      "src/lib/readiness.test.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P1 - High",
+    "dependsOn": [],
+    "sprint": "Sprint 9 \u2014 Honesty-math tests"
+  },
+  {
+    "epic": "Sprint 9 \u2014 Honesty-math tests",
+    "title": "Unit-test computeTargetFeasibility: log: observed path (>=3pts), <3pts unknown, met-check, ratioCap stall, decrease-sign",
+    "value": "so that the feasibility verdict is provably honest for any numeric goal \u2014 a thin data set reads 'unknown / does not count' instead of a confident tier, a stalled metric reads as a fantasy rather than easy, and decrease metrics are not silently inverted.",
+    "acceptanceCriteria": [
+      "New file src/lib/rarity-core.test.ts; `npx vitest run` is green",
+      "Tests the EXISTING engine (computeTargetFeasibility in rarity-core.ts) \u2014 pure function, no source change and no mocking required",
+      "log: observed path: observedPoints>=3 with positive observedWeeklyRate (null norm family) yields rateBasis 'observed', plausibleRate===observedWeeklyRate, a real numeric ratio and a non-unknown verdict, countsTowardTier:true",
+      "Honest <3-points path: observedPoints of 0/1/2 with a null-norm family returns verdict 'unknown', countsTowardTier:false, ratio null, rateBasis 'none' (asserts minObservedPoints stays 3 \u2014 no false confidence from a 2-point slope)",
+      "Met-check: gap<=0 (current already at/past target, both directions) returns verdict 'met', ratio 0, requiredRate 0, countsTowardTier:true",
+      "ratioCap stall path: observedPoints>=3 with observedWeeklyRate<=0 and null norm returns ratio===ratioCap (99), verdict 'legendary', countsTowardTier:true (stalled = effectively impossible)",
+      "Decrease-sign normalization: a decrease metric passed a pre-normalized positive observedWeeklyRate is treated as improving (real ratio, not regression) \u2014 documents the caller's negate convention",
+      "Never-measured guard: current===null with no explicit target.start returns verdict 'unknown', countsTowardTier:false, requiredRate null"
+    ],
+    "touches": [
+      "src/lib/rarity-core.test.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P2 - Medium",
+    "dependsOn": [],
+    "sprint": "Sprint 9 \u2014 Honesty-math tests"
+  },
+  {
+    "epic": "Sprint 9 \u2014 Honesty-math tests",
+    "title": "Unit-test the goal-presentation registry: per-kind config + __default__ fallback",
+    "value": "so that the kind\u2192presentation seam is pinned \u2014 fitness keeps its 4 recapField slots and READINESS ring, project resolves exactly 2 data-backed slots (MRR/MILESTONES) and a PROGRESS ring, and an unknown/null kind falls back to the labeled __default__ clone rather than mislabeling.",
+    "acceptanceCriteria": [
+      "New file src/lib/goal-presentation.test.ts; `npx vitest run` is green",
+      "presentationForGoal({kind:'fitness'}) returns ringLabel 'READINESS', headerStyle 'program-week', 4 statSlots (WORKOUTS/VOLUME/NEW PRs/ELEVATION) all source.from 'recapField', restCopy non-null, legendDefault 'fitness'",
+      "presentationForGoal({kind:'project'}) returns ringLabel 'PROGRESS' (NOT 'TRACTION'), headerStyle 'weeks-to-target', exactly 2 statSlots \u2014 MRR (logLatest 'mrr', currency) and MILESTONES (scheduledItem milestone doneOverTotal, ratioOfTotal), restCopy null, legendDefault 'project'",
+      "Unknown kind, null kind, and undefined goal all return the DEFAULT_PRESENTATION whose kind === '__default__' and whose slots match fitness (default-by-omission is the explicit labeled safety net, not 'fitness is universal')",
+      "Asserts project does NOT declare Subs/Conversion slots (the anti-vertical guardrail \u2014 only data-backed slots exist)"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 9 \u2014 Honesty-math tests"
+  },
+  {
+    "epic": "Sprint 9 \u2014 Honesty-math tests",
+    "title": "Unit-test resolveStatSlot + recap statSlots derivation per kind (fitness byte-identical, project \u2014/0/7)",
+    "value": "so that the recap aggregator's per-kind stat derivation is provably correct \u2014 fitness slots resolve to byte-identical strings (no pixel regression on the live card) and a project goal honestly resolves MRR '\u2014' (no logs) and MILESTONES '0/7' from ScheduledItem, never a fake $0 or a misleading dash for real milestones.",
+    "acceptanceCriteria": [
+      "New file src/lib/recap.test.ts; `npx vitest run` is green",
+      "resolveStatSlot (pure, fed a fabricated ctx \u2014 no DB): fitness recapField slots produce exactly the current strings via the hoisted formatters \u2014 String(n) for int, fmtVolume '2,370 lb' / '\u2014', fmtElevation '5,200 ft' / '\u2014' \u2014 with the same isNull flags (volumeLb===null, hikeElevationFt===null)",
+      "resolveStatSlot: project logLatest('mrr') with no logged value resolves to '\u2014' isNull:true (honest dash, not '$0'); a present value formats as currency '$1,000'",
+      "resolveStatSlot: project scheduledItem(milestone, doneOverTotal) with {done:0,total:7} resolves to '0/7' isNull:false (sourced from the ScheduledItem aggregate, NOT log:milestones_done \u2014 the two-truths invariant)",
+      "Recap aggregator derivation: computeWeeklyRecap (Prisma mocked) emits statSlots whose length and values match the goal's presentation per kind \u2014 4 fitness slots byte-identical to the legacy workoutsCompleted/volumeLb/prCount/hikeElevationFt fields (snapshot), 2 project slots resolving '\u2014' and '0/7'",
+      "Legacy recap fields (workoutsCompleted/volumeLb/prCount/hikeElevationFt) remain present on the bundle alongside statSlots"
+    ],
+    "touches": [
+      "src/lib/recap.test.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters",
+      "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap"
+    ],
+    "sprint": "Sprint 9 \u2014 Honesty-math tests"
+  },
+  {
+    "epic": "Backlog \u2014 Deferred chapters",
+    "title": "SPIKE: Proactive coach mechanism (scheduled routine vs. cron\u2192MCP\u2192nudge)",
+    "value": "so that the coach can initiate (gate nudges, staleness alerts, auto Sunday recap) instead of only reacting \u2014 thread 3.3",
+    "acceptanceCriteria": [
+      "A written spike doc compares Claude Code scheduled cloud routine (/schedule) vs. a cron job hitting MCP read tools (get_session_brief/compute_readiness/list_open_items) + a nudge/digest surface",
+      "Recommends a mechanism + a thin slice to build, with cost ($0 constraint) + USER_TZ + no-LLM-in-app implications",
+      "Decomposed into buildable stories as a follow-up \u2014 NOT built in the spike"
+    ],
+    "touches": [
+      "docs/roadmap/",
+      "docs/coaching/"
+    ],
+    "effort": "Medium",
+    "priority": "P2 - Medium",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Backlog \u2014 Deferred chapters",
+    "title": "EPIC: Close the content flywheel \u2014 auto Sunday recap \u2192 Instagram",
+    "value": "so that the Weekly Recap Card becomes an automatic build-in-public habit that grows the audience at $0 \u2014 thread 3.4",
+    "acceptanceCriteria": [
+      "Epic stub: auto-generate the Sunday card from the week's data (likely via the 3.3 scheduling mechanism)",
+      "Depends on the goal-kind-aware recap card (Sprint 6) so project + fitness cards both auto-post correctly",
+      "To be decomposed after Sprints 6\u20139 land"
+    ],
+    "touches": [
+      "src/lib/recap-card.tsx",
+      "src/app/recap/"
+    ],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Backlog \u2014 Deferred chapters",
+    "title": "EPIC: Goal onboarding / the 'goal interview' for any domain",
+    "value": "so that someone who isn't Gabe can turn a fuzzy goal into measurable, weighted, gated, feasibility-rated targets without hand-authoring targets[] JSON \u2014 thread 3.5; the usable-by-others unlock",
+    "acceptanceCriteria": [
+      "Epic stub: the coach conducts a guided interview; goaldmine persists the result as a Goal + targets[] + gates",
+      "Must be goal-generic (fitness + project + future kinds) and honesty-first (gated, feasibility-rated)",
+      "Precondition for multi-user; to be decomposed after the platform identity (Sprints 6\u20139) lands"
+    ],
+    "touches": [
+      "src/lib/mcp/tools.ts",
+      "docs/coaching/"
+    ],
+    "effort": "Large",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Sprint 7 \u2014 Today + progress + legend kind-awareness",
+    "title": "Update project-goal-prompts.md for the kind-aware recap card and Today/progress project surfaces",
+    "value": "so that the coach's project mental model matches what Sprints 6-7 ship \u2014 recap card shows MRR/MILESTONES with a PROGRESS ring and weeks-to-target header, Today drops the Mt. Elbert rest-day tip, and /progress shows the MRR trend + milestone burn-down instead of a weight chart \u2014 not just the feasibility readout documented in Sprint 8",
+    "acceptanceCriteria": [
+      "docs/coaching/project-goal-prompts.md gains a 'Surfaces the coach can rely on' subsection documenting: the recap card renders MRR + MILESTONES with a PROGRESS ring and a weeks-to-target header; Today renders project-shaped with no Mt. Elbert rest-day tip; /progress shows the MRR-over-time trend + MilestoneBurnDown instead of a weight chart",
+      "The doc states the recap MILESTONES stat sources the live ScheduledItem aggregate (0/7) while readiness still reads log:milestones_done (the two-truths invariant)",
+      "Does NOT duplicate the Sprint 8 edit: this story covers recap/Today/progress framing; Sprint 8 covers the FeasibilityReadout surface + the get_goal description",
+      "Documentation only: no production code touched; markdown internally consistent with Sprint 6 + Sprint 7 surfaces",
+      "Fitness un-regressed and project unaffected (doc-only change)"
+    ],
+    "touches": [
+      "docs/coaching/project-goal-prompts.md"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [],
+    "sprint": "Sprint 7 \u2014 Today + progress + legend kind-awareness"
+  },
+  {
+    "epic": "Backlog \u2014 Deferred chapters",
+    "title": "DEFERRED: Goal.presentation Json? per-goal label-override seam (no schema change in Sprints 6-9)",
+    "value": "so that the explicitly-deferred additive schema seam is tracked and NOT accidentally built during Sprints 6-9 \u2014 the presentation config stays code, not data, until a per-goal label override is actually needed",
+    "acceptanceCriteria": [
+      "Tracking stub only: records that Sprints 6-9 add NO Prisma migration \u2014 presentationForGoal resolves from goal.kind in code, never a Goal.presentation column (per plan \u00a74.1/\u00a77 and blueprint \u00a74)",
+      "If a per-goal override is ever needed it lands as a nullable additive Goal.presentation Json? migration, Neon-safe per .claude/quality-tools.md \u2014 not before",
+      "Also captures sibling deferred seams: minObservedPointsByFamily + TargetFeasibility.confidence and non-fitness NormPacks in RARITY_NORM_PACKS \u2014 all additive, none in scope now",
+      "To be decomposed only if/when a concrete per-goal override need arises"
+    ],
+    "touches": [
+      "prisma/schema.prisma",
+      "src/lib/goal-presentation.ts"
+    ],
+    "effort": "Small",
+    "priority": "P3 - Low",
+    "dependsOn": [],
+    "sprint": "Backlog"
+  },
+  {
+    "epic": "Sprint 9 \u2014 Honesty-math tests",
+    "title": "Sprint 9 QA \u2014 full Vitest suite green + build, no production code modified by the test sprint",
+    "value": "so that the honesty-math test sprint lands with the whole suite green on main, the build unbroken, and zero production-source drift \u2014 tests only",
+    "acceptanceCriteria": [
+      "npx vitest run is green across the full committed suite (food-units + readiness + rarity-core + goal-presentation + recap specs)",
+      "npx tsc --noEmit, npm run lint, and npm run build all pass",
+      "git diff against the sprint base shows ONLY *.test.ts files added/changed \u2014 no production source modified by Sprint 9",
+      "Any failing assertion is filed back to the owning honesty-math story; the engine is not changed to make a test pass (per blueprint \u00a73.1)"
+    ],
+    "touches": [
+      "src/lib/readiness.test.ts",
+      "src/lib/rarity-core.test.ts",
+      "src/lib/goal-presentation.test.ts",
+      "src/lib/recap.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P2 - Medium",
+    "dependsOn": [
+      "Unit-test progressFor + computeReadiness: gating ceiling 80, untested=0, coverage, decrease, already-met, build-from-zero",
+      "Unit-test computeTargetFeasibility: log: observed path (>=3pts), <3pts unknown, met-check, ratioCap stall, decrease-sign",
+      "Unit-test the goal-presentation registry: per-kind config + __default__ fallback",
+      "Unit-test resolveStatSlot + recap statSlots derivation per kind (fitness byte-identical, project \u2014/0/7)"
+    ],
+    "sprint": "Sprint 9 \u2014 Honesty-math tests"
+  }
+]

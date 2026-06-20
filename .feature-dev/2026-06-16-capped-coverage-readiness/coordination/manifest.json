@@ -1,0 +1,38 @@
+{
+  "feature": "Capped, Coverage-Aware Readiness",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-capped-coverage-readiness.md",
+  "prd_issue": null,
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"],
+  "agents": [
+    { "role": "research", "id": "a46d75cc80957bd8b", "status": "completed", "output": "agents/research-output.md" },
+    { "role": "architect", "id": "add58e27b68ca7495", "status": "completed", "output": "agents/architecture-blueprint.md" },
+    { "role": "devils-advocate", "id": "adf4bd489516c99ae", "status": "completed", "output": "agents/architecture-critique.md", "verdict": "NEEDS REVISION (2 crit) — resolved in v2 addendum + AC#12 corrected" },
+    { "role": "dev", "id": "a42cb95b80658678c", "status": "running", "owns": "metrics-registry, readiness, rarity-core, tools, recap+card, progress/page" }
+  ],
+  "iteration": 1,
+  "status": "dev-running",
+  "blueprint_addendum": "agents/architecture-blueprint-v2-addendum.md",
+  "da_key_catch": "80 ceiling is a SAFETY NET — with heavy Elbert gates (0.3+0.2) untested=0 already pulls rawScore<80, cap moot; binds only when rawScore>80 (under-weighted gates). AC#12 corrected to weight-aware tests.",
+  "dev_plan": "ONE developer agent, sequential REQ-001→002→004→003→005→006 (contained additive scope, zero file overlap)",
+  "research_findings": {
+    "snapshot": "currently {score,breakdown,missing} — additive extension clean",
+    "compute_readiness": "spreads ...snap → new fields auto-flow; only description update needed",
+    "write_tools": "create_goal/update_goal_targets validate via GoalTargetSchema → gating auto-passes once added",
+    "rarity_core": "REIMPLEMENTS (does not call computeReadiness); current===null guard stays valid → NO change needed",
+    "elbert_gates": "hike:prep_completion (0.30) + hike:max_elevation_single (0.20)",
+    "cleanup": "ReadinessSnapshot.missing JSDoc says 'excluded from score' — now false, update it",
+    "score_drops": "all existing scores drop/cap on deploy — intended (honesty); coach should pre-communicate"
+  },
+  "ux_research": "skipped — additive text line on existing surfaces, no new visual/interactive component",
+  "locked_design": {
+    "untested": "count as 0 progress, full weight in denominator (rawScore)",
+    "coverage": "{tested,total} surfaced",
+    "gating": "gating?:boolean on GoalTarget; gate cleared when progress>=1; ceiling=80 while any open, 100 when all clear; score=min(rawScore,ceiling)",
+    "snapshot": "additive: +rawScore +ceiling +coverage +gates[] +openGateCount; keep score/breakdown/missing",
+    "GATE_CEILING": 80,
+    "migration": "none (gating is additive JSON in Goal.targets)"
+  },
+  "dev_sequencing": "A (engine/schema/MCP/rarity) -> merge -> B (recap card + progress display)",
+  "base_head": "8a21bfe"
+}

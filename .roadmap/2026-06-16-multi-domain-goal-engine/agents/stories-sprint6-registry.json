@@ -1,0 +1,124 @@
+[
+  {
+    "epic": "Sprint 6 — Presentation registry + recap card",
+    "title": "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters",
+    "value": "so that every recap/Today/progress/legend surface resolves kind-aware labels and stat slots from one client-safe seam instead of hardcoded fitness strings — the seam that unblocks the rest of the multi-domain work",
+    "acceptanceCriteria": [
+      "New file src/lib/goal-presentation.ts is pure / client-safe: no Prisma import, no @/lib/calendar import, no Node built-ins (same purity class as src/lib/rarity-core.ts) — confirmed by importing it from a Satori JSX context with no server-only resolution error",
+      "Exports the TypeScript shapes exactly per plan-blueprint.md §1.3: StatFormat union (int|volumeLb|elevationFt|currency|ratioOfTotal|percent), StatSource declarative union (recapField|logLatest|scheduledItem|targetCurrent — NO closures, NO DB), StatSlot, HeaderStyle (program-week|weeks-to-target|none), GoalPresentation { kind, ringLabel, headerStyle, statSlots, restCopy, legendDefault }",
+      "Exports FITNESS_PRESENTATION per §1.4: ringLabel \"READINESS\", headerStyle \"program-week\", exactly 4 recapField statSlots keyed workouts/volume/prs/elevation with labels WORKOUTS/VOLUME/NEW PRs/ELEVATION and formats int/volumeLb/int/elevationFt, restCopy set to the generic recovery copy, legendDefault \"fitness\"",
+      "Exports PROJECT_PRESENTATION per §1.4: ringLabel \"PROGRESS\" (NOT \"TRACTION\" — that re-narrows the engine to startups), headerStyle \"weeks-to-target\", restCopy null, legendDefault \"project\", and exactly 2 statSlots — { key:\"mrr\", label:\"MRR\", source:{from:\"logLatest\", metricKey:\"mrr\"}, format:\"currency\" } and { key:\"milestones\", label:\"MILESTONES\", source:{from:\"scheduledItem\", itemType:\"milestone\", agg:\"doneOverTotal\"}, format:\"ratioOfTotal\" } — NO Subs/Conversion cells",
+      "presentationForGoal(goal) returns REGISTRY[goal.kind] when present, else a DEFAULT_PRESENTATION that is a clone of FITNESS_PRESENTATION with kind relabeled \"__default__\" (never \"fitness\") — matches the existing goal.kind ?? \"fitness\" defaulting in recap.ts and legend.ts while keeping neither vertical default-by-omission",
+      "fmtVolume and fmtElevation are defined and exported here (hoisted from recap-card.tsx:17-23) and produce byte-identical output: \"2,370 lb\" / \"5,200 ft\" for numbers and \"—\" for null — verified against the current recap-card.tsx implementations",
+      "Chewgether acceptance criterion: presentationForGoal({ kind: \"project\" }) returns ringLabel \"PROGRESS\" and statSlots of length 2 keyed exactly [mrr, milestones]; presentationForGoal({ kind: null }) returns kind \"__default__\" with the fitness 4-slot grid",
+      "npx tsc --noEmit passes, npm run lint passes, npm run build passes"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.ts"
+    ],
+    "effort": "Small",
+    "priority": "P0 - Critical",
+    "dependsOn": [],
+    "sprint": "Sprint 6 — Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 — Presentation registry + recap card",
+    "title": "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap",
+    "value": "so that the recap bundle carries kind-aware resolved stat slots plus a weeks-to-target header for project goals, while the fitness numbers and legacy fields stay byte-identical and no project query runs for a fitness goal",
+    "acceptanceCriteria": [
+      "computeWeeklyRecap is restructured to goal-first fetch → presentationForGoal(goal) → a single gated Promise.all that runs the project queries ONLY when presentation.statSlots declare them (the existing Promise.all at recap.ts:180-211 cannot gate inside the block that fetches the goal itself — fetch order fix per blueprint §2.2)",
+      "Adds resolveStatSlot(slot, ctx) that switches on slot.source.from over already-fetched data (ctx: { recap legacy fields, logLatest Map, scheduledAgg Map, breakdown, targets }) and returns { key, label, value, isNull } — handling all four sources recapField / logLatest / scheduledItem / targetCurrent; no Prisma access inside the pure registry",
+      "WeeklyRecap gains statSlots: ResolvedStatSlot[]; the four legacy fields workoutsCompleted, volumeLb, prCount, hikeElevationFt REMAIN on the bundle (the MCP generate_recap_card stats JSON and the highlight logic at recap.ts:327-424 still read them)",
+      "logLatest source uses prisma.logEntry.findFirst({ where:{ goalId, metric:<key>, value:{not:null} }, orderBy:{ date:\"desc\" } }); scheduledAgg source uses prisma.scheduledItem.groupBy({ by:[\"status\"], where:{ goalId, type:<itemType> } }) reduced to { done, total } — the Milestones stat sources from this ScheduledItem aggregate, NOT log:milestones_done (avoids the §0.2 desync; matches MilestoneBurnDown)",
+      "RecapProgramHeader gains weeksToTarget (number) and targetDateLabel (string) computed via @/lib/calendar (USER_TZ-correct), never raw Date math; populated only when headerStyle is weeks-to-target",
+      "Fitness byte-identical: for the Mt. Elbert goal, statSlots resolve to the same strings the card prints today (e.g. \"2\", \"2,370 lb\", \"1\", \"5,200 ft\") with isNull flags matching volumeLb===null / hikeElevationFt===null; the four legacy fields are unchanged",
+      "No project query (logEntry.findFirst / scheduledItem.groupBy) executes for a fitness focus goal — the gated Promise.all skips them",
+      "Chewgether acceptance criterion: computeWeeklyRecap for goal cmqbfseel0000cgdn3oz1uz2u yields statSlots [{ key:\"mrr\", value:\"—\", isNull:true }, { key:\"milestones\", value:\"0/7\", isNull:false }] and header weeksToTarget ≈ 15 with targetDateLabel reflecting 2026-09-30",
+      "npx tsc --noEmit, npm run lint, npm run build pass; MCP curl weekly_summary_data for the fitness goal returns the unchanged stats shape (4 legacy fields intact)"
+    ],
+    "touches": [
+      "src/lib/recap.ts"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters"
+    ],
+    "sprint": "Sprint 6 — Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 — Presentation registry + recap card",
+    "title": "Drive recap-card ring labels, headers, and stat grids from the presentation registry",
+    "value": "so that the OG recap card renders the kind-correct ring label, header style, and stat grid for any goal from one presentation source — and the fitness card stays pixel-identical",
+    "acceptanceCriteria": [
+      "recap-card.tsx resolves const presentation = presentationForGoal(recap.goal) once per slide (near line 300 and the SlideOne path) and imports fmtVolume/fmtElevation from goal-presentation.ts — the local copies at recap-card.tsx:17-23 are removed (one shared formatter, byte-identical fitness)",
+      "Both ring labels (lines 426 and 855) read presentation.ringLabel — \"READINESS\" for fitness, \"PROGRESS\" for project",
+      "Both program lines (lines 304-307 and 793-795) switch on presentation.headerStyle: program-week renders the current \"WEEK n · DAY m OF d\" string; weeks-to-target renders e.g. \"15 WEEKS TO SEP 30\" from recap.header.weeksToTarget / targetDateLabel; none omits the line",
+      "Both stat grids (lines 588-651 and 950-961) map recap.statSlots into StatCell (StatCell itself unchanged), rendering a single centered row when length 2 and a 2×2 when length 4 — no dash-padded fake 4-cell grid",
+      "Satori re-render verified: card renders with no Satori error, flex-only layout, inline styles, no conic-gradient, no CSS vars, SVG stroke-dasharray progress ring intact (per memory satori-no-conic-use-svg-arc)",
+      "Fitness byte-identical: the Mt. Elbert recap card at ≤390px is visually identical to pre-change — same ring label READINESS, same 2×2 WORKOUTS/VOLUME/NEW PRs/ELEVATION values and isNull dashes, same WEEK n · DAY m OF d header string",
+      "Chewgether acceptance criterion: the card for goal cmqbfseel0000cgdn3oz1uz2u renders a PROGRESS ring, a \"weeks to SEP 30\" header, and a single 2-cell row showing MRR \"—\" and MILESTONES \"0/7\"",
+      "npx tsc --noEmit, npm run lint, npm run build pass"
+    ],
+    "touches": [
+      "src/lib/recap-card.tsx"
+    ],
+    "effort": "Medium",
+    "priority": "P0 - Critical",
+    "dependsOn": [
+      "Create the pure goal-presentation registry module with fitness and project entries and hoisted formatters",
+      "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap"
+    ],
+    "sprint": "Sprint 6 — Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 — Presentation registry + recap card",
+    "title": "Add Vitest coverage pinning fitness statSlots byte-identical and project MRR/milestones slots",
+    "value": "so that the registry refactor can never silently drift the fitness card strings, and the project path's —/0/7 derivation is locked against regression",
+    "acceptanceCriteria": [
+      "A Vitest spec (e.g. src/lib/goal-presentation.test.ts) drives resolveStatSlot per kind with synthetic ctx (no DB), asserting the fitness 4 slots resolve to the exact strings + isNull flags the card prints today (e.g. \"2\", \"2,370 lb\", \"1\", \"5,200 ft\"; null volume/elevation → \"—\" isNull:true)",
+      "Test asserts presentationForGoal for fitness returns ringLabel \"READINESS\", headerStyle \"program-week\", and slot order WORKOUTS/VOLUME/NEW PRs/ELEVATION; and that null/unknown kind returns kind \"__default__\" with the same 4 slots",
+      "Chewgether acceptance criterion: a project fixture (kind \"project\", targets log:mrr + log:milestones_done, logLatest mrr=null, scheduledAgg milestone {done:0,total:7}) resolves statSlots to [{ key:\"mrr\", value:\"—\", isNull:true }, { key:\"milestones\", value:\"0/7\", isNull:false }] with ringLabel \"PROGRESS\" and headerStyle \"weeks-to-target\"",
+      "Test confirms a milestone-progress fixture ({done:3,total:7}) resolves the milestones slot to \"3/7\" isNull:false, proving the ScheduledItem aggregate (not log:milestones_done) backs the stat",
+      "npx vitest run passes and the committed suite includes these cases alongside the existing food-units.test.ts setup",
+      "npx tsc --noEmit, npm run lint, npm run build pass"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Add statSlots, resolveStatSlot, gated project fetch, and weeks-to-target header fields to computeWeeklyRecap",
+      "Drive recap-card ring labels, headers, and stat grids from the presentation registry"
+    ],
+    "sprint": "Sprint 6 — Presentation registry + recap card"
+  },
+  {
+    "epic": "Sprint 6 — Presentation registry + recap card",
+    "title": "Sprint 6 QA: typecheck, build, MCP recap shape, and 390px render for fitness and Chewgether",
+    "value": "so that Sprint 6 lands on main deployable with the Mt. Elbert surfaces un-regressed and the Chewgether recap card correctly relabeled and rendering without Satori errors",
+    "acceptanceCriteria": [
+      "npx tsc --noEmit, npm run lint, and npm run build are all green on the integrated Sprint 6 changes",
+      "MCP curl tools/list succeeds; weekly_summary_data / generate_recap_card for the fitness Mt. Elbert goal returns the unchanged stats JSON (4 legacy fields workoutsCompleted/volumeLb/prCount/hikeElevationFt intact)",
+      "Browser/OG smoke at ≤390px: the fitness recap card is visually identical to pre-sprint — READINESS ring, 2×2 WORKOUTS/VOLUME/NEW PRs/ELEVATION grid, \"WEEK n · DAY m OF d\" header",
+      "Chewgether acceptance criterion: the recap card for goal cmqbfseel0000cgdn3oz1uz2u renders a PROGRESS ring, a weeks-to-target header (~15 weeks to SEP 30), and a 2-cell row of MRR \"—\" + MILESTONES \"0/7\" — verified via the OG render route",
+      "Satori produces no render error for either goal (flex-only, no conic-gradient, SVG stroke-dasharray ring) per memory satori-no-conic-use-svg-arc",
+      "npx vitest run (the Sprint 6 snapshot/coverage suite) passes",
+      "No production files outside Sprint 6 scope were modified — only goal-presentation.ts, recap.ts, recap-card.tsx, and the test file"
+    ],
+    "touches": [
+      "src/lib/goal-presentation.ts",
+      "src/lib/recap.ts",
+      "src/lib/recap-card.tsx",
+      "src/lib/goal-presentation.test.ts"
+    ],
+    "effort": "Small",
+    "priority": "P1 - High",
+    "dependsOn": [
+      "Drive recap-card ring labels, headers, and stat grids from the presentation registry",
+      "Add Vitest coverage pinning fitness statSlots byte-identical and project MRR/milestones slots"
+    ],
+    "sprint": "Sprint 6 — Presentation registry + recap card"
+  }
+]

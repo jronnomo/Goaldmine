@@ -1,0 +1,32 @@
+{
+  "feature": "Recap Post-State Tracking \u2014 mark a week posted; clear the nudge",
+  "branch": "main",
+  "prd_path": "docs/prds/PRD-recap-post-state-tracking.md",
+  "prd_issue": "https://github.com/jronnomo/workout-planner/issues/95",
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004"
+  ],
+  "agents": [
+    "research+architect (sonnet)",
+    "devils-advocate (sonnet)",
+    "ux-research-orchestrator",
+    "backend-dev (sonnet, worktree)",
+    "frontend-dev (sonnet, worktree)"
+  ],
+  "iteration": 1,
+  "status": "complete",
+  "main_head": "c3cc66302884019ccb38479624c4d307e382b460",
+  "da_verdict": "NEEDS REVISION (folded into blueprint-v2)",
+  "ux_findings": "docs/ux-research/recap-post-state-tracking.md",
+  "ux_research": "invoked",
+  "decisions": {
+    "posted_trigger": "any completed share (native success OR download/clipboard fallback); not on AbortError",
+    "nudge_clear": "newest unresolved [week: open_item",
+    "reshare": "idempotent, stays posted, no un-post"
+  },
+  "merged_head": "8ccb4b6",
+  "iterations_required": 1
+}
