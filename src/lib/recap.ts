@@ -51,8 +51,9 @@ export type RecapHighlight = {
   id: string;       // stable: "pr:<name>" | "baseline:<testName>" | "hike:<hikeId>" | "badge:<id>" | "custom:<text>"
   kind: "pr" | "baseline" | "hike" | "badge" | "custom";
   icon: string;     // emoji: pr "🏆", baseline "📏", hike "⛰️", badge "🎖️", custom "⭐"
-  label: string;    // headline e.g. "Goblet Squat — 65 lb" / "Bear Peak — 8.2 mi · 3,768 ft"
-  sub: string | null; // optional secondary line e.g. "new PR" / "new best"
+  label: string;    // headline NAME only e.g. "Goblet Squat" / "Bear Peak Trail #1474"
+  meta: string | null; // stat sub-line e.g. "65 lb" / "8.2 mi · 3,768 ft"; null → no stat line
+  sub: string | null; // optional gold pill badge e.g. "new PR" / "new best"
 };
 
 /** A PR set during the recap week. v1 emits only source:"exercise". (CRIT-3, CRIT-4, S-4) */
@@ -542,7 +543,8 @@ export async function computeWeeklyRecap(
           id: `pr:${pr.name}`,
           kind: "pr" as const,
           icon: "🏆",
-          label: `${pr.name} — ${formatPrValue(pr.bestValue, pr.units)} ${pr.units}`,
+          label: pr.name,
+          meta: `${formatPrValue(pr.bestValue, pr.units)} ${pr.units}`,
           sub: "new PR",
         }));
 
@@ -560,6 +562,7 @@ export async function computeWeeklyRecap(
           kind: "badge" as const,
           icon: "🎖️",
           label: b.def.name,
+          meta: null,
           sub: null,
         }));
 
@@ -568,7 +571,8 @@ export async function computeWeeklyRecap(
         id: `hike:${h.id}`,
         kind: "hike" as const,
         icon: "⛰️",
-        label: `${h.route} — ${h.distanceMi.toFixed(1)} mi · ${new Intl.NumberFormat("en-US").format(h.elevationFt)} ft`,
+        label: h.route,
+        meta: `${h.distanceMi.toFixed(1)} mi · ${new Intl.NumberFormat("en-US").format(h.elevationFt)} ft`,
         sub: null,
       }));
 
@@ -608,7 +612,8 @@ export async function computeWeeklyRecap(
           id: `baseline:${row.testName}`,
           kind: "baseline" as const,
           icon: "📏",
-          label: `${row.testName} — ${row.value} ${row.units}`,
+          label: row.testName,
+          meta: `${row.value} ${row.units}`,
           sub: isNewBest ? "new best" : null,
         };
       });
@@ -717,6 +722,7 @@ export function resolveHighlight(
       kind: "custom",
       icon: "⭐",
       label: text,
+      meta: null,
       sub: null,
     };
   }

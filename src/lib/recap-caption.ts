@@ -61,10 +61,12 @@ function buildOpener(recap: WeeklyRecap): string {
 
 /**
  * Build the highlight callout line.
- * PRD template: "${icon} ${label}${sub ? ` — ${sub}` : ""}"
+ * Template: "${icon} ${label}${meta ? ` — ${meta}` : ""}${sub ? ` — ${sub}` : ""}"
+ * (label is the name; meta carries the stats since the card split them onto two lines)
  */
 function buildHighlight(h: RecapHighlight): string {
-  return h.sub !== null ? `${h.icon} ${h.label} — ${h.sub}` : `${h.icon} ${h.label}`;
+  const head = h.meta !== null ? `${h.icon} ${h.label} — ${h.meta}` : `${h.icon} ${h.label}`;
+  return h.sub !== null ? `${head} — ${h.sub}` : head;
 }
 
 /**

@@ -57,7 +57,8 @@ const PR_HIGHLIGHT: RecapHighlight = {
   id: "pr:Goblet Squat",
   kind: "pr",
   icon: "🏆",
-  label: "Goblet Squat — 65 lb",
+  label: "Goblet Squat",
+  meta: "65 lb",
   sub: "new PR",
 };
 
@@ -286,7 +287,8 @@ describe("composeCaption", () => {
       id: "hike:test",
       kind: "hike",
       icon: "⛰️",
-      label: "Bear Peak — 8.2 mi · 3,768 ft",
+      label: "Bear Peak",
+      meta: "8.2 mi · 3,768 ft",
       sub: null,
     };
     const caption = composeCaption(FITNESS_RECAP, noSubHighlight);
