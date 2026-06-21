@@ -273,7 +273,7 @@ export function RecapClient({
           <option value="">None</option>
           {(candidates ?? []).map((h) => (
             <option key={h.id} value={h.id}>
-              {h.icon} {h.label}
+              {h.icon} {h.label}{h.meta ? ` — ${h.meta}` : ""}
             </option>
           ))}
           <option value="__custom__">Custom…</option>

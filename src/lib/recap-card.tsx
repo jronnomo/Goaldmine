@@ -208,16 +208,18 @@ function HighlightBand({
         >
           {highlight.icon}
         </div>
-        {/* Label + optional gold pill sub */}
+        {/* Name + stat sub-line + optional gold pill sub */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: 8,
             flex: 1,
             overflow: "hidden",
           }}
         >
+          {/* Name — wraps up to 2 lines; the stats live on their own line below */}
+          {/* so the motivating numbers are never the thing that gets clipped.   */}
           <div
             style={{
               fontSize: 40,
@@ -226,12 +228,28 @@ function HighlightBand({
               color: tok.primaryText,
               lineHeight: 1.15,
               overflow: "hidden",
-              whiteSpace: "nowrap",
-              textOverflow: "ellipsis",
+              lineClamp: 2,
             }}
           >
             {highlight.label}
           </div>
+          {/* Stat sub-line — e.g. "9.5 mi · 4,580 ft" / "65 lb". Quiet, single line. */}
+          {highlight.meta !== null && (
+            <div
+              style={{
+                fontSize: 26,
+                fontFamily: tok.fontSans,
+                fontWeight: tok.fontWeight.regular,
+                color: tok.mutedText,
+                lineHeight: 1.2,
+                overflow: "hidden",
+                whiteSpace: "nowrap",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {highlight.meta}
+            </div>
+          )}
           {highlight.sub !== null && (
             /* Gold pill badge — background = gold, text = dark (tok.bg), uppercase */
             <div
