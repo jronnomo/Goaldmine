@@ -14,6 +14,7 @@
 //    tool so the coach can self-check on demand.
 
 import { addDays, resolveDay, startOfDay, weekConflicts } from "@/lib/calendar";
+import { findOrphanedOverrides } from "@/lib/override-integrity";
 import { prisma } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
 import { getBaselineSchedule } from "@/lib/records";
@@ -304,6 +305,27 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
         context: { overrideId: ov.id, date: ov.date, daysDelta },
       });
     }
+  }
+
+  // Rule: orphaned mirror-overrides — an in-range day override whose workoutJson MIRRORS a
+  // first-class object (today only a hike) on a date where that object no longer exists.
+  // Object rows and their mirror overrides are separate, unlinked objects; removing or
+  // rescheduling the object touches only its own row, so a leftover override survives and
+  // the resolver surfaces it as the day's session — invisible to that object's own tools.
+  // Driven by the OVERRIDE_MIRROR_KINDS registry so a new kind is one entry, not a new rule
+  // here. Heuristic — may flag a deliberate look-alike override; acknowledge_lint_finding to
+  // suppress those. (warning)
+  const inRangeOverrides = overrides.filter((ov) => {
+    const dd = Math.floor((startOfDay(ov.date).getTime() - startMid.getTime()) / 86400000);
+    return dd >= 0 && dd < planSpanDays;
+  });
+  for (const o of await findOrphanedOverrides(inRangeOverrides)) {
+    findings.push({
+      rule: o.rule,
+      severity: "warning",
+      message: o.message,
+      context: { overrideId: o.overrideId, date: o.date },
+    });
   }
 
   // Rule: the same baseline test scheduled on 2+ days within one rotation week.
