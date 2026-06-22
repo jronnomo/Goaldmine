@@ -173,6 +173,8 @@ CLAUDE.md                architecture + conventions (read before contributing)
 - [`docs/project-gotchas.md`](docs/project-gotchas.md) — the non-obvious traps
 - [`docs/roadmap/multi-domain-transformation-brief.md`](docs/roadmap/multi-domain-transformation-brief.md) — the strategic direction
 - [`docs/coaching/proactive-coach-routine.md`](docs/coaching/proactive-coach-routine.md) — the Sunday routine
+- [`docs/coaching/coach-operating-manual.default.md`](docs/coaching/coach-operating-manual.default.md) — default reasoning-discipline instructions (generic core + flavor slots)
+- [`docs/roadmap/onboarding-coach-operating-manual.md`](docs/roadmap/onboarding-coach-operating-manual.md) — parked: generate a personalized coach manual from the goal interview
 - [`docs/integrations/goaldmine-clipforge-bridge.md`](docs/integrations/goaldmine-clipforge-bridge.md) — the ClipForge bridge
 - `docs/prds/` — per-feature PRDs · `docs/qa/` — QA gates
 
