@@ -29,10 +29,28 @@ is mostly **composition**, not new data capture: core (static) + flavor (intervi
 
 ## Where it hooks in
 
-- Intake/interview surface: `src/components/GoalCreateForm.tsx`, `src/lib/goal-core.ts`,
-  the `create_goal` MCP tool's intake (targets, coachFeasibility, kind, constraints).
-- Reference prototype of a *fully personalized* manual: the single-user inline string in
-  `src/lib/mcp/instructions.ts` (the working proof that the core + flavor split is real).
+There are two goal-onboarding paths today; they converge on `create_goal` /
+`createGoalCore`:
+
+- **Path A — app form** (`src/components/GoalCreateForm.tsx` → `src/lib/goal-core.ts`):
+  fast commit, collects objective/date/flavor/targets/notes. Gathers no benchmarks,
+  intent, or constraints — so it can only ever offer the **generic default** manual, not a
+  personalized one.
+- **Path B — Claude coach interview** (the canned 7-stage prompt in
+  `src/app/coach/page.tsx`, id `interview`): objective → date → benchmarks (logged) →
+  constraints → targets → feasibility → **step 7: create**. By the time it reaches create,
+  the conversation already holds the entire Flavor layer (capacity from the logged
+  benchmarks, constraints/equipment/schedule, intent, domain). This is the natural home.
+
+**The hook: add the manual generation as interview step 7/8 (Path B).** Right after
+`create_goal` succeeds (or folded into the same go-ahead), compose the personalized manual
+= generic core (`docs/coaching/coach-operating-manual.default.md`) + the flavor the
+interview just collected, and hand it to the user as paste-ready project instructions.
+Path A users get the generic default with empty flavor slots and a pointer to run the
+interview to personalize it.
+
+Reference prototype of a *fully personalized* manual: the single-user inline string in
+`src/lib/mcp/instructions.ts` (the working proof that the core + flavor split is real).
 
 ## Design options (decide at build time)
 
@@ -58,7 +76,9 @@ These compose: 1 → 2 → 3 is a sensible phase order.
 ## Phasing
 
 - **Phase 0 (done):** generic default manual exists (`docs/coaching/coach-operating-manual.default.md`).
-- **Phase 1:** interview → generated personalized text artifact (copy/download).
+- **Phase 1:** add manual generation as **step 7/8 of the Path B coach interview**
+  (`src/app/coach/page.tsx`, id `interview`) — on create go-ahead, emit the personalized
+  text artifact (copy/download).
 - **Phase 2:** editable step + regenerate-on-goal-change.
 - **Phase 3:** generic core seeded into MCP instructions for all users (multi-user).
 
