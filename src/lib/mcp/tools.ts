@@ -33,6 +33,7 @@ import {
   type WeekConflict,
   type ResolveDayCtx,
 } from "@/lib/calendar";
+import { orphanedOverrideWarning } from "@/lib/override-integrity";
 import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma } from "@/lib/db";
@@ -1865,6 +1866,7 @@ function registerReadTools(server: McpServer) {
         "Checks: unanchored retests (a retest with no initial collected), retest/initial weeks past the plan horizon, a retest at or before its initial week, phase weeks that don't tile 1..totalWeeks, " +
         "metadata drift (Plan.weeks/endsOn or Goal.targetDate out of sync with the template), " +
         "phantom baseline values (≤0, excluding signed metrics like Toe Touch Reach), day overrides outside the plan range, duplicate planned hikes on a date, " +
+        "orphaned-hike-override (a hike-flavored day override with no Hike row on that date — a phantom hike left by a removed/rescheduled hike), " +
         "hike-outside-plan (planned hike before startedOn or past plan window), " +
         "multiple-hikes-one-week (>1 planned hike per rotation week — informational), " +
         "pre-hike-leg-load (hike the day after a lower/lower-power rotation day), and " +
@@ -3599,8 +3601,20 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
+        // Capture the date before deletion so we can check for a mirror override the delete
+        // would strand (object rows and their mirror overrides aren't linked — see
+        // override-integrity.ts).
+        const existing = await prisma.hike.findUnique({
+          where: { id },
+          select: { date: true },
+        });
         await prisma.hike.delete({ where: { id } });
-        return { id, message: "Hike deleted" };
+        let message = "Hike deleted";
+        if (existing) {
+          const warn = await orphanedOverrideWarning(existing.date);
+          if (warn) message += ` — ${warn}`;
+        }
+        return { id, message };
       }),
   );
 

@@ -2,6 +2,7 @@
 // completed workouts, baselines due, and goal markers.
 
 import { prisma } from "@/lib/db";
+import { isMirrorOverride } from "@/lib/override-integrity";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import { checkpointWindows } from "@/lib/records";
 import type { BaselineDay, BaselineTest, DayTemplate } from "@/lib/program-template";
@@ -651,6 +652,17 @@ export type ResolvedDay = {
     rotationLongEffortDate: string; // dateKey ("yyyy-mm-dd") of the long-endurance slot
     plannedHikeDates: string[]; // dateKey(s) of hike(s) planned elsewhere this week
   } | null;
+  // Flag C — orphaned mirror-override guard (general; see src/lib/override-integrity.ts).
+  // True when this date's session comes from an override whose workoutJson MIRRORS a
+  // first-class scheduled object (today only a hike: category "long-endurance") but no
+  // backing object is present for the date — a phantom session left behind when the object
+  // was removed/rescheduled (only its own row is cleaned up, not the mirror override).
+  // Surfaces the get_day vs object-tool disagreement instead of hiding it. The classifier
+  // (isMirrorOverride) is registry-driven and kind-agnostic; the backing-absent signal in
+  // this hot path is currently hike-specific (plannedHikeToday === null). A new mirror kind
+  // adds its registry entry AND its per-day backing signal here. Lint + the removal warning
+  // are already fully generic via the registry. Heuristic — treat as a soft signal.
+  orphanedOverride: boolean;
   nutritionText: string | null;
   nutritionPlan: NutritionPlan | null;
   mobilityText: string | null;
@@ -1081,6 +1093,13 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     deferredForHike: workoutDeferredForHike,
   });
 
+  // Flag C: a mirror-override (today: hike-flavored) with no backing object on the date is
+  // a phantom session (see ResolvedDay.orphanedOverride). plannedHikeToday is null exactly
+  // when no planned Hike row sits on this date — the hike kind's free, query-free backing
+  // signal — so this surfaces the get_day vs list_planned_hikes disagreement.
+  const orphanedOverride =
+    isOverride && plannedHikeToday === null && isMirrorOverride(workoutTemplate);
+
   return {
     date: dayStart,
     dateKey: dateKey(date),
@@ -1096,6 +1115,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     plannedHikeToday,
     workoutDeferredForHike,
     longEffortConflict,
+    orphanedOverride,
     nutritionText: override?.nutritionText ?? null,
     nutritionPlan: parseStoredNutritionPlan(override?.nutritionPlan),
     mobilityText: override?.mobilityText ?? null,
