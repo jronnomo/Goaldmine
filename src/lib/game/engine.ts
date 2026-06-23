@@ -31,6 +31,11 @@ import {
   hikeXp,
   levelFromXp,
 } from "@/lib/game/rules";
+import {
+  classifyWorkoutContent,
+  contentClassToAttribute,
+  contentClassLabel,
+} from "@/lib/game/classify";
 import { BADGE_CATALOG, evaluateBadges } from "@/lib/game/badges";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { projectQuestXp, type QuestDayInput } from "@/lib/game/quest";
@@ -214,6 +219,9 @@ function buildDayLedger(
         status: w.status,
         source: w.source,
         category: workoutTemplate?.category ?? null,
+        // Modality from the workout's own exercises — credits off-plan effort
+        // (mobility/cardio logged on a strength or rest day) the template misses.
+        contentClass: classifyWorkoutContent(w.exercises),
       }));
 
     const completedHikes = dayHikes.filter((h) => h.status === "completed");
@@ -471,18 +479,24 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
       workoutCompletedDays.add(entry.dateKey);
       const workout = entry.completedWorkouts[0]!;
       const cat = workout.category;
-      // category may be null (off-plan fallback) or "rest" (rest days don't earn workout.completed)
-      if (cat !== "rest") {
-        const attr = categoryToAttribute(cat);
-        const label = cat
-          ? (cat === "upper" ? "Upper workout"
+      // Trait attribution is content-first: credit what was actually done, falling
+      // back to the day's template category only when content is unclassifiable.
+      // This lets off-plan effort (and any real workout logged on a rest day) earn
+      // the matching trait instead of the scheduled-slot's trait (or nothing).
+      const content = workout.contentClass ?? null;
+      const contentAttr = content ? contentClassToAttribute(content) : null;
+      const templateAttr = cat !== "rest" ? categoryToAttribute(cat) : null;
+      const attr = contentAttr ?? templateAttr;
+      if (attr) {
+        const label = content
+          ? contentClassLabel(content)
+          : (cat === "upper" ? "Upper workout"
            : cat === "lower" ? "Lower workout"
            : cat === "zone2-mobility" ? "Zone-2 / Mobility"
            : cat === "calisthenics" ? "Calisthenics"
            : cat === "lower-power" ? "Lower power workout"
            : cat === "long-endurance" ? "Long endurance workout"
-           : "Workout completed")
-          : "Workout completed";
+           : "Workout completed");
         allEvents.push({
           dateKey: entry.dateKey,
           ruleId: "workout.completed",
@@ -493,14 +507,19 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
       }
     }
 
-    // Zone-2 mobility days → also count as mobility session (dedup with Set)
+    // mobility.session — Zone-2 plan days OR any completed workout whose content
+    // is actually mobility (off-plan mobility on a strength/rest day). Separate
+    // 1/day-capped event, additive to workout.completed.
     if (!mobilityByDay.has(entry.dateKey)) {
-      if (entry.completedWorkouts.some((w) => w.category === "zone2-mobility")) {
+      const isMobilityDay = entry.completedWorkouts.some(
+        (w) => w.category === "zone2-mobility" || w.contentClass === "mobility",
+      );
+      if (isMobilityDay) {
         mobilityByDay.add(entry.dateKey);
         allEvents.push({
           dateKey: entry.dateKey,
           ruleId: "mobility.session",
-          label: "Zone-2 / Mobility workout",
+          label: "Mobility session",
           xp: FITNESS_XP.MOBILITY_SESSION,
           attribute: "MOB",
         });

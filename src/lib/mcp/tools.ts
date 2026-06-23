@@ -2335,6 +2335,76 @@ function registerWriteTools(server: McpServer) {
   );
 
   server.registerTool(
+    "log_mobility",
+    {
+      title: "Log a standalone mobility / flexibility session",
+      description:
+        "Record a mobility/flexibility session that wasn't logged as a full workout — e.g. the daily 12-min routine, " +
+        "an off-plan stretch session, or a recovery-day mobility block. Writes a MobilityCheckin, which earns the " +
+        "Mobility (MOB) trait +15 XP for that day (1/day cap; if a mobility workout is already logged that day the XP " +
+        "is not double-counted). Use this when the user did mobility work but you are NOT logging a full set-by-set " +
+        "workout. If you ARE logging the session as a workout via log_workout, you don't need this — the game engine " +
+        "now detects mobility content and credits MOB automatically. " +
+        "Capture deepSquatHoldSec when the user hits a hold milestone; for a tracked flexibility benchmark that should " +
+        "trend over time (Deep Squat Hold, Toe Touch Reach, Shoulder Flexion), prefer log_baseline so it joins the test schedule. " +
+        "Idempotent per day: a second call on the same calendar date updates that day's check-in in place rather than stacking duplicates.",
+      inputSchema: {
+        date: z.string().optional().describe("yyyy-mm-dd (USER_TZ). Omit for today."),
+        areasWorked: z
+          .array(z.string())
+          .optional()
+          .describe("Body areas worked, e.g. ['ankles','hips','thoracic']. Stored comma-separated."),
+        deepSquatHoldSec: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Deep-squat hold time in seconds, if measured this session."),
+        notes: z.string().optional(),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const date = input.date ? parseDateInput(input.date) : new Date();
+        const areasWorked = (input.areasWorked ?? []).join(",");
+
+        // Idempotency: one check-in per calendar day (mirrors log_baseline /
+        // log_hike). Matches the engine's 1/day MOB award per MobilityCheckin.
+        const existing = await prisma.mobilityCheckin.findFirst({
+          where: { date: { gte: startOfDay(date), lte: endOfDay(date) } },
+          orderBy: { date: "asc" },
+        });
+
+        if (existing) {
+          const updated = await prisma.mobilityCheckin.update({
+            where: { id: existing.id },
+            data: {
+              date,
+              areasWorked,
+              deepSquatHoldSec: input.deepSquatHoldSec ?? null,
+              notes: input.notes ?? null,
+            },
+          });
+          return {
+            id: updated.id,
+            deduped: true,
+            message: "Existing mobility check-in on this date updated in place (no duplicate created).",
+          };
+        }
+
+        const m = await prisma.mobilityCheckin.create({
+          data: {
+            date,
+            areasWorked,
+            deepSquatHoldSec: input.deepSquatHoldSec ?? null,
+            notes: input.notes ?? null,
+          },
+        });
+        return { id: m.id, deduped: false, message: "Mobility session logged (+15 MOB for the day)." };
+      }),
+  );
+
+  server.registerTool(
     "log_hike",
     {
       title: "Record a completed hike, schedule a planned hike, or finalize a planned hike",

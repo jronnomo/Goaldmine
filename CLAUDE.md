@@ -51,7 +51,7 @@ All tools are registered in `src/lib/mcp/tools.ts` via `McpServer.registerTool()
 `get_today_plan`, `get_day`, `recent_history` (**now excludes standing_rule/review/open_item notes**), `get_nutrition_history`, `list_goals`, `get_goal`, `weekly_summary_data`, `get_baseline_schedule`, `get_baseline_history`, `get_records_summary`, `get_exercise_history`, `export_workout`, `get_session_brief`, `list_open_items`, `get_latest_review`.
 
 ### Write tools
-`log_workout` (**now returns recordsSet[]**), `log_measurement`, `log_baseline`, `log_hike`, `log_note`, `log_open_item`, `resolve_open_item`, `log_review`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`, `acknowledge_lint_finding`, `clear_lint_acknowledgement`.
+`log_workout` (**now returns recordsSet[]**), `log_measurement`, `log_baseline`, `log_mobility`, `log_hike`, `log_note`, `log_open_item`, `resolve_open_item`, `log_review`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`, `acknowledge_lint_finding`, `clear_lint_acknowledgement`.
 
 `log_workout` accepts the structured shape produced by `parseStrongWorkout()` — paste a Strong-app txt in claude.ai, Claude parses, then calls this tool.
 
