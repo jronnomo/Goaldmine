@@ -61,6 +61,9 @@ export type WorkoutRow = {
   status: string;         // "completed" | "planned" | "skipped"
   source: string | null;  // "baseline" identifies mirror workouts
   category: string | null; // resolved from DayTemplate for this day; null = off-plan or no template
+  // Modality inferred from the workout's own exercises (classifyWorkoutContent).
+  // Drives trait attribution for off-plan effort; null = nothing classifiable.
+  contentClass?: "mobility" | "endurance" | "strength" | null;
 };
 
 // Lightweight hike row
