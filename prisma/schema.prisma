@@ -222,6 +222,7 @@ model Goal {
   scheduledItems ScheduledItem[]
   logEntries     LogEntry[]
   hikes          Hike[]
+  dayRenderJobs  DayRenderJob[]
 
   @@index([active])
   @@index([targetDate])
@@ -409,4 +410,26 @@ model BodyMetric {
 
   @@index([key, date])
   @@index([date])
+}
+
+model DayRenderJob {
+  id                 String    @id @default(cuid())
+  date               DateTime  // USER_TZ midnight (set by callers via @/lib/calendar)
+  goalId             String
+  goal               Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  // status lifecycle: pending | claimed | drafted | approved | rendering | rendered | failed
+  status             String    @default("pending")
+  claimedAt          DateTime?
+  draftRef           String?   // opaque ClipForge draft id
+  approvedAt         DateTime?
+  renderedAt         DateTime?
+  outputRef          String?   // opaque reel URL-or-id; UI renders as a link when it starts with http(s), else plain text
+  errorMessage       String?
+  clipforgeProjectId String?   // nullable column; the MCP tool layer (#114) requires it via zod
+  payload            Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([goalId, date])
+  @@index([goalId, status, date])
 }
