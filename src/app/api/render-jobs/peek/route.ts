@@ -1,0 +1,65 @@
+// Cheap polling endpoint for the GPU-box cron to check whether any render work
+// is queued — so it can decide to spin up a Claude session without wasting tokens
+// when the queue is empty.
+//
+// READ-ONLY. No writes. Two findFirst + two count queries.
+//
+// Auth mirrors src/app/api/mcp/[token]/route.ts:
+//   - Bearer token in Authorization header.
+//   - Constant-time compare (length-guard + XOR) so timing doesn't leak a prefix.
+//   - 404 on mismatch/missing (same as [token] route — no header that signals validity).
+//   - 500 when MCP_AUTH_TOKEN is unset.
+
+import { prisma } from "@/lib/db";
+import { dateKey } from "@/lib/calendar";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
+export async function GET(req: Request): Promise<Response> {
+  const expected = process.env.MCP_AUTH_TOKEN;
+  if (!expected) {
+    return new Response("Server misconfigured: MCP_AUTH_TOKEN not set", { status: 500 });
+  }
+
+  const auth = req.headers.get("authorization") ?? "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+  if (!token || !timingSafeEqual(token, expected)) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  // Two findFirst + two count — all independent, run in parallel.
+  const [pendingCount, nextJob, approvedCount, nextApprovedJob] = await Promise.all([
+    prisma.dayRenderJob.count({ where: { status: "pending" } }),
+    prisma.dayRenderJob.findFirst({
+      where: { status: "pending" },
+      orderBy: { date: "asc" },
+      select: { id: true, date: true },
+    }),
+    prisma.dayRenderJob.count({ where: { status: "approved" } }),
+    prisma.dayRenderJob.findFirst({
+      where: { status: "approved" },
+      orderBy: { date: "asc" },
+      select: { id: true, date: true },
+    }),
+  ]);
+
+  return Response.json({
+    pendingCount,
+    nextJob: nextJob ? { id: nextJob.id, date: dateKey(nextJob.date) } : null,
+    approvedCount,
+    nextApprovedJob: nextApprovedJob
+      ? { id: nextApprovedJob.id, date: dateKey(nextApprovedJob.date) }
+      : null,
+  });
+}
+
+// Constant-time string compare so timing doesn't leak a prefix of the token.
+// Length mismatch is checked first to avoid allocating equal-length buffers
+// when the strings are obviously different.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
