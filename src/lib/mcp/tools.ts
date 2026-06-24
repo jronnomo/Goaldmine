@@ -94,6 +94,7 @@ import {
 } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
+import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
 
 const DateKeyShape = z
@@ -498,6 +499,7 @@ export function registerAll(server: McpServer) {
   registerWriteTools(server);
   registerProjectTools(server);
   registerGitHubTools(server);
+  registerRenderTools(server);
 }
 
 // ----------------------------------------------------------------------------
