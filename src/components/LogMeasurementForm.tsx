@@ -17,25 +17,16 @@ export function LogMeasurementForm({ latestWeight }: { latestWeight: number | nu
       }}
       className="flex flex-col gap-2"
     >
-      <div className="flex gap-2">
-        <input
-          type="number"
-          name="weightLb"
-          step="0.1"
-          min="0"
-          required
-          placeholder="lbs"
-          defaultValue={latestWeight ?? undefined}
-          className="flex-1 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
-        />
-        <input
-          type="number"
-          name="restingHr"
-          min="0"
-          placeholder="RHR"
-          className="w-20 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
-        />
-      </div>
+      <input
+        type="number"
+        name="weightLb"
+        step="0.1"
+        min="0"
+        required
+        placeholder="lbs"
+        defaultValue={latestWeight ?? undefined}
+        className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+      />
       <input
         type="text"
         name="notes"

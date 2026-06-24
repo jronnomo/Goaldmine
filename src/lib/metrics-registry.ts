@@ -183,6 +183,154 @@ export const METRICS: MetricSpec[] = [
 
 export const METRIC_BY_ID = new Map(METRICS.map((m) => [m.id, m]));
 
+// ─── Body-metric registry (REQ-002) ───────────────────────────────────────────
+// Client-safe: no Prisma / Node imports. Imported by the log form, server
+// actions, and MCP tools. Keep this block free of server-only deps.
+
+export type BodyMetricSpec = {
+  key: string;
+  label: string;
+  units: string;
+  direction: Direction;
+  description: string;
+  normalRange?: { min?: number; max?: number };
+};
+
+/**
+ * Hand-curated alias map: NORMALIZED loose key → canonical seed key.
+ * Keys in this map are already run through the normalizer regex
+ * (lowercase, [^a-z0-9]+ → _, trim leading/trailing _).
+ * Canonical seed keys map to themselves so quick-picks always resolve correctly.
+ * Mirrors EXERCISE_ALIAS_GROUPS: single source of truth, prevents series forks.
+ *
+ * Covers R-C1 aliases (blueprint):
+ *   vo2max variants · spo2 / blood-oxygen variants · sleep_score / sleep · rhr variants
+ */
+export const BODY_METRIC_ALIASES: Record<string, string> = {
+  // vo2max — canonical + loose forms (subscript ₂ normalizes to nothing → "vo_max")
+  vo2max:   "vo2max",
+  vo2_max:  "vo2max",
+  vo_max:   "vo2max", // covers "VO₂ max" (Unicode subscript 2 is stripped)
+  vo2:      "vo2max",
+  // spo2 — canonical + common phrasings
+  spo2:          "spo2",
+  blood_oxygen:  "spo2",
+  blood_o2:      "spo2",
+  o2:            "spo2",
+  oxygen:        "spo2",
+  sp_o2:         "spo2",
+  o2_sat:        "spo2",  // covers "o2 sat"
+  sp02:          "spo2",  // common typo (zero not letter O)
+  // sleep_score — canonical + bare "sleep"
+  sleep_score:   "sleep_score",
+  sleep:         "sleep_score",
+  // rhr — canonical + full phrasings
+  rhr:                  "rhr",
+  resting_hr:           "rhr",
+  resting_heart_rate:   "rhr",
+  resting_heart:        "rhr",
+  // hrv — canonical + full phrasings
+  hrv:                      "hrv",
+  heart_rate_variability:   "hrv",
+  heart_variability:        "hrv",
+};
+
+/**
+ * Normalize a raw metric key to a canonical snake_case form, resolving known
+ * aliases to their seed key. Used at every write path (MCP tool, server action,
+ * and any form's custom-key input) so all entries land on the same series.
+ *
+ * Step 1: lowercase → replace any run of non-[a-z0-9] chars with "_" → strip
+ *         leading/trailing underscores  (handles Unicode subscripts, spaces,
+ *         punctuation, mixed case, etc.).
+ * Step 2: look up the loose key in BODY_METRIC_ALIASES; if found, return the
+ *         canonical seed key; otherwise return the loose normalized key (ad-hoc).
+ */
+export function normalizeMetricKey(raw: string): string {
+  const loose = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return BODY_METRIC_ALIASES[loose] ?? loose;
+}
+
+/** Curated body-metric seeds (NOT folded into METRICS — body metrics are not goal targets in v1). */
+export const BODY_METRICS: BodyMetricSpec[] = [
+  {
+    key:         "rhr",
+    label:       "Resting heart rate",
+    units:       "bpm",
+    direction:   "decrease",
+    description: "Resting HR from a wearable.",
+  },
+  {
+    key:         "sleep_score",
+    label:       "Sleep score",
+    units:       "pts",
+    direction:   "increase",
+    description: "Nightly sleep score.",
+  },
+  {
+    key:         "spo2",
+    label:       "Blood oxygen (SpO₂)",
+    units:       "%",
+    direction:   "increase",
+    description: "Blood oxygen saturation.",
+    normalRange: { min: 95, max: 100 },
+  },
+  {
+    key:         "vo2max",
+    label:       "VO₂ max",
+    units:       "ml/kg/min",
+    direction:   "increase",
+    description: "Cardiorespiratory fitness estimate.",
+  },
+  {
+    key:         "hrv",
+    label:       "HRV",
+    units:       "ms",
+    direction:   "increase",
+    description: "Heart-rate variability — recovery indicator from a wearable.",
+  },
+];
+
+/** O(1) lookup map from canonical key → BodyMetricSpec. */
+export const BODY_METRIC_BY_KEY = new Map(BODY_METRICS.map((m) => [m.key, m]));
+
+/**
+ * Convert a bare snake_case key to a human-readable label.
+ * "grip_strength" → "Grip strength"
+ */
+export function humanizeMetricKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/**
+ * Resolve display metadata for a body-metric key.
+ *
+ * - Known keys: registry wins (label, units, direction, normalRange).
+ * - Ad-hoc keys: humanized label, row unit (or ""), direction "increase" default.
+ */
+export function resolveBodyMetric(
+  key: string,
+  rowUnit?: string | null,
+): { label: string; units: string; direction: Direction; normalRange?: { min?: number; max?: number } } {
+  const spec = BODY_METRIC_BY_KEY.get(key);
+  if (spec) {
+    return {
+      label:       spec.label,
+      units:       spec.units,
+      direction:   spec.direction,
+      normalRange: spec.normalRange,
+    };
+  }
+  return {
+    label:     humanizeMetricKey(key),
+    units:     rowUnit ?? "",
+    direction: "increase",
+  };
+}
+
 /**
  * Mt. Elbert via Black Cloud Trail — research-grounded default targets.
  *

@@ -85,7 +85,13 @@ import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
 import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
-import { GoalTargetSchema } from "@/lib/metrics-registry";
+import {
+  GoalTargetSchema,
+  normalizeMetricKey,
+  BODY_METRIC_BY_KEY,
+  BODY_METRICS,
+  resolveBodyMetric,
+} from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
@@ -739,7 +745,7 @@ function registerReadTools(server: McpServer) {
       safe(async () => {
         const since = startOfDay(addDays(new Date(), -days));
 
-        const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
+        const [workouts, measurements, notes, baselines, hikes, nutrition, bodyMetricRows] = await Promise.all([
           prisma.workout.findMany({
             where: { startedAt: { gte: since } },
             include: { exercises: { include: { sets: true } } },
@@ -765,12 +771,28 @@ function registerReadTools(server: McpServer) {
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
+          // R-S1: include latest body metric per key so the coach sees wearable data inline.
+          prisma.bodyMetric.findMany({
+            where: { date: { gte: since } },
+            orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+          }),
         ]);
 
         // B-4: strip source from nutrition items before sending to coach (saves ~73 KB
         // in a 14-day recent_history window; source is the rendering payload, not coaching context).
         const nutritionStripped = nutrition.map((n) => ({ ...n, items: stripItemSource(n.items) }));
-        return { since, days, workouts, measurements, notes, baselines, hikes, nutrition: nutritionStripped };
+
+        // R-S1: reduce bodyMetricRows to latest-per-key (desc order → first seen = latest).
+        const seenBmKeys = new Set<string>();
+        const bodyMetrics: Array<{ key: string; value: number; unit: string | null; date: string }> = [];
+        for (const row of bodyMetricRows) {
+          if (!seenBmKeys.has(row.key)) {
+            seenBmKeys.add(row.key);
+            bodyMetrics.push({ key: row.key, value: row.value, unit: row.unit, date: toDateKey(row.date) });
+          }
+        }
+
+        return { since, days, workouts, measurements, notes, baselines, hikes, nutrition: nutritionStripped, bodyMetrics };
       }),
   );
 
@@ -2034,6 +2056,132 @@ function registerReadTools(server: McpServer) {
       }),
   );
 
+  // ── get_body_metrics ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "get_body_metrics",
+    {
+      title: "Latest body metrics summary",
+      description:
+        "Returns the latest recorded value for every body-metric key, with registry label/units/direction and row counts. " +
+        "Covers all registered keys (rhr, sleep_score, spo2, vo2max, hrv) plus any ad-hoc keys the user has logged. " +
+        "Use to get a snapshot of all wearable health metrics. " +
+        "For the full trend of one metric use get_metric_history.",
+    },
+    async () =>
+      safe(async () => {
+        // R-S2: tie-break by createdAt so latest-per-day is deterministic.
+        const rows = await prisma.bodyMetric.findMany({
+          orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        });
+
+        // Reduce to latest-per-key (first occurrence wins given desc ordering).
+        const seenKeys = new Set<string>();
+        const latestByKey = new Map<
+          string,
+          { value: number; unit: string | null; date: Date; createdAt: Date }
+        >();
+        const countByKey = new Map<string, number>();
+        const firstDateByKey = new Map<string, Date>();
+        const lastDateByKey = new Map<string, Date>();
+
+        for (const row of rows) {
+          const cnt = (countByKey.get(row.key) ?? 0) + 1;
+          countByKey.set(row.key, cnt);
+
+          // Track first/last date (rows are desc so first row per key = lastDate, final = firstDate)
+          if (!lastDateByKey.has(row.key)) {
+            lastDateByKey.set(row.key, row.date);
+          }
+          firstDateByKey.set(row.key, row.date); // keeps overwriting → ends up at oldest
+
+          if (!seenKeys.has(row.key)) {
+            seenKeys.add(row.key);
+            latestByKey.set(row.key, { value: row.value, unit: row.unit, date: row.date, createdAt: row.createdAt });
+          }
+        }
+
+        // Order: registry order first, then ad-hoc keys alphabetically.
+        const registryKeys = BODY_METRICS.map((m) => m.key);
+        const adHocKeys = [...seenKeys]
+          .filter((k) => !registryKeys.includes(k))
+          .sort();
+        const orderedKeys = [...registryKeys.filter((k) => seenKeys.has(k)), ...adHocKeys];
+
+        const metrics = orderedKeys.map((key) => {
+          const latest = latestByKey.get(key)!;
+          const resolved = resolveBodyMetric(key, latest.unit);
+          return {
+            key,
+            label: resolved.label,
+            units: resolved.units,
+            direction: resolved.direction,
+            latest: {
+              value: latest.value,
+              date: toDateKey(latest.date),
+            },
+            count: countByKey.get(key) ?? 0,
+            firstDate: toDateKey(firstDateByKey.get(key)!),
+            lastDate: toDateKey(lastDateByKey.get(key)!),
+          };
+        });
+
+        return { metrics };
+      }),
+  );
+
+  // ── get_metric_history ───────────────────────────────────────────────────────
+  server.registerTool(
+    "get_metric_history",
+    {
+      title: "Body metric trend over time",
+      description:
+        "All recorded readings for one body-metric key (oldest-first), with registry label/units/direction. " +
+        "Use to view the trend / progression for a wearable metric — rhr, sleep_score, spo2, vo2max, or any ad-hoc key. " +
+        "Default lookback is 180 days; set days to narrow the window.",
+      inputSchema: {
+        key: z
+          .string()
+          .min(1)
+          .describe("Bare metric key — rhr | sleep_score | spo2 | vo2max | hrv | ad-hoc."),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(365)
+          .default(180)
+          .optional()
+          .describe("Lookback window in days (default 180, max 365)."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const key = normalizeMetricKey(input.key);
+        const lookback = input.days ?? 180;
+        const since = startOfDay(addDays(new Date(), -lookback));
+
+        // R-S2: oldest-first for charting; tie-break by createdAt asc.
+        const rows = await prisma.bodyMetric.findMany({
+          where: { key, date: { gte: since } },
+          orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+        });
+
+        const resolved = resolveBodyMetric(key, rows[0]?.unit ?? null);
+        const points = rows.map((r) => ({
+          date: toDateKey(r.date),
+          value: r.value,
+          unit: r.unit,
+        }));
+
+        return {
+          key,
+          label: resolved.label,
+          units: resolved.units,
+          direction: resolved.direction,
+          points,
+        };
+      }),
+  );
+
   // ── get_rarity ───────────────────────────────────────────────────────────────
   server.registerTool(
     "get_rarity",
@@ -2207,14 +2355,22 @@ function registerWriteTools(server: McpServer) {
   server.registerTool(
     "log_measurement",
     {
-      title: "Log body weight, resting heart rate, body fat, or other body metric",
+      title: "Log body weight or body fat",
       description:
-        "Record a daily weigh-in, resting HR (RHR), body fat %, or other body-composition metric. " +
-        "Use for any body-state tracking that isn't a workout, baseline test, or hike. " +
-        "Pass only the fields measured; omit the rest. Drives the weight trend on the dashboard and feeds weekly summaries.",
+        "Record a daily weigh-in or body fat %. " +
+        "Use for weight + body-fat only — these drive the weight trend on the dashboard and feed weekly summaries. " +
+        "For resting HR, sleep score, SpO₂, VO₂ max, HRV, or any other wearable number use log_body_metric instead. " +
+        "Pass only the fields measured; omit the rest.",
       inputSchema: {
         weightLb: z.number().min(0).optional(),
-        restingHr: z.number().int().min(0).optional(),
+        restingHr: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "Deprecated — forwarded to BodyMetric(key='rhr'); prefer log_body_metric.",
+          ),
         bodyFatPct: z.number().min(0).max(100).optional(),
         notes: z.string().optional(),
         date: z.string().optional().describe("ISO datetime; default = now"),
@@ -2222,16 +2378,106 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const m = await prisma.measurement.create({
+        const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
+
+        // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
+        let rhrRow: { id: string } | undefined;
+        if (input.restingHr !== undefined) {
+          rhrRow = await prisma.bodyMetric.create({
+            data: {
+              date,
+              key: "rhr",
+              value: input.restingHr,
+              unit: "bpm",
+              source: "claude",
+            },
+          });
+        }
+
+        // Only write a Measurement row when weight or body-fat are provided.
+        if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
+          const m = await prisma.measurement.create({
+            data: {
+              date,
+              weightLb: input.weightLb ?? null,
+              restingHr: null, // no longer written here
+              bodyFatPct: input.bodyFatPct ?? null,
+              notes: input.notes ?? null,
+            },
+          });
+          return { id: m.id, message: "Measurement logged" };
+        }
+
+        // restingHr-only path: return the BodyMetric row id so the coach has a handle.
+        if (rhrRow) {
+          return {
+            id: rhrRow.id,
+            key: "rhr",
+            message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
+          };
+        }
+
+        return { message: "Measurement logged" };
+      }),
+  );
+
+  // ── log_body_metric ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "log_body_metric",
+    {
+      title: "Log a wearable / body-sensor metric",
+      description:
+        "Record a numeric body metric from the Apple Watch or other wearable: resting HR, sleep score, SpO₂, VO₂ max, HRV, or any ad-hoc key. " +
+        "Use this tool for wearable/Watch numbers beyond weight and body fat. " +
+        "For weight or body fat use log_measurement; for program/goal metrics (MRR, milestones) use log_metric; for fitness benchmarks use log_baseline. " +
+        "Key is a bare lowercase snake string — e.g. rhr | sleep_score | spo2 | vo2max | hrv — or any custom key. " +
+        "Multiple readings per day are allowed (Watch can emit several SpO₂ spot-checks).",
+      inputSchema: {
+        key: z
+          .string()
+          .min(1)
+          .describe(
+            "Bare metric key, lowercase snake — rhr | sleep_score | spo2 | vo2max | hrv | ad-hoc. No prefix.",
+          ),
+        value: z.number().describe("Numeric reading."),
+        unit: z
+          .string()
+          .optional()
+          .describe("Unit e.g. bpm | % | ml/kg/min. Optional for registered keys (registry default used)."),
+        date: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd (USER_TZ) or ISO datetime. Default today."),
+        notes: z.string().optional(),
+        source: z
+          .enum(["manual", "claude", "watch", "imported"])
+          .default("claude"),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const key = normalizeMetricKey(input.key);
+        if (!Number.isFinite(input.value)) throw new Error("value must be a finite number");
+        const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
+        const unit = input.unit ?? BODY_METRIC_BY_KEY.get(key)?.units ?? null;
+        const row = await prisma.bodyMetric.create({
           data: {
-            date: input.date ? parseDateInput(input.date) : new Date(),
-            weightLb: input.weightLb ?? null,
-            restingHr: input.restingHr ?? null,
-            bodyFatPct: input.bodyFatPct ?? null,
+            date,
+            key,
+            value: input.value,
+            unit,
             notes: input.notes ?? null,
+            source: input.source,
           },
         });
-        return { id: m.id, message: "Measurement logged" };
+        return {
+          id: row.id,
+          key: row.key,
+          value: row.value,
+          unit: row.unit,
+          date: toDateKey(row.date),
+          message: "Body metric logged",
+        };
       }),
   );
 
