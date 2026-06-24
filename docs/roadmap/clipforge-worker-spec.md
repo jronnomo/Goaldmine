@@ -31,6 +31,13 @@ goaldmine runs **only on the Claude Max subscription, never the paid Anthropic A
 
 **Net:** Epic B collapses from "build an unattended worker" to "make triggering the existing bridge for a queued day frictionless, in an interactive Max session." Much smaller — mostly the already-shipped queue plus an optional launcher alias + an optional notify-routine.
 
+### 1b. Delivered Max-only helpers
+- **`scripts/render-next.sh`** — opens an interactive Claude Code session (Max, `$0`) pre-loaded to run the bridge for the oldest `pending` render day (or a date you pass). It reads `/peek`, seeds the bridge operating prompt + queue hooks (claim → draft → STOP for your OK → render → complete), and attaches both MCP servers. One command; you stay in the loop.
+- **Notify routine (claude.ai, runs on Max)** — set up a scheduled routine in claude.ai with this prompt so you get a morning nudge when reels are waiting (pure notification — no GPU, no render):
+  > "Call `list_render_jobs(status:'pending')` and `list_render_jobs(status:'drafted')` on the Goaldmine connector. If either is non-empty, post me a short note: how many days are queued for render (pending) and how many drafts are waiting for my approval (drafted), with their dates. If both are empty, do nothing."
+
+These two are the ceiling of what Max allows: the queue tells you what's ready, the routine reminds you, and `render-next.sh` makes triggering it one command — all interactive, all `$0`.
+
 ---
 
 ## 1. Architecture (recap)
