@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
+import { LogBodyMetricForm } from "@/components/LogBodyMetricForm";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
@@ -44,7 +45,7 @@ export type LogLauncherProps = {
   dayTarget?: DayMacros | null;
 };
 
-type ExpandedRow = "weight" | "meal" | "note" | null;
+type ExpandedRow = "weight" | "metric" | "meal" | "note" | null;
 
 type RowConfig = {
   key: ExpandedRow & string;
@@ -74,6 +75,16 @@ const rows: RowConfig[] = [
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
         <path d="M10 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" stroke="currentColor" strokeWidth="1.5" />
         <path d="M5 17a5 5 0 0 1 10 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    key: "metric",
+    label: "Body metric",
+    sub: "RHR, sleep, SpO₂, VO₂ max, HRV…",
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+        <path d="M2 10c1-3 2.5-5 4-5s2.5 2 4 5 2.5 5 4 5 3-2 4-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -157,6 +168,7 @@ export function LogLauncher({
             {isOpen && (
               <div className="px-4 pb-4 pt-1 border-t border-[var(--border)]">
                 {key === "weight" && <LogMeasurementForm latestWeight={latestWeight} />}
+                {key === "metric" && <LogBodyMetricForm />}
                 {key === "meal" && (
                   <>
                     {showMealSoFar && mealSoFar && (

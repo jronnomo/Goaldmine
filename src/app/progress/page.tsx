@@ -6,6 +6,7 @@ import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReadinessChart } from "@/components/ReadinessChart";
 import { WeightChart } from "@/components/WeightChart";
 import { RecordsSummary } from "@/components/RecordsSummary";
+import { BodyMetricsSection } from "@/components/BodyMetricsSection";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
@@ -244,6 +245,9 @@ export default async function ProgressPage() {
           )}
         </Card>
       )}
+
+      {/* Body metrics — ungated; shows regardless of goal targets (R-S5) */}
+      <BodyMetricsSection />
 
       {/* Records summary */}
       <RecordsSummary />
