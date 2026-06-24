@@ -21,6 +21,7 @@ import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { FootageForm } from "@/components/days/FootageForm";
 import { FootageList, type SerializedMarker } from "@/components/days/FootageList";
+import { RenderJobPanel, type SerializedRenderJob } from "@/components/days/RenderJobPanel";
 import { canonicalExerciseName } from "@/lib/records";
 import { prisma } from "@/lib/db";
 
@@ -141,6 +142,27 @@ export default async function DayDetail({
     exerciseName: m.exerciseName,
     highlight: m.highlight,
   }));
+
+  // ── Render job ───────────────────────────────────────────────────────────────
+  // Serialize approvedAt (Date | null) → ISO string before passing to client.
+  const rawRenderJob = await prisma.dayRenderJob.findFirst({
+    where: { date: { gte: date, lte: endOfDay(date) } },
+    select: {
+      id: true,
+      status: true,
+      clipforgeProjectId: true,
+      draftRef: true,
+      approvedAt: true,
+      outputRef: true,
+      errorMessage: true,
+    },
+  });
+  const renderJob: SerializedRenderJob | null = rawRenderJob
+    ? {
+        ...rawRenderJob,
+        approvedAt: rawRenderJob.approvedAt?.toISOString() ?? null,
+      }
+    : null;
 
   // Exercise picker — completed workout first, template fallback
   const footageExercises: { name: string }[] =
@@ -321,6 +343,7 @@ export default async function DayDetail({
       >
         <FootageList dateKey={dateKey} markers={footageMarkers} />
         <FootageForm date={dateKey} exercises={footageExercises} />
+        <RenderJobPanel dateKey={dateKey} job={renderJob} />
       </CollapsibleCard>
 
       {(r.nutritionPlan || r.loggedNutrition.length > 0) && (
