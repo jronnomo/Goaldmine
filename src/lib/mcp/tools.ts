@@ -2063,7 +2063,7 @@ function registerReadTools(server: McpServer) {
       title: "Latest body metrics summary",
       description:
         "Returns the latest recorded value for every body-metric key, with registry label/units/direction and row counts. " +
-        "Covers all registered keys (rhr, sleep_score, spo2, vo2max) plus any ad-hoc keys the user has logged. " +
+        "Covers all registered keys (rhr, sleep_score, spo2, vo2max, hrv) plus any ad-hoc keys the user has logged. " +
         "Use to get a snapshot of all wearable health metrics. " +
         "For the full trend of one metric use get_metric_history.",
     },
@@ -2381,8 +2381,9 @@ function registerWriteTools(server: McpServer) {
         const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
 
         // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
+        let rhrRow: { id: string } | undefined;
         if (input.restingHr !== undefined) {
-          await prisma.bodyMetric.create({
+          rhrRow = await prisma.bodyMetric.create({
             data: {
               date,
               key: "rhr",
@@ -2405,6 +2406,15 @@ function registerWriteTools(server: McpServer) {
             },
           });
           return { id: m.id, message: "Measurement logged" };
+        }
+
+        // restingHr-only path: return the BodyMetric row id so the coach has a handle.
+        if (rhrRow) {
+          return {
+            id: rhrRow.id,
+            key: "rhr",
+            message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
+          };
         }
 
         return { message: "Measurement logged" };
@@ -2447,6 +2457,7 @@ function registerWriteTools(server: McpServer) {
     async (input) =>
       safe(async () => {
         const key = normalizeMetricKey(input.key);
+        if (!Number.isFinite(input.value)) throw new Error("value must be a finite number");
         const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
         const unit = input.unit ?? BODY_METRIC_BY_KEY.get(key)?.units ?? null;
         const row = await prisma.bodyMetric.create({

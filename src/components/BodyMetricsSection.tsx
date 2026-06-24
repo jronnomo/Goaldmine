@@ -40,7 +40,7 @@ export async function BodyMetricsSection() {
         const keyRows = grouped.get(key)!;
         // Latest row by our asc-sort = last element (highest date, then highest createdAt)
         const latestRow = keyRows.at(-1)!;
-        const { label, units } = resolveBodyMetric(key, latestRow.unit);
+        const { label, units, normalRange } = resolveBodyMetric(key, latestRow.unit);
 
         const data: HistoryPoint[] = keyRows.map((r) => ({
           date: r.date.toISOString(),
@@ -56,12 +56,18 @@ export async function BodyMetricsSection() {
         // Pad by 10% of range, minimum 2 units (so single-point series has visible Y space)
         const pad = Math.max(range * 0.1, 2);
 
+        // Expand bounds to cover normalRange so the reference band is always visible
+        let lo = minVal - pad;
+        let hi = maxVal + pad;
+        if (normalRange?.min !== undefined) lo = Math.min(lo, normalRange.min);
+        if (normalRange?.max !== undefined) hi = Math.max(hi, normalRange.max);
+
         let domain: [number, number];
         if (units === "%") {
           // Clamp percentage series to sensible 0–100 range with small breathing room
-          domain = [Math.max(0, minVal - 2), Math.min(100, maxVal + 2)];
+          domain = [Math.max(0, lo), Math.min(100, hi)];
         } else {
-          domain = [minVal - pad, maxVal + pad];
+          domain = [lo, hi];
         }
 
         return (
