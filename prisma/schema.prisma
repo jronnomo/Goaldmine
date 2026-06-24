@@ -397,3 +397,17 @@ model FoodLibrary {
 
   @@index([usageCount(sort: Desc), lastUsedAt(sort: Desc)])
 }
+
+model BodyMetric {
+  id        String   @id @default(cuid())
+  date      DateTime // USER_TZ midnight
+  key       String   // bare lowercase snake: "rhr","sleep_score","spo2","vo2max"
+  value     Float    // non-null — the row's whole purpose is one number
+  unit      String?  // per-row snapshot; registry authoritative for known keys
+  notes     String?
+  source    String   @default("manual") // manual | claude | watch | imported | backfill
+  createdAt DateTime @default(now())
+
+  @@index([key, date])
+  @@index([date])
+}
