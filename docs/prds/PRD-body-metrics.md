@@ -14,7 +14,7 @@ A **generic** body-metric store: record any metric by `key + value + unit + date
 ## 3. Locked Decisions
 1. **Coexist + migrate RHR.** Weight & body-fat stay in `Measurement` (preserves `WeightChart` + readiness `weightLb`-target gating). A new generic `BodyMetric` table holds RHR, sleep, SpO₂, VO₂ max, and ad-hoc metrics. Existing `Measurement.restingHr` rows are backfilled into `BodyMetric` so RHR history is viewable.
 2. **View:** a "Body Metrics" section on **both** `/progress` and `/stats` — one mini trend chart per logged key, auto-appearing. Reuse `HistoryChart`.
-3. **Seed registry:** RHR, Sleep score, SpO₂, VO₂ max. Ad-hoc keys still loggable + viewable.
+3. **Seed registry:** RHR, Sleep score, SpO₂, VO₂ max, HRV. Ad-hoc keys still loggable + viewable.
 4. **Logging surface:** dashboard form (in the Log launcher) **and** an MCP write tool, plus MCP read tools.
 5. **Flow:** feature branch + PR; this PRD in `docs/prds/`.
 
@@ -47,7 +47,7 @@ model BodyMetric {
 ## 5. Registry (`src/lib/metrics-registry.ts`)
 A **separate** `BODY_METRICS` list (NOT folded into `METRICS`, which feeds goal-target/readiness pickers — body metrics are not targets in v1):
 - `BodyMetricSpec = { key, label, units, direction, description, normalRange? }`
-- Seeds: `rhr` (bpm, decrease) · `sleep_score` (pts, increase) · `spo2` (%, increase, normal 95–100) · `vo2max` (ml/kg/min, increase).
+- Seeds: `rhr` (bpm, decrease) · `sleep_score` (pts, increase) · `spo2` (%, increase, normal 95–100) · `vo2max` (ml/kg/min, increase) · `hrv` (ms, increase — recovery indicator).
 - `BODY_METRIC_BY_KEY` map; `humanizeMetricKey(key)`; `resolveBodyMetric(key, rowUnit?)` → label/units/direction (registry wins; ad-hoc → humanized label + row unit + `increase`).
 - Must stay client-safe (no Prisma/Node imports) — imported by the client form.
 
@@ -72,7 +72,7 @@ A **separate** `BODY_METRICS` list (NOT folded into `METRICS`, which feeds goal-
 - `prisma/backfill-body-metrics.ts` (standalone `npx tsx`, mirrors `prisma/seed-chewgether.ts`): `Measurement.restingHr (not null)` → `BodyMetric(key="rhr", unit="bpm", source="backfill")`, idempotent (skip if a `source="backfill"` rhr row already exists for that day). Run on dev, then prod during deploy.
 
 ## 10. Out of Scope (v1)
-Readiness/targets/rarity integration (no changes to `goal-targets.ts`/`readiness.ts`/`rarity.ts`); HRV seed (loggable ad-hoc); dropping `Measurement.restingHr`; per-row unit conversion.
+Readiness/targets/rarity integration (no changes to `goal-targets.ts`/`readiness.ts`/`rarity.ts`); dropping `Measurement.restingHr`; per-row unit conversion.
 
 ## 11. Edge Cases
 Empty state → section renders nothing. Single data point → chart shows one dot + a "trend appears with more readings" caption. Ad-hoc key → humanized label, row unit, `increase` default. Unit is a display label, not a normalization key (single-user; no conversion). USER_TZ: never `new Date(bareDateStr)` — route through calendar helpers. RHR briefly accepted by both `log_measurement` (now mirrored to BodyMetric) and the new path → converges on one table, no divergence.

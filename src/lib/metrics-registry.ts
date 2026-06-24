@@ -229,6 +229,10 @@ export const BODY_METRIC_ALIASES: Record<string, string> = {
   resting_hr:           "rhr",
   resting_heart_rate:   "rhr",
   resting_heart:        "rhr",
+  // hrv — canonical + full phrasings
+  hrv:                      "hrv",
+  heart_rate_variability:   "hrv",
+  heart_variability:        "hrv",
 };
 
 /**
@@ -280,6 +284,13 @@ export const BODY_METRICS: BodyMetricSpec[] = [
     units:       "ml/kg/min",
     direction:   "increase",
     description: "Cardiorespiratory fitness estimate.",
+  },
+  {
+    key:         "hrv",
+    label:       "HRV",
+    units:       "ms",
+    direction:   "increase",
+    description: "Heart-rate variability — recovery indicator from a wearable.",
   },
 ];
 
