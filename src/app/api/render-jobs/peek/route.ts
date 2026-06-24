@@ -2,7 +2,11 @@
 // is queued — so it can decide to spin up a Claude session without wasting tokens
 // when the queue is empty.
 //
-// READ-ONLY. No writes. Two findFirst + two count queries.
+// Includes a stale-claim reaper (story #117 [A5]) that runs post-auth, pre-read:
+//   - claimed  jobs older than 30 min → pending  (re-queue stuck draft-run claims)
+//   - rendering jobs older than 30 min → approved (re-queue stuck render-run claims)
+// Terminal statuses (rendered, failed) and other statuses are never touched.
+// The reaper is idempotent: a second call within the window reaps nothing new.
 //
 // Auth mirrors src/app/api/mcp/[token]/route.ts:
 //   - Bearer token in Authorization header.
@@ -28,7 +32,23 @@ export async function GET(req: Request): Promise<Response> {
     return new Response("Not Found", { status: 404 });
   }
 
+  // Stale-claim reaper: re-queue jobs whose worker died mid-claim (story #117 [A5]).
+  // claimedAt is an absolute UTC instant — Date.now() arithmetic is timezone-agnostic.
+  // Do NOT route through @/lib/calendar date-key helpers (those operate on USER_TZ day keys).
+  const staleBefore = new Date(Date.now() - 30 * 60 * 1000);
+  const [reapedClaimed, reapedRendering] = await Promise.all([
+    prisma.dayRenderJob.updateMany({
+      where: { status: "claimed", claimedAt: { lt: staleBefore } },
+      data: { status: "pending", claimedAt: null },
+    }),
+    prisma.dayRenderJob.updateMany({
+      where: { status: "rendering", claimedAt: { lt: staleBefore } },
+      data: { status: "approved", claimedAt: null },
+    }),
+  ]);
+
   // Two findFirst + two count — all independent, run in parallel.
+  // Runs after the reaper so the response reflects reaped-and-re-queued state.
   const [pendingCount, nextJob, approvedCount, nextApprovedJob] = await Promise.all([
     prisma.dayRenderJob.count({ where: { status: "pending" } }),
     prisma.dayRenderJob.findFirst({
@@ -51,6 +71,7 @@ export async function GET(req: Request): Promise<Response> {
     nextApprovedJob: nextApprovedJob
       ? { id: nextApprovedJob.id, date: dateKey(nextApprovedJob.date) }
       : null,
+    reaped: { claimed: reapedClaimed.count, rendering: reapedRendering.count },
   });
 }
 

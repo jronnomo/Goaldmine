@@ -32,6 +32,7 @@ is the **filename** (capturedAt is the tiebreaker).
 ## Verified contract (2026-06-19)
 
 **Goaldmine `get_day_footage(date)` returns:**
+
 ```jsonc
 {
   "day": {
@@ -48,6 +49,7 @@ is the **filename** (capturedAt is the tiebreaker).
 ```
 
 **ClipForge `apply_spine` pin (`PinSchema`, `packages/contracts/src/job.ts`):**
+
 ```ts
 { slot: string /* spine slot LABEL — exact match */, assetId: string,
   inSec?: number, outSec?: number, position?: "lead" | "member" }
@@ -56,14 +58,15 @@ is the **filename** (capturedAt is the tiebreaker).
 
 **The mapping (every pin field is derivable — via the bridge, not a field match):**
 
-| Pin field | From | How |
-|-----------|------|-----|
-| `assetId` | `marker.filename` | resolve via ClipForge `list_assets` (capturedAt = tiebreaker) |
-| `slot` | `exerciseName` / `highlight` / `taskType` | bridge → a spine slot **label**, read from `list_spines` |
-| `position` | `marker.highlight` | `true` → `"lead"`, else `"member"` |
-| `inSec`/`outSec` | — (Goaldmine has none) | omit → ClipForge picks the peak window inside the asset |
+| Pin field        | From                                      | How                                                           |
+| ---------------- | ----------------------------------------- | ------------------------------------------------------------- |
+| `assetId`        | `marker.filename`                         | resolve via ClipForge `list_assets` (capturedAt = tiebreaker) |
+| `slot`           | `exerciseName` / `highlight` / `taskType` | bridge → a spine slot **label**, read from `list_spines`      |
+| `position`       | `marker.highlight`                        | `true` → `"lead"`, else `"member"`                            |
+| `inSec`/`outSec` | — (Goaldmine has none)                    | omit → ClipForge picks the peak window inside the asset       |
 
 **Two things to get right (the only fragile joins):**
+
 1. **`slot` is a LABEL STRING, matched exactly** — NOT an index. The bridge must read the
    chosen spine's actual slot labels from `list_spines` and use them verbatim (case-exact).
    A wrong/invented label silently fails to place.
@@ -71,7 +74,7 @@ is the **filename** (capturedAt is the tiebreaker).
    narrow-no-break-space filenames and renames. capturedAt disambiguates duplicates.
 
 **Confirm on the first live run:** an `assetId`-only pin (no in/out) should trigger
-ClipForge's peak-moment selection *within* that asset (pick the rep), not grab the whole
+ClipForge's peak-moment selection _within_ that asset (pick the rep), not grab the whole
 clip. Verify against the current `spine_fill` pin-resolution.
 
 ---
@@ -144,9 +147,52 @@ Only render(projectId, preset) on my go-ahead.
 ---
 
 ## Wiring checklist (first live run, on the GPU box)
+
 - [ ] Markers tagged for the day in Goaldmine (Day page → Footage).
 - [ ] The day's files copied to the GPU box and ingested into a ClipForge project.
 - [ ] BOTH connectors attached to one Claude: Goaldmine (remote URL + bearer) + ClipForge (local).
 - [ ] Spine slot labels read from `list_spines` and used verbatim in pins.
 - [ ] `filename` → `assetId` resolves for every curated marker (capturedAt tiebreaker).
 - [ ] Confirm `assetId`-pin → peak-moment-within-asset behavior.
+
+---
+
+## Automated flow (render queue — Goaldmine side shipped 2026-06-24)
+
+The manual operating prompt above is now backed by a **render-job queue** so a curated day
+can be rendered by a standing worker on the GPU box instead of pasting the prompt by hand.
+Full design: [`docs/roadmap/clipforge-auto-render-plan.md`](../roadmap/clipforge-auto-render-plan.md).
+The architecture is **pull, not push** (MCP can't push into a live session): Goaldmine holds
+the queue; the GPU-box worker **polls** it.
+
+**Lifecycle:** `pending → claimed → drafted → approved → rendering → rendered` (+ `failed`).
+
+### Goaldmine surface (shipped — Epic A)
+
+- **Day page → Footage card:** "Queue for render" (enter the ClipForge `projectId` the day's
+  files were ingested into) creates a `DayRenderJob(pending)`. An "Approve render" button
+  appears on `drafted`; the finished reel link shows on `rendered`. The `drafted` badge IS
+  the notification (no push infra in v1).
+- **MCP tools (the worker's interface):** `queue_render_job`, `list_render_jobs`,
+  `claim_render_job` (atomic pending→claimed), `submit_render_draft`, `start_render_job`
+  (atomic approved→rendering), `complete_render_job(outputRef, status)`.
+- **`GET /api/render-jobs/peek`** (bearer auth) → `{ pendingCount, nextJob, approvedCount,
+  nextApprovedJob }` — the cheap cron poll so the worker only wakes Claude when there's work.
+- **Stale-claim reaper:** jobs stuck in `claimed`/`rendering` past 30 min reset to
+  `pending`/`approved` (runs inside the peek handler).
+
+### Worker (Epic B — NOT yet built; runs on the GPU box, subscription-auth)
+
+Split-run, **never long-polls** for approval:
+
+1. **Draft run** (cron sees `pending`): `claim_render_job` → run the operating prompt above
+   (`get_day_footage` → pins → `apply_spine` → `frame_strip` → caption) → `submit_render_draft`
+   → exit.
+2. *(You click "Approve render" in Goaldmine → `approved`.)*
+3. **Render run** (cron sees `approved`): `start_render_job` → ClipForge `render` →
+   `complete_render_job(outputRef)`.
+
+Guardrails: authenticate with the Claude **subscription** (no API key → $0 beyond Max — a
+goal, not a guarantee; see plan R3); the worker **never computes dates** (all dates come
+verbatim from Goaldmine MCP responses); files must be ingested into the ClipForge project
+before queuing (unresolved filenames fail the job loudly).
