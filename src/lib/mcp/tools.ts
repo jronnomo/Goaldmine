@@ -2400,7 +2400,6 @@ function registerWriteTools(server: McpServer) {
             data: {
               date,
               weightLb: input.weightLb ?? null,
-              restingHr: null, // no longer written here
               bodyFatPct: input.bodyFatPct ?? null,
               notes: input.notes ?? null,
             },

@@ -62,7 +62,6 @@ model Measurement {
   id         String   @id @default(cuid())
   date       DateTime
   weightLb   Float?
-  restingHr  Int?
   bodyFatPct Float?
   notes      String?
   createdAt  DateTime @default(now())
