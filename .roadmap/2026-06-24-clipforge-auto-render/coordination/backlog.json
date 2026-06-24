@@ -1,0 +1,184 @@
+{
+  "initiative": "Automated ClipForge Agent Worker + Render Queue",
+  "board": 8,
+  "projectId": "PVT_kwHOAZXu284BZVzf",
+  "sprints": {
+    "Sprint 1": "Render-Queue Foundation (Epic A)",
+    "Sprint 2": "Auto-Render Worker (Epic B, spec-only)",
+    "Sprint 3": "Coaching Window (Epic C, exploratory)"
+  },
+  "stories": [
+    {
+      "id": "A1", "epic": "A", "sprint": "Sprint 1", "priority": "P0 - Critical", "effort": "Small",
+      "title": "Add DayRenderJob model + additive migration",
+      "value": "so render jobs have a fitness-day-scoped queue with a claim/draft/approve/render lifecycle, separate from project-only ScheduledItem",
+      "ac": [
+        "DayRenderJob model: id cuid, date (USER_TZ midnight), goalId FK (onDelete: Cascade), status String @default('pending'), claimedAt?, draftRef?, approvedAt?, renderedAt?, outputRef?, errorMessage?, clipforgeProjectId? (nullable column; required at tool layer), payload Json?, createdAt, updatedAt",
+        "status values documented in a comment: pending | claimed | drafted | approved | rendering | rendered | failed (all 7; 'rendering' is referenced by A4/A5/B4)",
+        "draftRef / outputRef are opaque strings (ClipForge draft id / reel URL-or-id); outputRef format: http(s) -> link else plain text",
+        "@@unique([goalId, date]); @@index([goalId, status, date])",
+        "Migration additive/Neon-safe; npx prisma migrate dev succeeds; prisma.dayRenderJob generated; tsc clean; Measurement/ScheduledItem untouched"
+      ],
+      "touches": ["prisma/schema.prisma", "prisma/migrations/*"],
+      "deps": []
+    },
+    {
+      "id": "A2", "epic": "A", "sprint": "Sprint 1", "priority": "P0 - Critical", "effort": "Medium",
+      "title": "Add render-job MCP tools (registerRenderTools)",
+      "value": "so the GPU-box Claude worker can queue/list/claim/draft/render/complete render jobs over MCP",
+      "ac": [
+        "New registerRenderTools(server) with SIX tools: queue_render_job(date, clipforgeProjectId [required in zod], goalId? -> defaults to current FOCUS goal, error if none) UPSERT (re-queue terminal job -> pending); list_render_jobs(status?, from?, to?); claim_render_job(id) ATOMIC updateMany({where:{id,status:'pending'},data:{status:'claimed',claimedAt}}) returns claimed:boolean from count; start_render_job(id) ATOMIC updateMany({where:{id,status:'approved'},data:{status:'rendering',claimedAt}}) returns started:boolean (the render-run claim, M1); submit_render_draft(id,{draftRef,notes}) -> 'drafted'; complete_render_job(id,{outputRef,status:'rendered'|'failed', errorMessage?})",
+        "EXPLICIT AC: registerRenderTools(server) wired into registerAll() (else tools silently absent)",
+        "EXPLICIT AC: confirm the new tools appear in tools/list against the live deploy (MCP_SERVER_VERSION auto-bumps via commit SHA — verify connector discovers them)",
+        "All safe()-wrapped; dates via parseDateInput (USER_TZ); discoverable descriptions steering the worker",
+        "MCP curl: queue -> list -> claim (2nd claim returns claimed:false) -> submit_render_draft -> (approve via UI) -> start_render_job (2nd returns started:false) -> complete_render_job round-trips"
+      ],
+      "touches": ["src/lib/mcp/tools/render-tools.ts (new)", "src/lib/mcp/tools.ts (registerAll wiring)"],
+      "deps": ["A1"]
+    },
+    {
+      "id": "A3", "epic": "A", "sprint": "Sprint 1", "priority": "P1 - High", "effort": "Small",
+      "title": "Add cheap authed peek endpoint GET /api/render-jobs/peek",
+      "value": "so the GPU-box cron can check for work without spinning up a Claude session (no wasted subscription tokens)",
+      "ac": [
+        "GET /api/render-jobs/peek returns { pendingCount, nextJob:{id,date}|null, approvedCount, nextApprovedJob:{id,date}|null }",
+        "Bearer auth via timingSafeEqual pattern from src/app/api/mcp/[token]/route.ts; 401/404 on bad token (no header leak)",
+        "Read-only; force-dynamic; curl returns correct shape against seeded jobs"
+      ],
+      "touches": ["src/app/api/render-jobs/peek/route.ts (new)"],
+      "deps": ["A1"]
+    },
+    {
+      "id": "A4", "epic": "A", "sprint": "Sprint 1", "priority": "P1 - High", "effort": "Medium",
+      "title": "Day page: Queue-for-render + Approve-render affordance",
+      "value": "so I can mark a curated day ready, see its render status, approve the draft, and open the finished reel",
+      "ac": [
+        "Footage card on src/app/days/[dateKey]/page.tsx shows 'Queue for render' (server action -> DayRenderJob; collects/uses clipforgeProjectId) when no active job",
+        "Status badge reflects lifecycle (pending/claimed/drafted/approved/rendering/rendered/failed); the 'drafted' badge IS the v1 notification (no push infra)",
+        "'Approve render' action on 'drafted' -> status 'approved' + approvedAt; revalidates",
+        "'rendered' -> outputRef as external link if http(s) else plain text; 'failed' -> errorMessage shown",
+        "ERROR PATHS: queueing when a non-terminal job exists is a no-op with a friendly message; server-action/DB failure surfaces a visible error, not a 500",
+        "Server actions revalidatePath the day; renders at 390px"
+      ],
+      "touches": ["src/app/days/[dateKey]/page.tsx", "src/components/days/* (new)", "src/lib/*-actions.ts"],
+      "deps": ["A1", "A2"]
+    },
+    {
+      "id": "A5", "epic": "A", "sprint": "Sprint 1", "priority": "P1 - High", "effort": "Small",
+      "title": "Stale-claim reaper for stuck render jobs",
+      "value": "so a worker that dies mid-job doesn't strand a job in claimed/rendering forever",
+      "ac": [
+        "Jobs in 'claimed' with claimedAt < now-30min reset to 'pending'; jobs in 'rendering' with claimedAt < now-30min reset to 'approved'",
+        "Runs inside the GET /api/render-jobs/peek handler (zero new infrastructure) — documented",
+        "Idempotent; never reaps terminal (rendered/failed) jobs"
+      ],
+      "touches": ["src/app/api/render-jobs/peek/route.ts"],
+      "deps": ["A1", "A3"]
+    },
+    {
+      "id": "A6", "epic": "A", "sprint": "Sprint 1", "priority": "P3 - Low", "effort": "Small",
+      "title": "Document the automated flow in the bridge doc",
+      "value": "so the manual bridge doc reflects the new queue + lifecycle once Epic A ships",
+      "ac": [
+        "Add an 'Automated flow' section to docs/integrations/goaldmine-clipforge-bridge.md: queue -> claim -> draft -> approve -> render lifecycle + the new render MCP tools",
+        "Cross-link docs/roadmap/clipforge-auto-render-plan.md"
+      ],
+      "touches": ["docs/integrations/goaldmine-clipforge-bridge.md"],
+      "deps": ["A2", "A4"]
+    },
+    {
+      "id": "B1", "epic": "B", "sprint": "Sprint 2", "priority": "P1 - High", "effort": "Medium", "specOnly": true,
+      "title": "[spec] GPU-box worker scaffold + subscription auth (API-key fallback)",
+      "value": "so the box can run headless Claude on the Max subscription, with a one-env-var switch to the paid API",
+      "ac": [
+        "Spec: worker repo/dir layout (outside goaldmine); env (GOALDMINE_MCP url+token, ClipForge mcp config, claude auth)",
+        "Headless Claude Code (claude -p --output-format stream-json --mcp-config <Goaldmine remote + ClipForge local>) on subscription auth",
+        "RISK (R3): subscription OAuth token expires; standing automated use may exceed Max interactive intent -> '$0 beyond Max' is a goal, not a guarantee; ANTHROPIC_API_KEY swap = one env var; expiry detection + alert documented"
+      ],
+      "touches": ["(external) GPU-box worker repo", "docs/roadmap/clipforge-auto-render-plan.md"],
+      "deps": ["A2", "A3"]
+    },
+    {
+      "id": "B2", "epic": "B", "sprint": "Sprint 2", "priority": "P1 - High", "effort": "Small", "specOnly": true,
+      "title": "[spec] Cron poller -> peek -> launch correct run",
+      "value": "so work is picked up automatically without the worker ever long-polling",
+      "ac": [
+        "Spec: cron hits /peek; pendingCount>0 -> launch DRAFT run for nextJob.id; approvedCount>0 -> launch RENDER run for nextApprovedJob.id; else exit",
+        "Each launch start-do-exit (R2 split-run); never waits on human approval",
+        "Worker never computes dates (R8) — all dates come from MCP responses verbatim"
+      ],
+      "touches": ["(external) GPU-box worker repo"],
+      "deps": ["A3", "B1"]
+    },
+    {
+      "id": "B3", "epic": "B", "sprint": "Sprint 2", "priority": "P1 - High", "effort": "Medium", "specOnly": true,
+      "title": "[spec] Draft-run automated bridge prompt",
+      "value": "so a queued day auto-builds a draft reel + caption for my approval",
+      "ac": [
+        "Spec prompt: claim_render_job -> get_day_footage -> list_spines (capture exact slot labels, verify ClipForge tool names against live schema) -> list_assets(clipforgeProjectId) resolve filename->assetId (capturedAt tiebreaker) -> apply_spine -> frame_strip -> caption -> submit_render_draft -> EXIT (no render)",
+        "Failure policy (R9): EPS_GUARD -> retry next spine once then fail; POOL_CYCLED -> proceed + annotate draft notes; unresolved filenames -> complete_render_job status='failed' with the list",
+        "Multiple highlight markers tie-broken capturedAt asc"
+      ],
+      "touches": ["(external) worker prompt", "docs/integrations/goaldmine-clipforge-bridge.md"],
+      "deps": ["A2"]
+    },
+    {
+      "id": "B4", "epic": "B", "sprint": "Sprint 2", "priority": "P1 - High", "effort": "Small", "specOnly": true,
+      "title": "[spec] Render-run: approved -> render -> write back",
+      "value": "so an approved draft is rendered unattended and the reel reference lands back in Goaldmine",
+      "ac": [
+        "Spec: start_render_job(id) (approved->rendering, M1) -> ClipForge render(projectId, preset) -> complete_render_job(id,{outputRef, status:'rendered'})",
+        "Render error -> complete_render_job status='failed' + errorMessage; exits either way",
+        "outputRef = reel URL/id in the documented format"
+      ],
+      "touches": ["(external) worker prompt"],
+      "deps": ["A2", "B3"]
+    },
+    {
+      "id": "B5", "epic": "B", "sprint": "Sprint 2", "priority": "P2 - Medium", "effort": "Medium", "specOnly": true,
+      "title": "[spec] Run-as-a-service + logging + retry",
+      "value": "so the worker survives reboots and failures are observable",
+      "ac": [
+        "Spec: launchd/systemd unit; per-run logs; bounded retry on transient ClipForge/MCP errors; coordinates with the server-side reaper (A5)",
+        "Concurrency guard: only one run per job id at a time"
+      ],
+      "touches": ["(external) worker repo"],
+      "deps": ["B1", "B2", "B3", "B4"]
+    },
+    {
+      "id": "C1", "epic": "C", "sprint": "Sprint 3", "priority": "P2 - Medium", "effort": "Medium", "specOnly": true,
+      "title": "[spec] Spike: subscription-authed coaching chat proxy",
+      "value": "so we know if an in-app coaching window can run on the Max subscription before building UI",
+      "ac": [
+        "Spec/spike: a local Agent SDK or Claude Code process (Goaldmine MCP tools, subscription auth) that takes a chat turn and streams a reply",
+        "Confirms streaming transport (SSE/stream-json) + auth viability; reuses B1 auth",
+        "Documents it is a SEPARATE service from the batch render worker (R11)"
+      ],
+      "touches": ["(external) coaching-proxy spike"],
+      "deps": []
+    },
+    {
+      "id": "C2", "epic": "C", "sprint": "Sprint 3", "priority": "P3 - Low", "effort": "Large", "specOnly": true,
+      "precondition": "MUST be split into multiple stories before handing to /feature-dev — do not build as one unit",
+      "title": "[spec] In-app streaming coaching window UI (EPIC — split before build)",
+      "value": "so I can chat with the coach inside Goaldmine instead of copy-pasting prompts",
+      "ac": [
+        "Spec: streaming chat UI augmenting static /coach; backend proxies each turn to the C1 process; renders streamed tokens",
+        "Graceful offline state when the worker isn't running"
+      ],
+      "touches": ["src/app/coach/page.tsx", "(external) coaching proxy"],
+      "deps": ["C1"]
+    },
+    {
+      "id": "C3", "epic": "C", "sprint": "Sprint 3", "priority": "P3 - Low", "effort": "Small", "specOnly": true,
+      "title": "[spec] Coaching-window risk + usage-policy doc",
+      "value": "so the personal-use / cap / TOS constraints are explicit before any build",
+      "ac": [
+        "Doc: personal single-user only (distribution needs the paid API); bound by Max usage/daily caps; offline when PC off; subscription-auth/TOS risk (R3)",
+        "Decision gate: proceed on subscription vs paid API"
+      ],
+      "touches": ["docs/roadmap/*"],
+      "deps": ["C1"]
+    }
+  ]
+}
