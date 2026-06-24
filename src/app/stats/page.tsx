@@ -3,6 +3,7 @@ import { Card } from "@/components/Card";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReadinessChart } from "@/components/ReadinessChart";
 import { WeightChart } from "@/components/WeightChart";
+import { BodyMetricsSection } from "@/components/BodyMetricsSection";
 import { prisma } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
@@ -139,6 +140,9 @@ export default async function StatsPage() {
           </>
         )}
       </Card>
+
+      {/* Body metrics — ungated; shows regardless of goal targets (R-S5) */}
+      <BodyMetricsSection />
 
       <Card title="Totals">
         <ul className="grid grid-cols-3 gap-2 text-center">

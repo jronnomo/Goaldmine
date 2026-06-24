@@ -11,14 +11,13 @@ import { prisma } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
-import { userTzWallClockToUTC } from "@/lib/calendar";
+import { userTzWallClockToUTC, parseDateKey, startOfDay } from "@/lib/calendar";
+import { normalizeMetricKey, BODY_METRIC_BY_KEY } from "@/lib/metrics-registry";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
-  const restingHrRaw = form.get("restingHr");
-  const restingHr = restingHrRaw ? Number(restingHrRaw) : null;
   const notes = (form.get("notes") as string | null)?.trim() || null;
 
   if (!Number.isFinite(weightLb) || weightLb <= 0) {
@@ -29,9 +28,32 @@ export async function logMeasurement(form: FormData) {
     data: {
       date: new Date(),
       weightLb,
-      restingHr,
       notes,
     },
+  });
+
+  revalidatePath("/");
+  revalidatePath("/history");
+  revalidatePath("/progress");
+  revalidatePath("/stats");
+}
+
+export async function logBodyMetric(form: FormData) {
+  const rawKey = String(form.get("key") ?? "").trim();
+  const key = normalizeMetricKey(rawKey);
+  const value = Number(form.get("value"));
+  const unit = (form.get("unit") as string | null)?.trim() || null;
+  const dateStr = (form.get("date") as string | null)?.trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+
+  if (!key) throw new Error("Metric is required");
+  if (!Number.isFinite(value)) throw new Error("Value must be a number");
+
+  const date = dateStr ? parseDateKey(dateStr) : startOfDay(new Date());
+  const resolvedUnit = unit ?? BODY_METRIC_BY_KEY.get(key)?.units ?? null;
+
+  await prisma.bodyMetric.create({
+    data: { date, key, value, unit: resolvedUnit, notes, source: "manual" },
   });
 
   revalidatePath("/");
