@@ -6,18 +6,30 @@
 
 ---
 
-## 0. DECISION GATE (#119) — auth & cost · READ BEFORE BUILDING
+## 0. CONSTRAINT — Max subscription only (NON-NEGOTIABLE)
 
-**Finding (verified against Claude Code docs + 2026 auth guidance):** an unattended, cron-driven headless worker **cannot cleanly run on the Claude Max subscription.**
-- `CLAUDE_CODE_OAUTH_TOKEN` (subscription auth) is **not honored in `--bare` headless mode**, and subscription OAuth is **scoped to interactive use** (a standing automated worker is outside that intent / current ToS — re-verify the live ToS before relying on it).
-- → The worker must use **`ANTHROPIC_API_KEY`** (Console, pay-as-you-go). **The "$0 beyond Max" goal does NOT hold for the worker.** This was flagged as risk R3 in the plan; the research resolves it against the subscription.
+goaldmine runs **only on the Claude Max subscription, never the paid Anthropic API.** `$0 beyond Max` is a core product feature, not a preference.
 
-**Cost shape (so you can go/no-go):**
-- The **render itself is free** — GPU/ClipForge does the encoding; no LLM cost there.
-- Only the **curation reasoning** per job costs API tokens: a few-turn agent run reading `get_day_footage` + mapping pins. Ballpark a few cents per draft run, near-zero per render run. At your volume (a handful of reels/week) that's plausibly **< $1–2/mo** — but it is **not $0**. Estimate from real runs (`total_cost_usd` is in the JSON output) and decide.
-- **Recommendation:** proceed with `ANTHROPIC_API_KEY`. Keep auth behind one env var so it's swappable. Do NOT wire the subscription into the cron worker.
+**Hard consequence — fully-unattended local auto-render is NOT achievable on Max-only:**
+- An unattended cron worker = headless `claude -p`, which (a) does **not** honor the Max OAuth token in `--bare` mode and (b) is outside Max's interactive-use scope — it would require `ANTHROPIC_API_KEY`. **Out.**
+- claude.ai **routines** DO run on the subscription, but execute in Anthropic's **cloud** — they can't reach the **local GPU** or the **local ClipForge MCP**, so they cannot render. (At most a routine can read the queue and *notify* "a job is pending.")
+- Therefore: **no cron robot.** The render must be **triggered by you in an interactive Max session.**
 
-**If you do NOT want to pay metered API:** the fallback is to keep the bridge **semi-manual** — the queue + Day-page affordance (already shipped) still let you mark days ready; you just run the bridge prompt by hand in an interactive Claude on the GPU box (subscription, $0) when you see a `pending` job. The queue makes that a one-click-then-paste, not full automation.
+**This is a smaller loss than it sounds:** the bridge already **stops for your approval before rendering** — a human was always in the loop. Max-only just means you also *start* the session (which builds the draft → you approve → it renders), rather than a background process building drafts while you're away.
+
+→ **Sections §2–§7 below describe the unattended API-key worker and are SUPERSEDED / reference-only** (only relevant if the Max-only rule is ever lifted). The viable design is §1.
+
+## 1. The Max-only design (the viable path)
+
+- **Queue — already shipped (Epic A):** Day-page "Queue for render" marks a day ready; `list_render_jobs` + the Day-page status badge show what's pending.
+- **Trigger — interactive, on Max:** when you want reels, open an interactive Claude with **both** connectors attached and run the bridge for the next pending day. Two equivalent ways, both $0 on Max:
+  - **claude.ai** with the Goaldmine + ClipForge connectors, or
+  - **`claude` (Claude Code) on the GPU box**, logged into Max, with both MCP servers in its config.
+  - Optional streamliner: a `render-next` shell alias on the box that opens an interactive `claude` pre-seeded with the bridge prompt for the oldest `pending` job (still interactive, still Max).
+- **Lifecycle still applies:** the interactive session does claim → draft → (you approve / continue) → render → `complete_render_job`, writing status back so the Day page shows progress + the final reel link. The render MCP tools (#114) work the same whether driven by a human-interactive session or a robot.
+- **Optional Max-only nicety:** a claude.ai **routine** (runs on the subscription) that, on a schedule, reads the queue and writes you a nudge ("2 days queued for render") — pure notification, no rendering, no GPU.
+
+**Net:** Epic B collapses from "build an unattended worker" to "make triggering the existing bridge for a queued day frictionless, in an interactive Max session." Much smaller — mostly the already-shipped queue plus an optional launcher alias + an optional notify-routine.
 
 ---
 
