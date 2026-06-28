@@ -364,6 +364,46 @@ export function deriveAmountFromServings(
   return servings * 100;
 }
 
+// ── servingsFromLastPortion ───────────────────────────────────────────────────
+
+/**
+ * Convert a stored last-logged portion (amount + unit) back into the "servings"
+ * multiplier the ScanFoodSheet stepper uses (relative to perBasis).
+ *
+ * Inverse of deriveAmountFromServings:
+ *   serving basis → unit must be "serving"; servings = amount.
+ *   100g basis    → grams = amount × (1 | OZ_TO_G | portion.grams); servings = grams / 100.
+ *
+ * Returns null when the portion is missing/invalid or the unit doesn't apply to the
+ * food (e.g. a stale portion key), so the caller can fall back to 1.
+ */
+export function servingsFromLastPortion(
+  food: LibraryFood,
+  amount: number | null | undefined,
+  unit: string | null | undefined,
+): number | null {
+  if (amount == null || !isFinite(amount) || amount <= 0 || !unit) return null;
+
+  if (food.basis === "serving") {
+    return unit === "serving" ? amount : null;
+  }
+
+  // 100g basis
+  let grams: number;
+  if (unit === "g") {
+    grams = amount;
+  } else if (unit === "oz") {
+    grams = amount * OZ_TO_G;
+  } else {
+    const portion = buildItemSnapshot(food).portions.find((p) => p.key === unit);
+    if (!portion) return null;
+    grams = amount * portion.grams;
+  }
+
+  const servings = grams / 100;
+  return servings > 0 ? servings : null;
+}
+
 // ── deriveAmountFromEstimate ──────────────────────────────────────────────────
 
 /**

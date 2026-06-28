@@ -9,6 +9,7 @@ import type { LibraryFood, AddFoodPayload, FoodMacros } from "@/lib/food-types";
 import {
   getQuickPickFoods,
   recordFoodUse,
+  recordFoodPortion,
   searchFoodCandidates,
   resolveCandidate,
 } from "@/lib/food-actions";
@@ -266,10 +267,14 @@ export function useFoodComposer({
     //    longer sets macros directly.
     addItem(structuredItem);
 
-    // 3. Usage bump (chip path only)
-    // Scan path: lookupBarcode() already incremented usageCount. Do NOT call here.
+    // 3. Usage bump + last-portion memory.
+    // Chip path: recordFoodUse bumps usageCount AND stores the portion.
+    // Scan path: lookupBarcode() already incremented usageCount, so only persist the
+    //   portion (recordFoodPortion) — a second bump here would double-count.
     if (chipSource) {
-      recordFoodUse(food.id).catch(() => {});
+      recordFoodUse(food.id, { amount, unit }).catch(() => {});
+    } else {
+      recordFoodPortion(food.id, amount, unit).catch(() => {});
     }
 
     // 4. Optimistic chip upsert (scan path only)
@@ -352,6 +357,9 @@ export function useFoodComposer({
     // B-3: addItem, NEVER setItemsText from this path. The host recomputes the macro
     //      total from the items array (single source of truth) — no setMacros here.
     addItem(structuredItem);
+
+    // Persist the last-logged portion (usageCount already bumped in resolveCandidate).
+    recordFoodPortion(est.food.id, amount, unit).catch(() => {});
 
     // Upsert the resolved library food to front of localAdditions so the chip
     // carries fresh macros.

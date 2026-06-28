@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { ItemFoodSnapshot, NutritionItem } from "@/lib/nutrition-log-ops";
-import type { MacroKey } from "@/lib/food-types";
+import type { MacroKey, LibraryFood } from "@/lib/food-types";
 import {
   recalcItemMacros,
   sumStructuredMacros,
   recomposeMacros,
   recomposeWithResidual,
   deriveAmountFromServings,
+  servingsFromLastPortion,
 } from "@/lib/food-units";
 
 type MacroValues = Partial<Record<MacroKey, number | null>>;
@@ -130,5 +131,47 @@ describe("heal-on-seed discards stored macros for fully-structured meals", () =>
     expect(seeded).toEqual(recomposeMacros(sumStructuredMacros(items), {}));
     // The 465-cal corruption never survives the heal.
     expect(seeded.calories).toBe(131 + 120);
+  });
+});
+
+// ── 5. servingsFromLastPortion (stepper seed) ───────────────────────────────────
+// Converts a stored last-logged (amount, unit) back into the ScanFoodSheet
+// servings multiplier; inverse of deriveAmountFromServings.
+
+const POTATO_FOOD: LibraryFood = {
+  id: "f1", barcode: null, name: "Potato", brand: null, servingSize: null,
+  basis: "100g", perServing: POTATO.perBasis,
+};
+const WHEY_FOOD: LibraryFood = {
+  id: "f2", barcode: null, name: "Whey", brand: null, servingSize: "1 scoop",
+  basis: "serving", perServing: WHEY.perBasis,
+};
+
+describe("servingsFromLastPortion seeds the stepper from the last log", () => {
+  it("100g basis, grams → grams/100", () => {
+    expect(servingsFromLastPortion(POTATO_FOOD, 150, "g")).toBe(1.5);
+    expect(servingsFromLastPortion(POTATO_FOOD, 100, "g")).toBe(1);
+  });
+
+  it("100g basis, oz → grams via OZ_TO_G then /100", () => {
+    expect(servingsFromLastPortion(POTATO_FOOD, 1, "oz")).toBeCloseTo(0.283495, 5);
+  });
+
+  it("serving basis, serving → amount verbatim", () => {
+    expect(servingsFromLastPortion(WHEY_FOOD, 2, "serving")).toBe(2);
+  });
+
+  it("returns null for unusable portions (seed falls back to 1)", () => {
+    expect(servingsFromLastPortion(POTATO_FOOD, null, "g")).toBeNull();
+    expect(servingsFromLastPortion(POTATO_FOOD, 0, "g")).toBeNull();
+    expect(servingsFromLastPortion(WHEY_FOOD, 2, "g")).toBeNull(); // wrong unit for basis
+    expect(servingsFromLastPortion(POTATO_FOOD, 1, "small")).toBeNull(); // no portions on plain row
+  });
+
+  it("round-trips with deriveAmountFromServings for grams", () => {
+    for (const s of [0.5, 1, 1.5, 2]) {
+      const amount = deriveAmountFromServings(s, "g", POTATO);
+      expect(servingsFromLastPortion(POTATO_FOOD, amount, "g")).toBe(s);
+    }
   });
 });

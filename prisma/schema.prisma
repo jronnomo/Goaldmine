@@ -392,10 +392,16 @@ model FoodLibrary {
   source      String    @default("openfoodfacts")
   usageCount  Int       @default(0)
   lastUsedAt  DateTime?
+  // Explicit pin into the quick-pick chip row, independent of usageCount ranking.
+  isFavorite  Boolean   @default(false)
+  // Last-logged portion — seeds the ScanFoodSheet stepper when re-adding the food.
+  lastAmount  Float?
+  lastUnit    String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([usageCount(sort: Desc), lastUsedAt(sort: Desc)])
+  @@index([isFavorite(sort: Desc), usageCount(sort: Desc), lastUsedAt(sort: Desc)])
 }
 
 model BodyMetric {

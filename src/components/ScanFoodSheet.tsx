@@ -9,7 +9,8 @@ import type {
   AddFoodPayload,
   BarcodeLookupResult,
 } from "@/lib/food-types";
-import { lookupBarcode } from "@/lib/food-actions";
+import { lookupBarcode, setFoodFavorite } from "@/lib/food-actions";
+import { servingsFromLastPortion } from "@/lib/food-units";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Props
@@ -36,6 +37,18 @@ type Phase = "scan" | "lookup" | "confirm" | "not_found" | "error";
 const MAX_SERVINGS = 20;
 const STEP = 0.5;
 const MIN_SERVINGS = 0.5;
+
+/**
+ * Initial stepper value for a food: its last-logged portion (converted to the
+ * "servings" multiplier), clamped to the stepper range and rounded to 1dp.
+ * Falls back to 1 when the food has never been logged with a recordable portion.
+ */
+function seedServings(food: LibraryFood): number {
+  const s = servingsFromLastPortion(food, food.lastAmount, food.lastUnit);
+  if (s == null) return 1;
+  const clamped = Math.min(MAX_SERVINGS, Math.max(MIN_SERVINGS, s));
+  return Math.round(clamped * 10) / 10;
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macro display config — mirrors MacroInputs.tsx labels exactly
@@ -123,7 +136,11 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
     initialFood ? "confirm" : "scan"
   );
   const [food, setFood] = useState<LibraryFood | null>(initialFood ?? null);
-  const [servings, setServings] = useState(1);
+  const [servings, setServings] = useState(() =>
+    initialFood ? seedServings(initialFood) : 1,
+  );
+  // Optimistic favorite-pin state for the confirm card's ★ toggle.
+  const [isFav, setIsFav] = useState(initialFood?.isFavorite ?? false);
   const [manualCode, setManualCode] = useState("");
   const [manualError, setManualError] = useState<string | null>(null);
   const [retryCode, setRetryCode] = useState<string | null>(null);
@@ -173,11 +190,13 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
       if (initialFood) {
         setPhase("confirm");
         setFood(initialFood);
-        setServings(1);
+        setServings(seedServings(initialFood));
+        setIsFav(initialFood.isFavorite ?? false);
       } else {
         setPhase("scan");
         setFood(null);
         setServings(1);
+        setIsFav(false);
         setManualCode("");
         setManualError(null);
         setRetryCode(null);
@@ -211,7 +230,8 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
 
     if (result.status === "found") {
       setFood(result.food);
-      setServings(1);
+      setServings(seedServings(result.food));
+      setIsFav(result.food.isFavorite ?? false);
       setPhase("confirm");
     } else if (result.status === "not_found") {
       setPhase("not_found");
@@ -249,7 +269,22 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
       setPhase("scan");
       setFood(null);
       setServings(1);
+      setIsFav(false);
     }
+  }
+
+  // ── Favorite toggle (confirm card ★) ──────────────────────────────────────
+  // Optimistic: flip local state immediately, persist fire-and-forget. On failure
+  // revert so the pin reflects the true stored state.
+  function toggleFavorite() {
+    if (!food) return;
+    const next = !isFav;
+    setIsFav(next);
+    setFoodFavorite(food.id, next)
+      .then((r) => {
+        if (!r.ok) setIsFav(!next);
+      })
+      .catch(() => setIsFav(!next));
   }
 
   // ── Sheet title by phase ──────────────────────────────────────────────────
@@ -483,16 +518,42 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
                 {/* Food card */}
                 <div
                   data-testid="confirm-food-card"
-                  className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4"
+                  className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 flex items-start justify-between gap-3"
                 >
-                  <p className="text-base font-semibold text-[var(--foreground)] leading-snug">
-                    {food.name}
-                  </p>
-                  {(food.brand || food.servingSize) && (
-                    <p className="text-xs text-[var(--muted)] mt-0.5">
-                      {[food.brand, food.servingSize].filter(Boolean).join(" · ")}
+                  <div className="min-w-0">
+                    <p className="text-base font-semibold text-[var(--foreground)] leading-snug">
+                      {food.name}
                     </p>
-                  )}
+                    {(food.brand || food.servingSize) && (
+                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                        {[food.brand, food.servingSize].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  {/* Favorite pin — toggles whether this food is pinned into the quick-pick row */}
+                  <button
+                    type="button"
+                    data-testid="favorite-toggle"
+                    onClick={toggleFavorite}
+                    aria-pressed={isFav}
+                    aria-label={isFav ? "Unpin from quick-picks" : "Pin to quick-picks"}
+                    title={isFav ? "Pinned to quick-picks" : "Pin to quick-picks"}
+                    className="shrink-0 inline-flex items-center justify-center w-11 h-11 -mt-1 -mr-1 rounded-full text-[var(--muted)] hover:bg-[var(--border)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    style={isFav ? { color: "var(--accent)" } : undefined}
+                  >
+                    <svg
+                      width="22"
+                      height="22"
+                      viewBox="0 0 24 24"
+                      fill={isFav ? "currentColor" : "none"}
+                      stroke="currentColor"
+                      strokeWidth="1.75"
+                      strokeLinejoin="round"
+                      aria-hidden
+                    >
+                      <path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.52l-5.9 3.1 1.13-6.57L2.45 9.4l6.6-.96L12 2.5z" />
+                    </svg>
+                  </button>
                 </div>
 
                 {/* Servings stepper — ≥44px per cell, 0.5 steps, min 0.5, max 20 */}

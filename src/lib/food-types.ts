@@ -42,6 +42,12 @@ export type LibraryFood = {
   /** "serving" = per-label serving; "100g" = no serving data, per-100g basis */
   basis: "serving" | "100g";
   perServing: FoodMacros;
+  /** Explicitly pinned into the quick-pick chip row (independent of usage ranking). */
+  isFavorite?: boolean;
+  /** Last-logged portion amount — seeds the ScanFoodSheet stepper on re-add. */
+  lastAmount?: number | null;
+  /** Last-logged portion unit ("g" | "oz" | "serving" | <portion key>). */
+  lastUnit?: string | null;
 };
 
 /**
