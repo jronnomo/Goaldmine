@@ -432,12 +432,16 @@ export async function listLibraryFoods(): Promise<LibraryFoodRow[]> {
 // ── getQuickPickFoods ─────────────────────────────────────────────────────────
 
 /**
- * Top N foods by usage count (then recency) for the quick-pick chip row.
- * Default limit 8 (UI shows up to 8 chips).
+ * Foods for the quick-pick chip row: explicit favorites pinned first, then the
+ * most-used (and most-recent) foods fill the remaining slots. Default limit 8.
  */
 export async function getQuickPickFoods(limit = 8): Promise<LibraryFood[]> {
   const rows = await prisma.foodLibrary.findMany({
-    orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
+    orderBy: [
+      { isFavorite: "desc" },
+      { usageCount: "desc" },
+      { lastUsedAt: "desc" },
+    ],
     take: limit,
   });
   return rows.map(toLibraryFood);
@@ -446,15 +450,60 @@ export async function getQuickPickFoods(limit = 8): Promise<LibraryFood[]> {
 // ── recordFoodUse ─────────────────────────────────────────────────────────────
 
 /**
- * Bump usageCount + lastUsedAt for a chip-tap add.
- * Called fire-and-forget from LogNutritionForm.handleAdd ONLY when chipSource === true.
- * The scan path (chipSource === false) bumps count inside lookupBarcode — do not call here.
+ * Bump usageCount + lastUsedAt for a chip-tap add, optionally recording the
+ * portion (amount + unit) so a future re-add can default to it.
+ * Called fire-and-forget from useFoodComposer.handleAdd ONLY when chipSource === true.
+ * The scan path (chipSource === false) bumps count inside lookupBarcode — do not call
+ * here; use recordFoodPortion for the portion-only write on that path.
  */
-export async function recordFoodUse(id: string): Promise<void> {
+export async function recordFoodUse(
+  id: string,
+  portion?: { amount: number; unit: string },
+): Promise<void> {
   await prisma.foodLibrary.update({
     where: { id },
-    data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+    data: {
+      usageCount: { increment: 1 },
+      lastUsedAt: new Date(),
+      ...(portion ? { lastAmount: portion.amount, lastUnit: portion.unit } : {}),
+    },
   });
+}
+
+/**
+ * Persist the last-logged portion (amount + unit) WITHOUT bumping usageCount.
+ * Used by the scan / estimate add paths, where usageCount was already incremented
+ * upstream (lookupBarcode / resolveCandidate) and a second bump would double-count.
+ */
+export async function recordFoodPortion(
+  id: string,
+  amount: number,
+  unit: string,
+): Promise<void> {
+  await prisma.foodLibrary.update({
+    where: { id },
+    data: { lastAmount: amount, lastUnit: unit },
+  });
+}
+
+// ── setFoodFavorite ───────────────────────────────────────────────────────────
+
+/**
+ * Toggle a food's quick-pick favorite pin. Revalidates the surfaces that render
+ * the chip row so the change shows on next paint. Never throws — returns ok:false.
+ */
+export async function setFoodFavorite(
+  id: string,
+  isFavorite: boolean,
+): Promise<{ ok: boolean }> {
+  try {
+    await prisma.foodLibrary.update({ where: { id }, data: { isFavorite } });
+    safeRevalidate("/nutrition");
+    safeRevalidate("/");
+    return { ok: true };
+  } catch {
+    return { ok: false };
+  }
 }
 
 // ── toLibraryFood (module-private) ───────────────────────────────────────────
@@ -472,6 +521,9 @@ function toLibraryFood(row: {
   fatG: number | null;
   fiberG: number | null;
   sodiumMg: number | null;
+  isFavorite?: boolean;
+  lastAmount?: number | null;
+  lastUnit?: string | null;
 }): LibraryFood {
   return {
     id: row.id,
@@ -488,6 +540,9 @@ function toLibraryFood(row: {
       fiberG: row.fiberG,
       sodiumMg: row.sodiumMg,
     },
+    isFavorite: row.isFavorite ?? false,
+    lastAmount: row.lastAmount ?? null,
+    lastUnit: row.lastUnit ?? null,
   };
 }
 
