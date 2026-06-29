@@ -301,7 +301,7 @@ export default async function GoalDetail({
           )}
         </Card>
       ) : (
-        <FeasibilityReadout feasibility={feasibility} targetDateLabel={targetDateLabel} />
+        <FeasibilityReadout feasibility={feasibility} targetDateLabel={targetDateLabel} coach={coachFeasibility} />
       )}
 
       {/* Plan card — shows when there are any plans (active or paused). REQ-202 */}

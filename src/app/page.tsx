@@ -17,6 +17,7 @@ import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { presentationForGoal } from "@/lib/goal-presentation";
 import { computeGoalFeasibility } from "@/lib/rarity";
+import { parseCoachFeasibility } from "@/lib/rarity-core";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
 
 export const dynamic = "force-dynamic";
@@ -95,7 +96,7 @@ export default async function HomePage() {
       focusGoal
         ? prisma.goal.findUnique({
             where: { id: focusGoal.id },
-            select: { id: true, targetDate: true, targets: true, kind: true },
+            select: { id: true, targetDate: true, targets: true, kind: true, coachFeasibility: true },
           })
         : Promise.resolve(null),
     ]);
@@ -110,6 +111,7 @@ export default async function HomePage() {
   const feasibility = goalForFeas
     ? await computeGoalFeasibility(goalForFeas).catch(() => null)
     : null;
+  const coachFeas = goalForFeas ? parseCoachFeasibility(goalForFeas.coachFeasibility) : null;
   const targetDateLabel =
     goalForFeas?.targetDate != null
       ? new Intl.DateTimeFormat("en-US", {
@@ -288,6 +290,7 @@ export default async function HomePage() {
         <FeasibilityReadout
           feasibility={feasibility}
           targetDateLabel={targetDateLabel}
+          coach={coachFeas}
         />
       )}
 
