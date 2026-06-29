@@ -627,6 +627,54 @@ export function registerProjectTools(server: McpServer): void {
   );
 
   // --------------------------------------------------------------------------
+  // delete_metric
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "delete_metric",
+    {
+      title: "Hard-delete a logged metric entry",
+      description:
+        "Permanently delete a LogEntry by id. For project goals only — LogEntry rows only exist on project goals " +
+        "(log_metric enforces kind='project'). Returns the deleted metric key and value as confirmation. " +
+        "Returns a friendly error if the entry does not exist (second delete of the same id returns a friendly error, " +
+        "not an exception). No cascade — deletes only the entry itself. " +
+        "This is the retraction path for a mislogged metric (wrong value/date, snapshot-vs-cumulative mistake). " +
+        "Use list_log_entries to find the id before calling this tool.",
+      inputSchema: {
+        id: z
+          .string()
+          .min(1)
+          .describe("ID of the LogEntry to permanently delete (from list_log_entries)."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        // Single-round-trip delete: use the returned row to confirm metric+value.
+        // No findUnique-first — capture deleted row from prisma.logEntry.delete().
+        let row: { id: string; metric: string; value: number | null };
+        try {
+          row = await prisma.logEntry.delete({
+            where: { id: input.id },
+            select: { id: true, metric: true, value: true },
+          });
+        } catch (e) {
+          if ((e as { code?: string }).code === "P2025") {
+            throw new Error(`Log entry not found: ${input.id}`);
+          }
+          throw e;
+        }
+
+        return {
+          id: row.id,
+          metric: row.metric,
+          value: row.value,
+          deleted: true,
+          message: "Metric entry deleted.",
+        };
+      }),
+  );
+
+  // --------------------------------------------------------------------------
   // set_active_goal
   // --------------------------------------------------------------------------
   server.registerTool(
