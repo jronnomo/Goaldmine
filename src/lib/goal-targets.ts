@@ -25,12 +25,17 @@ export {
 
 import { LOG_METRIC_PREFIX } from "@/lib/metrics-registry";
 
-/** Resolve the latest value for a metric as of `asOf` (default: now). */
+/** Resolve the current value for a metric as of `asOf` (default: now).
+ *  When `cumulative` is true (only meaningful for `log:*`), returns the SUM
+ *  of all `LogEntry.value` rows up to the cutoff instead of the latest value.
+ *  The snapshot path (cumulative=false) is byte-for-byte unchanged.
+ */
 export async function resolveMetricValue(
   prisma: PrismaClient,
   metric: string,
   asOf: Date = new Date(),
   goalId: string,
+  cumulative = false,
 ): Promise<number | null> {
   // Bucket by user-tz day, not exact timestamp. A result logged earlier today
   // with an evening wall-clock time stores a `date` a few hours ahead of
@@ -104,6 +109,21 @@ export async function resolveMetricValue(
 
   if (metric.startsWith(LOG_METRIC_PREFIX)) {
     const key = metric.slice(LOG_METRIC_PREFIX.length);
+    if (cumulative) {
+      // Cumulative: sum all entries up to the cutoff.
+      // Returns raw _sum.value — null when zero rows (honest "no data"),
+      // not ?? 0 (which would mis-tier an unstarted goal as legendary).
+      const r = await prisma.logEntry.aggregate({
+        _sum: { value: true },
+        where: {
+          goalId,
+          metric: key,
+          date: { lte: cutoff },
+          value: { not: null },
+        },
+      });
+      return r._sum.value;
+    }
     const entry = await prisma.logEntry.findFirst({
       where: {
         goalId,
@@ -131,11 +151,15 @@ export async function resolveMetricValue(
   return null;
 }
 
-/** Earliest available value for a metric — used to auto-fill `start` if missing. */
+/** Earliest available value for a metric — used to auto-fill `start` if missing.
+ *  When `cumulative` is true for a `log:*` metric, returns 0 (build-from-zero
+ *  accumulation, matching the hike:/workout:count convention). Snapshot path unchanged.
+ */
 export async function resolveMetricStart(
   prisma: PrismaClient,
   metric: string,
   goalId: string, // used by the log:* start lookup; fitness branches ignore it
+  cumulative = false,
 ): Promise<number | null> {
   if (metric === "weightLb") {
     const m = await prisma.measurement.findFirst({
@@ -156,6 +180,9 @@ export async function resolveMetricStart(
 
   // Cumulative / count / max metrics start at 0.
   if (metric.startsWith("hike:") || metric === "workout:count") return 0;
+
+  // Cumulative log:* also starts at 0 (build-from-zero accumulation).
+  if (cumulative && metric.startsWith(LOG_METRIC_PREFIX)) return 0;
 
   // log:* — start from the EARLIEST logged value (the baseline you're moving from).
   // Increase metrics ignore start (build-from-zero in progressFor); decrease metrics

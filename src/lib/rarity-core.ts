@@ -404,12 +404,14 @@ export function computeTargetFeasibility(input: {
   // post-merge fix: never-measured targets (null current, no explicit start) are 'unknown'
   // — mirrors readiness `missing` semantics.
   // Build-from-zero metrics (hike:*, workout:count) always have current=0 from
-  // resolveMetricValue, so they are never null here. log:* is NOT build-from-zero:
-  // resolveMetricValue returns the latest LogEntry value or null (`entry?.value ?? null`),
-  // so a log: metric with zero entries IS null and DOES fire this 'unknown' guard — this is
-  // the honest no-data state for a fresh project metric like log:mrr (requiredRate stays null,
-  // i.e. no per-week pace is promised until at least one value is logged). The guard likewise
-  // fires for baseline:*, exercise:*, and weightLb when no data has been logged yet.
+  // resolveMetricValue, so they are never null here. log:* with cumulative=false
+  // (snapshot) is NOT build-from-zero: resolveMetricValue returns the latest LogEntry
+  // value or null (`entry?.value ?? null`), so a log: metric with zero entries IS null
+  // and DOES fire this 'unknown' guard — the honest no-data state for a fresh project
+  // metric like log:mrr. log:* with cumulative=true also returns null for zero entries
+  // (raw `_sum.value` when no rows exist), so the same 'unknown' guard applies.
+  // The guard likewise fires for baseline:*, exercise:*, and weightLb when no data
+  // has been logged yet.
   if (current === null && (target.start === undefined || target.start === null)) {
     return {
       metric: target.metric,

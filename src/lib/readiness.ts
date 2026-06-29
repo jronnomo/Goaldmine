@@ -169,10 +169,10 @@ export async function computeReadiness(
   const missing: GoalTarget[] = [];
 
   for (const t of targets) {
-    const current = await resolveMetricValue(prisma, t.metric, asOf, goalId);
+    const current = await resolveMetricValue(prisma, t.metric, asOf, goalId, t.cumulative ?? false);
     const start = t.start !== undefined && t.start !== null
       ? t.start
-      : await resolveMetricStart(prisma, t.metric, goalId);
+      : await resolveMetricStart(prisma, t.metric, goalId, t.cumulative ?? false);
     const progress = progressFor(t, current, start);
 
     if (progress === null) {
