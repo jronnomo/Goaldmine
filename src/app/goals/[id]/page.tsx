@@ -206,6 +206,15 @@ export default async function GoalDetail({
         )}
       </header>
 
+      {/* B2 (#148): project-only Trends nav link — NOT rendered for fitness goals */}
+      {goal.kind === "project" && (
+        <div className="flex gap-4 text-sm -mt-1">
+          <Link href={`/goals/${goal.id}/trends`} className="text-[var(--accent)]">
+            Trends →
+          </Link>
+        </div>
+      )}
+
       <Card title="Edit">
         <GoalEditForm
           id={goal.id}
