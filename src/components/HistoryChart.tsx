@@ -10,7 +10,7 @@ import {
   YAxis,
 } from "recharts";
 
-export type HistoryPoint = { date: string; value: number; tooltip?: string };
+export type HistoryPoint = { date: string; value: number; tooltip?: string; label?: string };
 
 export function HistoryChart({
   data,
@@ -23,7 +23,7 @@ export function HistoryChart({
 }) {
   const formatted = data.map((p) => ({
     ...p,
-    label: new Date(p.date).toLocaleDateString(undefined, {
+    label: p.label ?? new Date(p.date).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
     }),
