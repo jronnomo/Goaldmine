@@ -215,6 +215,26 @@ export async function removeGoalReference(id: string, refId: string) {
 }
 
 /**
+ * C2 (#150) — hard-delete a single LogEntry metric reading.
+ * Ownership guard: refuse if the entry does not exist, belongs to a different goal,
+ * or has a different metric key — prevents cross-goal/metric deletes via crafted ids.
+ * Revalidates the metric detail page, the trends page, and Today.
+ */
+export async function deleteMetricReading(goalId: string, metric: string, entryId: string) {
+  const entry = await prisma.logEntry.findUnique({
+    where: { id: entryId },
+    select: { goalId: true, metric: true },
+  });
+  if (!entry || entry.goalId !== goalId || entry.metric !== metric) {
+    throw new Error("Reading not found");
+  }
+  await prisma.logEntry.delete({ where: { id: entryId } });
+  revalidatePath(`/goals/${goalId}/metric/${metric}`);
+  revalidatePath(`/goals/${goalId}/trends`);
+  revalidatePath("/");
+}
+
+/**
  * Pause (active=false) or Resume (active=true) the goal's plan.
  * Pause = set the goal's active plan to active=false (silences retest-marker generation).
  * Resume = re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom).

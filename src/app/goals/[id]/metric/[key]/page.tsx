@@ -6,6 +6,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
+import { DeleteReadingButton } from "@/components/DeleteReadingButton";
 import { HistoryChart } from "@/components/HistoryChart";
 import { prisma } from "@/lib/db";
 import { getLogMetricSeries } from "@/lib/metric-series";
@@ -96,7 +97,10 @@ export default async function MetricDetailPage({
                     <p className="text-xs text-[var(--muted)] truncate">{r.text}</p>
                   )}
                 </div>
-                <p className="text-xs text-[var(--muted)] shrink-0">{fmtDate(r.date)}</p>
+                <div className="flex items-baseline gap-1 shrink-0">
+                  <p className="text-xs text-[var(--muted)]">{fmtDate(r.date)}</p>
+                  <DeleteReadingButton goalId={id} metric={metricKey} entryId={r.id} />
+                </div>
               </li>
             ))}
           </ul>
