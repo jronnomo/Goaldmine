@@ -28,6 +28,13 @@ export type GoalTarget = {
    * Readiness-only concept; has no effect on rarity tier.
    */
   gating?: boolean;
+  /**
+   * When true, `log:*` entries are summed (increment-style) rather than
+   * returning the latest value (snapshot). Use for metrics logged per-session
+   * (e.g. practice_hours, books_read, miles_run). Default/absent = false =
+   * snapshot. Only meaningful for `log:*` metrics; ignored for other families.
+   */
+  cumulative?: boolean;
 };
 
 export type MetricSpec = {
@@ -68,6 +75,12 @@ export const GoalTargetSchema = z.object({
     "Gate flag — while any gating target has progress < 1 (including untested), " +
     "the headline score is capped at 80. All gates cleared → ceiling 100. " +
     "Readiness-only concept; ignored by rarity tier.",
+  ),
+  cumulative: z.boolean().optional().describe(
+    "When true, log: entries are summed (increment-style — expects one entry per " +
+    "session/event, e.g. hours practiced, books read). The system sums all entries " +
+    "up to the current date. Do NOT use for metrics logged as running totals " +
+    "(e.g. MRR, body weight) — that overcounts. Default false = snapshot (latest entry).",
   ),
 });
 

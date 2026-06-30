@@ -69,6 +69,7 @@ export async function observedSeriesFor(
   goalId: string,
   since: Date,
   now: Date = new Date(),
+  cumulative = false,
 ): Promise<{ points: { date: Date; value: number }[]; current: number | null }> {
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 
@@ -123,6 +124,26 @@ export async function observedSeriesFor(
   }
 
   if (metric.startsWith("log:")) {
+    // Cumulative log: route into the weekly-snapshot loop (same shape as hike:/workout:count).
+    // With resolveMetricValue's SUM in place, each snapshot = running total, so the slope
+    // measures the weekly accumulation rate (not the ~0 per-entry delta).
+    if (cumulative) {
+      const weeks = Math.ceil((now.getTime() - since.getTime()) / MS_PER_WEEK);
+      const snapshots: { date: Date; value: number }[] = [];
+
+      for (let w = 0; w <= weeks; w++) {
+        const snapDate = w === weeks ? now : addDays(since, w * 7);
+        const val = await resolveMetricValue(prisma, metric, snapDate, goalId, true);
+        if (val !== null) {
+          snapshots.push({ date: snapDate, value: val });
+        }
+      }
+
+      const current = snapshots.length > 0 ? snapshots.at(-1)!.value : null;
+      return { points: snapshots, current };
+    }
+
+    // Snapshot (per-entry) path — unchanged.
     const key = metric.slice("log:".length);
     const rows = await prisma.logEntry.findMany({
       where: { goalId, metric: key, date: { gte: since, lte: now }, value: { not: null } },
@@ -231,7 +252,7 @@ export async function computeGoalFeasibility(
     targets.map((t) => {
       const lookbackWeeks = lookbackWeeksFor(t.metric);
       const lookbackStart = addDays(now, -(lookbackWeeks * 7));
-      return observedSeriesFor(t.metric, goal.id, lookbackStart, now);
+      return observedSeriesFor(t.metric, goal.id, lookbackStart, now, t.cumulative ?? false);
     }),
   );
 
@@ -244,8 +265,9 @@ export async function computeGoalFeasibility(
 
     let current: number | null = seriesCurrent;
     if (current === null) {
-      // Fallback to resolveMetricValue
-      current = await resolveMetricValue(prisma, t.metric, now, goal.id);
+      // Fallback to resolveMetricValue — thread cumulative so the SUM path is used
+      // if the series window happened to be empty.
+      current = await resolveMetricValue(prisma, t.metric, now, goal.id, t.cumulative ?? false);
     }
     if (current === null && t.start !== undefined && t.start !== null) {
       current = t.start;
