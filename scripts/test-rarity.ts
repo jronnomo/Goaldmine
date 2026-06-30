@@ -194,6 +194,7 @@ console.log("\n5. 0.05-weight stretch target does NOT dominate (above-floor targ
     ratio: 50,
     verdict: "legendary",
     countsTowardTier: true,
+    gating: false,
     currentValue: null,
   };
   const realCommon: TargetFeasibility = {
@@ -207,6 +208,7 @@ console.log("\n5. 0.05-weight stretch target does NOT dominate (above-floor targ
     ratio: 0.2,
     verdict: "common",
     countsTowardTier: true,
+    gating: false,
     currentValue: null,
   };
   const { tier } = aggregateGoalTier([tinyLegendary, realCommon]);
@@ -229,6 +231,7 @@ console.log("\n6. All-below-floor → falls back to highest-weight target:");
     ratio: 5,
     verdict: "legendary",
     countsTowardTier: true,
+    gating: false,
     currentValue: null,
   };
   const t2: TargetFeasibility = {
@@ -242,6 +245,7 @@ console.log("\n6. All-below-floor → falls back to highest-weight target:");
     ratio: 0.2,
     verdict: "common",
     countsTowardTier: true,
+    gating: false,
     currentValue: null,
   };
   const { tier } = aggregateGoalTier([t1, t2]);
@@ -383,6 +387,7 @@ console.log("\n13. All-unknown targets → unrated:");
     ratio: null,
     verdict: "unknown",
     countsTowardTier: false,
+    gating: false,
     currentValue: null,
   };
   const { tier } = aggregateGoalTier([unk]);
@@ -497,6 +502,7 @@ console.log("\n16. Unmeasured targets — never-measured baseline/exercise ⇒ u
     ratio: null,
     verdict: "unknown",
     countsTowardTier: false,
+    gating: false,
     currentValue: null,
   };
   const measuredCommon: TargetFeasibility = {
@@ -510,6 +516,7 @@ console.log("\n16. Unmeasured targets — never-measured baseline/exercise ⇒ u
     ratio: 0.2,
     verdict: "common",
     countsTowardTier: true,
+    gating: false,
     currentValue: null,
   };
   const { tier: goalTier } = aggregateGoalTier([unmeasuredTF, measuredCommon]);
