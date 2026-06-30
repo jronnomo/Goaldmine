@@ -10,6 +10,8 @@ import { prisma } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
 import { setFocusGoalCore } from "@/lib/goal-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
+import { getLogMetricSeries } from "@/lib/metric-series";
+import type { GoalTarget } from "@/lib/metrics-registry";
 
 export function registerProjectTools(server: McpServer): void {
   // --------------------------------------------------------------------------
@@ -670,6 +672,73 @@ export function registerProjectTools(server: McpServer): void {
           value: row.value,
           deleted: true,
           message: "Metric entry deleted.",
+        };
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // get_metric_trend
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "get_metric_trend",
+    {
+      title: "Get a project goal's metric time-series for charting or discussion",
+      description:
+        "Returns a project goal's log: metric time-series (points + label + units + domain) " +
+        "for charting or discussion. Project goals only — passing a fitness goal id returns a " +
+        "friendly error. Reuses the same series logic as the dashboard (snapshot vs. cumulative, " +
+        "domain padding) so the coach sees exactly what the chart shows. " +
+        "Pass the bare metric key (e.g. 'mrr', 'practice_hours') — the 'log:' prefix is accepted " +
+        "but not required. Returns an empty points array with a valid domain if no readings exist. " +
+        "Use list_log_entries to inspect raw rows; use this tool when you want the chart-ready series " +
+        "(running totals for cumulative metrics, domain bounds for discussion).",
+      inputSchema: {
+        goalId: z.string().describe("ID of the project goal. Must be kind='project'."),
+        metric: z
+          .string()
+          .min(1)
+          .describe(
+            "Metric key to retrieve. Bare key (e.g. 'mrr', 'practice_hours') or with 'log:' prefix — " +
+            "both forms are accepted and normalized. Must match a target defined on the goal.",
+          ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        // 1. Fetch goal kind + targets — friendly error if missing or wrong kind.
+        const goal = await prisma.goal.findUnique({
+          where: { id: input.goalId },
+          select: { kind: true, targets: true },
+        });
+        if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
+        if (goal.kind !== "project") {
+          throw new Error(
+            `Goal ${input.goalId} is kind='${goal.kind}'. ` +
+            `get_metric_trend is for project goals only — use get_exercise_history or ` +
+            `get_baseline_history for fitness metrics.`,
+          );
+        }
+
+        // 2. Normalize bare key → "log:" prefixed form for target lookup.
+        const bare = input.metric.replace(/^log:/, "");
+        const targets = (goal.targets as unknown as GoalTarget[]) ?? [];
+        const target = targets.find((t) => t.metric === "log:" + bare);
+        if (!target) {
+          throw new Error(
+            `Metric "log:${bare}" is not defined as a target on goal ${input.goalId}. ` +
+            `Check get_goal for the list of configured targets.`,
+          );
+        }
+
+        // 3. Reuse getLogMetricSeries — same logic as the dashboard chart.
+        const s = await getLogMetricSeries(target, input.goalId);
+
+        return {
+          metric: "log:" + bare,
+          label: s.label,
+          units: s.units,
+          domain: s.domain,
+          points: s.points,
         };
       }),
   );
