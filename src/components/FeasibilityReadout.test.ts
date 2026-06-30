@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
-import type { GoalFeasibility, TargetFeasibility } from "@/lib/rarity-core";
+import type { GoalFeasibility, TargetFeasibility, CoachFeasibility } from "@/lib/rarity-core";
 
 // ── Shared perTarget stubs ────────────────────────────────────────────────────
 
@@ -215,5 +215,92 @@ describe("FeasibilityReadout", () => {
       expect(html).not.toContain("Chewgether");
       expect(html).not.toContain("fitness");
     }
+  });
+
+  // ── effectiveTier / coach override cases (REQ-003) ───────────────────────────
+
+  // Coach fixtures
+  const COACH_EPIC: CoachFeasibility = {
+    tier: "epic",
+    rationale: "High-effort goal with strong execution track record.",
+    assessedAt: "2026-06-29T00:00:00.000Z",
+    assessedBy: "coach",
+  };
+  const COACH_RARE: CoachFeasibility = {
+    tier: "rare",
+    rationale: "Matches engine estimate.",
+    assessedAt: "2026-06-29T00:00:00.000Z",
+    assessedBy: "coach",
+  };
+  const COACH_UNCOMMON: CoachFeasibility = {
+    tier: "uncommon",
+    rationale: "Doable with consistent work.",
+    assessedAt: "2026-06-29T00:00:00.000Z",
+    assessedBy: "coach",
+  };
+
+  // B1-Case-1: computed=rare, coach=epic → headline "Epic" + affordance "engine: Rare"
+  it("B1-Case-1: coach override (rare→epic) → headline Epic + engine affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(FeasibilityReadout, {
+        feasibility: FIXTURE_RARE_TIER,
+        coach: COACH_EPIC,
+      }),
+    );
+    expect(html).toContain("Epic");
+    expect(html).toContain("engine: Rare");
+  });
+
+  // B1-Case-2: computed=rare, no coach → "Rare", no "engine:" affordance
+  it("B1-Case-2: no coach override → headline Rare, no engine affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(FeasibilityReadout, {
+        feasibility: FIXTURE_RARE_TIER,
+        coach: null,
+      }),
+    );
+    expect(html).toContain("Rare");
+    expect(html).not.toContain("engine:");
+  });
+
+  // B1-Case-3: computed=rare, coach=rare → "Rare", no affordance (no redundancy)
+  it("B1-Case-3: coach.tier === computed tier → no engine affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(FeasibilityReadout, {
+        feasibility: FIXTURE_RARE_TIER,
+        coach: COACH_RARE,
+      }),
+    );
+    expect(html).toContain("Rare");
+    expect(html).not.toContain("engine:");
+    expect(html).not.toContain("coach call");
+  });
+
+  // B1-Case-4: computed unrated (no-data, tier null), coach=uncommon → "Uncommon" + "coach call"
+  it("B1-Case-4: unrated no-data + coach override → Uncommon + coach call affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(FeasibilityReadout, {
+        feasibility: FIXTURE_NO_DATA_0_LOG,
+        coach: COACH_UNCOMMON,
+      }),
+    );
+    expect(html).toContain("Uncommon");
+    expect(html).toContain("coach call");
+    expect(html).not.toContain("Not enough logged data");
+  });
+
+  // B1-Case-5: computed unrated (no-data), no coach → unchanged no-data messaging
+  it("B1-Case-5: unrated no-data, no coach → unchanged no-data copy, no tier headline", () => {
+    const html = renderToStaticMarkup(
+      createElement(FeasibilityReadout, {
+        feasibility: FIXTURE_NO_DATA_0_LOG,
+        coach: null,
+      }),
+    );
+    expect(html).toContain("Not enough logged data");
+    expect(html).not.toContain("Uncommon");
+    expect(html).not.toContain("Rare");
+    expect(html).not.toContain("engine:");
+    expect(html).not.toContain("coach call");
   });
 });

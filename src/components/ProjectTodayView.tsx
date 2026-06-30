@@ -12,6 +12,7 @@ import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar"
 import type { GoalTarget } from "@/lib/metrics-registry";
 import type { FocusGoalRow } from "@/lib/goal-focus";
 import { computeGoalFeasibility } from "@/lib/rarity";
+import { parseCoachFeasibility } from "@/lib/rarity-core";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
 
 // UXR-s4-13: urgency threshold constant (≤14d → warning, <0 → danger).
@@ -64,7 +65,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
     // (getFocusGoal select was NOT extended; Decision CD-5).
     prisma.goal.findUnique({
       where: { id: goal.id },
-      select: { targets: true },
+      select: { targets: true, coachFeasibility: true },
     }),
   ]);
 
@@ -77,6 +78,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
     targets: goalRow?.targets,
     kind: goal.kind,
   }).catch(() => null);
+  const coachFeas = parseCoachFeasibility(goalRow?.coachFeasibility);
   const targetDateLabel =
     goal.targetDate != null
       ? new Intl.DateTimeFormat("en-US", {
@@ -264,6 +266,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
         <FeasibilityReadout
           feasibility={feasibility}
           targetDateLabel={targetDateLabel}
+          coach={coachFeas}
         />
       )}
 

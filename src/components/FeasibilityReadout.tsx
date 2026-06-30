@@ -3,7 +3,9 @@
 // Renders honest goal feasibility from a single serialized GoalFeasibility value.
 // Placement on Today/goal pages is #78/#79; this is the component + render proof only.
 
-import type { GoalFeasibility, TargetFeasibility, RarityTier } from "@/lib/rarity-core";
+import type { ReactNode } from "react";
+import type { GoalFeasibility, TargetFeasibility, RarityTier, CoachFeasibility } from "@/lib/rarity-core";
+import { effectiveTier } from "@/lib/rarity-core";
 import { fmtComma } from "@/lib/goal-presentation";
 import { Card } from "@/components/Card";
 
@@ -29,6 +31,13 @@ function basisLabel(basis: "observed" | "norms" | "mixed"): string {
   if (basis === "observed") return "your pace";
   if (basis === "norms") return "typical norms";
   return "mixed";
+}
+
+function plainReason(unratedReason: GoalFeasibility["unratedReason"]): string {
+  if (unratedReason === "no-data") return "not enough data for an engine estimate yet";
+  if (unratedReason === "someday") return "no target date set";
+  if (unratedReason === "no-targets") return "no targets defined";
+  return "engine estimate pending";
 }
 
 // ── Per-target rows (shared between NO_DATA_1_2_LOG and TIER_SET states) ─────
@@ -95,11 +104,64 @@ function PerTargetRows({
 export function FeasibilityReadout({
   feasibility,
   targetDateLabel,
+  coach,
 }: {
   feasibility: GoalFeasibility;
   targetDateLabel?: string | null;
+  coach?: CoachFeasibility | null;
 }) {
   const { unratedReason, tier, perTarget, basis, weeksRemaining } = feasibility;
+
+  const eTier = effectiveTier(tier, coach ?? null);
+
+  // ── eTier available (coach override OR engine tier) ──────────────────────────
+  if (eTier != null) {
+    // Affordance: muted 10px subtext when tier source needs explanation.
+    let affordance: ReactNode = null;
+    if (tier != null && coach != null && coach.tier !== tier) {
+      // Coach override differs from computed → show engine tier for transparency.
+      affordance = (
+        <p className="text-[10px] text-[var(--muted)] mt-0.5">
+          engine: {TIER_LABEL[tier]}
+        </p>
+      );
+    } else if (tier == null && coach != null) {
+      // Engine unrated but coach override exists → label it as a coach call.
+      affordance = (
+        <p className="text-[10px] text-[var(--muted)] mt-0.5">
+          coach call · {plainReason(unratedReason)}
+        </p>
+      );
+    }
+    // When coach.tier === tier, or no coach → no affordance.
+
+    return (
+      <div data-testid="feasibility-readout">
+        <Card title="Reach">
+          <div className="flex items-baseline justify-between mb-3">
+            <div>
+              <span className="text-lg font-semibold">{TIER_LABEL[eTier]}</span>
+              {affordance}
+            </div>
+            <span className="text-xs text-[var(--muted)] tabular-nums">
+              {weeksRemaining != null
+                ? Math.round(weeksRemaining) + " wk remaining"
+                : ""}
+              {basis != null ? " · " + basisLabel(basis) : ""}
+            </span>
+          </div>
+          {perTarget.length > 0 && (
+            <PerTargetRows
+              perTarget={perTarget}
+              targetDateLabel={targetDateLabel ?? null}
+            />
+          )}
+        </Card>
+      </div>
+    );
+  }
+
+  // ── eTier == null: no coach override + engine unrated → existing states UNCHANGED ──
 
   // State 1 — SOMEDAY
   if (unratedReason === "someday") {
@@ -162,29 +224,6 @@ export function FeasibilityReadout({
     );
   }
 
-  // State 4 — TIER_SET (tier !== null, unratedReason === null)
-  // Fallback "—" handles the impossible { tier:null, unratedReason:null } data anomaly.
-  return (
-    <div data-testid="feasibility-readout">
-      <Card title="Reach">
-        <div className="flex items-baseline justify-between mb-3">
-          <span className="text-lg font-semibold">
-            {tier != null ? TIER_LABEL[tier] : "—"}
-          </span>
-          <span className="text-xs text-[var(--muted)] tabular-nums">
-            {weeksRemaining != null
-              ? Math.round(weeksRemaining) + " wk remaining"
-              : ""}
-            {basis != null ? " · " + basisLabel(basis) : ""}
-          </span>
-        </div>
-        {perTarget.length > 0 && (
-          <PerTargetRows
-            perTarget={perTarget}
-            targetDateLabel={targetDateLabel ?? null}
-          />
-        )}
-      </Card>
-    </div>
-  );
+  // Impossible: { tier:null, unratedReason:null, no coach } — data anomaly guard.
+  return null;
 }
