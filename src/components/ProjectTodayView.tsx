@@ -10,6 +10,7 @@ import { TodayCelebration } from "@/components/TodayCelebration";
 import { prisma } from "@/lib/db";
 import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar";
 import type { GoalTarget } from "@/lib/metrics-registry";
+import { fmtComma } from "@/lib/goal-presentation";
 import type { FocusGoalRow } from "@/lib/goal-focus";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
@@ -90,10 +91,34 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
 
   // --- Derived values ---
 
-  // MRR card
+  // Primary metric card (D2: generalizes former MRR-only hero bar)
   const targets = (goalRow?.targets as unknown as GoalTarget[] | null) ?? [];
-  const mrrTarget = targets.find((t) => t.metric === "log:mrr") ?? null;
   const mrrValue = mrrEntry?.value ?? null;
+
+  // Choose the primary log: target: log:mrr first, then highest-weight, then first, else null.
+  const logTargets = targets.filter((t) => t.metric.startsWith("log:"));
+  const primaryTarget: GoalTarget | null =
+    logTargets.find((t) => t.metric === "log:mrr") ??
+    logTargets.slice().sort((a, b) => b.weight - a.weight)[0] ??
+    null;
+
+  // Current value: prefer feasibility.perTarget (richer, rate-aware); fall back to
+  // the mrrEntry DB read only when feasibility failed (caught → null) and metric is log:mrr.
+  let primaryCurrentValue: number | null = null;
+  if (primaryTarget !== null) {
+    if (feasibility !== null) {
+      primaryCurrentValue =
+        feasibility.perTarget.find((t) => t.metric === primaryTarget.metric)?.currentValue ?? null;
+    } else if (primaryTarget.metric === "log:mrr") {
+      primaryCurrentValue = mrrValue;
+    }
+  }
+
+  // Format helpers — only meaningful when primaryTarget is set (used inside the gate below).
+  const primaryIsUSD = primaryTarget !== null && (primaryTarget.units === "USD" || primaryTarget.units === "$");
+  const primarySuffix = primaryTarget !== null
+    ? (primaryTarget.metric === "log:mrr" ? "MRR" : primaryTarget.units)
+    : "";
 
   // Bullseye progress
   const total = items.length;
@@ -223,16 +248,20 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
         )}
       </section>
 
-      {/* ── MRR Progress card (UXR-s4-03; hidden when no log:mrr target) ── */}
-      {/* [v2] LOW-2: Card does not accept data-testid — use wrapper div. */}
-      {mrrTarget != null && (
-        <div data-testid="mrr-progress-card">
+      {/* ── Primary metric progress card (UXR-s4-03; hidden when no log: target) ── */}
+      {/* D2: generalized from MRR-only — renders for any log: target on the goal.    */}
+      {/* [v2] LOW-2: Card does not accept data-testid — use wrapper div.             */}
+      {primaryTarget != null && (
+        <div data-testid="primary-metric-card">
           <Card>
             <div className="flex items-baseline justify-between mb-2">
               <p className="text-4xl font-semibold tracking-tight">
-                {mrrValue != null ? formatCurrency(mrrValue) : "—"}
+                {primaryCurrentValue != null
+                  ? (primaryIsUSD ? formatCurrency(primaryCurrentValue) : fmtComma(primaryCurrentValue))
+                  : "—"}
                 <span className="text-base font-normal text-[var(--muted)]">
-                  {" "}/ {formatCurrency(mrrTarget.target)} MRR
+                  {" "}/ {primaryIsUSD ? formatCurrency(primaryTarget.target) : fmtComma(primaryTarget.target)}{" "}
+                  {primarySuffix}
                 </span>
               </p>
             </div>
@@ -241,20 +270,27 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
               className="h-1.5 rounded-full overflow-hidden"
               style={{ background: "var(--border)" }}
               role="progressbar"
-              aria-valuenow={mrrValue ?? 0}
-              aria-valuemax={mrrTarget.target}
-              aria-label={`MRR ${mrrValue != null ? formatCurrency(mrrValue) : "—"} of ${formatCurrency(mrrTarget.target)}`}
+              aria-valuenow={primaryCurrentValue ?? 0}
+              aria-valuemax={primaryTarget.target}
+              aria-label={`${primaryTarget.label} ${
+                primaryCurrentValue != null
+                  ? (primaryIsUSD ? formatCurrency(primaryCurrentValue) : fmtComma(primaryCurrentValue))
+                  : "—"
+              } of ${primaryIsUSD ? formatCurrency(primaryTarget.target) : fmtComma(primaryTarget.target)} ${primarySuffix}`}
             >
               <div
                 className="h-full rounded-full"
                 style={{
                   background: "var(--accent)",
-                  width: `${Math.min(100, mrrValue != null ? (mrrValue / mrrTarget.target) * 100 : 0).toFixed(1)}%`,
+                  width: `${Math.min(
+                    100,
+                    primaryCurrentValue != null ? (primaryCurrentValue / primaryTarget.target) * 100 : 0,
+                  ).toFixed(1)}%`,
                   // No CSS transition — static bar per UXR-s4-17.
                 }}
               />
             </div>
-            <p className="mt-1 text-xs text-[var(--muted)]">Monthly recurring revenue</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">{primaryTarget.label}</p>
           </Card>
         </div>
       )}
