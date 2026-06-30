@@ -3854,7 +3854,7 @@ function registerWriteTools(server: McpServer) {
           planId,
           noteId,
           ...(priorResolved ? { priorResolved: true } : {}),
-          message: `Goal created from note: ${objective}${planId ? "" : " (someday — no plan scaffolded)"}`,
+          message: `Goal created from note: ${objective}${parsedDate === null ? " (someday — no plan scaffolded)" : ""}`,
         };
       }),
   );
@@ -4466,7 +4466,7 @@ function registerWriteTools(server: McpServer) {
         }
 
         const baseMsg = `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`;
-        const message = planId === null
+        const message = parsedDate === null
           ? `${baseMsg} (someday — no plan scaffolded; add a target date later to scaffold one)`
           : baseMsg;
 
