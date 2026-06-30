@@ -25,7 +25,8 @@ export type GoalTarget = {
    * If true, while this target's progress < 1 (including untested),
    * the headline readiness score is capped at GATE_CEILING (80).
    * All gating targets cleared → ceiling lifts to 100.
-   * Readiness-only concept; has no effect on rarity tier.
+   * Also floors the rarity/Reach tier to no easier than 'rare' while
+   * the gate is unrated (no data / no confident rate).
    */
   gating?: boolean;
   /**
@@ -74,7 +75,8 @@ export const GoalTargetSchema = z.object({
   gating: z.boolean().optional().describe(
     "Gate flag — while any gating target has progress < 1 (including untested), " +
     "the headline score is capped at 80. All gates cleared → ceiling 100. " +
-    "Readiness-only concept; ignored by rarity tier.",
+    "Also floors the rarity/Reach tier to no easier than 'rare' while the gate " +
+    "is unrated (no data / no confident rate).",
   ),
   cumulative: z.boolean().optional().describe(
     "When true, log: entries are summed (increment-style — expects one entry per " +

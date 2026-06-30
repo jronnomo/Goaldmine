@@ -199,6 +199,10 @@ export type TargetFeasibility = {
   ratio: number | null;
   verdict: TargetVerdict;
   countsTowardTier: boolean;
+  /** Whether this target is a readiness gate (mirrors GoalTarget.gating).
+   *  Propagated so aggregateGoalTier can floor the goal tier to no easier than
+   *  'rare' when a gating target is unrated (verdict==='unknown'). */
+  gating: boolean;
   /** The most recent measured value for this metric, or null when unknown.
    *  Null when no data has been logged and no target.start is set (the "unknown"
    *  path). Populated as the effective current value (last series point →
@@ -397,9 +401,10 @@ export function computeTargetFeasibility(input: {
 
   const family = metricFamilyFor(target.metric, target.units, target.direction);
 
-  // Note: gating:boolean on GoalTarget is a readiness-only concept (caps the
-  // headline score at 80 until cleared). Rarity does not read or act on gating —
-  // difficulty tier is independent of whether a target is a gate.
+  // Note: gating is propagated onto TargetFeasibility; aggregateGoalTier floors
+  // the goal tier to no easier than 'rare' when a gating target is unrated
+  // (verdict==='unknown' — no confident rate / unrated). The readiness SCORE's
+  // 80-cap is a separate mechanism in readiness.ts.
 
   // post-merge fix: never-measured targets (null current, no explicit start) are 'unknown'
   // — mirrors readiness `missing` semantics.
@@ -424,6 +429,7 @@ export function computeTargetFeasibility(input: {
       ratio: null,
       verdict: "unknown",
       countsTowardTier: false,
+      gating: target.gating ?? false,
       currentValue: null,
     };
   }
@@ -448,6 +454,7 @@ export function computeTargetFeasibility(input: {
       ratio: 0,
       verdict: "met",
       countsTowardTier: true,
+      gating: target.gating ?? false,
       currentValue: effectiveCurrent,
     };
   }
@@ -486,6 +493,7 @@ export function computeTargetFeasibility(input: {
           ratio: rules.ratioCap,
           verdict: tierFromRatio(rules.ratioCap, rules),
           countsTowardTier: true,
+          gating: target.gating ?? false,
           currentValue: effectiveCurrent,
         };
       }
@@ -507,6 +515,7 @@ export function computeTargetFeasibility(input: {
       ratio: null,
       verdict: "unknown",
       countsTowardTier: false,
+      gating: target.gating ?? false,
       currentValue: effectiveCurrent,
     };
   }
@@ -527,6 +536,7 @@ export function computeTargetFeasibility(input: {
     ratio,
     verdict,
     countsTowardTier: true,
+    gating: target.gating ?? false,
     currentValue: effectiveCurrent,
   };
 }
@@ -575,11 +585,19 @@ export function aggregateGoalTier(
 
   if (worstRatio === -Infinity) return { tier: null, ratio: null, basis: null };
 
+  // Gate floor: if any gating target is unrated (no confident rate), floor the
+  // tier to no easier than 'rare'. Uses full perTarget (not just eligible) so an
+  // unrated gate with countsTowardTier=false is still captured.
+  const hasUnratedGate = perTarget.some((t) => t.gating && t.verdict === "unknown");
+  if (hasUnratedGate) worstTier = RARITY_TIERS[Math.max(tierIndex(worstTier), tierIndex("rare"))]!;
+
   let basis: "observed" | "norms" | "mixed" | null = null;
   if (hasObserved && hasNorm) basis = "mixed";
   else if (hasObserved) basis = "observed";
   else if (hasNorm) basis = "norms";
 
+  // Note: after a gate floor, tier may be elevated above what ratio implies.
+  // ratio always reflects the pre-floor worst pool target (unchanged by floor).
   return { tier: worstTier, ratio: worstRatio, basis };
 }
 

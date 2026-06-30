@@ -7,9 +7,11 @@
 import { describe, it, expect } from "vitest";
 import {
   computeTargetFeasibility,
+  aggregateGoalTier,
   FITNESS_NORM_PACK,
   RARITY_RULES,
 } from "@/lib/rarity-core";
+import type { TargetFeasibility } from "@/lib/rarity-core";
 import type { GoalTarget } from "@/lib/metrics-registry";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -330,5 +332,90 @@ describe("never-measured guard — current null, no target.start", () => {
     expect(r.verdict).toBe("unknown");
     expect(r.requiredRate).not.toBeNull(); // gap/weeksRemaining is defined
     expect(r.requiredRate).toBeCloseTo(50); // (1000-500)/10
+  });
+});
+
+// ─── B2. aggregateGoalTier — gate floor ───────────────────────────────────────
+// Story #134: an unrated gating target (gating=true, verdict='unknown') floors
+// the aggregated tier to no easier than 'rare'. The floor uses the FULL perTarget
+// array (not just eligible), so unrated gates (countsTowardTier=false) are captured.
+// These tests call aggregateGoalTier directly with TargetFeasibility[] fixtures.
+
+/** Helper fixture: a rated target that counts toward tier. */
+function ratedTarget(overrides: Partial<TargetFeasibility> = {}): TargetFeasibility {
+  return {
+    metric: "log:mrr",
+    label: "MRR",
+    weight: 0.8,
+    requiredRate: 50,
+    observedRate: 100,
+    plausibleRate: 100,
+    rateBasis: "norm",
+    ratio: 0.5,          // → common
+    verdict: "common",
+    countsTowardTier: true,
+    gating: false,
+    currentValue: 500,
+    ...overrides,
+  };
+}
+
+/** Helper fixture: an unrated gate (no data, gating=true). */
+function unratedGate(overrides: Partial<TargetFeasibility> = {}): TargetFeasibility {
+  return {
+    metric: "log:offers",
+    label: "Offers",
+    weight: 0.5,
+    requiredRate: null,
+    observedRate: null,
+    plausibleRate: null,
+    rateBasis: "none",
+    ratio: null,
+    verdict: "unknown",
+    countsTowardTier: false,
+    gating: true,
+    currentValue: null,
+    ...overrides,
+  };
+}
+
+describe("B2 — aggregateGoalTier gate floor", () => {
+  // Case 1: rated 'common' base + unrated gate → floor lifts tier to 'rare'
+  it("B2-1: rated common base + unrated gate → tier 'rare'", () => {
+    const result = aggregateGoalTier([ratedTarget(), unratedGate()]);
+    expect(result.tier).toBe("rare");
+    // ratio reflects the pre-floor pool worst (common base, ratio 0.5)
+    expect(result.ratio).toBe(0.5);
+  });
+
+  // Case 2: rated gating target (verdict != 'unknown') → no floor, tier stays at verdict
+  it("B2-2: rated gating target (gating=true, verdict='common') → tier 'common' (no floor)", () => {
+    const ratedGate = ratedTarget({ gating: true, verdict: "common", ratio: 0.5 });
+    const result = aggregateGoalTier([ratedGate]);
+    expect(result.tier).toBe("common");
+  });
+
+  // Case 3: rated 'common' base + non-gating unrated target → no floor
+  it("B2-3: non-gating unrated target → tier 'common' (floor does not fire)", () => {
+    const nonGatingUnrated: TargetFeasibility = {
+      ...unratedGate(),
+      gating: false,
+    };
+    const result = aggregateGoalTier([ratedTarget(), nonGatingUnrated]);
+    expect(result.tier).toBe("common");
+  });
+
+  // Case 4: 'legendary' base + unrated gate → stays 'legendary' (max keeps harder tier)
+  it("B2-4: legendary base + unrated gate → tier 'legendary' (floor does not downgrade)", () => {
+    const legendaryBase = ratedTarget({ ratio: 99, verdict: "legendary" });
+    const result = aggregateGoalTier([legendaryBase, unratedGate()]);
+    expect(result.tier).toBe("legendary");
+  });
+
+  // Case 5: only an unrated gate, eligible pool empty → tier null (early return, no spurious rare)
+  it("B2-5: only unrated gate (eligible empty) → tier null, no spurious rare", () => {
+    const result = aggregateGoalTier([unratedGate()]);
+    expect(result.tier).toBeNull();
+    expect(result.ratio).toBeNull();
   });
 });

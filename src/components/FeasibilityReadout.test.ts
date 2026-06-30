@@ -23,6 +23,7 @@ const UNKNOWN_TARGET: TargetFeasibility = {
   ratio: null,
   verdict: "unknown",
   countsTowardTier: false,
+  gating: false,
   currentValue: null,
 };
 
@@ -37,6 +38,7 @@ const MILESTONES_UNKNOWN: TargetFeasibility = {
   ratio: null,
   verdict: "unknown",
   countsTowardTier: false,
+  gating: false,
   currentValue: null,
 };
 
@@ -52,6 +54,7 @@ const RARE_TARGET: TargetFeasibility = {
   ratio: 3.3,
   verdict: "rare",
   countsTowardTier: true,
+  gating: false,
   currentValue: 350,
 };
 

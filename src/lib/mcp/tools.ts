@@ -3513,7 +3513,7 @@ function registerWriteTools(server: McpServer) {
         "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 155 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
         "Use when adjusting the success criteria / rubric / scoring weights for the goal. " +
         "Each target = { metric, label, target, weight, units, direction, rationale?, gating? }. Weights should sum near 1. " +
-        "Set gating:true on a target to make it a hard gate — readiness is capped at 80 until that target reaches progress ≥ 1. " +
+        "Set gating:true on a target to make it a hard gate — readiness is capped at 80 until that target reaches progress ≥ 1; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data). " +
         "Read the current targets via get_goal first; this is a full-replace, not a patch.",
       inputSchema: {
         goalId: z.string(),
@@ -4395,7 +4395,7 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Readiness targets captured during the intake interview (weights summing ~1). " +
               "Each target drives a per-target progress bar in compute_readiness. " +
-              "Set gating:true on a target to make it a hard gate — score capped at 80 until cleared.",
+              "Set gating:true on a target to make it a hard gate — score capped at 80 until cleared; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data).",
           ),
         coachFeasibility: z
           .object({
