@@ -96,6 +96,7 @@ import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
+import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
 
 const DateKeyShape = z
   .string()
@@ -553,9 +554,13 @@ function registerReadTools(server: McpServer) {
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
         "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
-        "When focusGoal.kind === 'project', todayItems contains today's ScheduledItems " +
-        "(id, type, title, status, completedAt) for that project goal; " +
-        "when the focus goal is fitness or no focus goal is set, todayItems is always [].",
+        "When focusGoal.kind === 'project', the payload is project-shaped: todayTask is null, " +
+        "activeWorkout/deferredWorkout/nutrition/baselines/mobility and all fitness scalars are null/false/[], " +
+        "todayItems contains today's ScheduledItems (id, type, title, status, completedAt) for that project goal, " +
+        "and feasibility carries the project's computed Reach tier (null if unrated/error). " +
+        "goalObjective is always populated from the focus goal's objective. " +
+        "When the focus goal is fitness or no focus goal is set, todayItems is [], feasibility is absent, " +
+        "and all fitness fields are fully populated as usual.",
     },
     async () =>
       safe(async () => {
@@ -578,7 +583,7 @@ function registerReadTools(server: McpServer) {
           prisma.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
-            select: { id: true, kind: true, objective: true, githubRepo: true },
+            select: { id: true, kind: true, objective: true, githubRepo: true, targets: true, targetDate: true },
           }),
         ]);
         const activeGoal = activeGoalRow
@@ -612,6 +617,13 @@ function registerReadTools(server: McpServer) {
             status: row.status,
             completedAt: row.completedAt?.toISOString() ?? null,
           }));
+          const feasibility = await computeGoalFeasibility({
+            id: activeGoalRow.id,
+            targetDate: activeGoalRow.targetDate,
+            targets: activeGoalRow.targets,
+            kind: activeGoalRow.kind,
+          }).catch(() => null);
+          return shapeProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
         }
         return { ...r, standingRules, focusGoal: activeGoal, activeGoal, todayItems }; // activeGoal: saved-prompt compat, remove next release
       }),
