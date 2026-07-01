@@ -9,8 +9,8 @@
 // Client-safe types and constants live in metrics-registry.ts (no Prisma,
 // no Node.js built-ins). Server-only resolve helpers live below.
 
-import type { PrismaClient } from "@/generated/prisma/client";
 import { endOfDay } from "@/lib/calendar";
+import { getDb } from "@/lib/db";
 import { getExerciseHistory } from "@/lib/records";
 
 // Re-export all pure data / types so existing imports of goal-targets.ts
@@ -31,7 +31,6 @@ import { LOG_METRIC_PREFIX } from "@/lib/metrics-registry";
  *  The snapshot path (cumulative=false) is byte-for-byte unchanged.
  */
 export async function resolveMetricValue(
-  prisma: PrismaClient,
   metric: string,
   asOf: Date = new Date(),
   goalId: string,
@@ -43,9 +42,10 @@ export async function resolveMetricValue(
   // the clock catches up (this hid an off-schedule baseline PR until 9:30pm).
   // Cap at end-of-day so anything dated today counts today; future days stay out.
   const cutoff = endOfDay(asOf);
+  const db = await getDb();
 
   if (metric === "weightLb") {
-    const m = await prisma.measurement.findFirst({
+    const m = await db.measurement.findFirst({
       where: { date: { lte: cutoff }, weightLb: { not: null } },
       orderBy: { date: "desc" },
     });
@@ -54,7 +54,7 @@ export async function resolveMetricValue(
 
   if (metric.startsWith("baseline:")) {
     const testName = metric.slice("baseline:".length);
-    const b = await prisma.baseline.findFirst({
+    const b = await db.baseline.findFirst({
       where: { testName, date: { lte: cutoff } },
       orderBy: { date: "desc" },
     });
@@ -66,7 +66,7 @@ export async function resolveMetricValue(
   // numbers are unchanged — this just stops a second goal with hike targets
   // (e.g. a future Longs Peak) from cross-counting the same hikes.
   if (metric === "hike:prep_completion") {
-    return prisma.hike.count({
+    return db.hike.count({
       where: {
         goalId,
         date: { lte: cutoff },
@@ -78,7 +78,7 @@ export async function resolveMetricValue(
   }
 
   if (metric === "hike:max_elevation_single") {
-    const r = await prisma.hike.aggregate({
+    const r = await db.hike.aggregate({
       _max: { elevationFt: true },
       where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
@@ -86,7 +86,7 @@ export async function resolveMetricValue(
   }
 
   if (metric === "hike:total_elevation_ft") {
-    const r = await prisma.hike.aggregate({
+    const r = await db.hike.aggregate({
       _sum: { elevationFt: true },
       where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
@@ -94,7 +94,7 @@ export async function resolveMetricValue(
   }
 
   if (metric === "hike:total_distance_mi") {
-    const r = await prisma.hike.aggregate({
+    const r = await db.hike.aggregate({
       _sum: { distanceMi: true },
       where: { goalId, date: { lte: cutoff }, status: "completed" },
     });
@@ -102,7 +102,7 @@ export async function resolveMetricValue(
   }
 
   if (metric === "workout:count") {
-    return prisma.workout.count({
+    return db.workout.count({
       where: { startedAt: { lte: cutoff }, status: "completed" },
     });
   }
@@ -113,7 +113,7 @@ export async function resolveMetricValue(
       // Cumulative: sum all entries up to the cutoff.
       // Returns raw _sum.value — null when zero rows (honest "no data"),
       // not ?? 0 (which would mis-tier an unstarted goal as legendary).
-      const r = await prisma.logEntry.aggregate({
+      const r = await db.logEntry.aggregate({
         _sum: { value: true },
         where: {
           goalId,
@@ -124,7 +124,7 @@ export async function resolveMetricValue(
       });
       return r._sum.value;
     }
-    const entry = await prisma.logEntry.findFirst({
+    const entry = await db.logEntry.findFirst({
       where: {
         goalId,
         metric: key,
@@ -137,11 +137,9 @@ export async function resolveMetricValue(
   }
 
   // exercise:<canonical name> — latest best (est 1RM, max reps, or max duration)
-  // from workout history as of asOf. The PrismaClient param is unused here because
-  // getExerciseHistory uses the shared singleton, but it is accepted for interface
-  // consistency with other branches.
+  // from workout history as of asOf. getExerciseHistory uses the raw prisma singleton
+  // internally (WorkoutExercise is non-scoped).
   if (metric.startsWith("exercise:")) {
-    void prisma; // singleton used internally by getExerciseHistory
     const exerciseName = metric.slice("exercise:".length);
     const { history } = await getExerciseHistory(exerciseName);
     const filtered = history.filter((p) => p.date <= cutoff);
@@ -156,13 +154,14 @@ export async function resolveMetricValue(
  *  accumulation, matching the hike:/workout:count convention). Snapshot path unchanged.
  */
 export async function resolveMetricStart(
-  prisma: PrismaClient,
   metric: string,
   goalId: string, // used by the log:* start lookup; fitness branches ignore it
   cumulative = false,
 ): Promise<number | null> {
+  const db = await getDb();
+
   if (metric === "weightLb") {
-    const m = await prisma.measurement.findFirst({
+    const m = await db.measurement.findFirst({
       where: { weightLb: { not: null } },
       orderBy: { date: "asc" },
     });
@@ -171,7 +170,7 @@ export async function resolveMetricStart(
 
   if (metric.startsWith("baseline:")) {
     const testName = metric.slice("baseline:".length);
-    const b = await prisma.baseline.findFirst({
+    const b = await db.baseline.findFirst({
       where: { testName },
       orderBy: { date: "asc" },
     });
@@ -189,7 +188,7 @@ export async function resolveMetricStart(
   // (churn, CAC) measure motion from this starting value toward the lower target.
   if (metric.startsWith(LOG_METRIC_PREFIX)) {
     const key = metric.slice(LOG_METRIC_PREFIX.length);
-    const entry = await prisma.logEntry.findFirst({
+    const entry = await db.logEntry.findFirst({
       where: { goalId, metric: key },
       orderBy: { date: "asc" },
     });

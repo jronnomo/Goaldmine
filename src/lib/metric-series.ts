@@ -12,7 +12,7 @@
 // Import from calendar-core (not calendar) to keep this module free of the
 // server-only transitive deps that calendar.ts pulls in (prisma, program, …).
 
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { GoalTarget, METRIC_BY_ID } from "@/lib/metrics-registry";
 import { USER_TZ, dateKey, parseDateKey } from "@/lib/calendar-core";
 
@@ -44,7 +44,8 @@ export async function getLogMetricSeries(
   // "log:" namespace prefix ("log:mrr"). Strip it before querying.
   const bareKey = target.metric.replace(/^log:/, "");
 
-  const rows = await prisma.logEntry.findMany({
+  const db = await getDb();
+  const rows = await db.logEntry.findMany({
     where: { goalId, metric: bareKey, value: { not: null } },
     orderBy: { date: "asc" },
     select: { date: true, value: true },

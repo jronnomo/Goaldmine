@@ -7,7 +7,7 @@
 // findFirst(orderBy: { updatedAt: "desc" }) — deterministic winner, mirrors the
 // existing active-goal convention in calendar.ts and program.ts.
 
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export type FocusGoalRow = {
   id: string;
@@ -39,7 +39,8 @@ export type ActiveGoalWithPlan = {
  * Deterministically picks the most-recently-updated if multiple are stuck isFocus=true.
  */
 export async function getFocusGoal(): Promise<FocusGoalRow | null> {
-  return prisma.goal.findFirst({
+  const db = await getDb();
+  return db.goal.findFirst({
     where: { isFocus: true },
     orderBy: { updatedAt: "desc" },
     select: {
@@ -59,7 +60,8 @@ export async function getFocusGoal(): Promise<FocusGoalRow | null> {
  * Used by getGoalEvents for the 3-query event fetch.
  */
 export async function getActiveGoalsWithPlans(): Promise<ActiveGoalWithPlan[]> {
-  return prisma.goal.findMany({
+  const db = await getDb();
+  return db.goal.findMany({
     where: { active: true },
     orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
     select: {

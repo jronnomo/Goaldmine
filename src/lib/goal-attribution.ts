@@ -63,6 +63,7 @@ export async function lastTrainedForGoals(
   if (allVariants.size === 0) return result;
 
   // Single batched query — mode:"insensitive" is supported on Postgres in Prisma 7
+  // non-scoped: WorkoutExercise has no userId FK — passes through ScopedClient untouched.
   const rows = await prisma.workoutExercise.findMany({
     where: {
       name: { in: [...allVariants], mode: "insensitive" },

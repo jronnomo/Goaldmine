@@ -3,7 +3,7 @@
 // Imported by footage-actions.ts AND tools.ts — must stay side-effect free.
 
 import { endOfDay } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Resolve the completed workout id for the given USER_TZ midnight date.
@@ -15,8 +15,9 @@ import { prisma } from "@/lib/db";
  * @param dayStart  USER_TZ midnight Date (from parseDateInput or parseDateKey).
  */
 export async function resolveWorkoutIdForDay(dayStart: Date): Promise<string | null> {
+  const db = await getDb();
   const dayEnd = endOfDay(dayStart);
-  const w = await prisma.workout.findFirst({
+  const w = await db.workout.findFirst({
     where: {
       startedAt: { gte: dayStart, lte: dayEnd },
       status: "completed",

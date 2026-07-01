@@ -11,7 +11,7 @@
 // "hike.goalId ?? focusGoalId — null at log time means 'the focus goal at time of
 // hike', resolved at read time." This is a deliberate read-time semantic.
 
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { dateKey } from "@/lib/calendar";
 import { resolveLegend, findLegendEntry } from "@/lib/legend";
 import { baselineCheckpointDates } from "@/lib/records";
@@ -72,8 +72,9 @@ export async function getGoalEventsResult(
   const endDk = dateKey(range.end);
 
   // Queries 2 + 3 in parallel
+  const db = await getDb();
   const [hikes, scheduledItems] = await Promise.all([
-    prisma.hike.findMany({
+    db.hike.findMany({
       where: {
         status: "planned",
         date: { gte: range.start, lte: range.end },
@@ -82,7 +83,7 @@ export async function getGoalEventsResult(
       orderBy: { date: "asc" },
     }),
     activeGoalIds.length > 0
-      ? prisma.scheduledItem.findMany({
+      ? db.scheduledItem.findMany({
           where: {
             goalId: { in: activeGoalIds },
             date: { gte: range.start, lte: range.end },
