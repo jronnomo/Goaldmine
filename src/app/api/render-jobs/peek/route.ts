@@ -37,10 +37,12 @@ export async function GET(req: Request): Promise<Response> {
   // Do NOT route through @/lib/calendar date-key helpers (those operate on USER_TZ day keys).
   const staleBefore = new Date(Date.now() - 30 * 60 * 1000);
   const [reapedClaimed, reapedRendering] = await Promise.all([
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.updateMany({
       where: { status: "claimed", claimedAt: { lt: staleBefore } },
       data: { status: "pending", claimedAt: null },
     }),
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.updateMany({
       where: { status: "rendering", claimedAt: { lt: staleBefore } },
       data: { status: "approved", claimedAt: null },
@@ -50,13 +52,17 @@ export async function GET(req: Request): Promise<Response> {
   // Two findFirst + two count — all independent, run in parallel.
   // Runs after the reaper so the response reflects reaped-and-re-queued state.
   const [pendingCount, nextJob, approvedCount, nextApprovedJob] = await Promise.all([
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.count({ where: { status: "pending" } }),
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.findFirst({
       where: { status: "pending" },
       orderBy: { date: "asc" },
       select: { id: true, date: true },
     }),
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.count({ where: { status: "approved" } }),
+    // SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)
     prisma.dayRenderJob.findFirst({
       where: { status: "approved" },
       orderBy: { date: "asc" },
