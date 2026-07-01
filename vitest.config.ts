@@ -12,5 +12,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    env: {
+      // Placeholder DATABASE_URL so db.ts can initialize without a real Neon connection.
+      // Tests that call the real Prisma query engine will still fail at the network layer,
+      // but pure-function unit tests (injectUserId, forUser) never make DB calls and pass.
+      DATABASE_URL:
+        "postgresql://test:test@localhost:5432/test_placeholder",
+    },
   },
 });

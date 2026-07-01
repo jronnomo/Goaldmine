@@ -101,6 +101,44 @@ As of E0-1, the workflow is: local `.env` → Neon **dev branch**; Vercel env va
 
 _Before E0-1, local `.env` was prod — that's why older sessions and memory files warned about mutating real data with scripts or dev-server runs._
 
+### 9. `getDb()` vs raw `prisma` — when to use which (E4a+)
+
+Since **E4a**, `src/lib/db.ts` exports two Prisma client surfaces:
+
+| Surface | Use when |
+|---|---|
+| `prisma` (raw, unscoped) | Seeds, scripts, migrations, system-scoped queries (auth lookups, FoodLibrary, plan structural reads), existing tests not yet migrated in E4b |
+| `await getDb()` (scoped) | All MCP tool handlers (after E4b) and RSC/server-actions — `userId` is injected automatically into every read and write on the 16 scoped models |
+
+**Rules:**
+- Never use `getDb()` in `prisma/seed.ts` or `scripts/*` — these run outside a user context and need the raw client.
+- Never use `getDb()` for `User`, `FoodLibrary`, `WorkoutExercise`, `Set`, `PlanDayOverride`, or `PlanRevision` — these are non-scoped models (no `userId` column); `getDb()` passes them through untouched, but raw `prisma` is clearer intent.
+- The `getDb()` scope in the MCP route (E4a) is **forward-setup** — tools still use raw `prisma` until E4b migrates them. Don't expect scoped behavior from tools until E4b lands.
+- `$queryRaw`, `$executeRaw`, and `*Unsafe` variants **bypass the `$extends` extension entirely** — they are never scoped. E4b/E5 must hand-scope any raw queries. E4b's audit must `grep '\$queryRaw|\$executeRaw'` across `src/lib/mcp/` and hand-scope each hit.
+
+### 10. CRITICAL: Nested writes bypass the `$extends` injection (E4a–E4b)
+
+`getDb()` scoping fires only at the **top-level JS call** to a model method.
+Nested relation writes in the `data` object are resolved inside Prisma's query
+engine and do NOT re-enter the extension:
+
+```typescript
+// WRONG — Plan gets null userId:
+const goal = await db.goal.create({
+  data: { ..., plans: { create: { name: "Phase 1" } } }
+  //                    ^^^^ extension does NOT fire for this Plan
+});
+
+// CORRECT — both rows go through the extension:
+const goal = await db.goal.create({ data: { ... } });
+const plan = await db.plan.create({ data: { goalId: goal.id, name: "Phase 1" } });
+```
+
+**This applies to all 16 scoped models.** E4b MUST audit every nested create
+and split into two sequential top-level calls. The highest-priority site is
+`src/lib/goal-core.ts` → `createGoalCore` which nests `plans: { create: {...} }`
+inside a `$transaction`.
+
 ---
 
 ## E. RPG game engine gotchas (dev)

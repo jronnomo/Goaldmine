@@ -3,6 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
 import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
 import { resolveUserIdFromToken } from "@/lib/auth/current-user";
+import { runWithUser } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,10 +24,9 @@ async function handler(req: Request): Promise<Response> {
   }
 
   const userId = await resolveUserIdFromToken(token);
-  // Phase-0 seam: resolves to the founder. E4a will open an AsyncLocalStorage
-  // scope with this userId so getDb() auto-scopes every query. Until then this is
-  // the single, audited identity-resolution point for the MCP surface.
-  void userId;
+  // E4a: open the AsyncLocalStorage scope so getDb() resolves to this user
+  // inside the tool-call chain. Tools still use raw `prisma` until E4b
+  // migrates them — this wiring is forward-setup only; no behavior change.
 
   const server = new McpServer(
     { name: "goaldmine", version: MCP_SERVER_VERSION },
@@ -44,7 +44,7 @@ async function handler(req: Request): Promise<Response> {
 
   await server.connect(transport);
   try {
-    return await transport.handleRequest(req);
+    return await runWithUser(userId, () => transport.handleRequest(req));
   } catch (e) {
     // Any throw that escapes the MCP transport/tool layer lands here. Without
     // this catch, Next.js returns a generic 500 with no body, which surfaces

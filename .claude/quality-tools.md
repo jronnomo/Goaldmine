@@ -6,7 +6,7 @@ Concrete commands and gotchas for QA / Devil's-Advocate / Developer agents worki
 
 ## Stack snapshot
 
-Next.js 16.2.4 (App Router, Turbopack) · TypeScript 5 (strict) · React 19.2 · Tailwind v4 · Prisma 7.8.0 (Postgres / Neon) · `@modelcontextprotocol/sdk` ^1.29 · Zod 4.4.2 · Recharts. Generated Prisma client lives at `src/generated/prisma`. Single user, mobile-first PWA. **No tests configured** — manual smoke + typecheck + lint are the gates.
+Next.js 16.2.4 (App Router, Turbopack) · TypeScript 5 (strict) · React 19.2 · Tailwind v4 · Prisma 7.8.0 (Postgres / Neon) · `@modelcontextprotocol/sdk` ^1.29 · Zod 4.4.2 · Recharts. Generated Prisma client lives at `src/generated/prisma`. Single user, mobile-first PWA. **Vitest** (`npm test`) — unit tests exist under `src/**/*.test.ts`; run `npx vitest run` or `npm test`. No live DB required for unit tests.
 
 ---
 
@@ -16,12 +16,11 @@ Next.js 16.2.4 (App Router, Turbopack) · TypeScript 5 (strict) · React 19.2 ·
 |--------------|------------------------------------------|-------|
 | Typecheck    | `npx tsc --noEmit`                       | Strict mode; cached incrementally |
 | Lint         | `npm run lint`                           | ESLint v9 + `next/core-web-vitals` + `next/typescript` |
+| Unit tests   | `npm test`                               | Vitest; no DB required; `db.scoped.test.ts` + `goal-core.test.ts` + others |
 | Build        | `npm run build`                          | Turbopack production build; verifies SSR + every API route incl. `/api/mcp` |
 | Dev server   | `npm run dev`                            | Open http://localhost:3000 — required for browser smoke + MCP curl below |
 | Prisma sync  | `npx prisma generate`                    | Run after every `schema.prisma` edit |
 | Prisma apply | `npm run db:migrate -- --name <slug>`    | Guarded — requires `DB_ENV=development` in `.env` |
-
-Tests do **not** exist. If you add Vitest/Playwright later, add a `Test` row above and update the QA-Agent prompt.
 
 ---
 
