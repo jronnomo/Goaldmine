@@ -15,6 +15,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Prevent any real DB connection — prisma is used by the snapshot log: branch
 // (findMany) and any other path we might accidentally hit.
+// getDb() is also mocked so observedSeriesFor (rarity.ts, E4b-2 migrated) can
+// obtain a scoped client without a real ALS context.
 vi.mock("@/lib/db", () => ({
   prisma: {
     logEntry: { findMany: vi.fn(), aggregate: vi.fn() },
@@ -23,6 +25,7 @@ vi.mock("@/lib/db", () => ({
     hike: { count: vi.fn(), aggregate: vi.fn() },
     workout: { count: vi.fn() },
   },
+  getDb: vi.fn(),
 }));
 
 // Replace resolveMetricValue with a controllable stub so we can feed
@@ -49,7 +52,10 @@ vi.mock("@/lib/program", () => ({ getActiveProgram: vi.fn() }));
 import { observedSeriesFor } from "@/lib/rarity";
 import { weeklySlope, RARITY_RULES } from "@/lib/rarity-core";
 import { resolveMetricValue } from "@/lib/goal-targets";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -65,6 +71,9 @@ const FIVE_WEEKS_AGO = new Date(NOW.getTime() - 5 * 7 * 24 * 60 * 60 * 1000);
 describe("observedSeriesFor — cumulative log: routing (PRIMARY — fails before fix)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // observedSeriesFor calls getDb() internally after E4b-2 migration.
+    // Wire getDb() → prisma so DB-branch calls resolve to the fake spies.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative=true: weekly-snapshot loop yields slope ≈ 10, NOT ≈ 0", async () => {
@@ -110,8 +119,8 @@ describe("observedSeriesFor — cumulative log: routing (PRIMARY — fails befor
     const calls = vi.mocked(resolveMetricValue).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     for (const call of calls) {
-      // 5th argument (index 4) must be true
-      expect(call[4]).toBe(true);
+      // 4th argument (index 3) must be true — prisma param removed in E4b-2
+      expect(call[3]).toBe(true);
     }
   });
 });
@@ -121,6 +130,7 @@ describe("observedSeriesFor — cumulative log: routing (PRIMARY — fails befor
 describe("observedSeriesFor — snapshot log: regression (cumulative=false)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative=false: uses per-entry findMany; resolveMetricValue NOT called", async () => {

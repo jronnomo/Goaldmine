@@ -15,7 +15,7 @@
 //   Only overrides are bounded to the plan window.
 
 import { cache } from "react";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import { dateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
 import { canonicalExerciseName, bestSetSummary, isBetter, type MetricKind, type MetricDirection } from "@/lib/records";
@@ -940,6 +940,7 @@ async function _computeGameState(): Promise<GameState> {
   );
 
   // ── Step 2: fan out the remaining 9 queries ───────────────────────────────
+  const db = await getDb();
   const [
     goal,
     workoutsRaw,
@@ -952,7 +953,7 @@ async function _computeGameState(): Promise<GameState> {
     bonusRaw,
   ] = await Promise.all([
     // 1. Focus goal (isFocus=true drives the daily prescription + XP attribute pack)
-    prisma.goal.findFirst({
+    db.goal.findFirst({
       where: { isFocus: true },
       orderBy: { updatedAt: "desc" },
       select: { id: true, kind: true },
@@ -960,7 +961,7 @@ async function _computeGameState(): Promise<GameState> {
 
     // 2. Workouts: ALL TIME — pure nested select (CRIT-2: no select+include mix)
     //    Ordered (startedAt ASC, id ASC) for deterministic PR replay.
-    prisma.workout.findMany({
+    db.workout.findMany({
       orderBy: [{ startedAt: "asc" }, { id: "asc" }],
       select: {
         id: true,
@@ -979,7 +980,7 @@ async function _computeGameState(): Promise<GameState> {
     }),
 
     // 3. Hikes: ALL TIME
-    prisma.hike.findMany({
+    db.hike.findMany({
       orderBy: { date: "asc" },
       select: {
         id: true,
@@ -992,31 +993,32 @@ async function _computeGameState(): Promise<GameState> {
     }),
 
     // 4. Baselines: ALL TIME
-    prisma.baseline.findMany({
+    db.baseline.findMany({
       orderBy: { date: "asc" },
       select: { id: true, date: true, testName: true, value: true },
     }),
 
     // 5. NutritionLog: ALL TIME — date only
-    prisma.nutritionLog.findMany({
+    db.nutritionLog.findMany({
       orderBy: { date: "asc" },
       select: { date: true },
     }),
 
     // 6. Review notes: ALL TIME
-    prisma.note.findMany({
+    db.note.findMany({
       where: { type: "review" },
       orderBy: { date: "asc" },
       select: { date: true },
     }),
 
     // 7. Mobility checkins: ALL TIME
-    prisma.mobilityCheckin.findMany({
+    db.mobilityCheckin.findMany({
       orderBy: { date: "asc" },
       select: { date: true },
     }),
 
     // 8. PlanDayOverrides: BOUNDED to plan window (ledger resolution only)
+    // planDayOverride is non-scoped (no userId FK) — use raw prisma.
     prisma.planDayOverride.findMany({
       where: {
         planId: program.id,
@@ -1026,7 +1028,7 @@ async function _computeGameState(): Promise<GameState> {
     }),
 
     // 9. GameBonusXp: ALL TIME (small; coach-granted only)
-    prisma.gameBonusXp.findMany({
+    db.gameBonusXp.findMany({
       orderBy: { date: "asc" },
       select: {
         id: true,

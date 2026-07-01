@@ -1,5 +1,5 @@
 import { addDays, endOfDay, startOfWeekMonday } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import {
   LOG_METRIC_PREFIX,
   type GoalTarget,
@@ -138,8 +138,9 @@ async function resolveHikePrepGateExtras(
   goalId: string,
   cutoff: Date,
 ): Promise<{ packHikeCount: number; above12k: boolean }> {
+  const db = await getDb();
   const [packHikeCount, above12kRow] = await Promise.all([
-    prisma.hike.count({
+    db.hike.count({
       where: {
         goalId,
         status: "completed",
@@ -147,7 +148,7 @@ async function resolveHikePrepGateExtras(
         packWeightLb: { gte: PREP_PACK_WEIGHT_MIN_LB },
       },
     }),
-    prisma.hike.findFirst({
+    db.hike.findFirst({
       where: {
         goalId,
         status: "completed",
@@ -169,10 +170,10 @@ export async function computeReadiness(
   const missing: GoalTarget[] = [];
 
   for (const t of targets) {
-    const current = await resolveMetricValue(prisma, t.metric, asOf, goalId, t.cumulative ?? false);
+    const current = await resolveMetricValue(t.metric, asOf, goalId, t.cumulative ?? false);
     const start = t.start !== undefined && t.start !== null
       ? t.start
-      : await resolveMetricStart(prisma, t.metric, goalId, t.cumulative ?? false);
+      : await resolveMetricStart(t.metric, goalId, t.cumulative ?? false);
     const progress = progressFor(t, current, start);
 
     if (progress === null) {

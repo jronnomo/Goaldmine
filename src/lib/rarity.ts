@@ -5,7 +5,7 @@
 //
 // All date math via @/lib/calendar (USER_TZ correctness — Vercel runs UTC).
 
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfDay, addDays } from "@/lib/calendar";
 import { resolveMetricValue } from "@/lib/goal-targets";
 import { getExerciseHistory } from "@/lib/records";
@@ -72,9 +72,10 @@ export async function observedSeriesFor(
   cumulative = false,
 ): Promise<{ points: { date: Date; value: number }[]; current: number | null }> {
   const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+  const db = await getDb();
 
   if (metric === "weightLb") {
-    const rows = await prisma.measurement.findMany({
+    const rows = await db.measurement.findMany({
       where: { date: { gte: since, lte: now }, weightLb: { not: null } },
       orderBy: { date: "asc" },
       select: { date: true, weightLb: true },
@@ -88,7 +89,7 @@ export async function observedSeriesFor(
 
   if (metric.startsWith("baseline:")) {
     const testName = metric.slice("baseline:".length);
-    const rows = await prisma.baseline.findMany({
+    const rows = await db.baseline.findMany({
       where: { testName, date: { gte: since, lte: now } },
       orderBy: { date: "asc" },
       select: { date: true, value: true },
@@ -113,7 +114,7 @@ export async function observedSeriesFor(
 
     for (let w = 0; w <= weeks; w++) {
       const snapDate = w === weeks ? now : addDays(since, w * 7);
-      const val = await resolveMetricValue(prisma, metric, snapDate, goalId);
+      const val = await resolveMetricValue(metric, snapDate, goalId);
       if (val !== null) {
         snapshots.push({ date: snapDate, value: val });
       }
@@ -133,7 +134,7 @@ export async function observedSeriesFor(
 
       for (let w = 0; w <= weeks; w++) {
         const snapDate = w === weeks ? now : addDays(since, w * 7);
-        const val = await resolveMetricValue(prisma, metric, snapDate, goalId, true);
+        const val = await resolveMetricValue(metric, snapDate, goalId, true);
         if (val !== null) {
           snapshots.push({ date: snapDate, value: val });
         }
@@ -145,7 +146,7 @@ export async function observedSeriesFor(
 
     // Snapshot (per-entry) path — unchanged.
     const key = metric.slice("log:".length);
-    const rows = await prisma.logEntry.findMany({
+    const rows = await db.logEntry.findMany({
       where: { goalId, metric: key, date: { gte: since, lte: now }, value: { not: null } },
       orderBy: { date: "asc" },
       select: { date: true, value: true },
@@ -267,7 +268,7 @@ export async function computeGoalFeasibility(
     if (current === null) {
       // Fallback to resolveMetricValue — thread cumulative so the SUM path is used
       // if the series window happened to be empty.
-      current = await resolveMetricValue(prisma, t.metric, now, goal.id, t.cumulative ?? false);
+      current = await resolveMetricValue(t.metric, now, goal.id, t.cumulative ?? false);
     }
     if (current === null && t.start !== undefined && t.start !== null) {
       current = t.start;
@@ -350,11 +351,12 @@ export async function computeStackRarity(opts?: {
 }): Promise<StackRarity> {
   const now = opts?.now ?? new Date();
   const computedAt = now.toISOString();
+  const db = await getDb();
 
   // Fetch all active goals with status=active (excludes achieved/abandoned).
   // coachFeasibility is added in REQ-63-2 migration; query it as an unknown
   // extra field so the code is forward-compatible once the column exists.
-  const dbGoals = await prisma.goal.findMany({
+  const dbGoals = await db.goal.findMany({
     where: { active: true, status: "active" },
     select: {
       id: true,

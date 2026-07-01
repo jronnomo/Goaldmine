@@ -8,11 +8,12 @@ import type { GoalTarget } from "@/lib/metrics-registry";
 
 // vi.mock is hoisted above imports by Vitest — the DB stub prevents the
 // "DATABASE_URL is not set" throw that readiness.ts would trigger via
-// its `import { prisma } from "@/lib/db"`.
+// its `import { getDb } from "@/lib/db"`.
 // prisma.hike is stubbed so the compound prep-gate path (resolveHikePrepGateExtras)
-// can be driven per-test; generic gating tests use non-prep metrics and never hit it.
+// can be driven per-test; getDb() returns the fake prisma object (E4b-2 migration).
 vi.mock("@/lib/db", () => ({
   prisma: { hike: { count: vi.fn(), findFirst: vi.fn() } },
+  getDb: vi.fn(),
 }));
 
 // Replace the Prisma-backed async helpers with controllable vi.fn stubs.
@@ -26,7 +27,10 @@ vi.mock("@/lib/goal-targets", () => ({
 
 import { progressFor, computeReadiness, GATE_CEILING } from "@/lib/readiness";
 import { resolveMetricValue, resolveMetricStart } from "@/lib/goal-targets";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -144,6 +148,8 @@ describe("progressFor — increase comparative (baseline metrics)", () => {
 describe("computeReadiness — gating behavior", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveHikePrepGateExtras calls getDb() after E4b-2 migration.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("open gating target (progress < 1): ceiling=80, score=Math.min(rawScore,80)", async () => {
@@ -217,6 +223,8 @@ describe("computeReadiness — gating behavior", () => {
 describe("computeReadiness — compound hike prep gate", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveHikePrepGateExtras calls getDb() after E4b-2 migration.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   const prepTarget = (): GoalTarget[] => [
@@ -282,6 +290,8 @@ describe("computeReadiness — compound hike prep gate", () => {
 describe("computeReadiness — untested target counts as 0 in denominator", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveHikePrepGateExtras calls getDb() after E4b-2 migration.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("two equal-weight targets, one untested → rawScore=50, not false-100", async () => {
@@ -310,6 +320,8 @@ describe("computeReadiness — untested target counts as 0 in denominator", () =
 describe("computeReadiness — coverage and missing", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveHikePrepGateExtras calls getDb() after E4b-2 migration.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("coverage.tested counts rows with progress!==null; missing[] lists untested targets", async () => {
@@ -368,6 +380,8 @@ describe("computeReadiness — coverage and missing", () => {
 describe("computeReadiness — edge cases", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveHikePrepGateExtras calls getDb() after E4b-2 migration.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("totalWeight===0 returns score:0 rawScore:0 without NaN", async () => {
