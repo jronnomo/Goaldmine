@@ -9,13 +9,31 @@ datasource db {
   provider = "postgresql"
 }
 
-// Phase-0 identity model. No relations yet (E2 adds userId FKs + back-relations).
+// Phase-0 identity model. E2 adds userId FKs + back-relations.
 model User {
   id        String   @id @default(cuid())
   email     String?  @unique
   name      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // E2 back-relations — owned tables (12 OWNED + 4 CHILD-denormalized)
+  workouts         Workout[]
+  measurements     Measurement[]
+  footageMarkers   FootageMarker[]
+  baselines        Baseline[]
+  notes            Note[]
+  hikes            Hike[]
+  nutritionLogs    NutritionLog[]
+  mobilityCheckins MobilityCheckin[]
+  goals            Goal[]
+  programs         Program[]
+  gameBonusXps     GameBonusXp[]
+  bodyMetrics      BodyMetric[]
+  scheduledItems   ScheduledItem[]
+  logEntries       LogEntry[]
+  plans            Plan[]
+  dayRenderJobs    DayRenderJob[]
 }
 
 model Workout {
@@ -29,13 +47,16 @@ model Workout {
   source    String? // manual | strong.app | claude | imported | baseline
   sourceUrl String?
   notes     String?
+  userId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   exercises      WorkoutExercise[]
   footageMarkers FootageMarker[]
+  user           User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([startedAt])
+  @@index([userId, startedAt])
 }
 
 model WorkoutExercise {
@@ -73,9 +94,13 @@ model Measurement {
   weightLb   Float?
   bodyFatPct Float?
   notes      String?
+  userId     String?
   createdAt  DateTime @default(now())
 
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([date])
+  @@index([userId, date])
 }
 
 model FootageMarker {
@@ -90,13 +115,16 @@ model FootageMarker {
   exerciseName String?   // canonicalExerciseName — links the clip to an exercise
   taskType     String?   // optional: "workout" | "hike" | "baseline" | "other"
   highlight    Boolean   @default(false) // the hero / featured shot
+  userId       String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
   workout      Workout?  @relation(fields: [workoutId], references: [id], onDelete: SetNull)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([date])
   @@index([workoutId])
+  @@index([userId, date])
 }
 
 model Baseline {
@@ -107,9 +135,13 @@ model Baseline {
   units            String
   notes            String?
   retestTargetDate DateTime?
+  userId           String?
   createdAt        DateTime  @default(now())
 
+  user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([testName, date])
+  @@index([userId, testName, date])
 }
 
 model Note {
@@ -132,14 +164,17 @@ model Note {
   // Priority for type="open_item" notes. One of "high" | "normal" | "low".
   // Null for all other note types and for open_items logged without a priority.
   priority           String?
+  userId             String?
   createdAt          DateTime  @default(now())
 
   triggeredRevisions PlanRevision[]
+  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([date])
   @@index([type])
   @@index([targetDate])
   @@index([resolvedAt])
+  @@index([userId, type, date])
 }
 
 model Hike {
@@ -154,13 +189,16 @@ model Hike {
   status       String   @default("completed") // planned | completed | skipped
   rpe          Float? // 1-10 perceived exertion (post-hike)
   notes        String?
+  userId       String?
   createdAt    DateTime @default(now())
   goalId       String?
   goal         Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([date])
   @@index([status])
   @@index([goalId])
+  @@index([userId, goalId, date])
 }
 
 model NutritionLog {
@@ -179,11 +217,15 @@ model NutritionLog {
   fatG      Float?
   fiberG    Float?
   sodiumMg  Float?
+  userId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([date])
   @@index([mealType, date])
+  @@index([userId, date])
 }
 
 model MobilityCheckin {
@@ -192,9 +234,13 @@ model MobilityCheckin {
   areasWorked      String // comma-separated tags: ankles,hips,thoracic,etc.
   deepSquatHoldSec Int?
   notes            String?
+  userId           String?
   createdAt        DateTime @default(now())
 
+  user             User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([date])
+  @@index([userId, date])
 }
 
 model Goal {
@@ -224,6 +270,7 @@ model Goal {
   kind                String    @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
   githubRepo          String? // "owner/repo" for project goals; null otherwise
   githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise
+  userId              String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -232,11 +279,14 @@ model Goal {
   logEntries     LogEntry[]
   hikes          Hike[]
   dayRenderJobs  DayRenderJob[]
+  user           User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([active])
   @@index([targetDate])
   @@index([isFocus])
   @@index([kind])
+  @@index([userId, isFocus])
+  @@index([userId, active])
 }
 
 model ScheduledItem {
@@ -251,12 +301,16 @@ model ScheduledItem {
   status      String    @default("planned") // planned | done | skipped
   completedAt DateTime?
   externalRef String? // e.g. GitHub milestone node id, for idempotent sync
+  userId      String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([goalId, externalRef])
   @@index([goalId, date])
   @@index([goalId, status])
+  @@index([userId, goalId])
 }
 
 model LogEntry {
@@ -269,10 +323,14 @@ model LogEntry {
   text      String?
   payload   Json?
   source    String?
+  userId    String?
   createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([goalId, metric, date])
   @@index([goalId, date])
+  @@index([userId, goalId, date])
 }
 
 model Plan {
@@ -296,14 +354,17 @@ model Plan {
   // specific entity (omit for singleton rules like goal-date-vs-plan-end),
   // `note` is a human-readable reason, and `at` is an ISO timestamp.
   lintAcknowledgements  Json?
+  userId                String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   revisions PlanRevision[]
   overrides PlanDayOverride[]
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([goalId])
   @@index([active])
+  @@index([userId, active])
 }
 
 // Per-date override for a specific day in a plan. The base rotation comes from
@@ -369,8 +430,13 @@ model Program {
   version   Int      @default(1)
   active    Boolean  @default(true)
   planJson  Json // 12-week template: phases -> days -> exercises
+  userId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
 }
 
 model GameBonusXp {
@@ -380,9 +446,13 @@ model GameBonusXp {
   reason    String
   attribute String?  // attribute id valid for active goal kind; null = overall-only
   source    String   @default("coach")
+  userId    String?
   createdAt DateTime @default(now())
 
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@index([date])
+  @@index([userId, date])
 }
 
 model FoodLibrary {
@@ -421,10 +491,14 @@ model BodyMetric {
   unit      String?  // per-row snapshot; registry authoritative for known keys
   notes     String?
   source    String   @default("manual") // manual | claude | watch | imported | backfill
+  userId    String?
   createdAt DateTime @default(now())
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([key, date])
   @@index([date])
+  @@index([userId, key, date])
 }
 
 model DayRenderJob {
@@ -442,9 +516,13 @@ model DayRenderJob {
   errorMessage       String?
   clipforgeProjectId String?   // nullable column; the MCP tool layer (#114) requires it via zod
   payload            Json?
+  userId             String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
+  user               User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@unique([goalId, date])
   @@index([goalId, status, date])
+  @@index([userId, status])
 }
