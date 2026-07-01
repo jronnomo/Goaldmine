@@ -45,6 +45,10 @@ next-env.d.ts
 # feature-dev agent worktrees (transient — never commit)
 .claude/worktrees/
 
+# feature-dev / roadmap orchestration run artifacts (local logs — never commit)
+.feature-dev/
+.roadmap/
+
 # local tooling-migration backups
 *.pre-v2.bak
 
