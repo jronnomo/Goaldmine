@@ -9,7 +9,7 @@
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 
@@ -63,17 +63,19 @@ export function registerRenderTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // 1. Resolve goalId — default to focus goal
         let resolvedGoalId: string;
         if (input.goalId) {
-          const goal = await prisma.goal.findUnique({
+          const goal = await db.goal.findUnique({
             where: { id: input.goalId },
             select: { id: true },
           });
           if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
           resolvedGoalId = goal.id;
         } else {
-          const focusGoal = await prisma.goal.findFirst({
+          const focusGoal = await db.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
             select: { id: true },
@@ -90,7 +92,7 @@ export function registerRenderTools(server: McpServer): void {
         const date = parseDateInput(input.date);
 
         // 3. Check existing job for this (goalId, date)
-        const existing = await prisma.dayRenderJob.findUnique({
+        const existing = await db.dayRenderJob.findUnique({
           where: { goalId_date: { goalId: resolvedGoalId, date } },
         });
 
@@ -108,7 +110,7 @@ export function registerRenderTools(server: McpServer): void {
           }
 
           // Terminal — reset to pending
-          const reset = await prisma.dayRenderJob.update({
+          const reset = await db.dayRenderJob.update({
             where: { id: existing.id },
             data: {
               status: "pending",
@@ -132,7 +134,7 @@ export function registerRenderTools(server: McpServer): void {
         }
 
         // 4. Create new pending job
-        const job = await prisma.dayRenderJob.create({
+        const job = await db.dayRenderJob.create({
           data: {
             date,
             goalId: resolvedGoalId,
@@ -198,6 +200,7 @@ export function registerRenderTools(server: McpServer): void {
         if (input.from) dateFilter.gte = startOfDay(parseDateInput(input.from));
         if (input.to) dateFilter.lte = endOfDay(parseDateInput(input.to));
 
+        // SYSTEM: raw prisma — cross-user worker op; worker scans all users' pending jobs (Phase 1: multi-tenant worker pattern)
         const jobs = await prisma.dayRenderJob.findMany({
           where: {
             ...(input.status ? { status: input.status } : {}),
@@ -261,6 +264,7 @@ export function registerRenderTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        // SYSTEM: raw prisma — cross-user worker op; atomic claim by id, job may belong to any user (Phase 1: worker claims cross-user)
         const result = await prisma.dayRenderJob.updateMany({
           where: { id: input.id, status: "pending" },
           data: { status: "claimed", claimedAt: new Date() },
@@ -309,7 +313,7 @@ export function registerRenderTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
-        // Fetch the current job to check status
+        // SYSTEM: raw prisma — cross-user worker op; findUnique by id not by owner (Phase 1: worker submits draft for any user's job)
         const job = await prisma.dayRenderJob.findUnique({
           where: { id: input.id },
           select: { id: true, status: true, payload: true },
@@ -335,6 +339,7 @@ export function registerRenderTools(server: McpServer): void {
           ? { ...existingPayload, notes: input.notes }
           : existingPayload;
 
+        // SYSTEM: raw prisma — cross-user worker op; update by id not by owner (Phase 1: worker submits draft for any user's job)
         const updated = await prisma.dayRenderJob.update({
           where: { id: input.id },
           data: {
@@ -374,6 +379,7 @@ export function registerRenderTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        // SYSTEM: raw prisma — cross-user worker op; atomic start by id, job may belong to any user (Phase 1: worker starts cross-user render)
         const result = await prisma.dayRenderJob.updateMany({
           where: { id: input.id, status: "approved" },
           data: { status: "rendering", claimedAt: new Date() },
@@ -447,6 +453,7 @@ export function registerRenderTools(server: McpServer): void {
                 outputRef: null,
               };
 
+        // SYSTEM: raw prisma — cross-user worker op; completes/fails job by id for any user (Phase 1: worker finalizes cross-user render)
         let updated: { id: string; status: string; outputRef: string | null };
         try {
           updated = await prisma.dayRenderJob.update({
