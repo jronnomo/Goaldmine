@@ -8,6 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "db:which": "tsx scripts/db-guard.ts",
+    "db:migrate": "tsx scripts/db-guard.ts --assert && prisma migrate dev",
+    "db:seed": "tsx scripts/db-guard.ts --assert && prisma db seed",
+    "db:push": "tsx scripts/db-guard.ts --assert && prisma db push",
     "icons": "tsx scripts/render-icons.ts",
     "postinstall": "prisma generate && node scripts/copy-zxing-wasm.mjs"
   },

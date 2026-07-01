@@ -19,9 +19,33 @@ Next.js 16.2.4 (App Router, Turbopack) · TypeScript 5 (strict) · React 19.2 ·
 | Build        | `npm run build`                          | Turbopack production build; verifies SSR + every API route incl. `/api/mcp` |
 | Dev server   | `npm run dev`                            | Open http://localhost:3000 — required for browser smoke + MCP curl below |
 | Prisma sync  | `npx prisma generate`                    | Run after every `schema.prisma` edit |
-| Prisma apply | `npx prisma migrate dev --name <slug>`   | ⚠ Neon-shared with prod — treat as semi-prod |
+| Prisma apply | `npm run db:migrate -- --name <slug>`    | Guarded — requires `DB_ENV=development` in `.env` |
 
 Tests do **not** exist. If you add Vitest/Playwright later, add a `Test` row above and update the QA-Agent prompt.
+
+---
+
+## Dev/prod DB split
+
+Since **E0-1**, local `.env` must point at a Neon **dev branch**; prod lives only in Vercel environment variables. `dotenv/config` loads `.env` (not `.env.local`) — `.env` is the canonical local DB config.
+
+| Script | What it does |
+|---|---|
+| `npm run db:which` | Print `DATABASE_URL` host + `DB_ENV` label. Always run this first to confirm the target. |
+| `npm run db:migrate` | Guard (`--assert`) then `prisma migrate dev` |
+| `npm run db:seed` | Guard (`--assert`) then `prisma db seed` |
+| `npm run db:push` | Guard (`--assert`) then `prisma db push` |
+
+**Fail-closed behavior**: the guard (`scripts/db-guard.ts`) throws (exit non-zero) unless `DB_ENV=development` in `.env`. An unset or wrong value blocks the destructive command.
+
+**Escape hatch**: set `ALLOW_PROD_DB_WRITE=1` to bypass the guard — it prints a loud `stderr` warning and continues. Only for intentional prod schema operations.
+
+**Creating a Neon dev branch**:
+```sh
+neonctl branches create --name dev --parent <primary>
+neonctl connection-string dev   # copy the direct (non-pooler) URL into .env
+```
+Or use the Neon console: your project → Branches → New Branch.
 
 ---
 
@@ -61,7 +85,7 @@ Then exercise each new/changed tool with `tools/call`. Read tools (`get_today_pl
 6. **Strong-app workouts compared by `startedAt` (DateTime), not date-only.** Strong exports include time-of-day; preserve it. The parser is regression-tested against `examples/sample-completed-workout.txt`.
 7. **Override-aware reads.** Today's workout = `resolveDay(now).workoutTemplate`, never `getTodayContext().day`. Same for baselines: `resolveDay(now).baselinesDue` honors `PlanDayOverride.baselineTestNames`; the rotation default does not.
 8. **`revalidatePath` after every server-action mutation.** `/`, `/history`, plus the route the change is most visible on. Otherwise the server-rendered Today page serves stale state.
-9. **Migrations on Neon are shared with prod.** `prisma migrate dev` writes the dev DB, which IS the prod DB for this app. Validate the SQL diff before running. A Vercel redeploy is what makes the new client visible to users.
+9. **Local `.env` must point at the Neon dev branch — prod is Vercel-only (E0-1).** Since E0-1, the workflow is: local `.env` → Neon dev branch; Vercel env vars → prod. Use `npm run db:migrate` / `npm run db:seed` / `npm run db:push` (guarded) instead of bare `prisma` commands — the guard refuses if `DB_ENV` ≠ `"development"`. Run `npm run db:which` to confirm the target first. A Vercel redeploy is what makes schema changes visible to prod users.
 10. **Single user, no PRs.** This repo pushes directly to `main` with conventional commits (`feat:`, `fix:`, `MCP write tools: …`). No PR workflow exists. If a feature warrants a branch + PR, ask first.
 
 ---

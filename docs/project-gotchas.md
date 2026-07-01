@@ -92,6 +92,15 @@ Builtin macros come from USDA FoodData Central reference data (curated in `src/l
 ### 7. A running `next dev` bundles the OLD Prisma client — restart after a migration
 `prisma migrate dev` / `prisma generate` rewrites `src/generated/prisma`, but a dev server that was already running keeps serving the **previously bundled** client. Symptom: a brand-new column reads/writes fail at runtime with `Unknown argument "<col>". Available options are marked with ?` — listing every field **except** the one you just added — while `npx tsc --noEmit` passes clean (tsc reads the fresh types off disk; the Turbopack chunk is stale). This bit us adding `Hike.summitFt` (2026-06-19): `update_hike` rejected `summitFt` until the server was bounced. Fix: after any `migrate dev`/`generate`, **kill and restart `npm run dev`** (HMR does not re-bundle the generated client). The production analog is the connector cache (§C) — different cache, same "schema changed, consumer didn't notice" shape.
 
+### 8. Local `.env` now points at a Neon DEV BRANCH — prod is Vercel-only (E0-1)
+As of E0-1, the workflow is: local `.env` → Neon **dev branch**; Vercel env vars → prod. `dotenv/config` loads `.env` only (not `.env.local`), so `.env` is the canonical local DB config.
+
+- **Confirm the target**: `npm run db:which` — prints the host and `DB_ENV` label before you touch anything.
+- **Guarded commands**: use `npm run db:migrate` / `npm run db:seed` / `npm run db:push` instead of bare `prisma` commands. They run `scripts/db-guard.ts --assert` first and refuse (exit non-zero) unless `DB_ENV=development`.
+- **Escape hatch**: `ALLOW_PROD_DB_WRITE=1` bypasses the guard with a loud `stderr` warning — for intentional prod schema operations only.
+
+_Before E0-1, local `.env` was prod — that's why older sessions and memory files warned about mutating real data with scripts or dev-server runs._
+
 ---
 
 ## E. RPG game engine gotchas (dev)
