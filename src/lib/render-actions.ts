@@ -6,7 +6,7 @@
 // conventions: parse → prisma → revalidatePath → return user-visible message.
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { parseDateKey, dateKey as toDateKey } from "@/lib/calendar";
 
 // Status groups — mirrors render-tools.ts
@@ -38,8 +38,10 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
   // USER_TZ midnight — same as parseDateInput for yyyy-mm-dd strings
   const date = parseDateKey(dateKeyStr);
 
+  const db = await getDb();
+
   // Resolve focus goal — error if none set
-  const focusGoal = await prisma.goal.findFirst({
+  const focusGoal = await db.goal.findFirst({
     where: { isFocus: true },
     orderBy: { updatedAt: "desc" },
     select: { id: true },
@@ -51,7 +53,7 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
   }
 
   // Check existing job for (goalId, date) — unique constraint
-  const existing = await prisma.dayRenderJob.findUnique({
+  const existing = await db.dayRenderJob.findUnique({
     where: { goalId_date: { goalId: focusGoal.id, date } },
   });
 
@@ -64,7 +66,7 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
     }
 
     // Terminal — reset to pending, update clipforgeProjectId
-    await prisma.dayRenderJob.update({
+    await db.dayRenderJob.update({
       where: { id: existing.id },
       data: {
         status: "pending",
@@ -84,7 +86,7 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
   }
 
   // Create new pending job
-  await prisma.dayRenderJob.create({
+  await db.dayRenderJob.create({
     data: {
       date,
       goalId: focusGoal.id,
@@ -110,7 +112,9 @@ export async function approveRenderJob(form: FormData): Promise<{ message: strin
 
   if (!id) throw new Error("Job ID is required");
 
-  const job = await prisma.dayRenderJob.findUnique({
+  const db = await getDb();
+
+  const job = await db.dayRenderJob.findUnique({
     where: { id },
     select: { id: true, status: true, date: true },
   });
@@ -122,7 +126,7 @@ export async function approveRenderJob(form: FormData): Promise<{ message: strin
     };
   }
 
-  await prisma.dayRenderJob.update({
+  await db.dayRenderJob.update({
     where: { id },
     data: {
       status: "approved",
