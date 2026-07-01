@@ -4,6 +4,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { scaffoldPlanFromTemplate, weeksBetween } from "../src/lib/plan";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -21,6 +22,7 @@ async function main() {
     const planTemplate = scaffoldPlanFromTemplate(weeks);
     await prisma.plan.create({
       data: {
+        userId: FOUNDER_USER_ID,
         goalId: goal.id,
         name: `${goal.objective} — ${weeks}-week plan`,
         startedOn: now,

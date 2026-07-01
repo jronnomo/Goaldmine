@@ -6,6 +6,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import type { GoalTarget } from "../src/lib/goal-targets";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -16,6 +17,7 @@ async function main() {
 
   await prisma.measurement.create({
     data: {
+      userId: FOUNDER_USER_ID,
       date: new Date(),
       weightLb: 159,
       notes: "Corrected starting weight for the 90-day program.",

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { parseStrongWorkout } from "../src/lib/parsers/strong";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is not set");
@@ -15,6 +16,7 @@ async function main() {
 
   const created = await prisma.workout.create({
     data: {
+      userId: FOUNDER_USER_ID,
       title: parsed.title,
       startedAt: parsed.startedAt,
       status: "completed",

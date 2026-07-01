@@ -65,7 +65,7 @@ E0 gates everything → E1 → E2 → E3 (the seam) unblocks E4/E5 → E4 (scope
 - **E4b — `prisma`→`getDb()` migration** (the big one, own sprint, atomic): ~59 files; + the nested-create two-step fix (`goal-core.ts:167`) + goal-less Hike create.
 - **E4c — Test-mock migration**: update the 8+ `vi.mock("@/lib/db")` suites for the dual export / `getDb()`.
 - **E5 — Global-write scoping**: the 4 write traps + document the system-scoped render reaper.
-- **E7 — `NOT NULL` promotion + final indexes** (after all scoped + verified on dev).
+- **E7 — `NOT NULL` promotion + final indexes** (after all scoped + verified on dev). **E7-1 shipped (2026-07-01):** guard-based enforcement — raw-create sites set `userId: FOUNDER_USER_ID`, `npm run db:verify-owned` asserts 0 unowned rows; hard schema NOT NULL deferred to Phase 1 (would break 29 getDb-injected create sites' types).
 - **E9 — Isolation verification**: seed a 2nd user; adversarial cross-tenant read/write tests (no leak); founder-behaves-identically regression.
 
 ### Deferred to Phase 1 (noted, NOT decomposed here)

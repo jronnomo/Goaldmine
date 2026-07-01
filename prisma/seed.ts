@@ -30,6 +30,7 @@ async function main() {
 
   const program = await prisma.program.create({
     data: {
+      userId: FOUNDER_USER_ID,
       name: PROGRAM_TEMPLATE.name,
       startedOn,
       phase: 1,

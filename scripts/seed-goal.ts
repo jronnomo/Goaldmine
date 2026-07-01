@@ -5,6 +5,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { MT_ELBERT_DEFAULT_TARGETS } from "../src/lib/goal-targets";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -20,6 +21,7 @@ async function main() {
 
   const goal = await prisma.goal.create({
     data: {
+      userId: FOUNDER_USER_ID,
       objective: "Summit Mt. Elbert via Black Cloud Trail",
       targetDate,
       notes:
@@ -31,10 +33,10 @@ async function main() {
 
   // Seed a couple weight measurements so readiness has start + current.
   await prisma.measurement.create({
-    data: { date: new Date(Date.now() - 7 * 86400000), weightLb: 170 },
+    data: { userId: FOUNDER_USER_ID, date: new Date(Date.now() - 7 * 86400000), weightLb: 170 },
   });
   await prisma.measurement.create({
-    data: { date: new Date(), weightLb: 169 },
+    data: { userId: FOUNDER_USER_ID, date: new Date(), weightLb: 169 },
   });
 
   console.log(`Created goal: ${goal.objective} (${goal.id})`);

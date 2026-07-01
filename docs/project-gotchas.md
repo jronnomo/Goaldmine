@@ -156,6 +156,21 @@ Each call-site is marked `// SYSTEM: raw prisma — cross-user render worker (Ph
 Use the `// SYSTEM:` comment convention to annotate any future intentional
 cross-user raw-prisma call so audits don't flag it as missing scoping.
 
+### 12. userId ownership (Phase 0) — two paths, two rules
+
+The 16 scoped models all carry a nullable `userId` column (intentionally `String?` — hard NOT NULL is deferred to Phase 1 because the 29 `getDb()`-injected create sites omit it and rely on the `$extends` runtime injection).
+
+**Two create paths — two different rules:**
+
+| Path | Who injects userId | Rule |
+|---|---|---|
+| `await getDb()` call in an MCP tool or RSC (`db.<model>.create`) | `$extends` query extension in `src/lib/db.ts` — injected at runtime | No change needed — extension guarantees it |
+| Raw `prisma.<model>.create` in `prisma/seed*.ts` or `scripts/*` | Nobody — you must set it explicitly | MUST pass `userId: FOUNDER_USER_ID` in the data payload |
+
+**Guard:** `npm run db:verify-owned` (`scripts/verify-no-null-userid.ts`) counts `WHERE userId IS NULL` across all 16 scoped models and exits non-zero if any row is unowned. Run it after seeding and as a pre-deploy check before `prisma migrate deploy` to prod (Phase 1).
+
+**Why NOT NULL is deferred:** promoting `userId String?` → `String` in the schema would make the 29 `getDb()` injected create sites fail TypeScript type-checking (they intentionally omit `userId` from the data object). Phase 1 will introduce a typed-create-input approach that handles this cleanly alongside real multi-user identity.
+
 ---
 
 ## E. RPG game engine gotchas (dev)

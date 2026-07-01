@@ -4,6 +4,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -18,6 +19,7 @@ async function main() {
   // Create a note simulating an audible.
   const note = await prisma.note.create({
     data: {
+      userId: FOUNDER_USER_ID,
       body:
         "Travel mid-week (Tue-Thu) — limited gym access. Hotel has dumbbells to 30 lb and a stairmaster. Skipped Day 2 lower; plan to make up Saturday.",
       type: "audible",

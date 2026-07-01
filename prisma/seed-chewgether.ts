@@ -24,6 +24,7 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/db";
 import { parseDateKey } from "../src/lib/calendar";
+import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 import type { Prisma } from "../src/generated/prisma/client";
 
 async function main() {
@@ -72,6 +73,7 @@ async function main() {
 
   const goal = await prisma.goal.create({
     data: {
+      userId: FOUNDER_USER_ID,
       objective: "Ship Chewgether to the App Store + reach $1,000/mo MRR",
       kind: "project",           // explicitly 'project' — schema default is 'fitness'
       status: "active",          // explicit (matches default, but stated for clarity)
