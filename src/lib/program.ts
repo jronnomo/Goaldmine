@@ -1,6 +1,6 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
 import { startOfDay } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export type ActiveProgramSnapshot = {
   id: string;
@@ -27,7 +27,8 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
   // drives the daily prescription while remaining resilient during the transition
   // period when some goals may not yet have isFocus set.
   // Falls back further to the global seeded Program for new users.
-  const plan = await prisma.plan.findFirst({
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
     where: { active: true },
     orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
   });
@@ -40,7 +41,7 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
       confirmedThroughDate: plan.confirmedThroughDate ?? null,
     };
   }
-  const program = await prisma.program.findFirst({
+  const program = await db.program.findFirst({
     where: { active: true },
     orderBy: { createdAt: "desc" },
   });

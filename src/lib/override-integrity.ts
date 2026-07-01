@@ -15,7 +15,7 @@
 // Imports only from the leaf calendar-core (date helpers) + db, so calendar.ts can import
 // isMirrorOverride from here without an import cycle.
 
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { dateKey, startOfDay, endOfDay } from "@/lib/calendar-core";
 
 // One mirrored-object kind: how to recognize its mirror override, and which dates have a
@@ -46,10 +46,12 @@ export const OVERRIDE_MIRROR_KINDS: OverrideMirrorKind[] = [
     // a deliberate non-hike long-endurance override; callers treat it as a soft signal
     // (warning/flag), never an auto-delete.
     matches: (wj) => hasCategory(wj, "long-endurance"),
-    backingDateKeys: async () =>
-      new Set(
-        (await prisma.hike.findMany({ select: { date: true } })).map((h) => dateKey(h.date)),
-      ),
+    backingDateKeys: async () => {
+      const db = await getDb();
+      return new Set(
+        (await db.hike.findMany({ select: { date: true } })).map((h) => dateKey(h.date)),
+      );
+    },
     message: (dk) =>
       `The day override on ${dk} is a hike-flavored (long-endurance) session, but there is no Hike row on that date — a phantom hike. It likely outlived a removed or rescheduled hike: get_day shows it as the day's session while list_planned_hikes shows nothing. Clear it with clear_day_override, or replace it with the intended workout/baseline override.`,
   },
@@ -69,12 +71,14 @@ export function matchingMirrorKind(workoutJson: unknown): OverrideMirrorKind | n
 // mirror override whose backing object no longer exists. null otherwise. Detect-and-guide
 // only — never mutates.
 export async function orphanedOverrideWarning(date: Date): Promise<string | null> {
-  const plan = await prisma.plan.findFirst({
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
     where: { active: true },
     orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
     select: { id: true },
   });
   if (!plan) return null;
+  // non-scoped: PlanDayOverride has no userId FK — passes through ScopedClient untouched.
   const ov = await prisma.planDayOverride.findFirst({
     where: { planId: plan.id, date: { gte: startOfDay(date), lte: endOfDay(date) } },
     select: { workoutJson: true },
