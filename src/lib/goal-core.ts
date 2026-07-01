@@ -16,7 +16,7 @@
 //     Next.js cache invalidation.
 
 import { Prisma } from "@/generated/prisma/client";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { Legend } from "@/lib/legend";
 import { dateKey } from "@/lib/calendar";
@@ -122,9 +122,11 @@ export async function createGoalCore(
   // baseline battery onto the calendar (see the rhino.the.grey regression, 2026-06-18).
   const kind = input.kind ?? "fitness";
 
+  const db = await getDb();
+
   let targets: GoalTarget[] | null = input.targets ?? null;
   if (!targets && copyFromGoalId) {
-    const source = await prisma.goal.findUnique({ where: { id: copyFromGoalId } });
+    const source = await db.goal.findUnique({ where: { id: copyFromGoalId } });
     if (source && source.targets) {
       targets = source.targets as unknown as GoalTarget[];
     }
@@ -164,24 +166,15 @@ export async function createGoalCore(
   // other goal already has isFocus=true. This prevents stealing focus from an
   // existing focused goal. Use setFocusGoal to explicitly switch focus.
   // (Replaces the old behavior of deactivating all other goals + plans globally.)
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await db.$transaction(async (tx) => {
     const existingFocusCount = await tx.goal.count({ where: { isFocus: true } });
     const shouldBecomeFocus = existingFocusCount === 0;
 
-    // D1 someday-no-plan: only scaffold a plan when targetDate is set.
-    // kind-gate: only fitness goals scaffold a (fitness-template) plan.
-    const plansCreate = targetDate !== null && kind === "fitness"
-      ? {
-          create: (() => {
-            const now = new Date();
-            const weeks = weeksBetween(now, targetDate);
-            const endsOn = targetDate;
-            return buildPlanData({ objective, weeks, startedOn: now, endsOn });
-          })(),
-        }
-      : undefined;
-
-    return tx.goal.create({
+    // Step 1: Create Goal (extension injects userId) — NO nested plans.
+    // Plan is a scoped model; nested relation writes bypass $extends and would
+    // produce null userId on the Plan row. We split into a separate tx.plan.create
+    // call below. (See docs/project-gotchas.md §B-9 and E4b-1 research §PROBLEM 3.)
+    const goal = await tx.goal.create({
       data: {
         objective,
         targetDate,
@@ -193,10 +186,29 @@ export async function createGoalCore(
         ...(legendForCreate === undefined ? {} : { legend: legendForCreate }),
         ...(coachFeasibilityValue === undefined ? {} : { coachFeasibility: coachFeasibilityValue }),
         ...(attributionHints === undefined ? {} : { attributionHints }),
-        ...(plansCreate ? { plans: plansCreate } : {}),
       },
-      include: { plans: { select: { id: true } } },
     });
+
+    // Step 2: Conditionally create Plan + nested PlanRevision as a top-level call.
+    // D1 someday-no-plan: only scaffold when targetDate is set.
+    // kind-gate: only fitness goals scaffold a (fitness-template) plan.
+    // Plan is scoped → tx.plan.create fires the extension, injecting userId ✓.
+    // PlanRevision is non-scoped → safe to nest inside Plan's create ✓.
+    let createdPlanId: string | null = null;
+    if (targetDate !== null && kind === "fitness") {
+      const now = new Date();
+      const weeks = weeksBetween(now, targetDate);
+      const plan = await tx.plan.create({
+        data: {
+          goalId: goal.id,
+          ...buildPlanData({ objective, weeks, startedOn: now, endsOn: targetDate }),
+        },
+        select: { id: true },
+      });
+      createdPlanId = plan.id;
+    }
+
+    return { id: goal.id, plans: createdPlanId ? [{ id: createdPlanId }] : [] };
   });
 
   const planId = created.plans[0]?.id ?? null;
@@ -221,10 +233,12 @@ export async function ensurePlanForGoalCore(
   goalId: string,
   targetDate: Date,
 ): Promise<EnsurePlanResult> {
+  const db = await getDb();
+
   // kind-gate: plans are fitness-template-based, so only fitness goals scaffold one.
   // Checked before the past-date guard so a non-fitness goal never throws on a stale
   // date for a plan it would never get. (rhino.the.grey regression, 2026-06-18.)
-  const kindRow = await prisma.goal.findUnique({
+  const kindRow = await db.goal.findUnique({
     where: { id: goalId },
     select: { kind: true },
   });
@@ -245,7 +259,7 @@ export async function ensurePlanForGoalCore(
     );
   }
 
-  return prisma.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     const existing = await tx.plan.findFirst({
       where: { goalId },
       select: { id: true },
@@ -264,6 +278,8 @@ export async function ensurePlanForGoalCore(
     const weeks = weeksBetween(now, targetDate);
     const planData = buildPlanData({ objective: goal.objective, weeks, startedOn: now, endsOn: targetDate });
 
+    // tx.plan.create fires the extension (Plan is scoped) → userId injected ✓.
+    // Nested revisions: { create: {...} } is safe — PlanRevision is non-scoped ✓.
     const plan = await tx.plan.create({
       data: {
         goalId,
@@ -294,7 +310,8 @@ export async function setGoalTrackedCore(
   id: string,
   tracked: boolean,
 ): Promise<SetGoalTrackedCoreResult> {
-  return prisma.$transaction(async (tx) => {
+  const db = await getDb();
+  return db.$transaction(async (tx) => {
     const goal = await tx.goal.findUnique({
       where: { id },
       select: { id: true, isFocus: true },
@@ -339,7 +356,8 @@ export async function setPlanActiveCore(
   goalId: string,
   active: boolean,
 ): Promise<SetPlanActiveCoreResult> {
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id: goalId },
     select: { id: true, isFocus: true },
   });
@@ -353,7 +371,7 @@ export async function setPlanActiveCore(
 
   if (!active) {
     // Pause: deactivate all active plans for this goal
-    await prisma.plan.updateMany({
+    await db.plan.updateMany({
       where: { goalId, active: true },
       data: { active: false },
     });
@@ -362,7 +380,7 @@ export async function setPlanActiveCore(
     // Resume: re-activate the most-recent plan (mirror setFocusGoal's latest-plan idiom).
     // Wrap findFirst + updateMany + update in a transaction so the "at most one active
     // plan" invariant holds under concurrent writes.
-    return prisma.$transaction(async (tx) => {
+    return db.$transaction(async (tx) => {
       const latest = await tx.plan.findFirst({
         where: { goalId },
         orderBy: { createdAt: "desc" },
@@ -400,9 +418,10 @@ export interface SetFocusGoalCoreResult {
 }
 
 export async function setFocusGoalCore(id: string): Promise<SetFocusGoalCoreResult> {
-  const oldFocus = await prisma.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
+  const db = await getDb();
+  const oldFocus = await db.goal.findFirst({ where: { isFocus: true }, select: { id: true } });
 
-  const goal = await prisma.$transaction(async (tx) => {
+  const goal = await db.$transaction(async (tx) => {
     const target = await tx.goal.findUnique({
       where: { id },
       select: { id: true, kind: true, objective: true },
