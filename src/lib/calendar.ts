@@ -1,7 +1,7 @@
 // Helpers to resolve "what's on this date" — combining plan rotation, overrides,
 // completed workouts, baselines due, and goal markers.
 
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { isMirrorOverride } from "@/lib/override-integrity";
 import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
 import { checkpointWindows } from "@/lib/records";
@@ -129,6 +129,7 @@ export type WeekConflict = {
 
 export async function getCalendarMonth(opts: { year: number; month: number /* 0-11 */ }) {
   const { year, month } = opts;
+  const db = await getDb();
   const program = await getActiveProgram();
 
   const monthStart = new Date(year, month, 1);
@@ -142,7 +143,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // a single indexed query and is fast. The alternative (single Promise.all) cannot gate
   // the ScheduledItem query on goal.kind because goal.kind hasn't resolved yet. Accepted
   // trade-off — #38's AC text does not forbid it; latency impact is sub-millisecond.
-  const goal = await prisma.goal.findFirst({
+  const goal = await db.goal.findFirst({
     where: { isFocus: true },
     // Deterministically picks the most-recently-updated if multiple are
     // stuck isFocus=true (bad state).
@@ -154,12 +155,12 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
   const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines] =
     await Promise.all([
-    prisma.workout.findMany({
+    db.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
       select: { id: true, startedAt: true, status: true, title: true },
       orderBy: { startedAt: "asc" },
     }),
-    prisma.hike.findMany({
+    db.hike.findMany({
       where: { date: { gte: gridStart, lte: gridEnd }, status: { in: ["completed", "planned"] } },
       select: { id: true, date: true, status: true },
       orderBy: { date: "asc" },
@@ -173,7 +174,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     getGoalEventsResult({ start: gridStart, end: gridEnd }),
     // REQ-004: ScheduledItem markers — project path only; zero queries for fitness/null.
     goal?.kind === "project"
-      ? prisma.scheduledItem.findMany({
+      ? db.scheduledItem.findMany({
           where: {
             goalId: goal.id,
             date: { gte: gridStart, lte: gridEnd },
@@ -187,7 +188,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     // completed retest (e.g. logged early in its credit window) doesn't keep
     // showing a "N Baseline due" badge. Fetched whole (single-user, small table)
     // so a result outside the grid window still credits its checkpoint.
-    prisma.baseline.findMany({ select: { testName: true, date: true }, orderBy: { date: "asc" } }),
+    db.baseline.findMany({ select: { testName: true, date: true }, orderBy: { date: "asc" } }),
   ]);
 
   // Bucket logged baselines by test name (date-asc) for the per-cell unlogged count.
@@ -826,6 +827,7 @@ export function deriveDayDisplay(input: {
 
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
   const program = await getActiveProgram();
+  const db = await getDb();
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
 
@@ -851,7 +853,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   }
 
   const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents] = await Promise.all([
-    prisma.workout.findMany({
+    db.workout.findMany({
       where: { startedAt: { gte: dayStart, lte: dayEnd } },
       include: { exercises: { select: { id: true } } },
       orderBy: { startedAt: "asc" },
@@ -861,7 +863,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
           where: { planId_date: { planId: program.id, date: dayStart } },
         })
       : Promise.resolve(null),
-    prisma.note.findMany({
+    db.note.findMany({
       where: {
         OR: [
           { targetDate: { gte: dayStart, lte: dayEnd } },
@@ -871,19 +873,19 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       },
       orderBy: { date: "desc" },
     }),
-    prisma.goal.findFirst({
+    db.goal.findFirst({
       where: { isFocus: true },
       orderBy: { updatedAt: "desc" },
       select: { id: true, targetDate: true, objective: true },
     }),
-    prisma.nutritionLog.findMany({
+    db.nutritionLog.findMany({
       where: { date: { gte: dayStart, lte: dayEnd } },
       orderBy: { date: "asc" },
     }),
     // Planned hikes this rotation week — gated on being in-plan so the query
     // only runs when weekWindow is known. Resolves [] for out-of-plan dates.
     weekWindow
-      ? prisma.hike.findMany({
+      ? db.hike.findMany({
           where: {
             status: "planned",
             date: { gte: weekWindow.start, lte: weekWindow.end },
@@ -1024,7 +1026,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         return { test, baselineDay, checkpoint, initialWeek, from, to };
       });
 
-      const logged = await prisma.baseline.findMany({
+      const logged = await db.baseline.findMany({
         where: {
           OR: matchTargets.map((m) => ({
             testName: m.test.testName,
@@ -1232,8 +1234,9 @@ export function rotationBaselineNamesForDate(
 
 /** Unresolved notes + a link target into the active plan's goal. */
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
+  const db = await getDb();
   const [plan, count] = await Promise.all([
-    prisma.plan.findFirst({
+    db.plan.findFirst({
       where: { active: true, goal: { isFocus: true } },
       orderBy: { updatedAt: "desc" },
       include: { goal: { select: { id: true } } },
@@ -1242,7 +1245,7 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
     // (plan changes) and feedback. Journals are diary entries you rarely
     // "resolve", and standing_rules are never resolved by design — counting
     // them inflated this number into a permanent, misleading to-do badge.
-    prisma.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
+    db.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
   ]);
   if (!plan) return { count, goalId: null, planId: null };
   return { count, goalId: plan.goal.id, planId: plan.id };
@@ -1342,10 +1345,11 @@ export async function weekConflicts(
   program: ActiveProgramSnapshot,
   weekIndex: number,
 ): Promise<WeekConflict[]> {
+  const db = await getDb();
   const window = rotationWeekWindow(program, weekIndex);
 
   const [plannedHikes, overrideRows] = await Promise.all([
-    prisma.hike.findMany({
+    db.hike.findMany({
       where: { status: "planned", date: { gte: window.start, lte: window.end } },
       select: { id: true, date: true, route: true },
       orderBy: { date: "asc" },

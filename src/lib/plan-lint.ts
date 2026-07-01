@@ -15,7 +15,7 @@
 
 import { addDays, resolveDay, startOfDay, weekConflicts } from "@/lib/calendar";
 import { findOrphanedOverrides } from "@/lib/override-integrity";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
 import { getBaselineSchedule } from "@/lib/records";
 import type { ProgramTemplate } from "@/lib/program-template";
@@ -218,13 +218,14 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
     return { planId: null, findings: [] };
   }
 
-  const plan = await prisma.plan.findFirst({
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
     where: { active: true, goal: { isFocus: true } },
     orderBy: { updatedAt: "desc" },
   });
   if (!plan) return { planId: null, findings: [] };
 
-  const goal = await prisma.goal.findUnique({ where: { id: plan.goalId } });
+  const goal = await db.goal.findUnique({ where: { id: plan.goalId } });
 
   const template = program.template;
   const findings: LintFinding[] = [];
@@ -276,7 +277,7 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
       .filter((t) => t.signed)
       .map((t) => t.testName),
   );
-  const phantomBaselines = await prisma.baseline.findMany({
+  const phantomBaselines = await db.baseline.findMany({
     where: { value: { lte: 0 } },
     orderBy: { date: "asc" },
   });
@@ -380,7 +381,7 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
 
   // Rule: more than one planned hike on the same calendar day. The Phase-3 write
   // guard prevents new dups; this surfaces existing ones. (warning)
-  const plannedHikes = await prisma.hike.findMany({
+  const plannedHikes = await db.hike.findMany({
     where: { status: "planned" },
     orderBy: { date: "asc" },
   });

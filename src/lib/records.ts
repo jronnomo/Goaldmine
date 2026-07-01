@@ -2,7 +2,7 @@
 // "PR" here is the best single-set effort across all completed workouts.
 
 import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
 
 export type CheckpointStatus = "upcoming" | "due" | "overdue" | "done";
@@ -217,7 +217,8 @@ export function isBetter(direction: MetricDirection, candidate: number, incumben
 }
 
 export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
-  const groups = await prisma.baseline.groupBy({
+  const db = await getDb();
+  const groups = await db.baseline.groupBy({
     by: ["testName"],
     _count: { _all: true },
   });
@@ -225,8 +226,8 @@ export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
   const out: BaselineSummary[] = [];
   for (const g of groups) {
     const [first, last] = await Promise.all([
-      prisma.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "asc" } }),
-      prisma.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "desc" } }),
+      db.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "asc" } }),
+      db.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "desc" } }),
     ]);
     if (!first || !last) continue;
     out.push({
@@ -242,7 +243,8 @@ export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
 }
 
 export async function getBaselineHistory(testName: string) {
-  return prisma.baseline.findMany({
+  const db = await getDb();
+  return db.baseline.findMany({
     where: { testName },
     orderBy: { date: "asc" },
   });
@@ -309,7 +311,8 @@ export async function getBaselineScheduleForPlan(
   }
 
   // Pull all baselines once and bucket by testName for efficiency.
-  const allBaselines = await prisma.baseline.findMany({ orderBy: { date: "asc" } });
+  const db = await getDb();
+  const allBaselines = await db.baseline.findMany({ orderBy: { date: "asc" } });
   const byName = new Map<string, typeof allBaselines>();
   for (const b of allBaselines) {
     const arr = byName.get(b.testName) ?? [];
@@ -397,7 +400,8 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   // Focus-strict: only return the focus goal's active plan (DC-6 + CRIT-2 fix).
   // When the focus goal has no active plan, return the empty shape rather than
   // silently showing another goal's baseline schedule on baselines/new.
-  const plan = await prisma.plan.findFirst({
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
     where: { active: true, goal: { isFocus: true } },
     orderBy: { updatedAt: "desc" },
   });
