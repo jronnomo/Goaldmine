@@ -8,8 +8,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // Prisma: ScheduledItemUpdateInput, InputJsonValue (payload cast), JsonNull not needed here
 import { Prisma } from "@/generated/prisma/client";
-// prisma singleton — all DB access
-import { prisma } from "@/lib/db";
+// getDb — user-scoped Prisma client for all DB access
+import { getDb } from "@/lib/db";
 // parseDateKey: yyyy-mm-dd → USER_TZ midnight Date (used for milestone due dates)
 import { parseDateKey } from "@/lib/calendar";
 // jsonResult, errorResult: format MCP tool responses
@@ -313,7 +313,8 @@ async function resolveLinkedGoal(goalId: string): Promise<{
   projectNumber: number | null;
   kind: string; // [v2] returned so sync_github_milestones can enforce kind='project'
 }> {
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id: goalId },
     select: { id: true, githubRepo: true, githubProjectNumber: true, kind: true }, // [v2] added kind
   });
@@ -387,8 +388,10 @@ export function registerGitHubTools(server: McpServer): void {
     },
     async (input) =>
       ghSafe(async () => {
+        const db = await getDb();
+
         // Existence check (friendly error on bad goalId)
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true, objective: true },
         });
@@ -397,7 +400,7 @@ export function registerGitHubTools(server: McpServer): void {
         // DB write — always set both fields; projectNumber null when omitted
         // (optional-field pattern: always write both because repo is required and
         // projectNumber defaults to null, so this is simpler than a conditional build)
-        const updated = await prisma.goal.update({
+        const updated = await db.goal.update({
           where: { id: input.goalId },
           data: {
             githubRepo: input.repo,
@@ -693,6 +696,7 @@ export function registerGitHubTools(server: McpServer): void {
     },
     async (input) =>
       ghSafe(async () => {
+        const db = await getDb();
         const { owner, repo, kind } = await resolveLinkedGoal(input.goalId); // [v2] destructure kind
 
         // [v2] ISSUE-3: hard-require kind='project' — sync writes ScheduledItems, which is
@@ -715,9 +719,9 @@ export function registerGitHubTools(server: McpServer): void {
         );
 
         // Pre-query existing externalRefs for this goal to compute synced vs updated counts.
-        // prisma.upsert does not expose whether it performed a create or update — we infer
-        // from whether the externalRef was in the DB before the loop.
-        const existingRows = await prisma.scheduledItem.findMany({
+        // db.scheduledItem.upsert does not expose whether it performed a create or update — we
+        // infer from whether the externalRef was in the DB before the loop.
+        const existingRows = await db.scheduledItem.findMany({
           where: {
             goalId: input.goalId,
             externalRef: { startsWith: "gh:milestone:" },
@@ -772,7 +776,7 @@ export function registerGitHubTools(server: McpServer): void {
           //
           // CLOSED milestones (closeCompleted=true): update block sets status='done' +
           //   completedAt from GitHub's closed_at. This propagates GitHub closures into DB.
-          await prisma.scheduledItem.upsert({
+          await db.scheduledItem.upsert({
             where: {
               goalId_externalRef: { goalId: input.goalId, externalRef },
             },

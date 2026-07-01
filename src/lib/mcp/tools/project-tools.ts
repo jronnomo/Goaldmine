@@ -6,7 +6,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
 import { setFocusGoalCore } from "@/lib/goal-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
@@ -72,8 +72,10 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // 1. Goal existence + kind check
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true, kind: true },
         });
@@ -94,7 +96,7 @@ export function registerProjectTools(server: McpServer): void {
         // (Postgres NULL != NULL semantics — multiple items without externalRef always succeed).
         let item;
         try {
-          item = await prisma.scheduledItem.create({
+          item = await db.scheduledItem.create({
             data: {
               goalId: input.goalId,
               date,
@@ -150,10 +152,12 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // Single-round-trip delete: attempt delete, catch P2025 for not-found case.
         // No findUnique-first — delete_scheduled_item needs no row data in its response.
         try {
-          await prisma.scheduledItem.delete({ where: { id: input.id } });
+          await db.scheduledItem.delete({ where: { id: input.id } });
         } catch (e) {
           if ((e as { code?: string }).code === "P2025") {
             throw new Error(`Scheduled item not found: ${input.id}`);
@@ -195,6 +199,8 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // Default completedAt = current instant (NOT midnight — per PRD §4.5)
         const completedAt = input.completedAt
           ? parseDateInput(input.completedAt)
@@ -205,7 +211,7 @@ export function registerProjectTools(server: McpServer): void {
         // update result supplies all returned fields.
         let updated: { id: string; status: string; completedAt: Date | null };
         try {
-          updated = await prisma.scheduledItem.update({
+          updated = await db.scheduledItem.update({
             where: { id: input.id },
             data: { status: "done", completedAt },
             select: { id: true, status: true, completedAt: true },
@@ -270,13 +276,14 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const { id, ...fields } = input;
 
         // 1. Existence check FIRST (S-4: gives "not found" even on no-op call with stale id).
         //    findUnique is kept here — unlike delete/complete, update_scheduled_item needs
         //    it to provide correct "not found" feedback on the no-op path where no
         //    subsequent update call would catch P2025.
-        const item = await prisma.scheduledItem.findUnique({
+        const item = await db.scheduledItem.findUnique({
           where: { id },
           select: { id: true },
         });
@@ -307,7 +314,7 @@ export function registerProjectTools(server: McpServer): void {
         //    (D-2: closes the TOCTOU window between findUnique and update)
         let updated: { id: string; title: string; detail: string | null; date: Date; status: string; type: string };
         try {
-          updated = await prisma.scheduledItem.update({
+          updated = await db.scheduledItem.update({
             where: { id },
             data,
             select: { id: true, title: true, detail: true, date: true, status: true, type: true },
@@ -380,8 +387,10 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // Verify goal exists (friendly error on bad goalId)
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true },
         });
@@ -399,7 +408,7 @@ export function registerProjectTools(server: McpServer): void {
           ...(input.type ? { type: input.type } : {}),
         };
 
-        const items = await prisma.scheduledItem.findMany({
+        const items = await db.scheduledItem.findMany({
           where,
           orderBy: { date: "desc" },
           take: input.limit,
@@ -488,6 +497,8 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // 1. value-or-text required guard — check FIRST before any DB call
         if (input.value === undefined && input.text === undefined) {
           throw new Error(
@@ -497,7 +508,7 @@ export function registerProjectTools(server: McpServer): void {
 
         // 2. Verify goal exists AND is a project goal (D-3: prevents silently writing
         //    metric rows to fitness goals, which would corrupt goal-type semantics)
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true, kind: true },
         });
@@ -513,7 +524,7 @@ export function registerProjectTools(server: McpServer): void {
         // 3. date: current instant default, not midnight (per PRD §4.5)
         const date = input.date ? parseDateInput(input.date) : new Date();
 
-        const entry = await prisma.logEntry.create({
+        const entry = await db.logEntry.create({
           data: {
             goalId: input.goalId,
             metric: input.metric,
@@ -580,7 +591,9 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
-        const goal = await prisma.goal.findUnique({
+        const db = await getDb();
+
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true },
         });
@@ -596,7 +609,7 @@ export function registerProjectTools(server: McpServer): void {
           ...(input.from || input.to ? { date: dateFilter } : {}),
         };
 
-        const entries = await prisma.logEntry.findMany({
+        const entries = await db.logEntry.findMany({
           where,
           orderBy: { date: "desc" },
           take: input.limit,
@@ -651,11 +664,13 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // Single-round-trip delete: use the returned row to confirm metric+value.
-        // No findUnique-first — capture deleted row from prisma.logEntry.delete().
+        // No findUnique-first — capture deleted row from db.logEntry.delete().
         let row: { id: string; metric: string; value: number | null };
         try {
-          row = await prisma.logEntry.delete({
+          row = await db.logEntry.delete({
             where: { id: input.id },
             select: { id: true, metric: true, value: true },
           });
@@ -705,8 +720,10 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
+
         // 1. Fetch goal kind + targets — friendly error if missing or wrong kind.
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { kind: true, targets: true },
         });
