@@ -9,6 +9,15 @@ datasource db {
   provider = "postgresql"
 }
 
+// Phase-0 identity model. No relations yet (E2 adds userId FKs + back-relations).
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Workout {
   id        String   @id @default(cuid())
   title     String?
