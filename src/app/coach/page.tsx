@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfDay, USER_TZ, startOfWeekMonday, addDays } from "@/lib/calendar";
 import { Card } from "@/components/Card";
 import { CopyPromptButton } from "@/components/CopyPromptButton";
@@ -91,8 +91,9 @@ const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string 
 
 export default async function CoachPage() {
   // --- open-item query (mirrors tools.ts:502–513) ---
+  const db = await getDb();
   const now = startOfDay(new Date());
-  const openItems = await prisma.note.findMany({
+  const openItems = await db.note.findMany({
     where: { type: "open_item", resolvedAt: null },
     orderBy: [{ targetDate: { sort: "asc", nulls: "last" } }, { date: "asc" }],
     select: { id: true, body: true, targetDate: true, priority: true },
@@ -113,7 +114,7 @@ export default async function CoachPage() {
   }));
 
   // --- staleness query (C-1: only routine-written nudges, identified by [week: prefix) ---
-  const lastRoutineNudge = await prisma.note.findFirst({
+  const lastRoutineNudge = await db.note.findFirst({
     where: { type: "open_item", body: { startsWith: "[week:" } },
     orderBy: { createdAt: "desc" },
     select: { createdAt: true },
@@ -125,7 +126,7 @@ export default async function CoachPage() {
   // --- has this week's recap been shared? (positive confirmation, data-derived) ---
   const thisMonday = startOfWeekMonday(now);
   const recapPostedThisWeek =
-    (await prisma.note.count({
+    (await db.note.count({
       where: {
         type: "shared_recap",
         targetDate: { gte: thisMonday, lt: addDays(thisMonday, 1) },

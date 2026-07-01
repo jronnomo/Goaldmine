@@ -1,19 +1,20 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { WeightChart } from "@/components/WeightChart";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function HistoryPage() {
+  const db = await getDb();
   const [workouts, measurements] = await Promise.all([
-    prisma.workout.findMany({
+    db.workout.findMany({
       where: { status: { not: "planned" } },
       orderBy: { startedAt: "desc" },
       take: 50,
       include: { exercises: { select: { id: true } } },
     }),
-    prisma.measurement.findMany({
+    db.measurement.findMany({
       orderBy: { date: "asc" },
       take: 90,
     }),

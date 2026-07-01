@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 import { weekRangeLabel } from "@/lib/recap";
 import { startOfWeekMonday, addDays, dateKey } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { RecapClient } from "@/components/RecapClient";
 
 export default async function RecapPage() {
@@ -30,7 +30,8 @@ export default async function RecapPage() {
 
   // Query shared_recap notes in the 13-week window
   // [mondays[12], mondays[0]] = [oldest Monday, newest Monday]
-  const postedNotes = await prisma.note.findMany({
+  const db = await getDb();
+  const postedNotes = await db.note.findMany({
     where: {
       type: "shared_recap",
       targetDate: {

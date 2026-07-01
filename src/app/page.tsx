@@ -7,7 +7,7 @@ import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
 import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay, USER_TZ } from "@/lib/calendar";
 import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
@@ -61,17 +61,18 @@ export default async function HomePage() {
   // (process.env.USER_TZ is undefined in the browser).
   const todayDateKey = dateKey(now);
 
+  const db = await getDb();
   const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
     await Promise.all([
-      prisma.measurement.findFirst({ orderBy: { date: "desc" } }),
-      prisma.workout.findMany({
+      db.measurement.findFirst({ orderBy: { date: "desc" } }),
+      db.workout.findMany({
         where: { status: "completed" },
         orderBy: { startedAt: "desc" },
         take: 3,
         include: { exercises: { include: { sets: true } } },
       }),
       resolveDay(now),
-      prisma.nutritionLog.findMany({
+      db.nutritionLog.findMany({
         where: { date: { gte: todayStart, lte: todayEnd } },
         orderBy: { date: "asc" },
       }),
@@ -83,7 +84,7 @@ export default async function HomePage() {
       getQuickPickFoods(),
       // Today's completed workouts, full detail — rendered in place of the
       // prescription when a workout was logged (single source of truth).
-      prisma.workout.findMany({
+      db.workout.findMany({
         where: { status: "completed", startedAt: { gte: todayStart, lte: todayEnd } },
         orderBy: { startedAt: "asc" },
         include: {
@@ -94,7 +95,7 @@ export default async function HomePage() {
       // The project early-return at line 46 already fired so focusGoal is fitness or null here.
       // A null focusGoal → goalForFeas resolves null → feasibility = null → no card rendered.
       focusGoal
-        ? prisma.goal.findUnique({
+        ? db.goal.findUnique({
             where: { id: focusGoal.id },
             select: { id: true, targetDate: true, targets: true, kind: true, coachFeasibility: true },
           })

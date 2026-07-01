@@ -4,19 +4,20 @@ import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReadinessChart } from "@/components/ReadinessChart";
 import { WeightChart } from "@/components/WeightChart";
 import { BodyMetricsSection } from "@/components/BodyMetricsSection";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
 export default async function StatsPage() {
+  const db = await getDb();
   const [measurements, baselineCount, workoutCount, hikeCount, activeGoals] = await Promise.all([
-    prisma.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
-    prisma.baseline.count(),
-    prisma.workout.count({ where: { status: "completed" } }),
-    prisma.hike.count(),
-    prisma.goal.findMany({
+    db.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
+    db.baseline.count(),
+    db.workout.count({ where: { status: "completed" } }),
+    db.hike.count(),
+    db.goal.findMany({
       where: { active: true },
       orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
     }),

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getLogMetricSeries } from "@/lib/metric-series";
 import { ProjectTrendsView } from "@/components/ProjectTrendsView";
 import type { GoalTarget } from "@/lib/metrics-registry";
@@ -13,7 +13,8 @@ export default async function TrendsPage({
 }) {
   const { id } = await params;
 
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id },
     select: { id: true, kind: true, objective: true, targets: true },
   });
@@ -27,7 +28,7 @@ export default async function TrendsPage({
 
   const series = await Promise.all(logTargets.map((t) => getLogMetricSeries(t, goal.id)));
 
-  const milestones = await prisma.scheduledItem.findMany({
+  const milestones = await db.scheduledItem.findMany({
     where: { goalId: id, type: "milestone" },
     select: { id: true, title: true, status: true, date: true, completedAt: true },
     orderBy: { date: "asc" },

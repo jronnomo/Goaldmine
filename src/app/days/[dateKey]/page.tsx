@@ -23,7 +23,7 @@ import { FootageForm } from "@/components/days/FootageForm";
 import { FootageList, type SerializedMarker } from "@/components/days/FootageList";
 import { RenderJobPanel, type SerializedRenderJob } from "@/components/days/RenderJobPanel";
 import { canonicalExerciseName } from "@/lib/records";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +50,7 @@ export default async function DayDetail({
 }) {
   const { dateKey } = await params;
   const date = parseDateKey(dateKey);
+  const db = await getDb();
   const r = await resolveDay(date);
 
   const today = startOfDay(new Date());
@@ -113,7 +114,7 @@ export default async function DayDetail({
   // Full exercise/set detail for completed workouts — rendered expanded in place
   // of the planned card (resolveDay only returns exercise counts).
   const completedDetails = completedWorkouts.length > 0
-    ? await prisma.workout.findMany({
+    ? await db.workout.findMany({
         where: { id: { in: completedWorkouts.map((w) => w.id) } },
         include: {
           exercises: {
@@ -128,7 +129,7 @@ export default async function DayDetail({
   // ── Footage markers ──────────────────────────────────────────────────────────
   // CRIT: rawMarkers contains Date objects — serialize capturedAt to ISO string
   // before passing to client components. Never send Date objects to client.
-  const rawMarkers = await prisma.footageMarker.findMany({
+  const rawMarkers = await db.footageMarker.findMany({
     where: { date: { gte: date, lte: endOfDay(date) } },
     orderBy: [{ highlight: "desc" }, { capturedAt: "asc" }, { createdAt: "asc" }],
   });
@@ -145,7 +146,7 @@ export default async function DayDetail({
 
   // ── Render job ───────────────────────────────────────────────────────────────
   // Serialize approvedAt (Date | null) → ISO string before passing to client.
-  const rawRenderJob = await prisma.dayRenderJob.findFirst({
+  const rawRenderJob = await db.dayRenderJob.findFirst({
     where: { date: { gte: date, lte: endOfDay(date) } },
     select: {
       id: true,

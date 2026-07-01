@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, DM_Serif_Display } from "next/font/google";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
@@ -80,9 +80,10 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const db = await getDb();
   const now = new Date();
   const [rawMeals, quickPickFoods, libraryFoods, today] = await Promise.all([
-    prisma.nutritionLog.findMany({
+    db.nutritionLog.findMany({
       where: { date: { gte: startOfDay(now), lte: endOfDay(now) } },
       orderBy: { date: "asc" },
       select: {

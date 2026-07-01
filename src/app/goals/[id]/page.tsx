@@ -8,7 +8,7 @@ import { PlanChangelog, type ChangelogEntry } from "@/components/PlanChangelog";
 import { PlanOverview } from "@/components/PlanOverview";
 import { ReadinessBreakdown } from "@/components/ReadinessBreakdown";
 import { ReachMeter } from "@/components/ReachMeter";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import type { GoalReference } from "@/lib/goal-actions";
 import { setPlanActive } from "@/lib/goal-actions";
@@ -35,7 +35,8 @@ export default async function GoalDetail({
   const stackWarning =
     rawStackWarning === "epic" || rawStackWarning === "legendary" ? rawStackWarning : null;
 
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id },
     include: {
       plans: {
@@ -58,7 +59,7 @@ export default async function GoalDetail({
   // (active=false IS the paused state; no schema change needed)
   const mostRecentPlan = activePlan
     ? null
-    : await prisma.plan.findFirst({
+    : await db.plan.findFirst({
         where: { goalId: id },
         orderBy: { createdAt: "desc" },
         select: { id: true, active: true },
@@ -74,7 +75,7 @@ export default async function GoalDetail({
   // apply_plan_revision that includes their id, or by an explicit resolve.
   let pendingNotes: PendingNote[] = [];
   if (activePlan) {
-    const notes = await prisma.note.findMany({
+    const notes = await db.note.findMany({
       where: { resolvedAt: null },
       orderBy: { date: "desc" },
       take: 25,
@@ -125,7 +126,7 @@ export default async function GoalDetail({
   // Parse coachFeasibility from DB using the shared parser (rarity-core.ts).
   const coachFeasibility = parseCoachFeasibility(goal.coachFeasibility);
 
-  const otherGoals = await prisma.goal.findMany({
+  const otherGoals = await db.goal.findMany({
     where: { id: { not: id } },
     orderBy: { updatedAt: "desc" },
   });

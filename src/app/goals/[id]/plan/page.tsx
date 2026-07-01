@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { ProjectPlanView } from "@/components/ProjectPlanView";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getBaselineSchedule, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
 import type { Block, DayTemplate, ExercisePrescription, Phase, ProgramTemplate } from "@/lib/program-template";
 
@@ -18,7 +18,8 @@ export default async function FullPlanPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id },
     include: { plans: { where: { active: true }, orderBy: { createdAt: "desc" }, take: 1 } },
   });

@@ -14,7 +14,7 @@ import {
   startOfDay,
   toDatetimeLocalValue,
 } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
@@ -57,8 +57,9 @@ function timeLabelFromLocal(datetimeLocal: string): string {
 export default async function NutritionPage() {
   const since = startOfDay(addDays(new Date(), -30));
 
+  const db = await getDb();
   const [logs, quickPickFoods, libraryFoods, today] = await Promise.all([
-    prisma.nutritionLog.findMany({
+    db.nutritionLog.findMany({
       where: { date: { gte: since } },
       orderBy: { date: "desc" },
       take: 200,
