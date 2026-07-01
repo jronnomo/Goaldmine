@@ -14,7 +14,7 @@
 //     invalidation.
 
 import { z } from "zod";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { recordsSetInWorkout, type RecordSet } from "@/lib/records";
 
 // ---------------------------------------------------------------------------
@@ -118,8 +118,9 @@ export interface CreateWorkoutCoreInput {
 export async function createWorkoutCore(
   input: CreateWorkoutCoreInput,
 ): Promise<{ id: string; recordsSet: RecordSet[] }> {
+  const db = await getDb();
   const status = input.status ?? "completed";
-  const created = await prisma.workout.create({
+  const created = await db.workout.create({
     data: {
       title: input.title,
       startedAt: input.startedAt,
@@ -179,6 +180,7 @@ export async function updateWorkoutCore(
   id: string,
   input: UpdateWorkoutCoreInput,
 ): Promise<{ id: string; updatedFields: string[]; message: string }> {
+  const db = await getDb();
   const data: Record<string, unknown> = {};
   const updatedFields: string[] = [];
   if (input.title !== undefined) { data.title = input.title; updatedFields.push("title"); }
@@ -190,7 +192,7 @@ export async function updateWorkoutCore(
   if (updatedFields.length === 0) {
     return { id, updatedFields, message: "No fields provided — nothing changed." };
   }
-  await prisma.workout.update({ where: { id }, data });
+  await db.workout.update({ where: { id }, data });
   return {
     id,
     updatedFields,
@@ -247,8 +249,9 @@ export async function updateWorkoutSetCore(
 export async function workoutOpsCore(
   ops: WorkoutOp[],
 ): Promise<{ count: number; applied: string[]; message: string }> {
+  const db = await getDb();
   const applied: string[] = [];
-  await prisma.$transaction(async (tx) => {
+  await db.$transaction(async (tx) => {
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i]!;
       try {
@@ -326,6 +329,7 @@ export async function workoutOpsCore(
 // ---------------------------------------------------------------------------
 
 export async function deleteWorkoutCore(id: string): Promise<{ id: string }> {
-  await prisma.workout.delete({ where: { id } });
+  const db = await getDb();
+  await db.workout.delete({ where: { id } });
   return { id };
 }
