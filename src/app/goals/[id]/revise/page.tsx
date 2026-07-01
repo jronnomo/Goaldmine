@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { ReviseForm } from "@/components/ReviseForm";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,8 @@ export default async function RevisePage({
 }) {
   const [{ id: goalId }, { noteId }] = await Promise.all([params, searchParams]);
 
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id: goalId },
     include: { plans: { where: { active: true }, orderBy: { createdAt: "desc" }, take: 1 } },
   });
@@ -37,7 +38,7 @@ export default async function RevisePage({
   }
 
   const note = noteId
-    ? await prisma.note.findUnique({ where: { id: noteId } })
+    ? await db.note.findUnique({ where: { id: noteId } })
     : null;
 
   return (

@@ -4,7 +4,7 @@ import { Card } from "@/components/Card";
 import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { ReachMeter } from "@/components/ReachMeter";
 import { StackReachCard } from "@/components/StackReachCard";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 import { computeStackRarity } from "@/lib/rarity";
@@ -38,8 +38,9 @@ export default async function GoalsPage({
   // Include most-recent plan per goal (regardless of active status) to detect paused state.
   // One computeStackRarity per request — no re-computation per row (UXR-63-08, PRD §4).
   // attributionHints is a scalar field — included by default in findMany (no explicit select needed).
+  const db = await getDb();
   const [goals, stack] = await Promise.all([
-    prisma.goal.findMany({
+    db.goal.findMany({
       orderBy: [
         { isFocus: "desc" },
         { active: "desc" },

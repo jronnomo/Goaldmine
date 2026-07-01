@@ -3,7 +3,7 @@
 // REQ-006: burn-down card for progress page. Returns null when no milestones.
 
 import { Card } from "@/components/Card";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfDay, USER_TZ } from "@/lib/calendar";
 
 const MILESTONE_WARNING_DAYS = 14;
@@ -12,7 +12,8 @@ const MS_PER_DAY = 1_000 * 60 * 60 * 24;
 export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
   // Single query — milestones only, all statuses, ordered by date.
   // Few milestones per goal (typically < 20); no pagination needed.
-  const milestones = await prisma.scheduledItem.findMany({
+  const db = await getDb();
+  const milestones = await db.scheduledItem.findMany({
     where: { goalId, type: "milestone" },
     orderBy: { date: "asc" },
     select: { id: true, title: true, status: true, date: true },

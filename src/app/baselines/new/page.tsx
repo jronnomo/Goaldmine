@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { LogBaselineForm } from "@/components/LogBaselineForm";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { ProgramTemplate } from "@/lib/program-template";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,8 @@ export default async function LogBaselinePage({
   const { testName } = await searchParams;
   const presetName = testName ? decodeURIComponent(testName) : null;
 
-  const plan = await prisma.plan.findFirst({
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
     where: { active: true, goal: { isFocus: true } },
     orderBy: { updatedAt: "desc" },
   });

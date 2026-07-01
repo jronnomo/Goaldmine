@@ -3,14 +3,15 @@ import { Card } from "@/components/Card";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { PendingNotes } from "@/components/PendingNotes";
 import { getPendingNotesCount } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function JournalPage() {
+  const db = await getDb();
   const [pending, allNotes] = await Promise.all([
     getPendingNotesCount(),
-    prisma.note.findMany({ orderBy: { date: "desc" }, take: 50 }),
+    db.note.findMany({ orderBy: { date: "desc" }, take: 50 }),
   ]);
 
   // "Needs review" = unresolved audibles/feedback — the notes that call for a

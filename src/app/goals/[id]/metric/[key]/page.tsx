@@ -8,7 +8,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { DeleteReadingButton } from "@/components/DeleteReadingButton";
 import { HistoryChart } from "@/components/HistoryChart";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getLogMetricSeries } from "@/lib/metric-series";
 import { USER_TZ } from "@/lib/calendar";
 import type { GoalTarget } from "@/lib/metrics-registry";
@@ -32,7 +32,8 @@ export default async function MetricDetailPage({
   const { id, key } = await params;
   const metricKey = decodeURIComponent(key);
 
-  const goal = await prisma.goal.findUnique({
+  const db = await getDb();
+  const goal = await db.goal.findUnique({
     where: { id },
     select: { id: true, kind: true, objective: true, targets: true },
   });
@@ -47,7 +48,7 @@ export default async function MetricDetailPage({
 
   const [series, readings] = await Promise.all([
     getLogMetricSeries(target, id),
-    prisma.logEntry.findMany({
+    db.logEntry.findMany({
       where: { goalId: id, metric: metricKey },
       orderBy: { date: "desc" },
       select: { id: true, date: true, value: true, text: true },

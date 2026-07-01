@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { EditNutritionForm } from "@/components/EditNutritionForm";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { toDatetimeLocalValue } from "@/lib/calendar";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
@@ -15,8 +15,9 @@ export default async function EditNutritionPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const db = await getDb();
   const [row, quickPickFoods] = await Promise.all([
-    prisma.nutritionLog.findUnique({ where: { id } }),
+    db.nutritionLog.findUnique({ where: { id } }),
     getQuickPickFoods(),
   ]);
   if (!row) notFound();

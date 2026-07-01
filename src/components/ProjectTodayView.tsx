@@ -7,7 +7,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { TodayCelebration } from "@/components/TodayCelebration";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar";
 import type { GoalTarget } from "@/lib/metrics-registry";
 import { fmtComma } from "@/lib/goal-presentation";
@@ -32,9 +32,10 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
 
   // All data in a single round-trip. UXR-s4-20: "upcoming-7d items" query DROPPED
   // (Decision CD-1: nothing in the chosen direction renders a 7-day list).
+  const db = await getDb();
   const [items, mrrEntry, nextMilestone, goalRow] = await Promise.all([
     // Today's scheduled items (planned + done) — sorted by date then title for stable order.
-    prisma.scheduledItem.findMany({
+    db.scheduledItem.findMany({
       where: {
         goalId: goal.id,
         date: { gte: todayStart, lte: todayEnd },
@@ -44,7 +45,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
       select: { id: true, type: true, title: true, status: true },
     }),
     // Latest MRR log entry. Metric key in DB is "mrr" (bare, without "log:" prefix).
-    prisma.logEntry.findFirst({
+    db.logEntry.findFirst({
       where: { goalId: goal.id, metric: "mrr", value: { not: null } },
       orderBy: { date: "desc" },
       select: { value: true },
@@ -52,7 +53,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
     // [v2] LOW-3: Next planned milestone strictly AFTER today (tomorrow+).
     // Today's milestones already appear in the checklist above — showing them here
     // too would be redundant. Contrast with MilestoneBurnDown which includes today.
-    prisma.scheduledItem.findFirst({
+    db.scheduledItem.findFirst({
       where: {
         goalId: goal.id,
         type: "milestone",
@@ -64,7 +65,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
     }),
     // Goal targets — needed for MRR target. ProjectTodayView fetches this itself
     // (getFocusGoal select was NOT extended; Decision CD-5).
-    prisma.goal.findUnique({
+    db.goal.findUnique({
       where: { id: goal.id },
       select: { targets: true, coachFeasibility: true },
     }),

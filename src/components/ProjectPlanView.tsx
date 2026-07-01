@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { CollapsibleCard } from "@/components/CollapsibleCard";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { dateKey } from "@/lib/calendar";
 
 const USER_TZ = process.env.USER_TZ ?? "America/Denver";
@@ -21,7 +21,8 @@ export async function ProjectPlanView({ goal }: { goal: GoalArg }) {
   // [v2] DC-2: no date filter — loads all items for this goal.
   // For chewgether's ~3-month launch timeline (30-60 items) this is fine.
   // TODO: paginate or date-cap when item count grows beyond ~200 items per goal.
-  const items = await prisma.scheduledItem.findMany({
+  const db = await getDb();
+  const items = await db.scheduledItem.findMany({
     where: { goalId: goal.id },
     orderBy: [{ date: "asc" }, { title: "asc" }],
     select: { id: true, type: true, title: true, status: true, date: true },

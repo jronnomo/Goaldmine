@@ -4,11 +4,12 @@
 import { Card } from "@/components/Card";
 import { HistoryChart } from "@/components/HistoryChart";
 import type { HistoryPoint } from "@/components/HistoryChart";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { BODY_METRICS, resolveBodyMetric } from "@/lib/metrics-registry";
 
 export async function BodyMetricsSection() {
-  const rows = await prisma.bodyMetric.findMany({
+  const db = await getDb();
+  const rows = await db.bodyMetric.findMany({
     orderBy: [{ date: "asc" }, { createdAt: "asc" }],
   });
 

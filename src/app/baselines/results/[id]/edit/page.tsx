@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { EditBaselineForm } from "@/components/EditBaselineForm";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,8 @@ export default async function EditBaselinePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const row = await prisma.baseline.findUnique({ where: { id } });
+  const db = await getDb();
+  const row = await db.baseline.findUnique({ where: { id } });
   if (!row) notFound();
 
   return (

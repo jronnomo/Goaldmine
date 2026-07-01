@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ShareWorkout } from "@/components/ShareWorkout";
 import { WorkoutEditor } from "@/components/WorkoutEditor";
 import type { WorkoutDTO } from "@/components/WorkoutEditor";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { FormattableWorkout } from "@/lib/formatters";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,8 @@ export default async function WorkoutDetail({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const workout = await prisma.workout.findUnique({
+  const db = await getDb();
+  const workout = await db.workout.findUnique({
     where: { id },
     include: {
       exercises: {
