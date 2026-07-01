@@ -49,6 +49,9 @@ next-env.d.ts
 .feature-dev/
 .roadmap/
 
+# private strategy notes — keep local, never commit
+docs/strategy/
+
 # local tooling-migration backups
 *.pre-v2.bak
 
