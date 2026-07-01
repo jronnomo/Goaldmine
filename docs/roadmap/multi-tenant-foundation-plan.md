@@ -68,8 +68,34 @@ E0 gates everything → E1 → E2 → E3 (the seam) unblocks E4/E5 → E4 (scope
 - **E7 — `NOT NULL` promotion + final indexes** (after all scoped + verified on dev). **E7-1 shipped (2026-07-01):** guard-based enforcement — raw-create sites set `userId: FOUNDER_USER_ID`, `npm run db:verify-owned` asserts 0 unowned rows; hard schema NOT NULL deferred to Phase 1 (would break 29 getDb-injected create sites' types).
 - **E9 — Isolation verification**: seed a 2nd user; adversarial cross-tenant read/write tests (no leak); founder-behaves-identically regression.
 
+- **E9-1 — Broad cross-tenant isolation verification (Phase-0 done-bar)**: `scripts/verify-tenant-isolation-full.ts` — 16-model per-model read sweep, lib-anchor isolation (getFocusGoal / getActiveProgram / resolveDay / computeWeeklyRecap / getExerciseSummaries), write isolation, founder-regression checks. Run via `npm run db:verify-isolation`. **Shipped 2026-07-01: ALL assertions PASS, exit 0.**
+
+---
+
+## Phase 0 COMPLETE (E0–E9 shipped)
+
+All epics in the Phase-0 scope have shipped:
+- **E0** — Dev/prod DB split (Neon dev branch + `.env.local`)
+- **E1** — User model + founder seed
+- **E2** — Additive `userId` migration + backfill + compound indexes
+- **E3** — Current-user seam (`getCurrentUserId` / `resolveUserIdFromToken`)
+- **E4a** — ALS + scoped-client infra (`AsyncLocalStorage`, `forUser`, `getDb`)
+- **E4b** — `prisma→getDb()` migration (~59 files) + nested-create two-step fixes
+- **E4c** — Test-mock migration for dual-export `db.ts`
+- **E5** — Global-write scoping (4 write traps: focus-switch / bulk-note / unskip-day / read isolation)
+- **E7** — NOT NULL guard enforcement + `db:verify-owned` (0 unowned rows asserted)
+- **E9** — Adversarial isolation harness (E5) + broad cross-tenant done-bar (E9-1)
+
+The data layer is **certifiably multi-tenant-ready**. A second user is fully isolated across all 16 scoped models. The founder's data and behavior are unchanged.
+
 ### Deferred to Phase 1 (noted, NOT decomposed here)
-RLS backstop · FoodLibrary `Food`/`FoodUsage` split · dashboard auth/sessions · OAuth MCP connector · onboarding/signup · billing · rate-limit/abuse · legal.
+- **Hard NOT NULL schema constraint** — deferred because 29 `getDb()`-injected create sites would break TypeScript types; the guard + `db:verify-owned` enforces at the application layer for now.
+- **RLS backstop** — Postgres Row-Level Security (`SET LOCAL app.current_user_id`; Neon pooled-connection-safe). No `$queryRaw` sites in Phase 0 — `$extends` scoping is sufficient alone. Design when Phase 1 brings untrusted public users.
+- **FoodLibrary → Food + FoodUsage split** — per-user fields (usageCount/isFavorite/lastAmount/lastUnit) on the shared barcode-unique row cause zero bugs in Phase 0 (single user); triggered by user 2 coming online.
+- **getDb() leaky-read select: cleanup** — audit call sites that call `getDb()` without explicit `select:` and return full rows (potential over-scoping in multi-tenant reads).
+- **Dashboard auth/sessions** — real Next.js session middleware; `getCurrentUserId()` throws on unauthenticated.
+- **OAuth MCP connector** — real per-user token resolution in `resolveUserIdFromToken`; the Phase-0 "return founder" shortcut is replaced.
+- **Onboarding / signup / billing** — first-run flow, per-user account creation, subscription management.
 
 ### Critical path
 E0 → E1 → E2 → E3 → **E4a → E4b** (the bottleneck) → E4c → E5 → E7 → E9. E4b gates everything downstream; size it generously.
