@@ -14,12 +14,16 @@ vi.mock("@/lib/db", () => ({
       findMany: vi.fn(),
     },
   },
+  getDb: vi.fn(),
 }));
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 
 import { getLogMetricSeries } from "@/lib/metric-series";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 import type { GoalTarget } from "@/lib/metrics-registry";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -67,6 +71,7 @@ function mockFindMany(rows: { date: Date; value: number | null }[]) {
 describe("SNAPSHOT path (!target.cumulative)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("flat-maps 3 distinct-day rows → 3 points in ascending order", async () => {
@@ -111,6 +116,7 @@ describe("SNAPSHOT path (!target.cumulative)", () => {
 describe("CUMULATIVE path (target.cumulative=true)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("prefix-sum: 3 rows [10, 10, 10] on distinct days → points [10, 20, 30]", async () => {
@@ -164,6 +170,7 @@ describe("CUMULATIVE path (target.cumulative=true)", () => {
 describe("domain computation", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative domain always starts at 0", async () => {
@@ -227,6 +234,7 @@ describe("domain computation", () => {
 describe("label and units resolution", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("log:mrr → registry label and units (not target fields)", async () => {
@@ -255,6 +263,7 @@ describe("label and units resolution", () => {
 describe("USER_TZ label formatting", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("a known UTC instant formats to the correct USER_TZ 'Mon D' label", async () => {
@@ -274,6 +283,7 @@ describe("USER_TZ label formatting", () => {
 describe("empty series", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("empty rows → points:[] and domain anchored to target.target", async () => {

@@ -9,6 +9,7 @@ vi.mock("@/lib/db", () => ({
     workout: { findFirst: vi.fn() },
     footageMarker: { create: vi.fn() },
   },
+  getDb: vi.fn(),
 }));
 
 // calendar is a pure module (no DB); let it run real.
@@ -18,9 +19,11 @@ vi.mock("@/lib/records", () => ({
 }));
 
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { canonicalExerciseName } from "@/lib/records";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 const mockWorkoutFindFirst = prisma.workout.findFirst as ReturnType<typeof vi.fn>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockPrisma = prisma as any;
@@ -31,6 +34,7 @@ describe("resolveWorkoutIdForDay", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("returns the workout id when a completed workout exists within the day window", async () => {
@@ -72,6 +76,7 @@ describe("resolveWorkoutIdForDay", () => {
 describe("canonicalization branch — exerciseName stored as canonical form", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("stores the canonicalized exerciseName (not the raw input)", async () => {
