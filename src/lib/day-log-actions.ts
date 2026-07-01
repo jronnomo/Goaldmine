@@ -20,7 +20,7 @@ import {
 } from "@/lib/calendar";
 import { createWorkoutCore, type ExerciseInput } from "@/lib/workout-core";
 import { logHikeCore, type LogHikeCoreInput } from "@/lib/hike-core";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { RecordSet } from "@/lib/records";
 
 // ---------------------------------------------------------------------------
@@ -168,7 +168,8 @@ export async function skipDay(input: SkipDayInput): Promise<{ id: string }> {
   const dayEnd = endOfDay(parseDateKey(input.dateKey));
 
   // Idempotent: look for an existing skipped workout this day.
-  const existing = await prisma.workout.findFirst({
+  const db = await getDb();
+  const existing = await db.workout.findFirst({
     where: {
       status: "skipped",
       startedAt: { gte: dayStart, lte: dayEnd },
@@ -177,7 +178,7 @@ export async function skipDay(input: SkipDayInput): Promise<{ id: string }> {
   });
 
   if (existing) {
-    await prisma.workout.update({
+    await db.workout.update({
       where: { id: existing.id },
       data: { notes, title },
     });
@@ -223,7 +224,9 @@ export async function unskipDay(dateKey: string): Promise<{ deleted: number }> {
   const dayEnd = endOfDay(parseDateKey(dateKey));
 
   // DA M4: deleteMany backstop — removes all skipped rows for this day.
-  const result = await prisma.workout.deleteMany({
+  // getDb() injects userId into deleteMany where → auto-scoped to current user's workouts.
+  const db = await getDb();
+  const result = await db.workout.deleteMany({
     where: {
       status: "skipped",
       startedAt: { gte: dayStart, lte: dayEnd },

@@ -7,7 +7,7 @@ import {
   removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
@@ -24,7 +24,8 @@ export async function logMeasurement(form: FormData) {
     throw new Error("Weight must be a positive number");
   }
 
-  await prisma.measurement.create({
+  const db = await getDb();
+  await db.measurement.create({
     data: {
       date: new Date(),
       weightLb,
@@ -52,7 +53,8 @@ export async function logBodyMetric(form: FormData) {
   const date = dateStr ? parseDateKey(dateStr) : startOfDay(new Date());
   const resolvedUnit = unit ?? BODY_METRIC_BY_KEY.get(key)?.units ?? null;
 
-  await prisma.bodyMetric.create({
+  const db = await getDb();
+  await db.bodyMetric.create({
     data: { date, key, value, unit: resolvedUnit, notes, source: "manual" },
   });
 
@@ -68,7 +70,8 @@ export async function logNote(form: FormData) {
 
   if (!body) throw new Error("Note body is required");
 
-  await prisma.note.create({
+  const db = await getDb();
+  await db.note.create({
     data: {
       date: new Date(),
       body,
@@ -95,7 +98,8 @@ export async function logBaselineInline(form: FormData) {
   if (!units) throw new Error("Units are required");
 
   const date = new Date();
-  await prisma.baseline.create({ data: { testName, value, units, date, notes } });
+  const db = await getDb();
+  await db.baseline.create({ data: { testName, value, units, date, notes } });
   await appendBaselineToDayWorkout({ testName, value, units, date, notes });
 
   revalidatePath("/");
@@ -119,7 +123,8 @@ export async function logBaseline(form: FormData) {
   const date = dateStr ? new Date(dateStr) : new Date();
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
-  await prisma.baseline.create({
+  const db = await getDb();
+  await db.baseline.create({
     data: { testName, value, units, date, notes },
   });
   await appendBaselineToDayWorkout({ testName, value, units, date, notes });
@@ -144,8 +149,9 @@ export async function updateBaseline(id: string, form: FormData) {
   const date = dateStr ? new Date(dateStr) : new Date();
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
-  const before = await prisma.baseline.findUniqueOrThrow({ where: { id } });
-  const updated = await prisma.baseline.update({
+  const db = await getDb();
+  const before = await db.baseline.findUniqueOrThrow({ where: { id } });
+  const updated = await db.baseline.update({
     where: { id },
     data: { value, units, date, notes },
   });
@@ -168,8 +174,9 @@ export async function updateBaseline(id: string, form: FormData) {
 }
 
 export async function deleteBaselineRow(id: string) {
-  const row = await prisma.baseline.findUniqueOrThrow({ where: { id } });
-  await prisma.baseline.delete({ where: { id } });
+  const db = await getDb();
+  const row = await db.baseline.findUniqueOrThrow({ where: { id } });
+  await db.baseline.delete({ where: { id } });
   await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
@@ -256,7 +263,8 @@ export async function logNutrition(form: FormData) {
   const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
-  await prisma.nutritionLog.create({
+  const db = await getDb();
+  await db.nutritionLog.create({
     data: { date, mealType, items, notes, ...parseMacros(form) },
   });
 
@@ -295,7 +303,8 @@ export async function updateNutrition(id: string, form: FormData) {
   const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
-  await prisma.nutritionLog.update({
+  const db = await getDb();
+  await db.nutritionLog.update({
     where: { id },
     data: { mealType, items, notes, date, ...parseMacros(form) },
   });
@@ -327,7 +336,8 @@ export type NutritionSnapshot = {
 // optimistic-delete/Undo flow (UXR-meal-edit-13) can restore it. Navigation for
 // the full-page fallback is handled by EditNutritionForm's onDeleted.
 export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
-  const row = await prisma.nutritionLog.delete({ where: { id } });
+  const db = await getDb();
+  const row = await db.nutritionLog.delete({ where: { id } });
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
@@ -361,7 +371,8 @@ export async function restoreNutrition(snap: NutritionSnapshot) {
   const date = new Date(snap.dateISO);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
-  await prisma.nutritionLog.create({
+  const db = await getDb();
+  await db.nutritionLog.create({
     data: {
       date,
       mealType: snap.mealType,

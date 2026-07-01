@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { parseDateKey } from "@/lib/calendar";
 import { canonicalExerciseName } from "@/lib/records";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
 
 // --------------------------------------------------------------------------
@@ -40,7 +40,8 @@ export async function logFootageMarker(formData: FormData): Promise<void> {
     capturedAt = isNaN(d.getTime()) ? null : d;
   }
 
-  await prisma.footageMarker.create({
+  const db = await getDb();
+  await db.footageMarker.create({
     data: {
       date: dayStart,
       label,
@@ -69,7 +70,8 @@ export async function deleteFootageMarker(formData: FormData): Promise<void> {
   const id      = String(formData.get("id"));
   const dateKey = String(formData.get("dateKey")); // passed by FootageList as hidden field
 
-  await prisma.footageMarker.delete({ where: { id } });
+  const db = await getDb();
+  await db.footageMarker.delete({ where: { id } });
 
   revalidatePath(`/days/${dateKey}`);
   revalidatePath("/");

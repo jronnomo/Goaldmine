@@ -11,7 +11,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { startOfWeekMonday, addDays, weekRangeLabel } from "@/lib/calendar";
 
 /**
@@ -23,7 +23,7 @@ import { startOfWeekMonday, addDays, weekRangeLabel } from "@/lib/calendar";
  *   1. Clamp + trunc weekOffset to [-12, 0]  (REV-5/S-1)
  *   2. Compute the week's Monday (USER_TZ-correct via @/lib/calendar)
  *   3. Idempotent create: calendar-day RANGE query for shared_recap (REV-1/CRIT-1)
- *   4. Clear active routine nudge: resolve newest unresolved [week: open_item
+ *   4. Clear active routine nudge: resolve newest unresolved [recap: open_item
  *   5. revalidatePath("/recap") + revalidatePath("/coach")
  *
  * NOTE on MCP: a log_note with type:"shared_recap" SHOULD pass
@@ -42,9 +42,11 @@ export async function markRecapPosted(
     const thisMonday = startOfWeekMonday(now);
     const monday = addDays(thisMonday, clampedOffset * 7);
 
+    const db = await getDb();
+
     // 3. Idempotent create — calendar-day RANGE, not exact-ms equality  (REV-1/CRIT-1)
     //    Tolerates notes written by MCP with a non-midnight targetDate on the same day.
-    const existing = await prisma.note.findFirst({
+    const existing = await db.note.findFirst({
       where: {
         type: "shared_recap",
         targetDate: { gte: monday, lt: addDays(monday, 1) },
@@ -52,7 +54,7 @@ export async function markRecapPosted(
       select: { id: true },
     });
     if (!existing) {
-      await prisma.note.create({
+      await db.note.create({
         data: {
           type: "shared_recap",
           targetDate: monday, // week's Monday 00:00 USER_TZ — the canonical week key
@@ -70,7 +72,7 @@ export async function markRecapPosted(
     //    nudges — those carry unrelated weekly guidance the user may not have acted on.
     //    Resolves regardless of which historical week was shared (clear the current
     //    active recap nudge, per the #95 "stop nagging" decision).
-    const nudge = await prisma.note.findFirst({
+    const nudge = await db.note.findFirst({
       where: {
         type: "open_item",
         resolvedAt: null,
@@ -80,7 +82,7 @@ export async function markRecapPosted(
       select: { id: true },
     });
     if (nudge) {
-      await prisma.note.update({
+      await db.note.update({
         where: { id: nudge.id },
         data: {
           resolvedAt: now,

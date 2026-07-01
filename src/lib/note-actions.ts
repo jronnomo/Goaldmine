@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export async function resolveNote(id: string, reason?: string) {
-  await prisma.note.update({
+  const db = await getDb();
+  await db.note.update({
     where: { id },
     data: {
       resolvedAt: new Date(),
@@ -17,9 +18,10 @@ export async function resolveNote(id: string, reason?: string) {
 }
 
 export async function resolveOpenItem(id: string, reason?: string) {
-  const note = await prisma.note.findUnique({ where: { id }, select: { type: true } });
+  const db = await getDb();
+  const note = await db.note.findUnique({ where: { id }, select: { type: true } });
   if (!note || note.type !== "open_item") return; // type guard — silent; UI must not crash on mismatch
-  await prisma.note.update({
+  await db.note.update({
     where: { id },
     data: {
       resolvedAt: new Date(),
@@ -29,9 +31,12 @@ export async function resolveOpenItem(id: string, reason?: string) {
   revalidatePath("/coach");
 }
 
+// note-actions:34 global-write trap: getDb() injects userId into the updateMany where
+// → auto-scopes to current user's pending notes only. Correct Phase-1 behavior.
 export async function resolveAllPendingNotes() {
+  const db = await getDb();
   const now = new Date();
-  await prisma.note.updateMany({
+  await db.note.updateMany({
     where: { resolvedAt: null },
     data: {
       resolvedAt: now,

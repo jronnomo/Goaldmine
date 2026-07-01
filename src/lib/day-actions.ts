@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@/generated/prisma/client";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { startOfDay } from "@/lib/calendar";
 import { getActiveProgram } from "@/lib/program";
 
@@ -29,9 +29,9 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
 
   // If everything is null/empty, treat as "remove override".
   if (!workoutJson && !nutritionText && !mobilityText && !notes) {
-    await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } });
+    await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } }); // non-scoped: plan override table
   } else {
-    await prisma.planDayOverride.upsert({
+    await prisma.planDayOverride.upsert({ // non-scoped: plan override table
       where: { planId_date: { planId: program.id, date } },
       create: {
         planId: program.id,
@@ -59,7 +59,7 @@ export async function clearDayOverride(dateKey: string) {
   const program = await getActiveProgram();
   if (!program) throw new Error("No active plan");
   const date = startOfDay(parseDateKey(dateKey));
-  await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } });
+  await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } }); // non-scoped: plan override table
   revalidatePath("/calendar");
   revalidatePath(`/days/${dateKey}`);
   revalidatePath("/");
@@ -71,7 +71,8 @@ export async function logNoteForDate(dateKey: string, form: FormData) {
   if (!body) throw new Error("Note body is required");
 
   const targetDate = startOfDay(parseDateKey(dateKey));
-  await prisma.note.create({
+  const db = await getDb();
+  await db.note.create({
     data: {
       body,
       type,

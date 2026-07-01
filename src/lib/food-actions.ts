@@ -1,6 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+// food-actions intentionally keeps prisma raw — all DB calls in this file are to
+// FoodLibrary, which is non-scoped (no userId column). getDb() passes non-scoped
+// models through untouched, so raw prisma and db.* are identical here. Keeping
+// raw signals that these are shared-catalog reads/writes with no user isolation.
 import { prisma } from "@/lib/db";
 import { normalizeOffProduct } from "@/lib/openfoodfacts";
 import { parseFoodQuery } from "@/lib/food-parse";

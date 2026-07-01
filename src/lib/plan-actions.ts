@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { ProgramTemplate } from "@/lib/program-template";
 
 export type ApplyRevisionInput = {
@@ -19,10 +19,11 @@ export async function applyPlanRevisionRaw(input: ApplyRevisionInput) {
   if (!input.summary.trim()) throw new Error("Summary is required");
   if (!input.snapshotJson) throw new Error("Snapshot JSON is required");
 
-  const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+  const db = await getDb();
+  const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
 
-  const revision = await prisma.$transaction(async (tx) => {
-    const r = await tx.planRevision.create({
+  const revision = await db.$transaction(async (tx) => {
+    const r = await tx.planRevision.create({ // non-scoped: plan revision table
       data: {
         planId: plan.id,
         triggerNoteId: input.triggerNoteId ?? null,
@@ -62,10 +63,11 @@ export async function applyPlanRevisionFromForm(planId: string, form: FormData) 
     throw new Error(`Invalid snapshot JSON: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const plan = await prisma.plan.findUniqueOrThrow({ where: { id: planId } });
+  const db = await getDb();
+  const plan = await db.plan.findUniqueOrThrow({ where: { id: planId } });
 
-  await prisma.$transaction(async (tx) => {
-    await tx.planRevision.create({
+  await db.$transaction(async (tx) => {
+    await tx.planRevision.create({ // non-scoped: plan revision table
       data: {
         planId,
         triggerNoteId: triggerNoteId || null,

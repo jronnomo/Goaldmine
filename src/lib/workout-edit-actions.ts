@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import {
   updateWorkoutCore,
   updateWorkoutSetCore,
@@ -49,7 +49,8 @@ export async function saveWorkoutEdits(
   { header, setPatches, ops }: SaveWorkoutEditsInput,
 ): Promise<void> {
   // Fetch startedAt upfront so we can target the day route in revalidation.
-  const workout = await prisma.workout.findUniqueOrThrow({
+  const db = await getDb();
+  const workout = await db.workout.findUniqueOrThrow({
     where: { id: workoutId },
     select: { startedAt: true },
   });
@@ -84,7 +85,8 @@ export async function saveWorkoutEdits(
 // ─── deleteWorkoutAction ──────────────────────────────────────────────────────
 
 export async function deleteWorkoutAction(workoutId: string): Promise<never> {
-  const workout = await prisma.workout.findUniqueOrThrow({
+  const db = await getDb();
+  const workout = await db.workout.findUniqueOrThrow({
     where: { id: workoutId },
     select: { startedAt: true },
   });

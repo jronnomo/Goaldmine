@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
@@ -85,8 +85,9 @@ export async function createGoal(form: FormData) {
 
 export async function copyTargetsFromGoal(toId: string, fromId: string) {
   if (toId === fromId) throw new Error("Cannot copy a goal's targets onto itself");
-  const source = await prisma.goal.findUniqueOrThrow({ where: { id: fromId } });
-  await prisma.goal.update({
+  const db = await getDb();
+  const source = await db.goal.findUniqueOrThrow({ where: { id: fromId } });
+  await db.goal.update({
     where: { id: toId },
     data: { targets: source.targets ?? undefined },
   });
@@ -114,7 +115,8 @@ export async function updateGoal(id: string, form: FormData) {
   // status (active/achieved/abandoned) is lifecycle metadata. Goal.active is
   // the tracking flag; Goal.isFocus is which goal drives Today/Calendar.
   // They are independent — use setFocusGoal to change focus.
-  await prisma.goal.update({
+  const db = await getDb();
+  await db.goal.update({
     where: { id },
     data: {
       objective,
@@ -170,7 +172,8 @@ export async function setGoalTracked(id: string, tracked: boolean) {
 }
 
 export async function deleteGoal(id: string) {
-  await prisma.goal.delete({ where: { id } });
+  const db = await getDb();
+  await db.goal.delete({ where: { id } });
   revalidatePath("/");
   revalidatePath("/calendar");
   revalidatePath("/goals");
@@ -189,7 +192,8 @@ export async function addGoalReference(id: string, form: FormData) {
     throw new Error("URLs must start with http:// or https://");
   }
 
-  const goal = await prisma.goal.findUniqueOrThrow({ where: { id } });
+  const db = await getDb();
+  const goal = await db.goal.findUniqueOrThrow({ where: { id } });
   const refs = (goal.references as unknown as GoalReference[] | null) ?? [];
   const next: GoalReference[] = [
     ...refs,
@@ -202,15 +206,16 @@ export async function addGoalReference(id: string, form: FormData) {
     },
   ];
 
-  await prisma.goal.update({ where: { id }, data: { references: next } });
+  await db.goal.update({ where: { id }, data: { references: next } });
   revalidatePath(`/goals/${id}`);
 }
 
 export async function removeGoalReference(id: string, refId: string) {
-  const goal = await prisma.goal.findUniqueOrThrow({ where: { id } });
+  const db = await getDb();
+  const goal = await db.goal.findUniqueOrThrow({ where: { id } });
   const refs = (goal.references as unknown as GoalReference[] | null) ?? [];
   const next = refs.filter((r) => r.id !== refId);
-  await prisma.goal.update({ where: { id }, data: { references: next } });
+  await db.goal.update({ where: { id }, data: { references: next } });
   revalidatePath(`/goals/${id}`);
 }
 
@@ -221,14 +226,15 @@ export async function removeGoalReference(id: string, refId: string) {
  * Revalidates the metric detail page, the trends page, and Today.
  */
 export async function deleteMetricReading(goalId: string, metric: string, entryId: string) {
-  const entry = await prisma.logEntry.findUnique({
+  const db = await getDb();
+  const entry = await db.logEntry.findUnique({
     where: { id: entryId },
     select: { goalId: true, metric: true },
   });
   if (!entry || entry.goalId !== goalId || entry.metric !== metric) {
     throw new Error("Reading not found");
   }
-  await prisma.logEntry.delete({ where: { id: entryId } });
+  await db.logEntry.delete({ where: { id: entryId } });
   revalidatePath(`/goals/${goalId}/metric/${metric}`);
   revalidatePath(`/goals/${goalId}/trends`);
   revalidatePath("/");
