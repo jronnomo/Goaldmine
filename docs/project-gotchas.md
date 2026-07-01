@@ -139,6 +139,23 @@ and split into two sequential top-level calls. The highest-priority site is
 `src/lib/goal-core.ts` → `createGoalCore` which nests `plans: { create: {...} }`
 inside a `$transaction`.
 
+### 11. SYSTEM-scoped writes — render-job worker ops bypass user-scoping BY DESIGN
+
+Two files use raw `prisma` (not `getDb()`) intentionally, because a background
+worker processes **any** user's render job — cross-user access is the correct
+behavior for a queue consumer:
+
+| File | Ops |
+|---|---|
+| `src/app/api/render-jobs/peek/route.ts` | 6 ops: list pending, claim, list claimed, start, submit-draft, complete/fail |
+| `src/lib/mcp/tools/render-tools.ts` | Same set of worker ops (MCP surface for the worker agent) |
+
+Each call-site is marked `// SYSTEM: raw prisma — cross-user render worker (Phase 1: multi-tenant worker pattern)`.
+
+**Rule:** everything else in `src/lib/mcp/` and `src/lib/` MUST use `getDb()`.
+Use the `// SYSTEM:` comment convention to annotate any future intentional
+cross-user raw-prisma call so audits don't flag it as missing scoping.
+
 ---
 
 ## E. RPG game engine gotchas (dev)
