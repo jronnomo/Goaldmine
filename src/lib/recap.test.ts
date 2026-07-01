@@ -18,16 +18,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // vi.mock is hoisted by Vitest before all imports. This prevents the
 // "DATABASE_URL is not set" throw from db.ts and intercepts the async helpers
 // called by computeWeeklyRecap.
-vi.mock("@/lib/db", () => ({
-  prisma: {
+vi.mock("@/lib/db", () => {
+  // Shared mock db — both `prisma` (legacy import at line 51) and the object
+  // returned by `getDb()` point to the same vi.fn() instances so beforeEach
+  // setup via `pm.*` applies to both paths.
+  const db = {
     goal: { findFirst: vi.fn() },
     workout: { findMany: vi.fn() },
     hike: { findMany: vi.fn() },
     logEntry: { findFirst: vi.fn() },
     scheduledItem: { groupBy: vi.fn() },
     baseline: { findMany: vi.fn() },
-  },
-}));
+  };
+  return {
+    prisma: db,
+    getDb: vi.fn().mockResolvedValue(db),
+  };
+});
 
 // @/lib/records is mocked for getExerciseSummaries (called by computeWeeklyRecap)
 // and getExerciseHistory (transitively imported by goal-targets.ts → readiness.ts).

@@ -14,7 +14,7 @@ import {
   dateKey,
   weekRangeLabel,
 } from "@/lib/calendar";
-import { prisma } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import {
   presentationForGoal,
   fmtComma,
@@ -277,10 +277,11 @@ export async function computeWeeklyRecap(
     const sunday = endOfWeekSunday(monday);
 
     // ── 2. Goal-first fetch ────────────────────────────────────────────────
+    const db = await getDb();
     const goal = await (
       opts?.goalId
-        ? prisma.goal.findFirst({ where: { id: opts.goalId } })
-        : prisma.goal.findFirst({
+        ? db.goal.findFirst({ where: { id: opts.goalId } })
+        : db.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
           })
@@ -308,14 +309,14 @@ export async function computeWeeklyRecap(
     const [workouts, allExerciseSummaries, hikes, plan, gameState] =
       await Promise.all([
         // Completed workouts in the week
-        prisma.workout.findMany({
+        db.workout.findMany({
           where: { startedAt: { gte: monday, lte: sunday }, status: "completed" },
           include: { exercises: { include: { sets: true } } },
         }),
         // All-time exercise PRs (filter by bestDate in window after)
         getExerciseSummaries(),
         // Completed hikes in the week (select extended for highlight detection)
-        prisma.hike.findMany({
+        db.hike.findMany({
           where: { date: { gte: monday, lte: sunday }, status: "completed" },
           select: { elevationFt: true, id: true, route: true, distanceMi: true },
         }),
@@ -333,14 +334,14 @@ export async function computeWeeklyRecap(
     if (goal && (logKeys.length > 0 || schedTypes.length > 0)) {
       await Promise.all([
         ...logKeys.map(async (k) => {
-          const row = await prisma.logEntry.findFirst({
+          const row = await db.logEntry.findFirst({
             where: { goalId: goal.id, metric: k, value: { not: null } },
             orderBy: { date: "desc" },
           });
           logLatest.set(k, row?.value ?? null);
         }),
         ...schedTypes.map(async (t) => {
-          const groups = await prisma.scheduledItem.groupBy({
+          const groups = await db.scheduledItem.groupBy({
             by: ["status"],
             where: { goalId: goal.id, type: t },
             _count: { _all: true },
@@ -577,7 +578,7 @@ export async function computeWeeklyRecap(
       }));
 
       // Baselines: query the week, dedupe by testName (take max value), check vs prior
-      const weekBaselineRows = await prisma.baseline.findMany({
+      const weekBaselineRows = await db.baseline.findMany({
         where: { date: { gte: monday, lte: sunday } },
         select: { testName: true, value: true, units: true },
       });
@@ -595,7 +596,7 @@ export async function computeWeeklyRecap(
       const priorMaxByTest = new Map<string, number>();
       if (uniqueWeekBaselines.length > 0) {
         const testNames = uniqueWeekBaselines.map((b) => b.testName);
-        const priorRows = await prisma.baseline.findMany({
+        const priorRows = await db.baseline.findMany({
           where: { testName: { in: testNames }, date: { lt: monday } },
           select: { testName: true, value: true },
         });
