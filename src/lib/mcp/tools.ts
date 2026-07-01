@@ -36,7 +36,8 @@ import {
 import { orphanedOverrideWarning } from "@/lib/override-integrity";
 import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
+import type { ScopedClient } from "@/lib/db";
 import { formatWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
@@ -207,7 +208,7 @@ type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
 // below can accept either the global `prisma` or a transaction client `tx`.
 // Picking the second overload via Parameters<…>[0] resolves to the callback,
 // then [0] grabs its first param.
-type DbClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+type DbClient = Parameters<Parameters<ScopedClient['$transaction']>[0]>[0];
 
 import { safe, parseDateInput, errorResult, imageAndJsonResult } from "@/lib/mcp/tool-helpers";
 import { computeWeeklyRecap, resolveHighlight } from "@/lib/recap";
@@ -512,8 +513,9 @@ export function registerAll(server: McpServer) {
 async function fetchOpenItems(): Promise<
   { id: string; body: string; targetDate: string | null; priority: string | null; overdue: boolean }[]
 > {
+  const db = await getDb();
   const now = startOfDay(new Date());
-  const items = await prisma.note.findMany({
+  const items = await db.note.findMany({
     where: { type: "open_item", resolvedAt: null },
     orderBy: [{ targetDate: { sort: "asc", nulls: "last" } }, { date: "asc" }],
     select: { id: true, body: true, targetDate: true, priority: true, date: true },
@@ -564,10 +566,11 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
+        const db = await getDb();
         const now = new Date();
         const [r, standingRules, activeGoalRow] = await Promise.all([
           resolveDay(now),
-          prisma.note.findMany({
+          db.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
             // nulls: "last" so freshly-acknowledged rules bubble up first
             // and never-acknowledged rules (lastAcknowledgedAt IS NULL) don't
@@ -580,7 +583,7 @@ function registerReadTools(server: McpServer) {
               lastAcknowledgedAt: true,
             },
           }),
-          prisma.goal.findFirst({
+          db.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
             select: { id: true, kind: true, objective: true, githubRepo: true, targets: true, targetDate: true },
@@ -602,7 +605,7 @@ function registerReadTools(server: McpServer) {
           completedAt: string | null;
         }[] = [];
         if (activeGoalRow?.kind === "project") {
-          const rows = await prisma.scheduledItem.findMany({
+          const rows = await db.scheduledItem.findMany({
             where: {
               goalId: activeGoalRow.id,
               date: { gte: startOfDay(now), lte: endOfDay(now) },
@@ -757,36 +760,37 @@ function registerReadTools(server: McpServer) {
     },
     async ({ days }) =>
       safe(async () => {
+        const db = await getDb();
         const since = startOfDay(addDays(new Date(), -days));
 
         const [workouts, measurements, notes, baselines, hikes, nutrition, bodyMetricRows] = await Promise.all([
-          prisma.workout.findMany({
+          db.workout.findMany({
             where: { startedAt: { gte: since } },
             include: { exercises: { include: { sets: true } } },
             orderBy: { startedAt: "desc" },
           }),
-          prisma.measurement.findMany({
+          db.measurement.findMany({
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
-          prisma.note.findMany({
+          db.note.findMany({
             where: { date: { gte: since }, type: { in: [...ACTIVITY_NOTE_TYPES] } },
             orderBy: { date: "desc" },
           }),
-          prisma.baseline.findMany({
+          db.baseline.findMany({
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
-          prisma.hike.findMany({
+          db.hike.findMany({
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
-          prisma.nutritionLog.findMany({
+          db.nutritionLog.findMany({
             where: { date: { gte: since } },
             orderBy: { date: "desc" },
           }),
           // R-S1: include latest body metric per key so the coach sees wearable data inline.
-          prisma.bodyMetric.findMany({
+          db.bodyMetric.findMany({
             where: { date: { gte: since } },
             orderBy: [{ date: "desc" }, { createdAt: "desc" }],
           }),
@@ -827,7 +831,8 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
-        const goals = await prisma.goal.findMany({
+        const db = await getDb();
+        const goals = await db.goal.findMany({
           orderBy: [
             { isFocus: "desc" },
             { active: "desc" },
@@ -874,7 +879,8 @@ function registerReadTools(server: McpServer) {
     },
     async ({ goalId }) =>
       safe(async () => {
-        const goal = await prisma.goal.findUniqueOrThrow({
+        const db = await getDb();
+        const goal = await db.goal.findUniqueOrThrow({
           where: { id: goalId },
           include: {
             plans: {
@@ -980,9 +986,10 @@ function registerReadTools(server: McpServer) {
     },
     async ({ goalId, asOf }) =>
       safe(async () => {
+        const db = await getDb();
         const goal = goalId
-          ? await prisma.goal.findUniqueOrThrow({ where: { id: goalId } })
-          : await prisma.goal.findFirst({ where: { isFocus: true }, orderBy: { updatedAt: "desc" } });
+          ? await db.goal.findUniqueOrThrow({ where: { id: goalId } })
+          : await db.goal.findFirst({ where: { isFocus: true }, orderBy: { updatedAt: "desc" } });
         if (!goal) {
           throw new Error("No focused goal found — pass goalId, or set a goal to focus first.");
         }
@@ -1014,11 +1021,12 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
-        const plan = await prisma.plan.findFirst({
+        const db = await getDb();
+        const plan = await db.plan.findFirst({
           where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
-        const notes = await prisma.note.findMany({
+        const notes = await db.note.findMany({
           where: { resolvedAt: null },
           orderBy: { date: "desc" },
         });
@@ -1065,10 +1073,11 @@ function registerReadTools(server: McpServer) {
     },
     async ({ includeStandingRules, includeAspirations, limit }) =>
       safe(async () => {
+        const db = await getDb();
         const types: string[] = ["feedback"];
         if (includeStandingRules) types.push("standing_rule");
         if (includeAspirations) types.push("audible", "journal");
-        const notes = await prisma.note.findMany({
+        const notes = await db.note.findMany({
           where: { type: { in: types } },
           orderBy: { date: "desc" },
           take: limit,
@@ -1104,7 +1113,8 @@ function registerReadTools(server: McpServer) {
     },
     async ({ noteIds, reason }) =>
       safe(async () => {
-        const result = await prisma.note.updateMany({
+        const db = await getDb();
+        const result = await db.note.updateMany({
           where: { id: { in: noteIds }, resolvedAt: null },
           data: { resolvedAt: new Date(), resolvedReason: reason },
         });
@@ -1132,34 +1142,35 @@ function registerReadTools(server: McpServer) {
     },
     async ({ weekOffset }) =>
       safe(async () => {
+        const db = await getDb();
         const now = new Date();
         const thisMonday = startOfWeekMonday(now);
         const monday = addDays(thisMonday, weekOffset * 7);
         const sunday = endOfWeekSunday(monday);
 
         const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
-          prisma.workout.findMany({
+          db.workout.findMany({
             where: { startedAt: { gte: monday, lte: sunday } },
             include: { exercises: { include: { sets: true } } },
             orderBy: { startedAt: "asc" },
           }),
-          prisma.measurement.findMany({
+          db.measurement.findMany({
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
-          prisma.note.findMany({
+          db.note.findMany({
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
-          prisma.baseline.findMany({
+          db.baseline.findMany({
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
-          prisma.hike.findMany({
+          db.hike.findMany({
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
-          prisma.nutritionLog.findMany({
+          db.nutritionLog.findMany({
             where: { date: { gte: monday, lte: sunday } },
             orderBy: { date: "asc" },
           }),
@@ -1247,7 +1258,8 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
-        const note = await prisma.note.findFirst({
+        const db = await getDb();
+        const note = await db.note.findFirst({
           where: { type: "review" },
           orderBy: { date: "desc" },
           select: { id: true, body: true, date: true, targetDate: true },
@@ -1286,6 +1298,7 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
+        const db = await getDb();
         const now = new Date();
         const MS_PER_DAY = 1000 * 60 * 60 * 24;
         const cutoff30 = addDays(startOfDay(now), -31);
@@ -1309,7 +1322,7 @@ function registerReadTools(server: McpServer) {
         ] = await Promise.all([
           resolveDay(now),
           getActiveProgram(),
-          prisma.goal.findFirst({
+          db.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },
             select: { id: true, objective: true, targetDate: true, kind: true },
@@ -1318,12 +1331,12 @@ function registerReadTools(server: McpServer) {
           // first in the brief. Intentional: stale rules are the ones the coach is most
           // at risk of forgetting. get_today_plan uses desc/nulls-last (freshest first)
           // because it's a per-turn surface, not a cold-start orientation.
-          prisma.note.findMany({
+          db.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
             orderBy: { lastAcknowledgedAt: "asc" },
             select: { id: true, body: true, lastAcknowledgedAt: true },
           }),
-          prisma.workout.findMany({
+          db.workout.findMany({
             where: { status: "completed", startedAt: { lte: now } },
             orderBy: { startedAt: "desc" },
             take: 5,
@@ -1335,19 +1348,19 @@ function registerReadTools(server: McpServer) {
               exercises: { select: { name: true }, take: 3 },
             },
           }),
-          prisma.hike.findMany({
+          db.hike.findMany({
             where: { status: "completed", date: { lte: endOfDay(now) } },
             orderBy: { date: "desc" },
             take: 5,
             select: { id: true, date: true, route: true, distanceMi: true, elevationFt: true, durationMin: true },
           }),
-          prisma.note.findFirst({
+          db.note.findFirst({
             where: { type: "review" },
             orderBy: { date: "desc" },
             select: { id: true, body: true, date: true, targetDate: true },
           }),
           fetchOpenItems(),
-          prisma.measurement.findMany({
+          db.measurement.findMany({
             where: { date: { gte: cutoff30 }, weightLb: { not: null } },
             orderBy: { date: "asc" },
             select: { date: true, weightLb: true },
@@ -1612,8 +1625,9 @@ function registerReadTools(server: McpServer) {
     },
     async ({ days, mealType }) =>
       safe(async () => {
+        const db = await getDb();
         const since = startOfDay(addDays(new Date(), -days));
-        const rows = await prisma.nutritionLog.findMany({
+        const rows = await db.nutritionLog.findMany({
           where: { date: { gte: since }, ...(mealType ? { mealType } : {}) },
           orderBy: { date: "desc" },
           select: {
@@ -1686,7 +1700,7 @@ function registerReadTools(server: McpServer) {
           };
         }> = [];
         try {
-          const frequentFoodRows = await prisma.foodLibrary.findMany({
+          const frequentFoodRows = await prisma.foodLibrary.findMany({  // non-scoped model — raw prisma is intentional
             orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
             take: 5,
             select: {
@@ -1832,11 +1846,12 @@ function registerReadTools(server: McpServer) {
     },
     async ({ from, to, includePast }) =>
       safe(async () => {
+        const db = await getDb();
         const lower = from ? parseDateInput(from) : startOfDay(new Date());
         const dateFilter: { gte?: Date; lte?: Date } = {};
         if (!includePast) dateFilter.gte = lower;
         if (to) dateFilter.lte = endOfDay(parseDateInput(to));
-        const rows = await prisma.hike.findMany({
+        const rows = await db.hike.findMany({
           where: {
             status: "planned",
             ...(dateFilter.gte || dateFilter.lte ? { date: dateFilter } : {}),
@@ -1861,7 +1876,7 @@ function registerReadTools(server: McpServer) {
           goalIds.length > 0
             ? Object.fromEntries(
                 (
-                  await prisma.goal.findMany({
+                  await db.goal.findMany({
                     where: { id: { in: goalIds } },
                     select: { id: true, objective: true },
                   })
@@ -1970,7 +1985,8 @@ function registerReadTools(server: McpServer) {
     },
     async ({ workoutId, format }) =>
       safe(async () => {
-        const w = await prisma.workout.findUniqueOrThrow({
+        const db = await getDb();
+        const w = await db.workout.findUniqueOrThrow({
           where: { id: workoutId },
           include: {
             exercises: {
@@ -2083,8 +2099,9 @@ function registerReadTools(server: McpServer) {
     },
     async () =>
       safe(async () => {
+        const db = await getDb();
         // R-S2: tie-break by createdAt so latest-per-day is deterministic.
-        const rows = await prisma.bodyMetric.findMany({
+        const rows = await db.bodyMetric.findMany({
           orderBy: [{ date: "desc" }, { createdAt: "desc" }],
         });
 
@@ -2169,12 +2186,13 @@ function registerReadTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const key = normalizeMetricKey(input.key);
         const lookback = input.days ?? 180;
         const since = startOfDay(addDays(new Date(), -lookback));
 
         // R-S2: oldest-first for charting; tie-break by createdAt asc.
-        const rows = await prisma.bodyMetric.findMany({
+        const rows = await db.bodyMetric.findMany({
           where: { key, date: { gte: since } },
           orderBy: [{ date: "asc" }, { createdAt: "asc" }],
         });
@@ -2259,6 +2277,7 @@ async function guardedAdvanceConfirmedThrough(
   | { ok: true; confirmedThroughDate: Date; previousConfirmedThroughDate: Date | null }
   | { ok: false; blockedBy: WeekConflict[]; reason?: string; previousConfirmedThroughDate: Date | null }
 > {
+  const db = await getDb();
   const previous: Date | null = program.confirmedThroughDate ?? null;
 
   // Clamp guard: refuse beyond plan end.
@@ -2325,7 +2344,7 @@ async function guardedAdvanceConfirmedThrough(
   // Write the new mark (skipped in dryRun mode — everything above still runs so the
   // preview is accurate; confirmedThroughDate in the return is the value that WOULD be set).
   if (!opts?.dryRun) {
-    await prisma.plan.update({
+    await db.plan.update({
       where: { id: program.id },
       data: { confirmedThroughDate: targetDate },
     });
@@ -2392,12 +2411,13 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
 
         // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
         let rhrRow: { id: string } | undefined;
         if (input.restingHr !== undefined) {
-          rhrRow = await prisma.bodyMetric.create({
+          rhrRow = await db.bodyMetric.create({
             data: {
               date,
               key: "rhr",
@@ -2410,7 +2430,7 @@ function registerWriteTools(server: McpServer) {
 
         // Only write a Measurement row when weight or body-fat are provided.
         if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
-          const m = await prisma.measurement.create({
+          const m = await db.measurement.create({
             data: {
               date,
               weightLb: input.weightLb ?? null,
@@ -2469,11 +2489,12 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const key = normalizeMetricKey(input.key);
         if (!Number.isFinite(input.value)) throw new Error("value must be a finite number");
         const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
         const unit = input.unit ?? BODY_METRIC_BY_KEY.get(key)?.units ?? null;
-        const row = await prisma.bodyMetric.create({
+        const row = await db.bodyMetric.create({
           data: {
             date,
             key,
@@ -2522,6 +2543,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         // Reject phantom completions: a bare 0 reads as "logged but no real
         // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
         // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
@@ -2539,7 +2561,7 @@ function registerWriteTools(server: McpServer) {
         // Idempotency: one result per testName per calendar day. A repeat call
         // updates the existing row in place (mirrors apply_day_override's upsert
         // and log_hike's finalize-in-place) instead of stacking duplicates.
-        const existing = await prisma.baseline.findFirst({
+        const existing = await db.baseline.findFirst({
           where: {
             testName: input.testName,
             date: { gte: startOfDay(date), lte: endOfDay(date) },
@@ -2548,7 +2570,7 @@ function registerWriteTools(server: McpServer) {
         });
 
         if (existing) {
-          const updated = await prisma.baseline.update({
+          const updated = await db.baseline.update({
             where: { id: existing.id },
             data: {
               value: input.value,
@@ -2573,7 +2595,7 @@ function registerWriteTools(server: McpServer) {
           };
         }
 
-        const b = await prisma.baseline.create({
+        const b = await db.baseline.create({
           data: {
             testName: input.testName,
             value: input.value,
@@ -2624,18 +2646,19 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const date = input.date ? parseDateInput(input.date) : new Date();
         const areasWorked = (input.areasWorked ?? []).join(",");
 
         // Idempotency: one check-in per calendar day (mirrors log_baseline /
         // log_hike). Matches the engine's 1/day MOB award per MobilityCheckin.
-        const existing = await prisma.mobilityCheckin.findFirst({
+        const existing = await db.mobilityCheckin.findFirst({
           where: { date: { gte: startOfDay(date), lte: endOfDay(date) } },
           orderBy: { date: "asc" },
         });
 
         if (existing) {
-          const updated = await prisma.mobilityCheckin.update({
+          const updated = await db.mobilityCheckin.update({
             where: { id: existing.id },
             data: {
               date,
@@ -2651,7 +2674,7 @@ function registerWriteTools(server: McpServer) {
           };
         }
 
-        const m = await prisma.mobilityCheckin.create({
+        const m = await db.mobilityCheckin.create({
           data: {
             date,
             areasWorked,
@@ -2763,7 +2786,7 @@ function registerWriteTools(server: McpServer) {
         "Audible / journal / feedback / standing_rule / review. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note. For a structured first-class weekly review (surfaced by get_latest_review) use log_review.",
       inputSchema: LogNoteShape,
     },
-    async (input) => safe(() => logNoteCore(prisma, input)),
+    async (input) => safe(async () => logNoteCore(await getDb(), input)),
   );
 
   server.registerTool(
@@ -2791,7 +2814,8 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const n = await prisma.note.create({
+        const db = await getDb();
+        const n = await db.note.create({
           data: {
             body: input.body,
             type: "open_item",
@@ -2822,11 +2846,12 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id, reason }) =>
       safe(async () => {
-        const note = await prisma.note.findUniqueOrThrow({ where: { id } });
+        const db = await getDb();
+        const note = await db.note.findUniqueOrThrow({ where: { id } });
         if (note.type !== "open_item") {
           throw new Error(`Note ${id} is type '${note.type}', not 'open_item'.`);
         }
-        const updated = await prisma.note.update({
+        const updated = await db.note.update({
           where: { id },
           data: { resolvedAt: new Date(), resolvedReason: reason },
         });
@@ -2905,6 +2930,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan.");
         const previous: Date | null = program.confirmedThroughDate ?? null;
@@ -2924,7 +2950,7 @@ function registerWriteTools(server: McpServer) {
             addDays(startOfDay(program.startedOn), (input.weekIndex - 2) * 7 + 6),
           );
         }
-        await prisma.plan.update({
+        await db.plan.update({
           where: { id: program.id },
           data: { confirmedThroughDate: newDate },
         });
@@ -2966,8 +2992,9 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         // Note is always persisted; confirm failure is a non-fatal advisory in the return.
-        const n = await prisma.note.create({
+        const n = await db.note.create({
           data: {
             body: input.body,
             type: "review",
@@ -3008,7 +3035,7 @@ function registerWriteTools(server: McpServer) {
         "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
       inputSchema: LogNutritionShape,
     },
-    async (input) => safe(() => logNutritionCore(prisma, input)),
+    async (input) => safe(async () => logNutritionCore(await getDb(), input)),
   );
 
   server.registerTool(
@@ -3041,6 +3068,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const data: Record<string, unknown> = {};
         if (input.mealType !== undefined) data.mealType = input.mealType;
         if (input.items !== undefined) data.items = input.items as Prisma.InputJsonValue;
@@ -3051,7 +3079,7 @@ function registerWriteTools(server: McpServer) {
             if (input.macros[k] !== undefined) data[k] = input.macros[k];
           }
         }
-        const updated = await prisma.nutritionLog.update({ where: { id: input.id }, data });
+        const updated = await db.nutritionLog.update({ where: { id: input.id }, data });
         return { id: updated.id, message: "Nutrition updated" };
       }),
   );
@@ -3081,7 +3109,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id, ops }) =>
       safe(async () => {
-        const log = await prisma.nutritionLog.findUniqueOrThrow({ where: { id } });
+        const db = await getDb();
+        const log = await db.nutritionLog.findUniqueOrThrow({ where: { id } });
         const items = parseStoredItems(log.items);
         let next: ReturnType<typeof applyNutritionLogOps>;
         try {
@@ -3091,7 +3120,7 @@ function registerWriteTools(server: McpServer) {
             `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
           );
         }
-        await prisma.nutritionLog.update({
+        await db.nutritionLog.update({
           where: { id },
           data: { items: next as unknown as Prisma.InputJsonValue },
         });
@@ -3138,7 +3167,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        await prisma.nutritionLog.delete({ where: { id } });
+        const db = await getDb();
+        await db.nutritionLog.delete({ where: { id } });
         return { id, message: "Nutrition deleted" };
       }),
   );
@@ -3175,6 +3205,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
         // Auto-recover then validate structural shape.
         let snapshot: unknown = input.snapshotJson;
@@ -3189,7 +3220,7 @@ function registerWriteTools(server: McpServer) {
         }
         assertValidProgramTemplate(snapshot);
 
-        const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
         const template = snapshot as ProgramTemplate;
 
         // Lint the proposed snapshot before writing. Structural errors block;
@@ -3226,7 +3257,7 @@ function registerWriteTools(server: McpServer) {
             ...(input.triggerNoteId ? [input.triggerNoteId] : []),
           ]),
         ];
-        const { rev, resolvedCount } = await prisma.$transaction(async (tx) => {
+        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
           const r = await tx.planRevision.create({
             data: {
               planId: plan.id,
@@ -3310,6 +3341,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         if (
           input.name === undefined &&
           input.endsOn === undefined &&
@@ -3320,13 +3352,13 @@ function registerWriteTools(server: McpServer) {
             "Nothing to update — pass at least one of name, endsOn, weeks, or goalTargetDate.",
           );
         }
-        const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
         const planData: Record<string, unknown> = {};
         if (input.name !== undefined) planData.name = input.name;
         if (input.endsOn !== undefined) planData.endsOn = startOfDay(parseDateKey(input.endsOn));
         if (input.weeks !== undefined) planData.weeks = input.weeks;
 
-        await prisma.$transaction(async (tx) => {
+        await db.$transaction(async (tx) => {
           if (Object.keys(planData).length > 0) {
             await tx.plan.update({ where: { id: plan.id }, data: planData });
           }
@@ -3381,7 +3413,8 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const plan = await prisma.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        const db = await getDb();
+        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
 
         // The live snapshot should already be valid (apply_plan_revision gates
         // every write), but assert before patching so a malformed planJson fails
@@ -3420,7 +3453,7 @@ function registerWriteTools(server: McpServer) {
           ]),
         ];
 
-        const { rev, resolvedCount } = await prisma.$transaction(async (tx) => {
+        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
           const r = await tx.planRevision.create({
             data: {
               planId: plan.id,
@@ -3493,9 +3526,10 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan");
-        return applyDayOverrideCore(prisma, program, input);
+        return applyDayOverrideCore(db, program, input);
       }),
   );
 
@@ -3541,7 +3575,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, targets }) =>
       safe(async () => {
-        await prisma.goal.update({
+        const db = await getDb();
+        await db.goal.update({
           where: { id: goalId },
           data: { targets: targets as Prisma.InputJsonValue },
         });
@@ -3599,6 +3634,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         if (input.body !== undefined && input.bodyOps !== undefined) {
           throw new Error(
             "body and bodyOps are mutually exclusive — pass body for a full replace, bodyOps for surgical edits.",
@@ -3609,7 +3645,7 @@ function registerWriteTools(server: McpServer) {
 
         if (input.bodyOps !== undefined) {
           // Load existing note and apply ops in order.
-          const existing = await prisma.note.findUniqueOrThrow({ where: { id: input.id } });
+          const existing = await db.note.findUniqueOrThrow({ where: { id: input.id } });
           let current = existing.body;
           for (const op of input.bodyOps) {
             if (op.op === "append") {
@@ -3638,7 +3674,7 @@ function registerWriteTools(server: McpServer) {
         if (input.targetDate !== undefined) {
           data.targetDate = input.targetDate ? startOfDay(parseDateKey(input.targetDate)) : null;
         }
-        const updated = await prisma.note.update({
+        const updated = await db.note.update({
           where: { id: input.id },
           data,
         });
@@ -3662,13 +3698,14 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const data: Record<string, unknown> = {};
         if (input.value !== undefined) data.value = input.value;
         if (input.units !== undefined) data.units = input.units;
         if (input.date !== undefined) data.date = parseDateInput(input.date);
         if (input.notes !== undefined) data.notes = input.notes;
-        const before = await prisma.baseline.findUniqueOrThrow({ where: { id: input.id } });
-        const updated = await prisma.baseline.update({ where: { id: input.id }, data });
+        const before = await db.baseline.findUniqueOrThrow({ where: { id: input.id } });
+        const updated = await db.baseline.update({ where: { id: input.id }, data });
         await syncBaselineUpdateToWorkout({
           testName: updated.testName,
           oldDate: before.date,
@@ -3694,7 +3731,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        await prisma.note.delete({ where: { id } });
+        const db = await getDb();
+        await db.note.delete({ where: { id } });
         return { id, message: "Note deleted" };
       }),
   );
@@ -3718,8 +3756,9 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id, type, stampAcknowledged }) =>
       safe(async () => {
-        const existing = await prisma.note.findUniqueOrThrow({ where: { id } });
-        const updated = await prisma.note.update({
+        const db = await getDb();
+        const existing = await db.note.findUniqueOrThrow({ where: { id } });
+        const updated = await db.note.update({
           where: { id },
           data: {
             type,
@@ -3789,8 +3828,9 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ noteId, objective, kind, flavor, targetDate, targets, attributionHints, notes }) =>
       safe(async () => {
+        const db = await getDb();
         // C2: look up note first — validate BEFORE creating anything
-        const note = await prisma.note.findUniqueOrThrow({ where: { id: noteId } });
+        const note = await db.note.findUniqueOrThrow({ where: { id: noteId } });
 
         // C2: already promoted → return early without creating a duplicate
         if (note.resolvedAt && note.resolvedReason?.startsWith("promoted to goal ")) {
@@ -3840,7 +3880,7 @@ function registerWriteTools(server: McpServer) {
         if (note.resolvedAt) {
           priorResolved = true;
         } else {
-          await prisma.note.update({
+          await db.note.update({
             where: { id: noteId },
             data: {
               resolvedAt: new Date(),
@@ -3869,13 +3909,14 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const existing = await prisma.note.findUniqueOrThrow({ where: { id } });
+        const db = await getDb();
+        const existing = await db.note.findUniqueOrThrow({ where: { id } });
         if (existing.type !== "standing_rule") {
           throw new Error(
             `Note ${id} is type='${existing.type}', not 'standing_rule'. Use promote_note first if you want to make it a standing rule.`,
           );
         }
-        const updated = await prisma.note.update({
+        const updated = await db.note.update({
           where: { id },
           data: { lastAcknowledgedAt: new Date() },
         });
@@ -3894,7 +3935,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        await prisma.measurement.delete({ where: { id } });
+        const db = await getDb();
+        await db.measurement.delete({ where: { id } });
         return { id, message: "Measurement deleted" };
       }),
   );
@@ -3912,8 +3954,9 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const row = await prisma.baseline.findUniqueOrThrow({ where: { id } });
-        await prisma.baseline.delete({ where: { id } });
+        const db = await getDb();
+        const row = await db.baseline.findUniqueOrThrow({ where: { id } });
+        await db.baseline.delete({ where: { id } });
         await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
         return { id, message: "Baseline deleted (workout synced)" };
       }),
@@ -3930,14 +3973,15 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
+        const db = await getDb();
         // Capture the date before deletion so we can check for a mirror override the delete
         // would strand (object rows and their mirror overrides aren't linked — see
         // override-integrity.ts).
-        const existing = await prisma.hike.findUnique({
+        const existing = await db.hike.findUnique({
           where: { id },
           select: { date: true },
         });
-        await prisma.hike.delete({ where: { id } });
+        await db.hike.delete({ where: { id } });
         let message = "Hike deleted";
         if (existing) {
           const warn = await orphanedOverrideWarning(existing.date);
@@ -4018,6 +4062,7 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         const dayStart     = startOfDay(parseDateInput(input.date));
         const workoutId    = await resolveWorkoutIdForDay(dayStart); // footage-core.ts
         const exerciseName = input.exerciseName
@@ -4031,7 +4076,7 @@ function registerWriteTools(server: McpServer) {
           capturedAt = isNaN(d.getTime()) ? null : d;
         }
 
-        const marker = await prisma.footageMarker.create({
+        const marker = await db.footageMarker.create({
           data: {
             date:        dayStart,
             label:       input.label,
@@ -4068,12 +4113,13 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ date }) =>
       safe(async () => {
+        const db = await getDb();
         const dayStart = startOfDay(parseDateInput(date));
         const dayEnd   = endOfDay(dayStart);
         const dateStr  = toDateKey(dayStart);
 
         // 1. Completed workout + exercises ordered by orderIndex
-        const workout = await prisma.workout.findFirst({
+        const workout = await db.workout.findFirst({
           where: { startedAt: { gte: dayStart, lte: dayEnd }, status: "completed" },
           orderBy: { startedAt: "desc" },
           include: { exercises: { orderBy: { orderIndex: "asc" } } },
@@ -4087,13 +4133,13 @@ function registerWriteTools(server: McpServer) {
         const r = await resolveDay(dayStart);
 
         // 4. Focus goal for narrative caption
-        const focusGoal = await prisma.goal.findFirst({
+        const focusGoal = await db.goal.findFirst({
           where: { isFocus: true, active: true },
           select: { objective: true, kind: true },
         });
 
         // 5. Footage markers — highlight-first, then capturedAt asc, then createdAt asc
-        const rawMarkers = await prisma.footageMarker.findMany({
+        const rawMarkers = await db.footageMarker.findMany({
           where: { date: { gte: dayStart, lte: dayEnd } },
           orderBy: [
             { highlight: "desc" },
@@ -4151,7 +4197,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        await prisma.footageMarker.delete({ where: { id } });
+        const db = await getDb();
+        await db.footageMarker.delete({ where: { id } });
         return { id, message: "Footage marker deleted" };
       }),
   );
@@ -4224,7 +4271,7 @@ function registerWriteTools(server: McpServer) {
         if (updatedFields.length === 0) {
           return { id: input.id, updatedFields, message: "No fields provided — nothing changed." };
         }
-        await prisma.workoutExercise.update({ where: { id: input.id }, data });
+        await prisma.workoutExercise.update({ where: { id: input.id }, data });  // non-scoped model — raw prisma is intentional
         return {
           id: input.id,
           updatedFields,
@@ -4325,7 +4372,8 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const goal = await prisma.goal.findUniqueOrThrow({ where: { id: input.goalId } });
+        const db = await getDb();
+        const goal = await db.goal.findUniqueOrThrow({ where: { id: input.goalId } });
         const refs = (Array.isArray(goal.references) ? goal.references : []) as Array<Record<string, unknown>>;
         const next = [
           ...refs,
@@ -4338,7 +4386,7 @@ function registerWriteTools(server: McpServer) {
             addedAt: new Date().toISOString(),
           },
         ];
-        await prisma.goal.update({
+        await db.goal.update({
           where: { id: input.goalId },
           data: { references: next as unknown as Prisma.InputJsonValue },
         });
@@ -4361,11 +4409,12 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, legend }) =>
       safe(async () => {
+        const db = await getDb();
         const next =
           legend && legend.length > 0
             ? (legend as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull;
-        await prisma.goal.update({
+        await db.goal.update({
           where: { id: goalId },
           data: { legend: next },
         });
@@ -4510,9 +4559,10 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ operations }) =>
       safe(async () => {
+        const db = await getDb();
         const program = await getActiveProgram();
         if (!program) throw new Error("No active plan");
-        const results = await prisma.$transaction(async (tx) => {
+        const results = await db.$transaction(async (tx) => {
           const out: ApplyDayOverrideResult[] = [];
           for (let i = 0; i < operations.length; i++) {
             try {
@@ -4554,7 +4604,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ operations }) =>
       safe(async () => {
-        const results = await prisma.$transaction(async (tx) => {
+        const db = await getDb();
+        const results = await db.$transaction(async (tx) => {
           const out: { id: string; message: string }[] = [];
           for (let i = 0; i < operations.length; i++) {
             try {
@@ -4596,7 +4647,8 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ operations }) =>
       safe(async () => {
-        const results = await prisma.$transaction(async (tx) => {
+        const db = await getDb();
+        const results = await db.$transaction(async (tx) => {
           const out: { id: string; message: string }[] = [];
           for (let i = 0; i < operations.length; i++) {
             try {
@@ -4648,6 +4700,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ rule, note, fingerprint }) =>
       safe(async () => {
+        const db = await getDb();
         // Resolve fingerprint if not provided.
         let resolvedFingerprint = fingerprint;
         if (resolvedFingerprint === undefined) {
@@ -4664,7 +4717,7 @@ function registerWriteTools(server: McpServer) {
           resolvedFingerprint = matching[0].fingerprint ?? fingerprintFinding(rule, matching[0].context);
         }
 
-        const plan = await prisma.plan.findFirst({
+        const plan = await db.plan.findFirst({
           where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
@@ -4679,7 +4732,7 @@ function registerWriteTools(server: McpServer) {
           at: new Date().toISOString(),
         };
         const updated = [...existing, ack];
-        await prisma.plan.update({
+        await db.plan.update({
           where: { id: plan.id },
           data: { lintAcknowledgements: updated },
         });
@@ -4715,10 +4768,11 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ rule, fingerprint }) =>
       safe(async () => {
+        const db = await getDb();
         if (rule === undefined && fingerprint === undefined) {
           throw new Error("Provide at least one of `rule` or `fingerprint`.");
         }
-        const plan = await prisma.plan.findFirst({
+        const plan = await db.plan.findFirst({
           where: { active: true, goal: { isFocus: true } },
           orderBy: { updatedAt: "desc" },
         });
@@ -4732,7 +4786,7 @@ function registerWriteTools(server: McpServer) {
           return true;
         });
         const removed = existing.length - filtered.length;
-        await prisma.plan.update({
+        await db.plan.update({
           where: { id: plan.id },
           data: { lintAcknowledgements: filtered },
         });
@@ -4785,8 +4839,9 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        const db = await getDb();
         // 1. Resolve focus goal for attribute validation
-        const goal = await prisma.goal.findFirst({
+        const goal = await db.goal.findFirst({
           where: { isFocus: true },
           orderBy: { updatedAt: "desc" },
           select: { id: true, kind: true },
@@ -4814,7 +4869,7 @@ function registerWriteTools(server: McpServer) {
         // 3. Idempotency check: return existing row rather than inserting a duplicate.
         //    Keyed on (date, amount, reason) — covers the retry case where the coach
         //    re-sends the same bonus on the same day for the same reason.
-        const existing = await prisma.gameBonusXp.findFirst({
+        const existing = await db.gameBonusXp.findFirst({
           where: { date, amount: input.amount, reason: input.reason },
           select: { id: true, amount: true, reason: true, attribute: true, date: true },
         });
@@ -4838,7 +4893,7 @@ function registerWriteTools(server: McpServer) {
         }
 
         // 4. Persist
-        const row = await prisma.gameBonusXp.create({
+        const row = await db.gameBonusXp.create({
           data: {
             date,
             amount: input.amount,
@@ -4922,7 +4977,8 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
-        const goal = await prisma.goal.findUnique({
+        const db = await getDb();
+        const goal = await db.goal.findUnique({
           where: { id: input.goalId },
           select: { id: true, objective: true, targetDate: true, status: true, notes: true },
         });
@@ -4956,7 +5012,7 @@ function registerWriteTools(server: McpServer) {
           };
         }
 
-        const updated = await prisma.goal.update({
+        const updated = await db.goal.update({
           where: { id: input.goalId },
           data,
           select: { id: true, objective: true, targetDate: true, status: true },
@@ -5018,6 +5074,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, confirm }) =>
       safe(async () => {
+        const db = await getDb();
         if (confirm !== true) {
           throw new Error(
             "confirm must be true. Propose the deletion to the user first — explain what will be cascaded — " +
@@ -5025,7 +5082,7 @@ function registerWriteTools(server: McpServer) {
           );
         }
 
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: goalId },
           select: { id: true, objective: true },
         });
@@ -5033,15 +5090,15 @@ function registerWriteTools(server: McpServer) {
 
         // Collect cascade counts before delete so the response is informative.
         const [plans, scheduledItems, logEntries] = await Promise.all([
-          prisma.plan.findMany({
+          db.plan.findMany({
             where: { goalId },
             select: {
               id: true,
               _count: { select: { revisions: true, overrides: true } },
             },
           }),
-          prisma.scheduledItem.count({ where: { goalId } }),
-          prisma.logEntry.count({ where: { goalId } }),
+          db.scheduledItem.count({ where: { goalId } }),
+          db.logEntry.count({ where: { goalId } }),
         ]);
 
         const planCount = plans.length;
@@ -5049,7 +5106,7 @@ function registerWriteTools(server: McpServer) {
         const overrideCount = plans.reduce((sum, p) => sum + p._count.overrides, 0);
 
         // Prisma cascades (onDelete: Cascade) handle the children automatically.
-        await prisma.goal.delete({ where: { id: goalId } });
+        await db.goal.delete({ where: { id: goalId } });
 
         return {
           deleted: { id: goal.id, objective: goal.objective },
@@ -5100,11 +5157,12 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, referenceId, claudeSummary, label }) =>
       safe(async () => {
+        const db = await getDb();
         if (!claudeSummary && !label) {
           throw new Error("At least one of claudeSummary or label must be provided.");
         }
 
-        const goal = await prisma.goal.findUnique({ where: { id: goalId } });
+        const goal = await db.goal.findUnique({ where: { id: goalId } });
         if (!goal) throw new Error(`Goal not found: ${goalId}`);
 
         const refs = (
@@ -5129,7 +5187,7 @@ function registerWriteTools(server: McpServer) {
         const next = [...refs];
         next[idx] = updated;
 
-        await prisma.goal.update({
+        await db.goal.update({
           where: { id: goalId },
           data: { references: next as unknown as Prisma.InputJsonValue },
         });
@@ -5178,6 +5236,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, tier, rationale }) =>
       safe(async () => {
+        const db = await getDb();
         // Tier requires rationale
         if (tier !== undefined && !rationale) {
           throw new Error(
@@ -5185,7 +5244,7 @@ function registerWriteTools(server: McpServer) {
           );
         }
 
-        const goal = await prisma.goal.findUnique({
+        const goal = await db.goal.findUnique({
           where: { id: goalId },
           select: { id: true, targetDate: true, targets: true, kind: true, coachFeasibility: true },
         });
@@ -5204,12 +5263,12 @@ function registerWriteTools(server: McpServer) {
           };
         }
 
-        await prisma.goal.update({
+        await db.goal.update({
           where: { id: goalId },
           data: { coachFeasibility: newCoachFeasibility },
         });
 
-        const updatedRow = await prisma.goal.findUniqueOrThrow({
+        const updatedRow = await db.goal.findUniqueOrThrow({
           where: { id: goalId },
           select: { coachFeasibility: true },
         });
