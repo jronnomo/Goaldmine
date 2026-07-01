@@ -4,17 +4,28 @@
 // (matches/isMirrorOverride); we mock @/lib/db only because the module imports prisma for
 // its async backing helpers.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/db", () => ({ prisma: {} }));
+// Dual-export: @/lib/db exports both `prisma` and `getDb`; getDb is used by
+// orphanedOverrideWarning/findOrphanedOverrides (not tested here) — wired for completeness.
+vi.mock("@/lib/db", () => ({ prisma: {}, getDb: vi.fn() }));
 
 import {
   isMirrorOverride,
   matchingMirrorKind,
   OVERRIDE_MIRROR_KINDS,
 } from "@/lib/override-integrity";
+import { getDb } from "@/lib/db";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 
 describe("override mirror registry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDb.mockResolvedValue({}); // fake db for any getDb call (orphanedOverrideWarning etc.)
+  });
+
   it("isMirrorOverride: true for a long-endurance (hike-mirror) workoutJson", () => {
     expect(isMirrorOverride({ title: "La Plata — Dress Rehearsal", category: "long-endurance" })).toBe(true);
   });

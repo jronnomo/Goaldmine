@@ -1,12 +1,16 @@
 // src/lib/recap-caption.test.ts
 // Pure unit tests for the recap caption composer.
 //
-// NO vi.mock("@/lib/db") here. recap-caption.ts uses import type only —
-// recap.ts never loads at test time. If this test ever throws
-// "DATABASE_URL is not set", a runtime import from recap.ts has snuck in;
-// fix the import, do NOT add a mock to silence the error.
+// recap-caption.ts uses `import type` only from recap.ts — recap.ts never loads
+// at test time. The vi.mock below is for API-surface consistency ONLY (dual-export:
+// prisma + getDb); it is inert — composeCaption never calls prisma or getDb.
+// If this test ever throws "DATABASE_URL is not set", a runtime import from
+// recap.ts has snuck in; fix the import — do NOT rely on the mock to silence it.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Dual-export: @/lib/db exports both `prisma` and `getDb` — mock both for module-surface consistency.
+vi.mock("@/lib/db", () => ({ prisma: {}, getDb: vi.fn() }));
 import { composeCaption } from "@/lib/recap-caption";
 import type { WeeklyRecap, RecapHighlight } from "@/lib/recap";
 

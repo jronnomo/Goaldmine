@@ -5,10 +5,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Hoist DB mock above imports to prevent "DATABASE_URL is not set" throws.
+// Dual-export: @/lib/db exports both `prisma` and `getDb`; getDb is used by
+// getBaselineSummaries/getBaselineHistory (not tested here) — wired for completeness.
 vi.mock("@/lib/db", () => ({
   prisma: {
     workoutExercise: { findMany: vi.fn() },
   },
+  getDb: vi.fn(),
 }));
 
 import {
@@ -22,7 +25,7 @@ import {
 import { mapBaselineToSet } from "@/lib/baseline-workout";
 import { computeGameStateFromData } from "@/lib/game/engine";
 
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -262,10 +265,13 @@ describe("bestSetSummary — unmapped path (regression)", () => {
 // ── Group 5: recordsSetInWorkout (DB mock) ────────────────────────────────────
 
 const findManyMock = vi.mocked(prisma.workoutExercise.findMany);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 
 describe("recordsSetInWorkout", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetDb.mockResolvedValue(prisma); // wire getDb to the fake client (completeness)
   });
 
   it("bike 5.9→6.6 mi: returns RecordSet with kind=distance", async () => {

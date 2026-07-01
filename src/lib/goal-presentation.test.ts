@@ -16,7 +16,8 @@
 import { describe, it, expect, vi } from "vitest";
 
 // vi.mock is hoisted before imports — this is the critical ordering.
-vi.mock("@/lib/db", () => ({ prisma: {} }));
+// Dual-export: @/lib/db exports both `prisma` and `getDb`; getDb is inert here (pure-function source).
+vi.mock("@/lib/db", () => ({ prisma: {}, getDb: vi.fn() }));
 
 import { resolveStatSlot } from "@/lib/recap";
 import {

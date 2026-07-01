@@ -16,7 +16,7 @@ Next.js 16.2.4 (App Router, Turbopack) · TypeScript 5 (strict) · React 19.2 ·
 |--------------|------------------------------------------|-------|
 | Typecheck    | `npx tsc --noEmit`                       | Strict mode; cached incrementally |
 | Lint         | `npm run lint`                           | ESLint v9 + `next/core-web-vitals` + `next/typescript` |
-| Unit tests   | `npm test`                               | Vitest; no DB required; `db.scoped.test.ts` + `goal-core.test.ts` + others |
+| Unit tests   | `npm test`                               | Vitest; no DB required; `db.scoped.test.ts` + `goal-core.test.ts` + others. **Convention:** any suite `vi.mock("@/lib/db")` must dual-export `prisma` + `getDb` (`getDb` resolves to the fake client). |
 | Build        | `npm run build`                          | Turbopack production build; verifies SSR + every API route incl. `/api/mcp` |
 | Dev server   | `npm run dev`                            | Open http://localhost:3000 — required for browser smoke + MCP curl below |
 | Prisma sync  | `npx prisma generate`                    | Run after every `schema.prisma` edit |
