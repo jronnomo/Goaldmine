@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
 import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
+import { resolveUserIdFromToken } from "@/lib/auth/current-user";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,12 @@ async function handler(req: Request): Promise<Response> {
       headers: { "WWW-Authenticate": 'Bearer realm="workout-planner-mcp"' },
     });
   }
+
+  const userId = await resolveUserIdFromToken(token);
+  // Phase-0 seam: resolves to the founder. E4a will open an AsyncLocalStorage
+  // scope with this userId so getDb() auto-scopes every query. Until then this is
+  // the single, audited identity-resolution point for the MCP surface.
+  void userId;
 
   const server = new McpServer(
     { name: "goaldmine", version: MCP_SERVER_VERSION },
