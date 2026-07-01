@@ -4,7 +4,7 @@
 // Workout on first call. One Workout per day, one Exercise per test, one Set
 // per result.
 
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
 import { endOfDay, startOfDay } from "@/lib/calendar";
 import { metricKindFor, canonicalExerciseName } from "@/lib/records";
 
@@ -89,8 +89,9 @@ export async function appendBaselineToDayWorkout(args: {
 
   const dayStart = startOfDay(args.date);
   const dayEnd = endOfDay(args.date);
+  const db = await getDb();
 
-  const existing = await prisma.workout.findFirst({
+  const existing = await db.workout.findFirst({
     where: {
       startedAt: { gte: dayStart, lte: dayEnd },
       source: "baseline",
@@ -108,7 +109,7 @@ export async function appendBaselineToDayWorkout(args: {
   };
 
   if (!existing) {
-    return prisma.workout.create({
+    return db.workout.create({
       data: {
         title: "Baseline tests",
         startedAt: args.date,
@@ -147,7 +148,8 @@ export async function appendBaselineToDayWorkout(args: {
 async function findBaselineExercise(testName: string, date: Date) {
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
-  const workout = await prisma.workout.findFirst({
+  const db = await getDb();
+  const workout = await db.workout.findFirst({
     where: {
       startedAt: { gte: dayStart, lte: dayEnd },
       source: "baseline",
@@ -173,12 +175,14 @@ export async function removeBaselineFromDayWorkout(args: {
 }) {
   const found = await findBaselineExercise(args.testName, args.date);
   if (!found?.exercise) return;
+  // workoutExercise is non-scoped (no userId FK) — use raw prisma.
   await prisma.workoutExercise.delete({ where: { id: found.exercise.id } });
   const remaining = await prisma.workoutExercise.count({
     where: { workoutId: found.workout.id },
   });
   if (remaining === 0) {
-    await prisma.workout.delete({ where: { id: found.workout.id } });
+    const db = await getDb();
+    await db.workout.delete({ where: { id: found.workout.id } });
   }
 }
 

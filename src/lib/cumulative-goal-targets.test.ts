@@ -18,6 +18,7 @@ vi.mock("@/lib/db", () => ({
     hike: { count: vi.fn(), aggregate: vi.fn() },
     workout: { count: vi.fn() },
   },
+  getDb: vi.fn(),
 }));
 
 vi.mock("@/lib/records", () => ({
@@ -27,7 +28,10 @@ vi.mock("@/lib/records", () => ({
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 
 import { resolveMetricValue, resolveMetricStart } from "@/lib/goal-targets";
-import { prisma } from "@/lib/db";
+import { prisma, getDb } from "@/lib/db";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockGetDb = getDb as any;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +43,9 @@ const AS_OF = new Date("2026-06-29T12:00:00Z");
 describe("resolveMetricValue — cumulative log: SUM branch", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // resolveMetricValue/Start call getDb() internally after E4b-2 migration.
+    // Wire getDb() to return the same fake prisma object so spy assertions work.
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative=true: calls logEntry.aggregate and returns _sum.value", async () => {
@@ -47,8 +54,6 @@ describe("resolveMetricValue — cumulative log: SUM branch", () => {
     });
 
     const result = await resolveMetricValue(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:practice_hours",
       AS_OF,
       GOAL_ID,
@@ -66,8 +71,6 @@ describe("resolveMetricValue — cumulative log: SUM branch", () => {
     });
 
     const result = await resolveMetricValue(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:practice_hours",
       AS_OF,
       GOAL_ID,
@@ -84,8 +87,6 @@ describe("resolveMetricValue — cumulative log: SUM branch", () => {
     });
 
     const result = await resolveMetricValue(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:books_read",
       AS_OF,
       GOAL_ID,
@@ -101,6 +102,7 @@ describe("resolveMetricValue — cumulative log: SUM branch", () => {
 describe("resolveMetricValue — snapshot log: path (cumulative=false, unchanged)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative=false: calls findFirst, returns latest value", async () => {
@@ -109,8 +111,6 @@ describe("resolveMetricValue — snapshot log: path (cumulative=false, unchanged
     });
 
     const result = await resolveMetricValue(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:mrr",
       AS_OF,
       GOAL_ID,
@@ -126,8 +126,6 @@ describe("resolveMetricValue — snapshot log: path (cumulative=false, unchanged
     vi.mocked(prisma.logEntry.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await resolveMetricValue(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:mrr",
       AS_OF,
       GOAL_ID,
@@ -142,8 +140,7 @@ describe("resolveMetricValue — snapshot log: path (cumulative=false, unchanged
       value: 999,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await resolveMetricValue(prisma as any, "log:mrr", AS_OF, GOAL_ID);
+    const result = await resolveMetricValue("log:mrr", AS_OF, GOAL_ID);
 
     expect(result).toBe(999);
     expect(vi.mocked(prisma.logEntry.findFirst)).toHaveBeenCalled();
@@ -156,12 +153,11 @@ describe("resolveMetricValue — snapshot log: path (cumulative=false, unchanged
 describe("resolveMetricStart — cumulative log:", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
   });
 
   it("cumulative=true: returns 0 (build-from-zero accumulation; no DB call)", async () => {
     const result = await resolveMetricStart(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:practice_hours",
       GOAL_ID,
       true, // cumulative
@@ -177,8 +173,6 @@ describe("resolveMetricStart — cumulative log:", () => {
     });
 
     const result = await resolveMetricStart(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:mrr",
       GOAL_ID,
       false,
@@ -192,8 +186,6 @@ describe("resolveMetricStart — cumulative log:", () => {
     vi.mocked(prisma.logEntry.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const result = await resolveMetricStart(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma as any,
       "log:mrr",
       GOAL_ID,
       false,
