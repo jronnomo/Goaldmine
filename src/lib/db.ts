@@ -56,6 +56,8 @@ const SCOPED_MODELS = new Set<string>([
 ]);
 // Auth.js models (Account, Session, VerificationToken) are intentionally excluded —
 // auth infrastructure is cross-user by design; the adapter uses raw `prisma` directly.
+// C-1 OAuth server models (OAuthClient, OAuthAuthCode, OAuthAccessToken, OAuthRefreshToken)
+// are also excluded — pre-auth infrastructure; route handlers use raw `prisma` directly.
 
 // ---------------------------------------------------------------------------
 // 3. Pure injection helper — EXPORTED for unit-testing without a live DB.

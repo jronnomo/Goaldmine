@@ -1,0 +1,133 @@
+// src/lib/oauth/tokens.test.ts
+//
+// Unit tests for C-1 OAuth token helpers (tokens.ts).
+// Pure module — no DB, no imports to mock.
+
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  generateSecret,
+  hashSecret,
+  ACCESS_TOKEN_TTL_S,
+  REFRESH_TOKEN_TTL_S,
+  AUTH_CODE_TTL_S,
+  OAUTH_SCOPE,
+  deriveOrigin,
+} from "@/lib/oauth/tokens";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("generateSecret", () => {
+  it("returns a string starting with the given prefix followed by underscore", () => {
+    const s = generateSecret("mcp");
+    expect(s.startsWith("mcp_")).toBe(true);
+  });
+
+  it("includes 43 base64url chars after the prefix (32 random bytes)", () => {
+    // 32 bytes → 43 base64url chars (no padding)
+    const s = generateSecret("mcp");
+    const payload = s.slice("mcp_".length);
+    expect(payload).toHaveLength(43);
+    expect(payload).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("returns different values on each call (random)", () => {
+    const a = generateSecret("at");
+    const b = generateSecret("at");
+    expect(a).not.toBe(b);
+  });
+
+  it("honours an arbitrary prefix", () => {
+    const s = generateSecret("rt");
+    expect(s.startsWith("rt_")).toBe(true);
+  });
+});
+
+describe("hashSecret", () => {
+  it("returns a 64-char lowercase hex string (SHA-256)", () => {
+    const h = hashSecret("hello");
+    expect(h).toHaveLength(64);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("is deterministic — same input → same output", () => {
+    const s = "some-secret-value";
+    expect(hashSecret(s)).toBe(hashSecret(s));
+  });
+
+  it("is stable (known vector: SHA-256 of 'hello')", () => {
+    // SHA-256("hello") = 2cf24dba…
+    expect(hashSecret("hello")).toBe(
+      "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    );
+  });
+
+  it("round-trip: hashSecret(plaintext) !== hashSecret(hashSecret(plaintext))", () => {
+    // i.e. it is NOT idempotent — hashing the hash gives a different value
+    const plain = "test-secret";
+    const once = hashSecret(plain);
+    const twice = hashSecret(once);
+    expect(once).not.toBe(twice);
+  });
+
+  it("two different secrets produce different hashes", () => {
+    const a = generateSecret("mcp");
+    const b = generateSecret("mcp");
+    expect(hashSecret(a)).not.toBe(hashSecret(b));
+  });
+});
+
+describe("TTL constants", () => {
+  it("ACCESS_TOKEN_TTL_S = 3600 (1 hour)", () => {
+    expect(ACCESS_TOKEN_TTL_S).toBe(3600);
+  });
+
+  it("REFRESH_TOKEN_TTL_S = 2592000 (30 days)", () => {
+    expect(REFRESH_TOKEN_TTL_S).toBe(30 * 24 * 3600);
+  });
+
+  it("AUTH_CODE_TTL_S = 300 (5 minutes)", () => {
+    expect(AUTH_CODE_TTL_S).toBe(300);
+  });
+
+  it("OAUTH_SCOPE = 'mcp'", () => {
+    expect(OAUTH_SCOPE).toBe("mcp");
+  });
+});
+
+describe("deriveOrigin", () => {
+  function makeReq(url: string): Request {
+    return new Request(url);
+  }
+
+  it("returns the request origin when CANONICAL_ORIGIN is unset", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const origin = deriveOrigin(makeReq("http://localhost:3000/api/mcp"));
+    expect(origin).toBe("http://localhost:3000");
+  });
+
+  it("returns the request origin including port", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const origin = deriveOrigin(makeReq("https://preview-123.vercel.app/api/mcp"));
+    expect(origin).toBe("https://preview-123.vercel.app");
+  });
+
+  it("uses CANONICAL_ORIGIN when set, ignoring the request URL", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com");
+    const origin = deriveOrigin(makeReq("https://preview-abc.vercel.app/api/mcp"));
+    expect(origin).toBe("https://goaldmine.com");
+  });
+
+  it("strips trailing slash from CANONICAL_ORIGIN", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com/");
+    const origin = deriveOrigin(makeReq("https://goaldmine.com/api/mcp"));
+    expect(origin).toBe("https://goaldmine.com");
+  });
+
+  it("strips multiple trailing slashes from CANONICAL_ORIGIN", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com///");
+    const origin = deriveOrigin(makeReq("https://goaldmine.com/api/mcp"));
+    expect(origin).toBe("https://goaldmine.com");
+  });
+});

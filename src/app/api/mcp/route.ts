@@ -4,6 +4,7 @@ import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
 import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
 import { resolveUserIdFromToken } from "@/lib/auth/current-user";
 import { runWithUser } from "@/lib/db";
+import { deriveOrigin } from "@/lib/oauth/tokens";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,9 +18,15 @@ async function handler(req: Request): Promise<Response> {
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
   if (!token || token !== expected) {
+    // C-1 (REQ-005 + DA fix #1): exact spike-proven format — NO realm.
+    // claude.ai reads this header to discover the protected-resource metadata URL,
+    // then fetches /.well-known/oauth-protected-resource to begin the OAuth flow.
+    const origin = deriveOrigin(req);
     return new Response("Unauthorized", {
       status: 401,
-      headers: { "WWW-Authenticate": 'Bearer realm="workout-planner-mcp"' },
+      headers: {
+        "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+      },
     });
   }
 

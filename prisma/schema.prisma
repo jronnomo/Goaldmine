@@ -41,6 +41,11 @@ model User {
   // Auth.js adapter relations (A-1) — not in SCOPED_MODELS; auth infra is cross-user
   accounts         Account[]
   sessions         Session[]
+
+  // C-1 OAuth server back-relations — not in SCOPED_MODELS; OAuth infra is pre-auth
+  oauthAuthCodes     OAuthAuthCode[]
+  oauthAccessTokens  OAuthAccessToken[]
+  oauthRefreshTokens OAuthRefreshToken[]
 }
 
 model Workout {
@@ -602,4 +607,88 @@ model Invite {
   redeemedByUserId String?                             // backfilled at events.createUser (no FK — user may not exist yet at validate time; keep loose)
 
   @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// C-1: OAuth server models (E-C)
+// These are auth infrastructure — cross-user by design (OAuthClient has no
+// userId at all; OAuthAuthCode/AccessToken/RefreshToken are owned by userId
+// but serve the auth flow, not user-scoped MCP queries).
+// They must NOT be added to SCOPED_MODELS in src/lib/db.ts.
+// Route handlers (/oauth/*, /.well-known/*) use raw `prisma` directly.
+// ---------------------------------------------------------------------------
+
+model OAuthClient {
+  id                      String    @id @default(cuid())
+  clientId                String    @unique            // public identifier issued at DCR: "mcp_" + 18 random base64url bytes (24 chars)
+  clientName              String?
+  redirectUris            String[]                     // exact-match set enforced at authorize (C-2)
+  tokenEndpointAuthMethod String    @default("none")   // public client — never a secret
+  grantTypes              String[]  @default(["authorization_code", "refresh_token"])
+  responseTypes           String[]  @default(["code"])
+  scope                   String?   @default("mcp")
+  createdAt               DateTime  @default(now())
+  lastUsedAt              DateTime?
+}
+
+model OAuthAuthCode {
+  id                  String    @id @default(cuid())
+  codeHash            String    @unique               // SHA-256 hex of the code — plaintext never stored
+  clientId            String                          // loose string (audit survives client cleanup)
+  userId              String
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  redirectUri         String
+  codeChallenge       String
+  codeChallengeMethod String    @default("S256")
+  resource            String?                         // RFC 8707 audience binding
+  scope               String?   @default("mcp")
+  expiresAt           DateTime                        // ~5 min
+  consumedAt          DateTime?                       // single-use
+  createdAt           DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+model OAuthAccessToken {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  clientId   String
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource   String?
+  scope      String?   @default("mcp")
+  expiresAt  DateTime                                  // 1h
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])                                    // C-3b "connected apps" listing
+  @@index([expiresAt])
+}
+
+// Rotation invariant — normative for C-3a token endpoint:
+//   1. Old token MUST get `revokedAt = now()` AND `supersededById` set BEFORE the new token is issued.
+//   2. Validity check: `revokedAt IS NULL AND expiresAt > now()`.
+//   3. `familyId` is set once at first issuance (C-3a) and COPIED on every rotation
+//      (new token inherits the same familyId from the old token).
+//   4. Reuse-detection: presenting a revoked refresh token → revoke the whole family
+//      in one query: UPDATE OAuthRefreshToken SET revokedAt=now() WHERE familyId=? AND revokedAt IS NULL.
+//   5. `supersededById` is kept for chain audit but is NOT the revocation signal — revokedAt IS NULL is.
+model OAuthRefreshToken {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique
+  clientId       String
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource       String?
+  scope          String?   @default("mcp")
+  familyId       String?                                // set once at first issuance; copied on rotation — revoke whole family on replay attack
+  expiresAt      DateTime                               // 30d
+  revokedAt      DateTime?
+  supersededById String?                                // rotation chain (C-3a) — audit trail only
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
 }
