@@ -28,6 +28,7 @@ import {
   approveAuthorization,
   denyAuthorization,
 } from "@/lib/oauth/authorize-actions";
+import { originFromHeaders } from "@/lib/oauth/tokens";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,9 +62,7 @@ export default async function AuthorizePage({ searchParams }: AuthorizePageProps
 
   // Derive origin for RFC 8707 resource validation.
   const headersList = await headers();
-  const origin =
-    process.env.CANONICAL_ORIGIN?.replace(/\/+$/, "") ??
-    `${headersList.get("x-forwarded-proto") ?? "http"}://${headersList.get("host") ?? "localhost:3000"}`;
+  const origin = originFromHeaders(headersList);
 
   // ── 1. Validate OAuth params ─────────────────────────────────────────────
   const validation = await validateAuthorizeParams(params, prisma, origin);

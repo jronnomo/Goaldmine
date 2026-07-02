@@ -14,6 +14,7 @@ import {
   AUTH_CODE_TTL_S,
   OAUTH_SCOPE,
   deriveOrigin,
+  originFromHeaders,
 } from "@/lib/oauth/tokens";
 
 afterEach(() => {
@@ -192,5 +193,42 @@ describe("deriveOrigin", () => {
     vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com///");
     const origin = deriveOrigin(makeReq("https://goaldmine.com/api/mcp"));
     expect(origin).toBe("https://goaldmine.com");
+  });
+});
+
+describe("originFromHeaders", () => {
+  function makeHeaders(entries: Record<string, string>): Headers {
+    const h = new Headers();
+    for (const [k, v] of Object.entries(entries)) h.set(k, v);
+    return h;
+  }
+
+  it("CANONICAL_ORIGIN wins — trailing slash stripped", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com/");
+    const h = makeHeaders({
+      "x-forwarded-proto": "https",
+      host: "preview-abc.vercel.app",
+    });
+    expect(originFromHeaders(h)).toBe("https://goaldmine.com");
+  });
+
+  it("CANONICAL_ORIGIN wins over header values (env precedence)", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com");
+    const h = makeHeaders({ "x-forwarded-proto": "http", host: "localhost:3000" });
+    expect(originFromHeaders(h)).toBe("https://goaldmine.com");
+  });
+
+  it("header fallback when CANONICAL_ORIGIN unset — https preview", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({
+      "x-forwarded-proto": "https",
+      host: "abc.vercel.app",
+    });
+    expect(originFromHeaders(h)).toBe("https://abc.vercel.app");
+  });
+
+  it("header fallback when CANONICAL_ORIGIN unset — no headers (localhost default)", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    expect(originFromHeaders(new Headers())).toBe("http://localhost:3000");
   });
 });

@@ -67,7 +67,7 @@ export async function createGoal(form: FormData) {
   // accepted to prevent open-redirect attacks (browser normalizes \→/ so startsWith
   // checks are bypassable via "/\evil.com" or "/%2F" encoded paths).
   const redirectToRaw = form.get("redirectTo");
-  const SAFE_REDIRECTS = new Set(["/", "/goals"]);
+  const SAFE_REDIRECTS = new Set(["/", "/goals", "/onboarding/connect"]);
   const redirectTo =
     typeof redirectToRaw === "string" && SAFE_REDIRECTS.has(redirectToRaw)
       ? redirectToRaw

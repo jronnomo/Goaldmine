@@ -43,7 +43,7 @@ export function OnboardingGoalForm() {
     >
       {/* Hidden fields — must be inside <form> to be included in FormData */}
       <input type="hidden" name="kind" value={kind} />
-      <input type="hidden" name="redirectTo" value="/" />
+      <input type="hidden" name="redirectTo" value="/onboarding/connect" />
 
       {/* Kind chooser — mutually exclusive; role="radiogroup" for a11y */}
       <fieldset className="flex flex-col gap-2">

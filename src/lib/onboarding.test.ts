@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 // These must stay in sync with the production code.
 
 function resolveRedirectTo(raw: FormDataEntryValue | null): string | null {
-  const SAFE_REDIRECTS = new Set(["/", "/goals"]);
+  const SAFE_REDIRECTS = new Set(["/", "/goals", "/onboarding/connect"]);
   return typeof raw === "string" && SAFE_REDIRECTS.has(raw) ? raw : null;
 }
 
@@ -54,8 +54,20 @@ describe("redirectTo whitelist", () => {
   });
 
   it('rejects an arbitrary path like "/onboarding"', () => {
-    // Only "/" and "/goals" are allowed — not arbitrary paths
+    // Only "/", "/goals", and "/onboarding/connect" are allowed — not arbitrary paths
     expect(resolveRedirectTo("/onboarding")).toBeNull();
+  });
+
+  it('accepts "/onboarding/connect" (D-2 step-2 route)', () => {
+    expect(resolveRedirectTo("/onboarding/connect")).toBe("/onboarding/connect");
+  });
+
+  it('rejects "/onboarding/connect/evil" (exact-match only — no startsWith)', () => {
+    expect(resolveRedirectTo("/onboarding/connect/evil")).toBeNull();
+  });
+
+  it('rejects "/onboarding/connectX" (exact-match only)', () => {
+    expect(resolveRedirectTo("/onboarding/connectX")).toBeNull();
   });
 });
 

@@ -8,10 +8,13 @@
  * Dates are formatted in USER_TZ via Intl.DateTimeFormat — no raw Date.toString().
  */
 
+import { headers } from "next/headers";
 import { getCurrentUserId } from "@/lib/auth/current-user";
 import { listConnections } from "@/lib/oauth/connections";
 import { RevokeConnectionButton } from "@/components/RevokeConnectionButton";
 import { USER_TZ } from "@/lib/calendar-core";
+import { originFromHeaders } from "@/lib/oauth/tokens";
+import { ConnectClaudePanel } from "@/components/ConnectClaudePanel";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,6 +42,8 @@ export default async function SettingsPage() {
   // getCurrentUserId redirects to /signin when there's no session.
   const uid = await getCurrentUserId();
   const connections = await listConnections(uid);
+  const h = await headers();
+  const connectorUrl = `${originFromHeaders(h)}/api/mcp`;
 
   return (
     <div className="min-h-[calc(100vh-48px)] px-4 py-8">
@@ -56,6 +61,14 @@ export default async function SettingsPage() {
           </p>
         </div>
 
+        {/* D-2: Connect Claude walkthrough panel */}
+        <ConnectClaudePanel
+          variant="settings"
+          connectorUrl={connectorUrl}
+          connected={connections.length > 0}
+          connection={connections[0] ?? null}
+        />
+
         {/* Connected apps card */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] overflow-hidden shadow-sm">
           <div className="px-4 py-3 border-b border-[var(--border)]">
@@ -68,15 +81,9 @@ export default async function SettingsPage() {
           </div>
 
           {connections.length === 0 ? (
-            /* Empty state */
-            <div className="px-4 py-8 text-center">
-              <p className="text-sm text-[var(--muted)] leading-relaxed">
-                No apps are connected. Connect Claude from your{" "}
-                <span className="text-[var(--foreground)] font-medium">
-                  claude.ai settings
-                </span>{" "}
-                to let it access your Goaldmine data.
-              </p>
+            /* Empty state — connect instructions live in ConnectClaudePanel above */
+            <div className="px-4 py-6 text-center">
+              <p className="text-sm text-[var(--muted)]">No apps connected yet.</p>
             </div>
           ) : (
             /* Connection list */

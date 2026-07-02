@@ -125,3 +125,33 @@ export function deriveOrigin(req: Request): string {
   const url = new URL(req.url);
   return `${url.protocol}//${url.host}`;
 }
+
+// ---------------------------------------------------------------------------
+// RSC-safe origin derivation (no Request object available in server components)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the canonical OAuth issuer origin from Next.js `headers()`.
+ *
+ * Mirrors the precedence of `deriveOrigin` exactly:
+ *  1. `CANONICAL_ORIGIN` env var (production hard-lock, trailing slash stripped)
+ *  2. `x-forwarded-proto` + `host` headers (Vercel proxy / localhost dev fallback)
+ *
+ * Use this from RSC pages/layouts where no `Request` object is available.
+ * Use `deriveOrigin(req)` from API route handlers.
+ *
+ * Both paths produce the same value when CANONICAL_ORIGIN is set — which is
+ * the only case that matters for production correctness.  The displayed
+ * connector URL `${originFromHeaders(h)}/api/mcp` will match the `resource`
+ * value advertised by the discovery route (which calls `deriveOrigin`).
+ *
+ * Note: header fallback is only safe behind Vercel's trusted proxy. Non-Vercel
+ * deploys that don't set CANONICAL_ORIGIN can have spoofable Host headers.
+ * Set CANONICAL_ORIGIN in production to guarantee stability.
+ */
+export function originFromHeaders(h: Headers): string {
+  const canonical = process.env.CANONICAL_ORIGIN;
+  // Mirror deriveOrigin: falsy check (not nullish) so empty string falls through
+  if (canonical) return canonical.replace(/\/+$/, "");
+  return `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`;
+}
