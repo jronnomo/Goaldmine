@@ -194,6 +194,18 @@ describe("deriveOrigin", () => {
     const origin = deriveOrigin(makeReq("https://goaldmine.com/api/mcp"));
     expect(origin).toBe("https://goaldmine.com");
   });
+
+  it("throws for untrusted host when CANONICAL_ORIGIN unset", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "");
+    expect(() => deriveOrigin(makeReq("https://evil.com/api/mcp"))).toThrow("Untrusted origin host: evil.com");
+  });
+
+  it("CANONICAL_ORIGIN wins even for untrusted host — no trust check reached", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com");
+    // evil.com would throw without CANONICAL_ORIGIN, but it is bypassed
+    expect(deriveOrigin(makeReq("https://evil.com/api/mcp"))).toBe("https://goaldmine.com");
+  });
 });
 
 describe("originFromHeaders", () => {
@@ -230,5 +242,103 @@ describe("originFromHeaders", () => {
   it("header fallback when CANONICAL_ORIGIN unset — no headers (localhost default)", () => {
     vi.stubEnv("CANONICAL_ORIGIN", "");
     expect(originFromHeaders(new Headers())).toBe("http://localhost:3000");
+  });
+
+  it("CANONICAL_ORIGIN wins even for evil.com host — no trust check triggered", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "https://goaldmine.com");
+    const h = makeHeaders({ "host": "evil.com", "x-forwarded-proto": "https" });
+    expect(originFromHeaders(h)).toBe("https://goaldmine.com");
+  });
+
+  it("localhost trusted — exact match", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "localhost", "x-forwarded-proto": "http" });
+    expect(originFromHeaders(h)).toBe("http://localhost");
+  });
+
+  it("localhost:3000 trusted — port stripped for comparison", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "localhost:3000", "x-forwarded-proto": "http" });
+    expect(originFromHeaders(h)).toBe("http://localhost:3000");
+  });
+
+  it("127.0.0.1 trusted", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "127.0.0.1", "x-forwarded-proto": "http" });
+    expect(originFromHeaders(h)).toBe("http://127.0.0.1");
+  });
+
+  it("127.0.0.1:8080 trusted — port stripped for comparison", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "127.0.0.1:8080", "x-forwarded-proto": "http" });
+    expect(originFromHeaders(h)).toBe("http://127.0.0.1:8080");
+  });
+
+  it("[::1]:3000 trusted — IPv6 loopback", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "[::1]:3000", "x-forwarded-proto": "http" });
+    expect(originFromHeaders(h)).toBe("http://[::1]:3000");
+  });
+
+  it("myapp.vercel.app trusted — *.vercel.app prefix", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "myapp.vercel.app", "x-forwarded-proto": "https" });
+    expect(originFromHeaders(h)).toBe("https://myapp.vercel.app");
+  });
+
+  it("FOO.VERCEL.APP trusted — case-insensitive comparison", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "FOO.VERCEL.APP", "x-forwarded-proto": "https" });
+    // Normalized to lowercase in returned origin
+    expect(originFromHeaders(h)).toBe("https://foo.vercel.app");
+  });
+
+  it("foo.vercel.app. (trailing FQDN dot) trusted — dot stripped before comparison", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    const h = makeHeaders({ "host": "foo.vercel.app.", "x-forwarded-proto": "https" });
+    // Trailing dot stripped in normalization step
+    expect(originFromHeaders(h)).toBe("https://foo.vercel.app");
+  });
+
+  it("evil.com throws when CANONICAL_ORIGIN unset", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "");
+    const h = makeHeaders({ "host": "evil.com", "x-forwarded-proto": "https" });
+    expect(() => originFromHeaders(h)).toThrow("Untrusted origin host: evil.com");
+  });
+
+  it("x.vercel.app.evil.com throws — endsWith check requires trailing .vercel.app", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "");
+    const h = makeHeaders({ "host": "x.vercel.app.evil.com", "x-forwarded-proto": "https" });
+    expect(() => originFromHeaders(h)).toThrow("Untrusted origin host: x.vercel.app.evil.com");
+  });
+
+  it("ALLOWED_ORIGIN_HOSTS entry trusted", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "myapp.com,staging.myapp.com");
+    const h = makeHeaders({ "host": "myapp.com", "x-forwarded-proto": "https" });
+    expect(originFromHeaders(h)).toBe("https://myapp.com");
+  });
+
+  it("ALLOWED_ORIGIN_HOSTS: second entry in list trusted", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "myapp.com,staging.myapp.com");
+    const h = makeHeaders({ "host": "staging.myapp.com", "x-forwarded-proto": "https" });
+    expect(originFromHeaders(h)).toBe("https://staging.myapp.com");
+  });
+
+  it("ALLOWED_ORIGIN_HOSTS: not-listed host still throws", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", "myapp.com");
+    const h = makeHeaders({ "host": "evil.com", "x-forwarded-proto": "https" });
+    expect(() => originFromHeaders(h)).toThrow("Untrusted origin host: evil.com");
+  });
+
+  it("ALLOWED_ORIGIN_HOSTS: empty/whitespace entries ignored", () => {
+    vi.stubEnv("CANONICAL_ORIGIN", "");
+    vi.stubEnv("ALLOWED_ORIGIN_HOSTS", " , , ");
+    const h = makeHeaders({ "host": "evil.com", "x-forwarded-proto": "https" });
+    expect(() => originFromHeaders(h)).toThrow("Untrusted origin host: evil.com");
   });
 });

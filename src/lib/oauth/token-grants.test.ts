@@ -362,16 +362,72 @@ describe("exchangeRefreshToken", () => {
     expect(createCall.data.familyId).toBe(FAMILY_ID);
   });
 
-  it("rotation: old refresh token gets revokedAt set + supersededById = new.id", async () => {
+  it("rotation: old token atomically revoked via updateMany({id, revokedAt:null}); supersededById set via update", async () => {
     const db = makeRefreshDb(validOldToken);
-    const txDb = (db as GrantDb & { oAuthRefreshToken: { update: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> } });
+    const txDb = (db as GrantDb & {
+      oAuthRefreshToken: {
+        updateMany: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+      };
+    });
 
     await exchangeRefreshToken(db, baseParams);
 
+    // Step 1: conditional atomic revoke (revokedAt must be set here, not in update)
+    const updateManyCall = vi.mocked(txDb.oAuthRefreshToken.updateMany).mock.calls[0][0];
+    expect(updateManyCall.where).toMatchObject({ id: "old-rt-id", revokedAt: null });
+    expect(updateManyCall.data.revokedAt).toBeInstanceOf(Date);
+
+    // Step 3: chain link audit trail — only supersededById; revokedAt must NOT be set here
     const updateCall = vi.mocked(txDb.oAuthRefreshToken.update).mock.calls[0][0];
     expect(updateCall.where.id).toBe("old-rt-id");
-    expect(updateCall.data.revokedAt).toBeInstanceOf(Date);
     expect(updateCall.data.supersededById).toBe("new-rt-id");
+    expect("revokedAt" in updateCall.data).toBe(false);
+  });
+
+  it("atomic: concurrent rotation (updateMany count=0) → invalid_grant, no tokens issued", async () => {
+    // Simulate: a concurrent request already rotated this token inside the transaction;
+    // the atomic updateMany returns count=0. This is NOT theft — no family revoke.
+    const txDb: GrantTxDb = {
+      oAuthAuthCode: {
+        findUnique: vi.fn(),
+        updateMany: vi.fn(),
+      },
+      oAuthClient: {
+        findUnique: vi.fn(),
+      },
+      oAuthAccessToken: {
+        create: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      oAuthRefreshToken: {
+        findUnique: vi.fn().mockResolvedValue(validOldToken),
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }), // peer already rotated
+      },
+    };
+    const db: GrantDb = {
+      ...txDb,
+      $transaction: vi.fn().mockImplementation(
+        async (fn: (tx: GrantTxDb) => Promise<unknown>) => fn(txDb),
+      ),
+    } as GrantDb;
+
+    const result = await exchangeRefreshToken(db, baseParams);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.err.error).toBe("invalid_grant");
+
+    // No tokens must have been issued (steps 2-4 are skipped)
+    expect(vi.mocked(txDb.oAuthRefreshToken.create)).not.toHaveBeenCalled();
+    expect(vi.mocked(txDb.oAuthAccessToken.create)).not.toHaveBeenCalled();
+    // Exactly one updateMany call (the atomic consume attempt) — NOT a family revoke
+    expect(vi.mocked(txDb.oAuthRefreshToken.updateMany)).toHaveBeenCalledTimes(1);
+    const onlyCall = vi.mocked(txDb.oAuthRefreshToken.updateMany).mock.calls[0][0];
+    expect(onlyCall.where).toMatchObject({ id: "old-rt-id" });
   });
 
   it("reuse detection: revoked refresh token → revokes whole family + all access tokens → invalid_grant", async () => {

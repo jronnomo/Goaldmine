@@ -20,6 +20,7 @@ import {
   bestSetSummary,
   recordsSetInWorkout,
   canonicalExerciseName,
+  getBaselineHistory,
 } from "@/lib/records";
 
 import { mapBaselineToSet } from "@/lib/baseline-workout";
@@ -803,5 +804,36 @@ describe("mapBaselineToSet", () => {
     expect(result.reps).toBe(95);
     // durationSec may be set (phantom) — that's the pre-existing behavior for unmapped tests
     // The reps cascade wins in bestSetSummary, so this is safe.
+  });
+});
+
+// ── Group: getBaselineHistory omit assertion (E-3 leaky-read fix) ─────────────
+// Assert the query was called with omit: { userId: true } in its args.
+// (The mock ignores omit — only real Prisma honours it; test query CALL ARGS.)
+
+describe("getBaselineHistory — query passes omit: { userId: true }", () => {
+  const baselineFindMany = vi.fn().mockResolvedValue([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({ baseline: { findMany: baselineFindMany } });
+  });
+
+  it("findMany is called with omit: { userId: true }", async () => {
+    await getBaselineHistory("Squat 1RM");
+
+    expect(baselineFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ omit: { userId: true } }),
+    );
+  });
+
+  it("findMany where clause still targets testName", async () => {
+    await getBaselineHistory("Pull-up Max Reps");
+
+    expect(baselineFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { testName: "Pull-up Max Reps" } }),
+    );
   });
 });

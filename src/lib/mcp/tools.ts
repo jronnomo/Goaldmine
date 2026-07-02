@@ -786,30 +786,37 @@ function registerReadTools(server: McpServer) {
         const [workouts, measurements, notes, baselines, hikes, nutrition, bodyMetricRows] = await Promise.all([
           db.workout.findMany({
             where: { startedAt: { gte: since } },
+            omit: { userId: true },
             include: { exercises: { include: { sets: true } } },
             orderBy: { startedAt: "desc" },
           }),
           db.measurement.findMany({
             where: { date: { gte: since } },
+            omit: { userId: true },
             orderBy: { date: "desc" },
           }),
           db.note.findMany({
             where: { date: { gte: since }, type: { in: [...ACTIVITY_NOTE_TYPES] } },
+            omit: { userId: true },
             orderBy: { date: "desc" },
           }),
           db.baseline.findMany({
             where: { date: { gte: since } },
+            omit: { userId: true },
             orderBy: { date: "desc" },
           }),
           db.hike.findMany({
             where: { date: { gte: since } },
+            omit: { userId: true },
             orderBy: { date: "desc" },
           }),
           db.nutritionLog.findMany({
             where: { date: { gte: since } },
+            omit: { userId: true },
             orderBy: { date: "desc" },
           }),
           // R-S1: include latest body metric per key so the coach sees wearable data inline.
+          // bodyMetric: NO omit needed — result is DTO-mapped to { key, value, unit, date } only.
           db.bodyMetric.findMany({
             where: { date: { gte: since } },
             orderBy: [{ date: "desc" }, { createdAt: "desc" }],
@@ -902,8 +909,10 @@ function registerReadTools(server: McpServer) {
         const db = await getDb();
         const goal = await db.goal.findUniqueOrThrow({
           where: { id: goalId },
+          omit: { userId: true },
           include: {
             plans: {
+              omit: { userId: true },
               where: { active: true },
               orderBy: { createdAt: "desc" },
               take: 1,
@@ -911,7 +920,11 @@ function registerReadTools(server: McpServer) {
                 revisions: {
                   orderBy: { createdAt: "desc" },
                   take: 10,
-                  include: { triggerNote: true },
+                  include: {
+                    triggerNote: {
+                      omit: { userId: true },
+                    },
+                  },
                 },
               },
             },
@@ -1048,6 +1061,7 @@ function registerReadTools(server: McpServer) {
         });
         const notes = await db.note.findMany({
           where: { resolvedAt: null },
+          omit: { userId: true },
           orderBy: { date: "desc" },
         });
         return {
@@ -1171,27 +1185,33 @@ function registerReadTools(server: McpServer) {
         const [workouts, measurements, notes, baselines, hikes, nutrition] = await Promise.all([
           db.workout.findMany({
             where: { startedAt: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             include: { exercises: { include: { sets: true } } },
             orderBy: { startedAt: "asc" },
           }),
           db.measurement.findMany({
             where: { date: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             orderBy: { date: "asc" },
           }),
           db.note.findMany({
             where: { date: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             orderBy: { date: "asc" },
           }),
           db.baseline.findMany({
             where: { date: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             orderBy: { date: "asc" },
           }),
           db.hike.findMany({
             where: { date: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             orderBy: { date: "asc" },
           }),
           db.nutritionLog.findMany({
             where: { date: { gte: monday, lte: sunday } },
+            omit: { userId: true },
             orderBy: { date: "asc" },
           }),
         ]);

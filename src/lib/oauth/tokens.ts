@@ -104,14 +104,35 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Returns true if the given Host header value is a host we trust when
+ * CANONICAL_ORIGIN is unset (dev / Vercel preview).
+ *
+ * Normalizes to lowercase and strips a trailing FQDN dot + port suffix before
+ * matching, so "localhost:3000", "LOCALHOST", and "foo.vercel.app." all work.
+ * Trusts localhost, 127.0.0.1, [::1] (loopback), *.vercel.app (preview deploys),
+ * and any host listed in the ALLOWED_ORIGIN_HOSTS env var (comma-separated).
+ */
+function isTrustedHost(host: string): boolean {
+  const lower = host.toLowerCase().replace(/\.$/, "").replace(/:\d+$/, "");
+  if (lower === "localhost" || lower === "127.0.0.1" || lower === "[::1]") return true;
+  if (lower.endsWith(".vercel.app")) return true;
+  const allowList = (process.env.ALLOWED_ORIGIN_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase().replace(/\.$/, ""))
+    .filter(Boolean);
+  return allowList.includes(lower);
+}
+
+/**
  * Derive the canonical OAuth issuer origin for this request.
  *
  * Priority order:
  *  1. `process.env.CANONICAL_ORIGIN` — hard-coded on production deploys where
  *     the issuer must be stable across Vercel preview URLs and custom domains.
  *     Set this in Vercel's environment variables for prod (e.g. "https://goaldmine.com").
- *  2. The origin of the incoming request URL — works for localhost dev and
- *     Vercel preview deployments without any extra configuration.
+ *  2. The origin of the incoming request URL — validated against isTrustedHost
+ *     before use. Throws for untrusted hosts (fail-closed; never mints a token
+ *     bound to an attacker-controlled origin).
  *
  * Multi-domain note: if your deployment answers on multiple hostnames (e.g.
  * `goaldmine.com` and `www.goaldmine.com`), set CANONICAL_ORIGIN to the primary
@@ -122,7 +143,12 @@ export function deriveOrigin(req: Request): string {
   const canonical = process.env.CANONICAL_ORIGIN;
   if (canonical) return canonical.replace(/\/+$/, ""); // strip trailing slash(es)
 
+  // CANONICAL_ORIGIN not set — validate the request host before trusting it.
+  // new URL() normalizes ASCII hostnames to lowercase, so url.host is already lower.
   const url = new URL(req.url);
+  if (!isTrustedHost(url.host)) {
+    throw new Error(`Untrusted origin host: ${url.host}`);
+  }
   return `${url.protocol}//${url.host}`;
 }
 
@@ -135,7 +161,10 @@ export function deriveOrigin(req: Request): string {
  *
  * Mirrors the precedence of `deriveOrigin` exactly:
  *  1. `CANONICAL_ORIGIN` env var (production hard-lock, trailing slash stripped)
- *  2. `x-forwarded-proto` + `host` headers (Vercel proxy / localhost dev fallback)
+ *  2. `x-forwarded-proto` + `host` headers — validated against isTrustedHost
+ *     (fail-closed; throws for untrusted hosts). Uses the normalized (lowercase,
+ *     trailing-dot-stripped) host in the returned URL so the issuer string is
+ *     canonical regardless of raw header casing.
  *
  * Use this from RSC pages/layouts where no `Request` object is available.
  * Use `deriveOrigin(req)` from API route handlers.
@@ -144,14 +173,18 @@ export function deriveOrigin(req: Request): string {
  * the only case that matters for production correctness.  The displayed
  * connector URL `${originFromHeaders(h)}/api/mcp` will match the `resource`
  * value advertised by the discovery route (which calls `deriveOrigin`).
- *
- * Note: header fallback is only safe behind Vercel's trusted proxy. Non-Vercel
- * deploys that don't set CANONICAL_ORIGIN can have spoofable Host headers.
- * Set CANONICAL_ORIGIN in production to guarantee stability.
  */
 export function originFromHeaders(h: Headers): string {
   const canonical = process.env.CANONICAL_ORIGIN;
   // Mirror deriveOrigin: falsy check (not nullish) so empty string falls through
   if (canonical) return canonical.replace(/\/+$/, "");
-  return `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`;
+
+  // CANONICAL_ORIGIN not set — validate the Host header before trusting it.
+  const rawHost = h.get("host") ?? "localhost:3000";
+  if (!isTrustedHost(rawHost)) {
+    throw new Error(`Untrusted origin host: ${rawHost}`);
+  }
+  // Normalize to lowercase + strip trailing FQDN dot so the issuer string is canonical.
+  const normalizedHost = rawHost.toLowerCase().replace(/\.$/, "");
+  return `${h.get("x-forwarded-proto") ?? "http"}://${normalizedHost}`;
 }

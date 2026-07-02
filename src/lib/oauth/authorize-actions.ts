@@ -20,22 +20,12 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth/auth";
 import { prisma } from "@/lib/db";
-import { generateSecret, hashSecret, AUTH_CODE_TTL_S } from "@/lib/oauth/tokens";
+import { generateSecret, hashSecret, AUTH_CODE_TTL_S, originFromHeaders } from "@/lib/oauth/tokens";
 import { validateAuthorizeParams } from "@/lib/oauth/authorize-validate";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Derive the canonical server origin (same logic as page.tsx). */
-async function getOrigin(): Promise<string> {
-  const canonical = process.env.CANONICAL_ORIGIN;
-  if (canonical) return canonical.replace(/\/+$/, "");
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host = h.get("host") ?? "localhost:3000";
-  return `${proto}://${host}`;
-}
 
 /**
  * Convert FormData to the params Record expected by validateAuthorizeParams.
@@ -74,7 +64,7 @@ export async function approveAuthorization(formData: FormData) {
   }
   const userId = session.user.id;
 
-  const origin = await getOrigin();
+  const origin = originFromHeaders(await headers());
   const params = formDataToParams(formData);
   const validation = await validateAuthorizeParams(params, prisma, origin);
 
@@ -135,7 +125,7 @@ export async function approveAuthorization(formData: FormData) {
  * redirect_uri before sending the user there — never trusts the hidden input raw.
  */
 export async function denyAuthorization(formData: FormData) {
-  const origin = await getOrigin();
+  const origin = originFromHeaders(await headers());
   const params = formDataToParams(formData);
   const validation = await validateAuthorizeParams(params, prisma, origin);
 

@@ -15,8 +15,9 @@
  *  - Authorization-code consume is ATOMIC (single updateMany in a transaction)
  *    and happens INSIDE the transaction that issues tokens — cleaner than two
  *    separate DB round-trips.
- *  - Refresh-token ROTATION: old token gets revokedAt + supersededById set
- *    inside the same transaction that creates the new pair.
+ *  - Refresh-token ROTATION: ATOMIC — old token is consumed via updateMany
+ *    ({id, revokedAt: null}) inside the transaction (count=0 → invalid_grant,
+ *    closes double-spend); supersededById is set via update as audit trail.
  *  - REUSE DETECTION: a revoked refresh token → revoke entire family (all
  *    refresh tokens with same familyId AND all access tokens for that
  *    userId+clientId that are still live).
@@ -115,10 +116,12 @@ export type GrantTxDb = {
     }): Promise<{ id: string }>;
     update(args: {
       where: { id: string };
-      data: { revokedAt: Date; supersededById: string };
+      data: { supersededById: string };
     }): Promise<{ id: string }>;
     updateMany(args: {
-      where: { familyId: string; revokedAt: null };
+      where:
+        | { familyId: string; revokedAt: null }  // family-revoke (reuse detection, unchanged)
+        | { id: string; revokedAt: null };        // conditional-consume (rotation gate, NEW)
       data: { revokedAt: Date };
     }): Promise<{ count: number }>;
   };
@@ -312,11 +315,11 @@ export async function exchangeAuthorizationCode(
       };
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[OAuth] Token issuance failed:", e);
     return {
       ok: false,
       status: 400,
-      err: { error: "server_error", error_description: `Token issuance failed: ${msg}` },
+      err: { error: "server_error", error_description: "Internal error during token issuance" },
     };
   }
 
@@ -418,9 +421,9 @@ export async function exchangeRefreshToken(
   }
 
   // ── Rotate in a transaction ────────────────────────────────────────────────
-  let txResult: { access_token: string; refresh_token: string; scope: string };
+  let txResult: TxResult;
   try {
-    txResult = await db.$transaction(async (tx) => {
+    txResult = await db.$transaction(async (tx): Promise<TxResult> => {
       const now = new Date();
       const accessTokenPlain = generateSecret("mcpa");
       const refreshTokenPlain = generateSecret("mcpr");
@@ -428,7 +431,23 @@ export async function exchangeRefreshToken(
       // familyId must never be null (PRD DA revision) — defensive UUID fallback
       const familyId = oldToken.familyId ?? randomUUID();
 
-      // 1. Create the new refresh token (same family)
+      // 1. Atomically revoke the old token — gate on revokedAt: null.
+      //    count=0 means a concurrent request already rotated this token inside a
+      //    transaction. Return invalid_grant WITHOUT family-revoke (not theft;
+      //    see DA critique §3d). Do NOT issue new tokens.
+      const consumed = await tx.oAuthRefreshToken.updateMany({
+        where: { id: oldToken.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      if (consumed.count !== 1) {
+        return {
+          type: "error",
+          error: "invalid_grant",
+          error_description: "Refresh token was already rotated by a concurrent request",
+        };
+      }
+
+      // 2. Create the new refresh token (same family)
       const newRefresh = await tx.oAuthRefreshToken.create({
         data: {
           tokenHash: hashSecret(refreshTokenPlain),
@@ -441,13 +460,13 @@ export async function exchangeRefreshToken(
         },
       });
 
-      // 2. Revoke the old refresh token + record the chain link
+      // 3. Record the chain link (audit trail — revokedAt already set in step 1)
       await tx.oAuthRefreshToken.update({
         where: { id: oldToken.id },
-        data: { revokedAt: now, supersededById: newRefresh.id },
+        data: { supersededById: newRefresh.id },
       });
 
-      // 3. Issue new access token
+      // 4. Issue new access token
       await tx.oAuthAccessToken.create({
         data: {
           tokenHash: hashSecret(accessTokenPlain),
@@ -459,15 +478,20 @@ export async function exchangeRefreshToken(
         },
       });
 
-      return { access_token: accessTokenPlain, refresh_token: refreshTokenPlain, scope };
+      return { type: "success", access_token: accessTokenPlain, refresh_token: refreshTokenPlain, scope };
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[OAuth] Token rotation failed:", e);
     return {
       ok: false,
       status: 400,
-      err: { error: "server_error", error_description: `Token rotation failed: ${msg}` },
+      err: { error: "server_error", error_description: "Internal error during token issuance" },
     };
+  }
+
+  if (txResult.type === "error") {
+    const status: 400 | 401 = txResult.error === "invalid_client" ? 401 : 400;
+    return { ok: false, status, err: { error: txResult.error, error_description: txResult.error_description } };
   }
 
   return {

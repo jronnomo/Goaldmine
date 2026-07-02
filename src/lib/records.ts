@@ -246,6 +246,7 @@ export async function getBaselineHistory(testName: string) {
   const db = await getDb();
   return db.baseline.findMany({
     where: { testName },
+    omit: { userId: true },
     orderBy: { date: "asc" },
   });
 }
