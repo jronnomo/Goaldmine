@@ -109,8 +109,16 @@ export function SessionMenu({ user }: SessionMenuProps) {
             )}
           </div>
 
-          {/* Sign out */}
-          <div className="px-2 pt-1">
+          {/* Settings + Sign out */}
+          <div className="px-2 pt-1 space-y-0.5">
+            <Link
+              href="/settings"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center px-3 py-2 rounded-lg text-sm text-[var(--foreground)] hover:bg-[var(--accent)]/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              Settings
+            </Link>
             <form action={signOutAction}>
               <button
                 type="submit"

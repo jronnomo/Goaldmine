@@ -11,10 +11,9 @@
  *   - grant_types_supported: ["authorization_code", "refresh_token"]
  *   - scopes_supported: ["mcp"]
  *
- * NOTE: authorization_endpoint (/oauth/authorize) returns 404 until C-2.
- *       token_endpoint (/oauth/token) returns 404 until C-3a.
- *       revocation_endpoint will be added to this document in C-3b when the
- *       endpoint itself is built. Do not add it here speculatively.
+ * NOTE: authorization_endpoint (/oauth/authorize) live as of C-2.
+ *       token_endpoint (/oauth/token) live as of C-3a.
+ *       revocation_endpoint (/oauth/revoke) live as of C-3b.
  *       registration_endpoint (/oauth/register) is live as of C-1.
  *
  * runtime="nodejs" — no DB access; pure JSON response.
@@ -38,6 +37,7 @@ export async function GET(req: Request): Promise<Response> {
     issuer: origin,
     authorization_endpoint: `${origin}/oauth/authorize`,
     token_endpoint: `${origin}/oauth/token`,
+    revocation_endpoint: `${origin}/oauth/revoke`,
     registration_endpoint: `${origin}/oauth/register`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code", "refresh_token"],
