@@ -6,6 +6,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerAll, MCP_SERVER_VERSION } from "@/lib/mcp/tools";
 import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
+import { runWithUser } from "@/lib/db";
+import { FOUNDER_USER_ID } from "@/lib/auth/founder";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -40,7 +42,11 @@ async function handler(
 
   await server.connect(transport);
   try {
-    return await transport.handleRequest(req);
+    // This route's shared token maps to the founder identity — mirrors
+    // resolveUserIdFromToken's legacy branch — so getDb() inside the tool
+    // call tree resolves via the ALS scope instead of falling through to
+    // getCurrentUserId()'s session redirect.
+    return await runWithUser(FOUNDER_USER_ID, () => transport.handleRequest(req));
   } catch (e) {
     // Any throw that escapes the MCP transport/tool layer lands here.
     // Without this catch, Next.js returns a generic 500 with no body, which
