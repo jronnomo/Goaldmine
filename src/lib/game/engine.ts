@@ -120,6 +120,7 @@ function emptyState(): GameState {
     streak: { current: 0, longest: 0, todayCounted: false },
     badges: BADGE_CATALOG.map((def) => ({ def, dateKey: null })),
     recentEvents: [],
+    events: [],
     questToday: null,
   };
 }
@@ -920,6 +921,7 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
     streak,
     badges,
     recentEvents,
+    events: allEvents,
     questToday,
   };
 }
