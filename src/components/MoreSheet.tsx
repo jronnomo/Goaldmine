@@ -69,6 +69,15 @@ const RecapIcon = () => (
   </svg>
 );
 
+// Compare icon — two opposing curved arrows, 20px / stroke 1.5, house style.
+// Evokes "then vs now" — the glance-back-forge-ahead two-date comparison.
+const CompareIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <path d="M4 7h8M12 7l-2.5-2.5M12 7l-2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 13H8M8 13l2.5-2.5M8 13l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
 // Character icon — bust silhouette (head + shoulders), 20px / stroke 1.5, house style.
 // Reads as "RPG character sheet" at a glance alongside the other line icons.
 const CharacterIcon = () => (
@@ -109,6 +118,12 @@ const navRows: NavRow[] = [
     label: "Recap",
     sub: "Weekly recap card — share your progress",
     icon: <RecapIcon />,
+  },
+  {
+    href: "/compare",
+    label: "Compare",
+    sub: "Glance back, forge ahead",
+    icon: <CompareIcon />,
   },
   {
     href: "/nutrition",
