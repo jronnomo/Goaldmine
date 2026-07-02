@@ -116,7 +116,6 @@ export function SessionMenu({ user }: SessionMenuProps) {
                 type="submit"
                 role="menuitem"
                 className="w-full text-left px-3 py-2 rounded-lg text-sm text-[var(--foreground)] hover:bg-[var(--accent)]/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                onClick={() => setOpen(false)}
               >
                 Sign out
               </button>

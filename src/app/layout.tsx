@@ -137,6 +137,7 @@ export default async function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} ${dmSerifDisplay.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <head>
         {/* Pre-paint theme application — avoids a flash when the user has
