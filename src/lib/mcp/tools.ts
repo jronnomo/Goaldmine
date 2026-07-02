@@ -82,6 +82,7 @@ import {
   summarizeBaselineChanges,
 } from "@/lib/baseline-ops";
 import { computeGameState } from "@/lib/game/engine";
+import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
@@ -1220,6 +1221,25 @@ function registerReadTools(server: McpServer) {
         const nutritionStripped = nutrition.map((n) => ({ ...n, items: stripItemSource(n.items) }));
         return { monday, sunday, weekOffset, workouts, measurements, notes, baselines, hikes, nutrition: nutritionStripped };
       }),
+  );
+
+  server.registerTool(
+    "compare_dates",
+    {
+      title: "Two-date snapshot comparison (glance back, forge ahead)",
+      description:
+        "Side-by-side snapshot of every tracked metric as of two dates — latest-known value ≤ end of each day, NOT what happened on that day. " +
+        "Covers per-goal targets + readiness, strength PRs, baseline tests, body/wearable metrics, consistency counters between the dates " +
+        "(workouts, hikes, XP/level), and trailing-7-day nutrition averages. Use for 'how far have I come since X', " +
+        "'compare today vs program start', 'progress since goal creation'. Dates auto-normalize (swapped if b < a, clamped to today). " +
+        "b defaults to today.",
+      inputSchema: {
+        a: DateKeyShape.describe("Earlier date, yyyy-mm-dd"),
+        b: DateKeyShape.optional().describe("Later date, yyyy-mm-dd; defaults to today"),
+      },
+    },
+    async ({ a, b }) =>
+      safe(() => computeComparison(a, b ?? toDateKey(new Date()))),
   );
 
   server.registerTool(

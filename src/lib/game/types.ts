@@ -38,6 +38,7 @@ export type GameState = {
   };
   badges: UnlockedBadge[];   // all 16 sorted: unlocked first (by dateKey asc), then locked
   recentEvents: XpEvent[];   // last 30 across all attributes + unattributed, sorted desc
+  events: XpEvent[];         // full, unsorted event history — for as-of XP sums (e.g. compare.ts)
   questToday: QuestProjection | null; // null when no program or off-plan day
 };
 
