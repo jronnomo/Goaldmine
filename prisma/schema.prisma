@@ -10,12 +10,15 @@ datasource db {
 }
 
 // Phase-0 identity model. E2 adds userId FKs + back-relations.
+// A-1 adds emailVerified + image (Auth.js adapter contract) + auth relations.
 model User {
-  id        String   @id @default(cuid())
-  email     String?  @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // E2 back-relations — owned tables (12 OWNED + 4 CHILD-denormalized)
   workouts         Workout[]
@@ -34,6 +37,10 @@ model User {
   logEntries       LogEntry[]
   plans            Plan[]
   dayRenderJobs    DayRenderJob[]
+
+  // Auth.js adapter relations (A-1) — not in SCOPED_MODELS; auth infra is cross-user
+  accounts         Account[]
+  sessions         Session[]
 }
 
 model Workout {
@@ -525,4 +532,53 @@ model DayRenderJob {
   @@unique([goalId, date])
   @@index([goalId, status, date])
   @@index([userId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Auth.js v5 adapter models (A-1)
+// These are auth infrastructure — cross-user by design.
+// They must NOT be added to SCOPED_MODELS in src/lib/db.ts.
+// The adapter uses the raw `prisma` singleton directly (never getDb).
+// ---------------------------------------------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
 }

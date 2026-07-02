@@ -54,6 +54,8 @@ const SCOPED_MODELS = new Set<string>([
   "Plan",
   "DayRenderJob",
 ]);
+// Auth.js models (Account, Session, VerificationToken) are intentionally excluded —
+// auth infrastructure is cross-user by design; the adapter uses raw `prisma` directly.
 
 // ---------------------------------------------------------------------------
 // 3. Pure injection helper — EXPORTED for unit-testing without a live DB.
