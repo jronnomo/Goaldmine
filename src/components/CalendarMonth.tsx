@@ -14,15 +14,26 @@
 //   - DayCell provisional opacity + dashed top hairline (REQ-006)
 //   - DayCell conflict corner wedge (REQ-006, D-2 colorblind-safe redundancy)
 //   - bullseye-pop flip on newly-confirmed weeks via localStorage gate (REQ-007)
+//   - Compare mode: two-tap date-pair picker -> /compare?a=&b= (REQ-006, glance-back-forge-ahead)
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
 import { WeekRail } from "@/components/WeekRail";
 import type { CalendarDayCell } from "@/lib/calendar";
+import { parseDateKey } from "@/lib/calendar-core";
 import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// ─── Compare mode (REQ-006) ─────────────────────────────────────────────────
+// Two-tap date-pair picker: "normal" (default calendar browsing) -> "selectA"
+// (pill tapped, waiting for the first day) -> "selectB" (first day picked,
+// waiting for the second) -> navigate to /compare and reset to "normal".
+type CompareMode = "normal" | "selectA" | "selectB";
+
+const COMPARE_STORAGE_KEY = "goaldmine.compareMode";
 
 // UXR-62-03: focus-first ordering, cap 2–3 total markers before +N chip.
 // 3 chosen: worst-case race-week cell has 1 focus + 2 foreign glyphs before chip.
@@ -98,6 +109,96 @@ export function CalendarMonth({
 
   const selected = cells.find((c) => c.dateKey === selectedKey) ?? null;
 
+  // ── REQ-006: compare mode ───────────────────────────────────────────────────
+  const [mode, setMode] = useState<CompareMode>("normal");
+  const [compareA, setCompareA] = useState<string | null>(null);
+  const router = useRouter();
+
+  // Hydrate once on mount. CalendarMonth remounts fully on month navigation
+  // (key={year-month} + plain <Link> in calendar/page.tsx — no client-side
+  // transition preserves React state), so sessionStorage — not just state —
+  // is what survives a month-nav mid-comparison. Reading external storage
+  // into state on mount is the intentional exception the project's
+  // react-hooks/set-state-in-effect rule allows (see RecapClient.tsx).
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(COMPARE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { mode: CompareMode; compareA: string | null };
+        if (parsed.mode === "selectA" || parsed.mode === "selectB") {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setMode(parsed.mode);
+          setCompareA(parsed.compareA);
+        }
+      }
+    } catch {
+      // private browsing / storage disabled — degrade to normal mode silently,
+      // mirroring the existing localStorage try/catch guard in this same file
+      // (REQ-007 bullseye-pop gate, below).
+    }
+  }, []);
+
+  // Persist on every mode/compareA change; clear when back to normal.
+  useEffect(() => {
+    try {
+      if (mode === "normal") sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+      else sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify({ mode, compareA }));
+    } catch {
+      // ignore — same defensive posture as above
+    }
+  }, [mode, compareA]);
+
+  function handleCompareToggle() {
+    if (mode === "normal") {
+      setMode("selectA");
+      setCompareA(null);
+    } else {
+      setMode("normal");
+      setCompareA(null);
+    }
+  }
+
+  // Cross-month recall row's "change" tap — re-pick day 1 without leaving
+  // compare mode entirely.
+  function handleRecallChange() {
+    setMode("selectA");
+    setCompareA(null);
+  }
+
+  function handleDayTap(cell: CalendarDayCell) {
+    if (mode === "normal") {
+      setSelectedKey(cell.dateKey); // existing behavior, unchanged
+      return;
+    }
+    if (mode === "selectA") {
+      setCompareA(cell.dateKey);
+      setMode("selectB");
+      return;
+    }
+    // mode === "selectB"
+    if (cell.dateKey === compareA) {
+      setCompareA(null);
+      setMode("selectA"); // tap-A-again -> undo (presence/absence only, no red/shake)
+      return;
+    }
+    const [minKey, maxKey] = [compareA!, cell.dateKey].sort();
+    setMode("normal");
+    setCompareA(null);
+    try {
+      sessionStorage.removeItem(COMPARE_STORAGE_KEY);
+    } catch {
+      // ignore — same defensive posture as above
+    }
+    router.push(`/compare?a=${minKey}&b=${maxKey}`);
+  }
+
+  // Fix 5: cross-month recall row condition is checked against the FULL
+  // 42-cell padded grid (`cells`), NOT the inMonth subset — a compareA that
+  // sits in an adjacent month but is visible as an overflow cell (ringed +
+  // chipped) needs no recall row.
+  const compareAOffScreen =
+    mode === "selectB" && compareA !== null && !cells.some((c) => c.dateKey === compareA);
+
   // ── REQ-007: bullseye-pop flip ──────────────────────────────────────────────
   // The pop is applied imperatively via a DOM query in useEffect so we avoid:
   //   1. Accessing refs during render (ESLint react-hooks/refs)
@@ -141,6 +242,48 @@ export function CalendarMonth({
 
   return (
     <div className="space-y-3">
+      {/* REQ-006: compare-mode pill row — right-aligned, above the whole grid. */}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          data-testid="compare-pill"
+          aria-pressed={mode !== "normal"}
+          onClick={handleCompareToggle}
+          className={`compare-pill min-h-11 rounded-full border px-3 py-1.5 text-xs font-medium ${
+            mode === "normal"
+              ? "border-[var(--border)] bg-[var(--card)] text-[var(--accent)]"
+              : "border-[var(--border)] bg-[var(--accent-soft)] text-[var(--accent)]"
+          }`}
+        >
+          {mode === "normal" ? "⇄ Compare" : "⇄ Comparing · Cancel"}
+        </button>
+      </div>
+      {mode !== "normal" && (
+        <p
+          aria-live="polite"
+          role="status"
+          data-testid="compare-hint"
+          className="text-xs text-[var(--muted)] px-1"
+        >
+          {mode === "selectA"
+            ? "Pick the first day"
+            : `Pick the second day — ${formatCompareDate(compareA)} selected`}
+        </p>
+      )}
+      {/* UXR-18 / Fix 5: cross-month recall row — compareA lives outside the
+          rendered month's 42-cell grid, so its ring + "A" chip are off-screen. */}
+      {compareAOffScreen && (
+        <div className="flex items-center gap-2 text-xs text-[var(--muted)] px-1">
+          <span>A: {formatCompareDate(compareA)}</span>
+          <button
+            type="button"
+            onClick={handleRecallChange}
+            className="min-h-11 font-medium text-[var(--accent)]"
+          >
+            ⇄ change
+          </button>
+        </div>
+      )}
       <div>
         {/* Header: 16px rail gutter spacer + 7 day-name columns (same grid as rows).
             The spacer keeps columns perfectly aligned with the week data rows. */}
@@ -172,24 +315,45 @@ export function CalendarMonth({
                   weekIndex={weekIndex}
                   confirmedThroughDate={confirmedThroughDate ?? null}
                 />
-                {weekCells.map((c) => (
-                  <DayCell
-                    key={c.dateKey}
-                    cell={c}
-                    inMonth={inMonth(c)}
-                    legend={legend}
-                    selected={c.dateKey === selectedKey}
-                    onSelect={() => setSelectedKey(c.dateKey)}
-                  />
-                ))}
+                {weekCells.map((c) => {
+                  // "selected" is repurposed in compare mode: it drives the
+                  // same ring-2 styling for whichever day is currently
+                  // picked as A, rather than adding a parallel prop set.
+                  const isSelectedForDisplay =
+                    mode === "normal" ? c.dateKey === selectedKey : c.dateKey === compareA;
+                  return (
+                    <DayCell
+                      key={c.dateKey}
+                      cell={c}
+                      inMonth={inMonth(c)}
+                      legend={legend}
+                      selected={isSelectedForDisplay}
+                      compareBadge={mode === "selectB" && c.dateKey === compareA ? "A" : undefined}
+                      onSelect={() => handleDayTap(c)}
+                    />
+                  );
+                })}
               </div>
             );
           })}
         </div>
       </div>
-      {selected && <DayDetail cell={selected} legend={legend} />}
+      {/* REQ-006: DayDetail is hidden (unmounted) while a compare-mode pick is
+          in progress — Fix 6 accepts the resulting one-frame flash on
+          month-nav rehydrate rather than a sessionStorage lazy-initializer
+          (which would cause a hydration mismatch). */}
+      {mode === "normal" && selected && <DayDetail cell={selected} legend={legend} />}
     </div>
   );
+}
+
+// Small display-only formatter for the compare-mode hint/recall row — NOT
+// date math, just rendering an already-normalized dateKey. Uses the same
+// `undefined` (browser-locale) toLocaleDateString convention as DayDetail's
+// dateLabel below, scoped to a short month/day form for the compact rows.
+function formatCompareDate(key: string | null): string {
+  if (!key) return "";
+  return parseDateKey(key).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 // ─── DayCell ──────────────────────────────────────────────────────────────────
@@ -201,12 +365,14 @@ function DayCell({
   inMonth,
   legend,
   selected,
+  compareBadge,
   onSelect,
 }: {
   cell: CalendarDayCell;
   inMonth: boolean;
   legend: readonly LegendEntry[];
   selected: boolean;
+  compareBadge?: "A"; // REQ-006: corner chip for the picked A day in compare mode
   onSelect: () => void;
 }) {
   const focusMarkers = markersFor(cell, legend);
@@ -233,11 +399,13 @@ function DayCell({
     inMonth && isCompleted ? "shadow-[0_0_11px_-3px_var(--accent)]" : "";
 
   // Selection wins the ring; today gets a subtler ring when not selected.
+  // REQ-006: `compare-ring` carries the box-shadow fade transition whenever
+  // this ring is toggled on/off by a compare-mode pick (UXR-16).
   const ringClass = selected
-    ? "ring-2 ring-[var(--accent)]"
+    ? "ring-2 ring-[var(--accent)] compare-ring"
     : cell.isToday
       ? "ring-1 ring-[var(--accent)]"
-      : "";
+      : "compare-ring";
 
   const numClass = !inMonth
     ? "text-[var(--muted)]/40"
@@ -274,6 +442,8 @@ function DayCell({
     cell.conflict
       ? `· conflict: ${cell.conflict.label ?? cell.conflict.kind}`
       : "",
+    // REQ-006: announce the compare-mode A pick for screen readers.
+    compareBadge ? "· A selected" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -325,6 +495,20 @@ function DayCell({
           </span>
         )}
       </span>
+
+      {/* REQ-006: compare-mode "A" chip — same chip vocabulary as the +N
+          overflow chip above, placed in the opposite corner from the
+          conflict wedge so the two never collide. Entrance animated via
+          @starting-style (compare-a-chip, globals.css). */}
+      {compareBadge && (
+        <span
+          data-testid={`day-compare-badge-${cell.dateKey}`}
+          aria-hidden="true"
+          className="compare-a-chip absolute bottom-0.5 right-0.5 rounded-full bg-[var(--accent-soft)] px-1 leading-[1.6] text-[9px] font-medium text-[var(--accent)]"
+        >
+          A
+        </span>
+      )}
 
       {/* REQ-006 / D-2: conflict corner wedge.
           Geometric non-color redundant channel — required for colorblind-safety

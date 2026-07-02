@@ -417,3 +417,57 @@ input::placeholder, textarea::placeholder {
     animation: none;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Calendar compare mode (REQ-006, UXR-12/14/15/16/17, glance-back-forge-
+   ahead). Three CSS-only motions, each with its own reduced-motion guard:
+   the "⇄ Compare" pill's on-state color/bg swap, the "A" chip's entrance
+   on first pick, and the repurposed selection ring's box-shadow fade.
+   No new macro-flash — the existing one (above) is reused as-is for
+   /compare's delta chips; bullseye-pop is NOT used here (routine
+   navigation, not a celebration — see UX storyboard §5.1).
+   ────────────────────────────────────────────────────────────────────── */
+
+/* Pill on-state swap: color/bg only, no transform (UXR-17). */
+.compare-pill {
+  transition: background-color 180ms ease-out, color 180ms ease-out; /* ⚠ playtest 150-200ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-pill {
+    transition: none;
+  }
+}
+
+/* "A" chip entrance on first pick — opacity + translateY via @starting-style
+   (UXR-15). Reduced-motion: appears instantly at its final position. */
+.compare-a-chip {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 170ms cubic-bezier(0.16, 1, 0.3, 1), /* ⚠ playtest 140-200ms */
+    transform 170ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@starting-style {
+  .compare-a-chip {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-a-chip {
+    transition: none;
+  }
+}
+
+/* Selection ring fade — repurposed ring-2 toggling on/off as compare-mode
+   picks change (UXR-16). Kept under 180ms so the 2nd tap doesn't read as
+   laggy. Tap-A-again undo rides this same fade (presence/absence only —
+   no red, no shake). */
+.compare-ring {
+  transition: box-shadow 150ms ease-out; /* ⚠ playtest 120-160ms */
+}
+@media (prefers-reduced-motion: reduce) {
+  .compare-ring {
+    transition: none;
+  }
+}
