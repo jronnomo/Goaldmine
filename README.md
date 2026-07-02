@@ -43,13 +43,11 @@ flowchart LR
     DB[("Postgres (Neon)<br/>30 Prisma models<br/>tenant-scoped client")]
     GH["GitHub Projects API<br/>milestone sync for project goals"]
     FOOD["OpenFoodFacts / USDA<br/>barcode nutrition lookup"]
-    CF["ClipForge<br/>render-job queue → Reels"]
 
     CLAUDE -- "MCP over streamable HTTP<br/>(OAuth bearer)" --> OAUTH
     ENGINE --> DB
     ENGINE --> GH
     DASH --> FOOD
-    MCP --> CF
 ```
 
 - **No LLM in the app.** Every MCP tool is a pure, validated (Zod) read or write. All reasoning lives in the claude.ai conversation.
@@ -96,7 +94,7 @@ sequenceDiagram
 - **Deterministic Strong-app parser + round-trip formatters** — paste a Strong txt export in claude.ai, Claude parses it into structured sets, `log_workout` persists it, and the `strong` formatter reproduces the original format. Regression-tested against real exports.
 - **Gamification engine** (`src/lib/game/`) — XP curves per attribute, a day-ledger that replays PRs, streaks, 16 badges with pure unlock predicates, and a character page; the coach can grant bonus XP through a tool.
 - **Nutrition with barcode scanning** — zxing-wasm scanner in the browser → OpenFoodFacts/USDA lookup → a shared food catalog with per-user usage history (split for tenant isolation).
-- **Content flywheel to ClipForge** — footage markers tag which clip is which moment; a `DayRenderJob` queue (pending → claimed → drafted → approved → rendered) lets ClipForge, a sibling MCP-driven video editor, turn logged days into Instagram Reels. A server-rendered (resvg) 9:16 recap card ships with auto-captions and Web Share.
+- **Shareable recap pipeline** — footage markers tag which clip is which moment on a day; a `DayRenderJob` queue manages a full render lifecycle (pending → claimed → drafted → approved → rendered); and a server-rendered (resvg) 9:16 recap card ships with auto-captions and Web Share.
 - **Ops discipline unusual for a side project** — a `db-guard` script that refuses to migrate anything but a development database branch, tenant-isolation verification scripts, rate limiting (Upstash, fails open), and a `docs/project-gotchas.md` capturing hard-won traps.
 - **~540 unit tests** covering the readiness math, game engine scenarios, MCP read-leak safety (reads must not leak private note types), goal presentation, plan integrity, tenant isolation, and the full OAuth suite.
 
@@ -114,7 +112,7 @@ Registered in `src/lib/mcp/tools.ts` (+ GitHub / project / render packs). A samp
 | Plan control | `apply_plan_revision`, `apply_day_override`, `confirm_week`, `baseline_ops` / `workout_ops` (batched mutations) |
 | Goals | `create_goal`, `update_goal_targets`, `promote_note_to_goal`, `set_goal_feasibility` |
 | Project pack | `schedule_item`, `complete_item`, `link_github_project`, `sync_github_milestones`, `set_github_issue_status` |
-| Flywheel | `generate_recap_card`, `log_footage`, `queue_render_job` → `complete_render_job` |
+| Media & recap | `generate_recap_card`, `log_footage`, `queue_render_job` → `complete_render_job` |
 | Game | `get_game_state`, `grant_bonus_xp` |
 
 Connect from claude.ai → custom connector → `https://<deployment>/api/mcp` (OAuth, or legacy bearer token). Smoke-test locally:
@@ -135,18 +133,6 @@ Mobile-first PWA. Highlights: **Today** (session brief + celebrations), **Calend
 
 ---
 
-## The Forge ecosystem
-
-Goaldmine is one of three "Forge" apps that compound:
-
-- **Goaldmine** — records the work and coaches the goal.
-- **ClipForge** — an agent-driven video editor (its own MCP server) that turns footage into Reels.
-- **chewgether / ChewForge** — a second real vertical (an app-launch goal: App Store + $1k/mo MRR), proving the engine is domain-agnostic.
-
-The flywheel: a proactive-coach Sunday routine generates a weekly recap card and nudges you to post it; footage markers tag which clip is which moment; and the render-job queue feeds that curation into ClipForge — so the tool that *documents* the work also *tells its story*. See [`docs/integrations/goaldmine-clipforge-bridge.md`](docs/integrations/goaldmine-clipforge-bridge.md).
-
----
-
 ## Data model
 
 30 Prisma models. The load-bearing ones:
@@ -156,7 +142,7 @@ The flywheel: a proactive-coach Sunday routine generates a weekly recap card and
 | Logging | `Workout → WorkoutExercise → Set`, `Measurement`, `BodyMetric`, `Baseline`, `Hike`, `MobilityCheckin`, `NutritionLog` |
 | Goal engine | `Goal` (kind: fitness \| project, JSON targets/feasibility), `ScheduledItem` (GitHub-synced milestones), `LogEntry` (generic metric series) |
 | Planning | `Plan` (planJson + confirmed high-water mark), `PlanDayOverride`, `PlanRevision` (snapshot + reasoning), `Program` |
-| Flywheel | `FootageMarker`, `DayRenderJob` (ClipForge lifecycle) |
+| Media | `FootageMarker`, `DayRenderJob` (render lifecycle) |
 | Nutrition | `FoodLibrary` (shared catalog) + `FoodUsage` (per-user) |
 | Auth | `User` + Auth.js models, `Invite`, and `OAuthClient / AuthCode / AccessToken / RefreshToken` |
 
@@ -224,7 +210,6 @@ docs/                    PRDs, roadmap, coaching, qa, ux-research, integrations,
 - [`docs/roadmap/multi-domain-transformation-brief.md`](docs/roadmap/multi-domain-transformation-brief.md) — the strategic direction
 - [`docs/coaching/proactive-coach-routine.md`](docs/coaching/proactive-coach-routine.md) — the Sunday routine
 - [`docs/coaching/coach-operating-manual.default.md`](docs/coaching/coach-operating-manual.default.md) — the coach's reasoning-discipline instructions
-- [`docs/integrations/goaldmine-clipforge-bridge.md`](docs/integrations/goaldmine-clipforge-bridge.md) — the ClipForge bridge
 - `docs/prds/` — per-feature PRDs · `docs/qa/` — QA gates
 
 > Note: Next 16 + Prisma 7 are recent — the Prisma generator is `prisma-client` (not `-js`) and the datasource URL lives in `prisma.config.ts`, not the schema.
@@ -233,6 +218,6 @@ docs/                    PRDs, roadmap, coaching, qa, ux-research, integrations,
 
 ## Status
 
-The multi-domain engine is substantially built: the honesty math (readiness + feasibility) is unit-tested; multi-user auth (OAuth 2.1 + Google sign-in + invite gate + tenant isolation) is live; the content flywheel (recap card → proactive nudge → render-job queue) ships end to end; goal-kind-aware surfaces and the GitHub Projects integration are in. Next up: goal-interview onboarding and deepening the ClipForge integration.
+The multi-domain engine is substantially built: the honesty math (readiness + feasibility) is unit-tested; multi-user auth (OAuth 2.1 + Google sign-in + invite gate + tenant isolation) is live; the recap pipeline (recap card → proactive nudge → render-job queue) ships end to end; goal-kind-aware surfaces and the GitHub Projects integration are in. Next up: goal-interview onboarding.
 
 Mobile-first, **$0 marginal cost beyond an existing Claude subscription**. Neon is shared with prod — every migration is semi-prod; `db-guard` enforces it, but validate the SQL diff anyway.
