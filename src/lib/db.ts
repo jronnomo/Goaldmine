@@ -28,9 +28,10 @@ export const prisma = globalForPrisma.prisma ?? createClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 // ---------------------------------------------------------------------------
-// 2. Scoped-model set — 16 models that have a `userId` FK.
+// 2. Scoped-model set — 17 models that have a `userId` FK.
 //    Non-scoped models (User, FoodLibrary, WorkoutExercise, Set,
 //    PlanDayOverride, PlanRevision) are passed through untouched.
+//    FoodLibrary stays non-scoped (shared catalog); FoodUsage is scoped.
 //
 //    Source of truth: PRD §"Grounded context" + `ModelName` enum in
 //    src/generated/prisma/internal/prismaNamespace.ts lines 386–409.
@@ -53,6 +54,7 @@ const SCOPED_MODELS = new Set<string>([
   "LogEntry",
   "Plan",
   "DayRenderJob",
+  "FoodUsage", // E-1: per-user food state (usage count, favorites, last portion)
 ]);
 // Auth.js models (Account, Session, VerificationToken) are intentionally excluded —
 // auth infrastructure is cross-user by design; the adapter uses raw `prisma` directly.
@@ -262,9 +264,10 @@ const _scopeCache = new Map<string, ScopedClient>();
 
 /**
  * Returns a Prisma client that auto-injects `userId` into every query's
- * `where` (reads) or `data` (writes) for the 16 user-scoped models.
+ * `where` (reads) or `data` (writes) for the 17 user-scoped models.
  * Non-scoped models (User, FoodLibrary, WorkoutExercise, Set,
  * PlanDayOverride, PlanRevision) are passed through untouched.
+ * FoodLibrary is non-scoped (shared catalog); use FoodUsage for per-user state.
  *
  * Result is memoized per userId so repeated calls within the same process
  * return the same object (no allocation overhead per request).

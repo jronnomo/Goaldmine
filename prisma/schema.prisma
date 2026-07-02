@@ -46,6 +46,9 @@ model User {
   oauthAuthCodes     OAuthAuthCode[]
   oauthAccessTokens  OAuthAccessToken[]
   oauthRefreshTokens OAuthRefreshToken[]
+
+  // E-1 FoodUsage — per-user food state (usage count, favorites, last portion)
+  foodUsages       FoodUsage[]
 }
 
 model Workout {
@@ -481,6 +484,24 @@ model FoodLibrary {
   fiberG      Float?
   sodiumMg    Float?
   source      String    @default("openfoodfacts")
+  // usageCount, lastUsedAt, isFavorite, lastAmount, lastUnit removed in E-1.
+  // They live in FoodUsage (per-user) — this is now a shared catalog.
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // E-1 back-relation — per-user usage state
+  usages FoodUsage[]
+}
+
+// E-1: Per-user food usage state — splits the 5 per-user fields off FoodLibrary
+// so each user's favorites, usage counts, and last portions are isolated.
+// FoodLibrary stays a shared catalog (non-scoped); FoodUsage is scoped (getDb).
+// userId is nullable for schema compat but NEVER null in practice — getCurrentUserId()
+// throws on unauthenticated access (redirect to /signin). Phase 2 task: SET NOT NULL.
+model FoodUsage {
+  id          String    @id @default(cuid())
+  userId      String?
+  foodId      String
   usageCount  Int       @default(0)
   lastUsedAt  DateTime?
   // Explicit pin into the quick-pick chip row, independent of usageCount ranking.
@@ -491,8 +512,13 @@ model FoodLibrary {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@index([usageCount(sort: Desc), lastUsedAt(sort: Desc)])
-  @@index([isFavorite(sort: Desc), usageCount(sort: Desc), lastUsedAt(sort: Desc)])
+  user        User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  food        FoodLibrary  @relation(fields: [foodId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, foodId])
+  @@index([userId, isFavorite(sort: Desc), usageCount(sort: Desc), lastUsedAt(sort: Desc)])
+  @@index([userId, usageCount(sort: Desc), lastUsedAt(sort: Desc)])
+  @@index([foodId])
 }
 
 model BodyMetric {

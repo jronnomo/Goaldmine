@@ -168,6 +168,47 @@ describe("injectUserId — scoped model (Workout)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// injectUserId — FoodUsage (scoped model — E-1)
+// ---------------------------------------------------------------------------
+
+describe("injectUserId — FoodUsage (scoped model, E-1)", () => {
+  it("findMany: injects userId into where (scoped model)", () => {
+    const args = { where: { foodId: "food_1" } };
+    const result = injectUserId("FoodUsage", "findMany", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.where as Record<string, unknown>).foodId).toBe("food_1");
+  });
+
+  it("findFirst: injects userId into where (per-user row lookup)", () => {
+    const args = { where: { foodId: "food_1" } };
+    const result = injectUserId("FoodUsage", "findFirst", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.where as Record<string, unknown>).foodId).toBe("food_1");
+  });
+
+  it("create: injects userId into data", () => {
+    const args = { data: { foodId: "food_1", usageCount: 1 } };
+    const result = injectUserId("FoodUsage", "create", args, USER);
+    expect((result.data as Record<string, unknown>).userId).toBe(USER);
+    expect((result.data as Record<string, unknown>).foodId).toBe("food_1");
+  });
+
+  it("update: injects userId into where (NOT into data — ownership guard)", () => {
+    const args = { where: { id: "fu_1" }, data: { usageCount: { increment: 1 } } };
+    const result = injectUserId("FoodUsage", "update", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.data as Record<string, unknown>).userId).toBeUndefined();
+  });
+
+  it("deleteMany: injects userId into where (per-user delete)", () => {
+    const args = { where: { foodId: "food_1" } };
+    const result = injectUserId("FoodUsage", "deleteMany", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.where as Record<string, unknown>).foodId).toBe("food_1");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // injectUserId — NON-scoped models must pass through untouched
 // ---------------------------------------------------------------------------
 

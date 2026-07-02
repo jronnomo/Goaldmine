@@ -1705,7 +1705,11 @@ function registerReadTools(server: McpServer) {
         const byDay = Array.from(byDayMap.values());
 
         // frequentFoods — top-5 by usageCount for coach macro estimates.
-        // Independent try/catch: FoodLibrary failure degrades to [] without
+        // E-1: rerouted from prisma.foodLibrary (global sort) to getDb().foodUsage
+        // (per-user sort) so each user sees their own top-5, not a global ranking.
+        // getDb() returns the ALS-scoped client (runWithUser wraps handleRequest in
+        // route.ts:53) — no extra getCurrentUserId() call needed.
+        // Independent try/catch: FoodUsage failure degrades to [] without
         // breaking nutrition history (migration may not be applied yet, or
         // the table may have a transient query error).
         let frequentFoods: Array<{
@@ -1723,38 +1727,28 @@ function registerReadTools(server: McpServer) {
           };
         }> = [];
         try {
-          const frequentFoodRows = await prisma.foodLibrary.findMany({  // non-scoped model — raw prisma is intentional
+          const db = await getDb(); // ALS-scoped to token owner in MCP context
+          const usageRows = await db.foodUsage.findMany({
             orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
             take: 5,
-            select: {
-              name: true,
-              brand: true,
-              servingSize: true,
-              basis: true,
-              calories: true,
-              proteinG: true,
-              carbsG: true,
-              fatG: true,
-              fiberG: true,
-              sodiumMg: true,
-            },
+            include: { food: true },
           });
-          frequentFoods = frequentFoodRows.map((f) => ({
-            name: f.name,
-            brand: f.brand,
-            servingSize: f.servingSize,
-            basis: f.basis,
+          frequentFoods = usageRows.map((u) => ({
+            name: u.food.name,
+            brand: u.food.brand,
+            servingSize: u.food.servingSize,
+            basis: u.food.basis,
             perServing: {
-              calories: f.calories,
-              proteinG: f.proteinG,
-              carbsG: f.carbsG,
-              fatG: f.fatG,
-              fiberG: f.fiberG,
-              sodiumMg: f.sodiumMg,
+              calories: u.food.calories,
+              proteinG: u.food.proteinG,
+              carbsG: u.food.carbsG,
+              fatG: u.food.fatG,
+              fiberG: u.food.fiberG,
+              sodiumMg: u.food.sodiumMg,
             },
           }));
         } catch {
-          // FoodLibrary migration not yet applied, or query error.
+          // FoodUsage migration not yet applied, or query error.
           // Return empty array; byDay data is unaffected.
         }
 

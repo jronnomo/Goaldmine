@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-// food-actions intentionally keeps prisma raw — all DB calls in this file are to
-// FoodLibrary, which is non-scoped (no userId column). getDb() passes non-scoped
-// models through untouched, so raw prisma and db.* are identical here. Keeping
-// raw signals that these are shared-catalog reads/writes with no user isolation.
-import { prisma } from "@/lib/db";
+// food-actions uses raw `prisma` for FoodLibrary (shared catalog — non-scoped, no userId).
+// Per-user food state (FoodUsage) uses getDb() — scoped to the current user automatically.
+// Two-statement pattern: never nest FoodLibrary and FoodUsage writes (db.ts critical limitation:
+// $extends does NOT fire for nested relation writes — they would escape scoping).
+import { prisma, getDb } from "@/lib/db";
 import { normalizeOffProduct } from "@/lib/openfoodfacts";
 import { parseFoodQuery } from "@/lib/food-parse";
 import {
@@ -21,6 +21,61 @@ import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { OffProduct } from "@/lib/openfoodfacts";
 import { scaleMacros } from "@/lib/food-resolve-local";
 import { recalcItemMacros } from "@/lib/food-units";
+import type { FoodUsage } from "@/generated/prisma/client";
+
+// ── bumpFoodUsage (module-private) ────────────────────────────────────────────
+//
+// Atomic helper: increments usageCount + lastUsedAt in the caller's FoodUsage row
+// (or creates it on first use). Returns the FoodUsage row for callers that need it
+// (e.g. to populate the 5 per-user fields in a returned LibraryFood without an
+// extra findFirst round-trip).
+//
+// Option B (findFirst + create/update) is used instead of atomic upsert because
+// getDb() injection on upsert.where adds userId at the top level alongside the
+// compound key, which is valid but harder to read. Option B is cleaner and safe
+// for Phase 0/1 single-user; the P2002 catch handles the rare concurrent double-tap.
+//
+// getDb() is sufficient — no separate getCurrentUserId() needed at call sites.
+// All callers are server actions (browser path); getDb() resolves the current user.
+async function bumpFoodUsage(
+  foodId: string,
+  portion?: { amount: number; unit: string },
+): Promise<FoodUsage | null> {
+  const db = await getDb();
+  const portionFields = portion ? { lastAmount: portion.amount, lastUnit: portion.unit } : {};
+  const existing = await db.foodUsage.findFirst({ where: { foodId } });
+  if (existing) {
+    return db.foodUsage.update({
+      where: { id: existing.id },
+      data: { usageCount: { increment: 1 }, lastUsedAt: new Date(), ...portionFields },
+    });
+  } else {
+    try {
+      return await db.foodUsage.create({
+        data: { foodId, usageCount: 1, lastUsedAt: new Date(), ...portionFields },
+      });
+    } catch (err: unknown) {
+      // P2002: concurrent double-tap — another request created the row between our
+      // findFirst and create. Retry the update branch.
+      if (
+        err != null &&
+        typeof err === "object" &&
+        "code" in err &&
+        (err as { code: string }).code === "P2002"
+      ) {
+        const created = await db.foodUsage.findFirst({ where: { foodId } });
+        if (created) {
+          return db.foodUsage.update({
+            where: { id: created.id },
+            data: { usageCount: { increment: 1 }, lastUsedAt: new Date(), ...portionFields },
+          });
+        }
+        return null;
+      }
+      throw err;
+    }
+  }
+}
 
 // ── lookupBarcode ─────────────────────────────────────────────────────────────
 
@@ -76,20 +131,14 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
   // Manual rows have been user-corrected — never refresh from OFF/FDC regardless of
   // macro completeness.  Self-heal must not clobber intentional edits.
   if (existing && existing.source === "manual") {
-    await prisma.foodLibrary.update({
-      where: { id: existing.id },
-      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-    });
-    return { status: "found", food: existingFood!, fromLibrary: true };
+    const usage = await bumpFoodUsage(existing.id);
+    return { status: "found", food: toLibraryFood(existing, usage ?? undefined), fromLibrary: true };
   }
 
   // Good cache hit: ≥3 non-null macros → no network call needed
   if (existing && existingNonNull >= 3) {
-    await prisma.foodLibrary.update({
-      where: { id: existing.id },
-      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-    });
-    return { status: "found", food: existingFood!, fromLibrary: true };
+    const usage = await bumpFoodUsage(existing.id);
+    return { status: "found", food: toLibraryFood(existing, usage ?? undefined), fromLibrary: true };
   }
 
   // ── OFF fetch (only on cache miss or sparse cache) ────────────────────────
@@ -125,11 +174,8 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
   if (!hasOffWinner && !hasFdcWinner) {
     if (existing) {
       // Keep sparse existing row — just bump count
-      await prisma.foodLibrary.update({
-        where: { id: existing.id },
-        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-      });
-      return { status: "found", food: existingFood!, fromLibrary: true };
+      const usage = await bumpFoodUsage(existing.id);
+      return { status: "found", food: toLibraryFood(existing, usage ?? undefined), fromLibrary: true };
     }
     if (offResult.status === "error") {
       return { status: "error", message: offResult.message };
@@ -139,15 +185,14 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
 
   // Winner isn't strictly better than existing row → bump count only
   if (existing && winnerNonNull <= existingNonNull) {
-    await prisma.foodLibrary.update({
-      where: { id: existing.id },
-      data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-    });
-    return { status: "found", food: existingFood!, fromLibrary: true };
+    const usage = await bumpFoodUsage(existing.id);
+    return { status: "found", food: toLibraryFood(existing, usage ?? undefined), fromLibrary: true };
   }
 
   // ── Commit winner to DB ───────────────────────────────────────────────────
-  // Use update-by-id when refreshing an existing (sparse) row; upsert for new rows.
+  // FoodLibrary write: shared cols only (no usageCount/lastUsedAt — those move to FoodUsage).
+  // FoodUsage write: bumpFoodUsage via getDb() — scoped to current user.
+  // Two-statement pattern: never nest these writes.
   type FLRow = Parameters<typeof toLibraryFood>[0];
   let row: FLRow;
 
@@ -159,18 +204,18 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
       basis: fdcResult.basis as string,
       ...fdcResult.macros,
       source: "usda-branded",
-      lastUsedAt: new Date(),
+      // lastUsedAt removed — moves to FoodUsage
     };
     if (existing) {
       row = await prisma.foodLibrary.update({
         where: { id: existing.id },
-        data: { ...base, usageCount: { increment: 1 } },
+        data: base, // no usageCount increment — FoodLibrary is shared catalog
       });
     } else {
       row = await prisma.foodLibrary.upsert({
         where: { barcode: canonicalKey },
-        create: { barcode: canonicalKey, ...base, usageCount: 1 },
-        update: { ...base, usageCount: { increment: 1 } },
+        create: { barcode: canonicalKey, ...base }, // no usageCount: 1 on FoodLibrary
+        update: { ...base },
       });
     }
   } else {
@@ -185,23 +230,25 @@ export async function lookupBarcode(raw: string): Promise<BarcodeLookupResult> {
       basis: norm.basis as string,
       ...norm.macros,
       source: "openfoodfacts",
-      lastUsedAt: new Date(),
+      // lastUsedAt removed — moves to FoodUsage
     };
     if (existing) {
       row = await prisma.foodLibrary.update({
         where: { id: existing.id },
-        data: { ...base, usageCount: { increment: 1 } },
+        data: base, // no usageCount increment — FoodLibrary is shared catalog
       });
     } else {
       row = await prisma.foodLibrary.upsert({
         where: { barcode: canonicalKey },
-        create: { barcode: canonicalKey, ...base, usageCount: 1 },
-        update: { ...base, usageCount: { increment: 1 } },
+        create: { barcode: canonicalKey, ...base }, // no usageCount: 1 on FoodLibrary
+        update: { ...base },
       });
     }
   }
 
-  return { status: "found", food: toLibraryFood(row), fromLibrary: false };
+  // FoodUsage: per-user bump (getDb() scopes to current user)
+  const usage = await bumpFoodUsage(row.id);
+  return { status: "found", food: toLibraryFood(row, usage ?? undefined), fromLibrary: false };
 }
 
 // ── OFF HTTP layer ────────────────────────────────────────────────────────────
@@ -285,11 +332,19 @@ function countNonNullMacros(macros: FoodMacros): number {
 // ── deleteLibraryFood ─────────────────────────────────────────────────────────
 
 /**
- * Delete a FoodLibrary row by id.
- * Uses deleteMany so a missing id is a no-op, not a throw.
+ * Remove the current user's FoodUsage row for a food (per-user delete).
+ * The shared FoodLibrary catalog row is preserved — other users keep it.
+ *
+ * Semantic change from pre-E1: previously deleted the shared FoodLibrary row
+ * (only one user existed). Now only the caller's usage record is removed.
+ * The food vanishes from "my library" but persists in search for all users.
+ *
+ * Uses deleteMany so a missing FoodUsage is a no-op (idempotent).
  */
 export async function deleteLibraryFood(id: string): Promise<void> {
-  await prisma.foodLibrary.deleteMany({ where: { id } });
+  const db = await getDb();
+  // Delete only the current user's FoodUsage — shared FoodLibrary catalog row persists.
+  await db.foodUsage.deleteMany({ where: { foodId: id } });
   safeRevalidate("/nutrition");
   safeRevalidate("/");
 }
@@ -417,19 +472,22 @@ export type LibraryFoodRow = LibraryFood & {
 };
 
 /**
- * Top 50 FoodLibrary rows ordered by usage desc, then recency desc.
- * Intended for the Food Library Manager UI; richer than getQuickPickFoods.
+ * Current user's food library ordered by usage desc, then recency desc.
+ * Reads from FoodUsage (per-user) joined to FoodLibrary (shared catalog).
+ * Returns up to 200 rows. Intended for the Food Library Manager UI.
  */
 export async function listLibraryFoods(): Promise<LibraryFoodRow[]> {
-  const rows = await prisma.foodLibrary.findMany({
+  const db = await getDb();
+  const usages = await db.foodUsage.findMany({
     orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
     take: 200,
+    include: { food: true },
   });
   const fmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
-  return rows.map((row) => ({
-    ...toLibraryFood(row),
-    usageCount: row.usageCount,
-    lastUsedAt: row.lastUsedAt ? fmt.format(row.lastUsedAt) : null,
+  return usages.map((usage) => ({
+    ...toLibraryFood(usage.food, usage),
+    usageCount: usage.usageCount,
+    lastUsedAt: usage.lastUsedAt ? fmt.format(usage.lastUsedAt) : null,
   }));
 }
 
@@ -438,17 +496,20 @@ export async function listLibraryFoods(): Promise<LibraryFoodRow[]> {
 /**
  * Foods for the quick-pick chip row: explicit favorites pinned first, then the
  * most-used (and most-recent) foods fill the remaining slots. Default limit 8.
+ * Reads from the current user's FoodUsage (per-user).
  */
 export async function getQuickPickFoods(limit = 8): Promise<LibraryFood[]> {
-  const rows = await prisma.foodLibrary.findMany({
+  const db = await getDb();
+  const usages = await db.foodUsage.findMany({
     orderBy: [
       { isFavorite: "desc" },
       { usageCount: "desc" },
       { lastUsedAt: "desc" },
     ],
     take: limit,
+    include: { food: true },
   });
-  return rows.map(toLibraryFood);
+  return usages.map((usage) => toLibraryFood(usage.food, usage));
 }
 
 // ── recordFoodUse ─────────────────────────────────────────────────────────────
@@ -464,14 +525,7 @@ export async function recordFoodUse(
   id: string,
   portion?: { amount: number; unit: string },
 ): Promise<void> {
-  await prisma.foodLibrary.update({
-    where: { id },
-    data: {
-      usageCount: { increment: 1 },
-      lastUsedAt: new Date(),
-      ...(portion ? { lastAmount: portion.amount, lastUnit: portion.unit } : {}),
-    },
-  });
+  await bumpFoodUsage(id, portion);
 }
 
 /**
@@ -484,10 +538,16 @@ export async function recordFoodPortion(
   amount: number,
   unit: string,
 ): Promise<void> {
-  await prisma.foodLibrary.update({
-    where: { id },
-    data: { lastAmount: amount, lastUnit: unit },
-  });
+  const db = await getDb();
+  const existing = await db.foodUsage.findFirst({ where: { foodId: id } });
+  if (existing) {
+    await db.foodUsage.update({
+      where: { id: existing.id },
+      data: { lastAmount: amount, lastUnit: unit },
+    });
+  }
+  // If no FoodUsage row exists (food has never been used by this user), skip.
+  // The scan/estimate bump upstream creates the row; this is always called after.
 }
 
 // ── setFoodFavorite ───────────────────────────────────────────────────────────
@@ -501,7 +561,20 @@ export async function setFoodFavorite(
   isFavorite: boolean,
 ): Promise<{ ok: boolean }> {
   try {
-    await prisma.foodLibrary.update({ where: { id }, data: { isFavorite } });
+    const db = await getDb();
+    const existing = await db.foodUsage.findFirst({ where: { foodId: id } });
+    if (existing) {
+      await db.foodUsage.update({
+        where: { id: existing.id },
+        data: { isFavorite },
+      });
+    } else {
+      // User is favoriting a food they haven't logged yet — create FoodUsage row.
+      // getDb() injection adds userId automatically.
+      await db.foodUsage.create({
+        data: { foodId: id, isFavorite, usageCount: 0 },
+      });
+    }
     safeRevalidate("/nutrition");
     safeRevalidate("/");
     return { ok: true };
@@ -511,24 +584,34 @@ export async function setFoodFavorite(
 }
 
 // ── toLibraryFood (module-private) ───────────────────────────────────────────
+//
+// 2-arg form: FoodLibrary row (shared catalog cols only) + optional per-user
+// usage fields (FoodUsage or partial shape). Defaults isFavorite=false,
+// lastAmount=null, lastUnit=null when usage is absent (shared catalog read paths
+// like updateLibraryFood, estimateMealMacros/resolveItemMacrosLocal that are
+// read-only and don't need per-user state).
 
-function toLibraryFood(row: {
-  id: string;
-  barcode: string | null;
-  name: string;
-  brand: string | null;
-  servingSize: string | null;
-  basis: string;
-  calories: number | null;
-  proteinG: number | null;
-  carbsG: number | null;
-  fatG: number | null;
-  fiberG: number | null;
-  sodiumMg: number | null;
-  isFavorite?: boolean;
-  lastAmount?: number | null;
-  lastUnit?: string | null;
-}): LibraryFood {
+function toLibraryFood(
+  row: {
+    id: string;
+    barcode: string | null;
+    name: string;
+    brand: string | null;
+    servingSize: string | null;
+    basis: string;
+    calories: number | null;
+    proteinG: number | null;
+    carbsG: number | null;
+    fatG: number | null;
+    fiberG: number | null;
+    sodiumMg: number | null;
+  },
+  usage?: {
+    isFavorite?: boolean | null;
+    lastAmount?: number | null;
+    lastUnit?: string | null;
+  },
+): LibraryFood {
   return {
     id: row.id,
     barcode: row.barcode,
@@ -544,9 +627,9 @@ function toLibraryFood(row: {
       fiberG: row.fiberG,
       sodiumMg: row.sodiumMg,
     },
-    isFavorite: row.isFavorite ?? false,
-    lastAmount: row.lastAmount ?? null,
-    lastUnit: row.lastUnit ?? null,
+    isFavorite: usage?.isFavorite ?? false,
+    lastAmount: usage?.lastAmount ?? null,
+    lastUnit: usage?.lastUnit ?? null,
   };
 }
 
@@ -608,10 +691,7 @@ export async function estimateFood(query: string): Promise<FoodEstimate> {
     });
 
     if (libRow) {
-      await prisma.foodLibrary.update({
-        where: { id: libRow.id },
-        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-      });
+      await bumpFoodUsage(libRow.id);
 
       const food = toLibraryFood(libRow);
 
@@ -775,14 +855,43 @@ export async function searchFoodCandidates(
   const candidates: FoodCandidate[] = [];
   const cachedBarcodes = new Set<string>();
 
-  // ── A. Personal library (name contains query) ─────────────────────────────
+  // ── A. Shared catalog name-contains search (raw prisma — FoodLibrary is non-scoped)
+  // No take before in-memory ranking — fetch all matches then rank by current user's usage.
+  // For a typical 200-food personal library, at most ~20 rows match a specific term.
+  // The name-contains WHERE bounds the result set; no arbitrary limit before ranking.
   try {
     const libRows = await prisma.foodLibrary.findMany({
       where: { name: { contains: rest, mode: "insensitive" } },
-      orderBy: [{ usageCount: "desc" }, { lastUsedAt: "desc" }],
-      take: 6,
+      // No orderBy by usage — FoodLibrary is now a shared catalog with no usage cols.
+      // No take here — rank by current user's FoodUsage after fetching all name matches.
     });
-    for (const r of libRows) {
+
+    // Fetch current user's FoodUsage for these catalog rows (per-user ranking signal).
+    const foodIds = libRows.map((r) => r.id);
+    let usageByFoodId = new Map<string, { usageCount: number; lastUsedAt: Date | null }>();
+    try {
+      const db = await getDb();
+      const usages = await db.foodUsage.findMany({
+        where: { foodId: { in: foodIds } },
+        select: { foodId: true, usageCount: true, lastUsedAt: true },
+      });
+      usageByFoodId = new Map(usages.map((u) => [u.foodId, u]));
+    } catch {
+      // getDb unavailable (outside user context) — rank 0 for all (degrade gracefully).
+    }
+
+    // In-memory rank by user's usage, then slice to top-6 candidates.
+    const rankedLibRows = [...libRows]
+      .sort((a, b) => {
+        const ua = usageByFoodId.get(a.id);
+        const ub = usageByFoodId.get(b.id);
+        const countDiff = (ub?.usageCount ?? 0) - (ua?.usageCount ?? 0);
+        if (countDiff !== 0) return countDiff;
+        return (ub?.lastUsedAt?.getTime() ?? 0) - (ua?.lastUsedAt?.getTime() ?? 0);
+      })
+      .slice(0, 6);
+
+    for (const r of rankedLibRows) {
       if (r.barcode) cachedBarcodes.add(r.barcode);
       candidates.push({
         key: `lib:${r.id}`,
@@ -859,10 +968,7 @@ export async function resolveCandidate(
     if (ref.type === "library") {
       const libRow = await prisma.foodLibrary.findUnique({ where: { id: ref.id } });
       if (!libRow) return { status: "not_found", query };
-      await prisma.foodLibrary.update({
-        where: { id: libRow.id },
-        data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
-      });
+      await bumpFoodUsage(libRow.id);
       const food = toLibraryFood(libRow);
 
       if (food.basis === "100g") {
@@ -1188,6 +1294,9 @@ function resolveUsdaGrams(
  * Upsert a FoodLibrary row for a builtin or USDA estimate.
  * Returns the library row and whether this was a brand-new row (isNew=true).
  *
+ * FoodLibrary write: shared catalog cols only (name/macros/source/barcode).
+ * FoodUsage write: bumpFoodUsage via getDb() — two-statement pattern.
+ *
  * Barcode column stores the namespaced key ("builtin:<slug>" or "usda:<fdcId>").
  * These keys are never matched by lookupBarcode's digit-only filter, so real
  * barcode lookups are unaffected.
@@ -1203,6 +1312,7 @@ async function upsertEstimateRow(opts: {
     where: { barcode: opts.barcode },
   });
 
+  // FoodLibrary upsert: shared cols only — no usageCount/lastUsedAt (those moved to FoodUsage).
   const row = await prisma.foodLibrary.upsert({
     where: { barcode: opts.barcode },
     create: {
@@ -1218,14 +1328,17 @@ async function upsertEstimateRow(opts: {
       fiberG: opts.macros.fiberG,
       sodiumMg: opts.macros.sodiumMg,
       source: opts.source,
-      usageCount: 1,
-      lastUsedAt: new Date(),
+      // usageCount: 1 REMOVED — moves to FoodUsage
+      // lastUsedAt REMOVED — moves to FoodUsage
     },
     update: {
-      usageCount: { increment: 1 },
-      lastUsedAt: new Date(),
+      // Refresh source to confirm the row came from builtin/USDA (non-empty update).
+      source: opts.source,
     },
   });
+
+  // FoodUsage: per-user bump (getDb() scopes to current user; two-statement pattern).
+  await bumpFoodUsage(row.id);
 
   return { food: toLibraryFood(row), isNew: existing == null };
 }
