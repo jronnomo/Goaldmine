@@ -59,12 +59,27 @@ export async function createGoal(form: FormData) {
   const flavorRaw = (form.get("flavor") as string | null)?.trim() ?? "";
   const legend = isFlavorKey(flavorRaw) ? legendForFlavor(flavorRaw) : null;
 
+  // D-1: honor the domain-neutral kind choice from OnboardingGoalForm.
+  // Absent or unrecognized → "fitness" (preserves existing /goals form behavior).
+  const kind = (form.get("kind") as string | null) === "project" ? "project" : "fitness";
+
+  // D-1: optional redirect override. Whitelist-validated — only exact in-app paths
+  // accepted to prevent open-redirect attacks (browser normalizes \→/ so startsWith
+  // checks are bypassable via "/\evil.com" or "/%2F" encoded paths).
+  const redirectToRaw = form.get("redirectTo");
+  const SAFE_REDIRECTS = new Set(["/", "/goals"]);
+  const redirectTo =
+    typeof redirectToRaw === "string" && SAFE_REDIRECTS.has(redirectToRaw)
+      ? redirectToRaw
+      : null;
+
   const { goal } = await createGoalCore({
     objective,
     targetDate,
     notes,
     copyFromGoalId,
     targets,
+    kind,
     legend: legend ?? undefined,
   });
 
@@ -78,9 +93,10 @@ export async function createGoal(form: FormData) {
   revalidatePath("/calendar");
   revalidatePath("/stats");
   if (stack.tier === "epic" || stack.tier === "legendary") {
-    redirect(`/goals/${goal.id}?stackWarning=${stack.tier}`);
+    const stackDest = redirectTo ?? `/goals/${goal.id}`;
+    redirect(`${stackDest}${stackDest.includes("?") ? "&" : "?"}stackWarning=${stack.tier}`);
   }
-  redirect(`/goals/${goal.id}`);
+  redirect(redirectTo ?? `/goals/${goal.id}`);
 }
 
 export async function copyTargetsFromGoal(toId: string, fromId: string) {

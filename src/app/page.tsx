@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
 import { Card } from "@/components/Card";
 import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
@@ -8,6 +10,7 @@ import { QuestCard } from "@/components/game/QuestCard";
 import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay, USER_TZ } from "@/lib/calendar";
 import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { getDb } from "@/lib/db";
+import { getCurrentUserId } from "@/lib/auth/current-user";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
@@ -23,6 +26,22 @@ import { FeasibilityReadout } from "@/components/FeasibilityReadout";
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  // D-1: Gate 0-goal users into onboarding (REQ-004).
+  // A 0-goal user with no per-user dismiss cookie → /onboarding.
+  // A 0-goal user who dismissed → stays here (B-2 empty state).
+  // A user with goals → gate never fires; falls through to the program reads below.
+  // getCurrentUserId() is React.cache-deduped — this call is free (same session user).
+  const uid = await getCurrentUserId();
+  const cookieName = `gm_onboarding_dismissed_${uid.slice(0, 16)}`;
+  const gateDb = await getDb();
+  const [gateGoalCount, gateCookieJar] = await Promise.all([
+    gateDb.goal.count(),
+    cookies(),
+  ]);
+  if (gateGoalCount === 0 && !gateCookieJar.get(cookieName)) {
+    redirect("/onboarding");
+  }
+
   // REQ-001: fetch program and focus goal in parallel — no waterfall.
   const [program, focusGoal] = await Promise.all([
     getActiveProgram(),
@@ -40,10 +59,10 @@ export default async function HomePage() {
             target date, your Today view fills in automatically.
           </p>
           <Link
-            href="/goals"
+            href="/onboarding"
             className="mt-3 inline-block text-sm font-medium text-[var(--accent)] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
           >
-            Create your first goal →
+            Get started →
           </Link>
         </Card>
       </div>
