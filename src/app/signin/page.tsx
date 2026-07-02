@@ -7,12 +7,12 @@ import { safeNext } from "@/lib/auth/safe-next";
 export const dynamic = "force-dynamic";
 
 interface SignInPageProps {
-  searchParams: Promise<{ next?: string; callbackUrl?: string }>;
+  searchParams: Promise<{ next?: string; callbackUrl?: string; invite?: string }>;
 }
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   // Next 16: searchParams is a Promise — must be awaited.
-  const { next, callbackUrl } = await searchParams;
+  const { next, callbackUrl, invite } = await searchParams;
   const redirectTo = safeNext(next ?? callbackUrl);
 
   // Don't show the form to already-signed-in users.
@@ -21,8 +21,9 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     redirect(redirectTo);
   }
 
-  // Bind the server action to the safe redirect target.
-  const boundSignIn = signInWithGoogle.bind(null, redirectTo);
+  // Bind the server action to the safe redirect target and the invite code.
+  // signInWithGoogle(next?, inviteCode?) — both positional.
+  const boundSignIn = signInWithGoogle.bind(null, redirectTo, invite);
 
   return (
     <div className="min-h-[calc(100vh-48px)] flex items-center justify-center px-4 py-12">
@@ -43,6 +44,13 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             Mining for goals — an honest tracker for any goal, any domain.
           </p>
         </div>
+
+        {/* Invite code hint — shown when ?invite= is present */}
+        {invite && (
+          <div className="mb-5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-2.5 text-center text-xs font-medium text-[var(--accent)]">
+            Invite code detected ✓
+          </div>
+        )}
 
         {/* Sign-in form */}
         <form action={boundSignIn}>

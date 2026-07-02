@@ -582,3 +582,24 @@ model VerificationToken {
 
   @@unique([identifier, token])
 }
+
+// ---------------------------------------------------------------------------
+// A-3: Invite-gated signup model
+// NOT in SCOPED_MODELS — admin/cross-user data like Account/Session.
+// The adapter uses raw `prisma` singleton directly (never getDb).
+// ---------------------------------------------------------------------------
+
+model Invite {
+  id               String    @id @default(cuid())
+  code             String    @unique                   // URL-safe, mint-generated
+  email            String?                             // optional binding: only this email may redeem
+  note             String?                             // who/why (admin bookkeeping)
+  maxUses          Int       @default(1)
+  useCount         Int       @default(0)
+  expiresAt        DateTime?                           // null = never expires
+  createdAt        DateTime  @default(now())
+  redeemedAt       DateTime?                           // first redemption
+  redeemedByUserId String?                             // backfilled at events.createUser (no FK — user may not exist yet at validate time; keep loose)
+
+  @@index([email])
+}
