@@ -1,87 +1,77 @@
-# Workout Planner
+# Goaldmine (repo legacy name: workout-planner)
 
-Personal workout-tracker + coaching app. The user (single user) follows a 90-day Mt. Elbert / shred / longevity program. They chat with Claude in **claude.ai** for coaching; this app exposes an **MCP server** with read/write tools (no LLM calls inside the app). Cost is $0 beyond the user's existing Claude Code Max subscription.
+AI-coached, multi-domain goal engine. Users log workouts/hikes/nutrition/metrics and pursue measurable goals (fitness or project kind); Claude coaches from **claude.ai**, connected as an OAuth/MCP connector to `/api/mcp`. **This app contains zero LLM calls** — every MCP tool is a deterministic, Zod-validated read or write. Cost is $0 beyond the user's Claude subscription.
 
-See: `/Users/ggronnii/.claude/plans/research-and-vet-out-cached-sloth.md` for the full plan.
-See: `/Users/ggronnii/.claude/projects/-Users-ggronnii-Development/memory/fitness-profile.md` for the user's fitness context.
-See: `docs/project-gotchas.md` for the non-obvious scenarios that have bitten us (planJson vs override-aware reads, baseline_ops vs full-snapshot rewrite, records/PR canonicalization, deploy/connector cache). Read it before touching plan writes, records, or the MCP tool surface.
+See: `README.md` for the product-level overview and architecture diagrams.
+See: `/Users/ggronnii/.claude/projects/-Users-ggronnii-Development/memory/fitness-profile.md` for the founder-user's fitness context.
+See: `docs/project-gotchas.md` for the non-obvious scenarios that have bitten us (planJson vs override-aware reads, baseline_ops vs full-snapshot rewrite, records/PR canonicalization, deploy/connector cache). **Read it before touching plan writes, records, or the MCP tool surface.**
 
 ## Architecture
 
 ```
-claude.ai (web + mobile)  ──MCP/HTTP──>  Next.js /api/mcp  ──>  Postgres (Neon)
-                                          │
-                                          └──>  Dashboard pages (logger, history, charts)
+claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp  ──▶  Postgres (Neon)
+   (the coach: reasons,          (OAuth 2.1 or           │  106 deterministic tools
+    writes back via tools)        legacy bearer)         └──▶  Dashboard PWA (Today, Calendar,
+                                                               Goals, Records, Recap, Character…)
 ```
 
-- **No LLM calls live in this app.** Claude reasons in claude.ai. The MCP tools are pure read/write.
-- **Auth:** single bearer token (env `MCP_AUTH_TOKEN`), gates `/api/mcp` and (eventually) the dashboard.
+- **No LLM calls live in this app.** Claude reasons in claude.ai; the MCP tools are pure read/write.
+- **Multi-user + multi-tenant.** Auth.js (v5) with Google sign-in, invite-gated signup (`Invite`, `OPEN_SIGNUP`). All owned-model DB access goes through the **tenant-scoped Prisma client** (`getDb()` in `src/lib/db.ts`), which enforces `userId` filtering — never query owned models with a raw client. Isolation is tested (`db.scoped.test.ts`) and auditable (`npm run db:verify-isolation`).
+- **Auth for `/api/mcp`:** primary path is the hand-built **OAuth 2.1 server** (`src/lib/oauth/`, routes under `src/app/oauth/` + `.well-known` discovery): PKCE S256, dynamic client registration with redirect-host allowlist, hashed single-use auth codes, refresh rotation with family reuse-detection, RFC 8707 audience binding. Legacy single bearer token (`MCP_AUTH_TOKEN`, also via `/api/mcp/[token]`) still works.
+- **Timezone:** Vercel runs UTC; the user does not. Every date helper goes through `src/lib/calendar.ts` / `calendar-core.ts`. Never do raw `new Date()` day math.
 
 ## Stack
 
-- Next.js 16 (App Router) + TypeScript + Tailwind v4 + Turbopack
-- Prisma 7 (modern style: datasource URL via `prisma.config.ts`, generated client at `src/generated/prisma`)
-- `@modelcontextprotocol/sdk` for the MCP server
-- Recharts for progress visualizations
-- `zod` for tool input validation
-- `tsx` + `dotenv` for the seed script
+- Next.js 16 (App Router, Turbopack) + React 19 + TypeScript (strict) + Tailwind v4
+- Prisma 7, Postgres on Neon — generator is `prisma-client` (NOT `prisma-client-js`), output `src/generated/prisma`, datasource URL in `prisma.config.ts` (not the schema)
+- `@modelcontextprotocol/sdk` (stateless streamable HTTP), Zod 4, Recharts 3, Vitest 3
+- next-auth v5 beta, Upstash rate limiting (fails open), zxing-wasm (barcode scan), resvg (server-rendered recap card)
 
-## Important: Next.js 16 + Prisma 7 are recent
-
-`AGENTS.md` warns that Next 16 has breaking changes vs older Next docs in training data. The Prisma generator is `prisma-client` (not `prisma-client-js`) and the datasource URL lives in `prisma.config.ts`, not the schema's datasource block. Follow the docs in `node_modules/next/dist/docs/` and `node_modules/prisma/dist/` if anything looks off.
+`AGENTS.md` warns: Next 16 + Prisma 7 postdate most training data — trust `node_modules/next/dist/docs/` and the local Prisma dist docs over memory.
 
 ## Key directories
 
-- `prisma/schema.prisma` — DB schema. Run `npx prisma generate` after edits. Run `npx prisma migrate dev` to apply.
-- `prisma/seed.ts` — seeds the active 90-day Program. Idempotent.
-- `src/lib/program-template.ts` — source of truth for the 12-week program (phases, weekly split, baseline week, hiking superset).
-- `src/lib/parsers/strong.ts` — deterministic parser for Strong-app txt exports. Regression-tested against `examples/sample-completed-workout.txt`.
-- `src/lib/formatters/{strong,markdown,plain,json,index}.ts` — export formatters. `strong` round-trips the input format.
-- `src/lib/db.ts` — Prisma client singleton.
-- `src/app/api/mcp/route.ts` — MCP HTTP endpoint (Phase 3, not yet built).
-- `src/lib/mcp/tools/*.ts` — one file per MCP tool (Phase 3).
+- `prisma/schema.prisma` — 30 models. `npx prisma generate` after edits; migrations via the **guarded** `npm run db:migrate` (see Database safety).
+- `src/app/` — dashboard pages (Today `/`, calendar, days/[dateKey], goals + plan/revisions/trends, baselines, workouts, import, nutrition, character, recap, coach, onboarding, settings) · `api/mcp/` · `oauth/*` + `api/auth/[...nextauth]`.
+- `src/lib/mcp/tools.ts` — the main tool registrations (large file); packs in `src/lib/mcp/tools/{github,project,render}-tools.ts`; server instructions in `mcp/instructions.ts`; `today-shapers.ts` shapes `get_today_plan` by goal kind.
+- `src/lib/readiness.ts`, `rarity-core.ts` — the honesty math (untested=0, gate caps at 80, coverage, feasibility tiers). Pure + unit-tested; keep it that way.
+- `src/lib/plan.ts`, `plan-lint.ts`, `snapshot-diff.ts`, `override-integrity.ts` — plan revisions (full snapshot + reasoning), day overrides, and the linter (`lintTemplate()` pure pre-write check; `lintActivePlan()` backs the `lint_plan` tool).
+- `src/lib/records.ts` — baseline scheduling + PR detection (canonical exercise names — see gotchas).
+- `src/lib/game/` — XP curves, day-ledger engine, badges, attributes.
+- `src/lib/parsers/strong.ts` + `formatters/` — Strong-app txt parser (regression-tested against `examples/`) and round-trip export formatters.
+- `src/lib/oauth/`, `src/lib/auth/` — OAuth 2.1 server + Auth.js glue. Fully unit-tested; don't modify token/grant logic without running the suite.
+- `scripts/` — ~30 tsx utilities: `db-guard.ts`, tenant-isolation verifiers, `mint-invite.ts`, plan inspectors/backfills.
 
-## MCP server (Phase 3, shipped)
+## MCP server
 
-Endpoint: `POST /api/mcp` (also GET, DELETE for the streamable HTTP protocol). Stateless transport (`enableJsonResponse: true`, no session id). Bearer-token auth — `Authorization: Bearer $MCP_AUTH_TOKEN`.
+`POST /api/mcp` (GET/DELETE for the streamable-HTTP protocol). Fresh server per request; ~106 tools. Session entrypoint for the coach is `get_today_plan` → kind-routes: fitness payload (workout/baselines/nutrition) vs project payload (scheduled items, feasibility, GitHub). Batched mutation tools (`baseline_ops`, `workout_ops`, `nutrition_log_ops`) exist specifically to avoid full-snapshot rewrites — prefer them.
 
-All tools are registered in `src/lib/mcp/tools.ts` via `McpServer.registerTool()`. The route handler in `src/app/api/mcp/route.ts` creates a fresh server per request, registers tools, and pipes the request through `WebStandardStreamableHTTPServerTransport.handleRequest`.
+Read tools must not leak private note types (standing_rule/review/open_item) — `mcp/leaky-reads.test.ts` enforces this; new read tools need coverage there.
 
-### Read tools
-`get_today_plan`, `get_day`, `recent_history` (**now excludes standing_rule/review/open_item notes**), `get_nutrition_history`, `list_goals`, `get_goal`, `weekly_summary_data`, `get_baseline_schedule`, `get_baseline_history`, `get_records_summary`, `get_exercise_history`, `export_workout`, `get_session_brief`, `list_open_items`, `get_latest_review`.
+After a deploy that changes the tool set, the claude.ai connector caches the old list — reconnect it.
 
-### Write tools
-`log_workout` (**now returns recordsSet[]**), `log_measurement`, `log_baseline`, `log_mobility`, `log_hike`, `log_note`, `log_open_item`, `resolve_open_item`, `log_review`, `apply_plan_revision`, `apply_day_override`, `clear_day_override`, `update_goal_targets`, `add_goal_reference`, `acknowledge_lint_finding`, `clear_lint_acknowledgement`, `delete_metric`.
+Smoke test: see README "MCP server" section for the curl.
 
-`log_workout` accepts the structured shape produced by `parseStrongWorkout()` — paste a Strong-app txt in claude.ai, Claude parses, then calls this tool.
+## Database safety (Neon is shared with prod)
 
-### Connecting from claude.ai
-
-After deploying (Phase 4), the user adds a custom MCP connector in claude.ai's settings:
-- URL: `https://<vercel-deployment>/api/mcp`
-- Auth: Bearer token (paste `MCP_AUTH_TOKEN`)
-- Transport: Streamable HTTP
-
-Locally testable with curl — see `scripts/test-mcp.sh` (if present) or:
-```
-curl -s -X POST http://localhost:3000/api/mcp \
-  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
+- `npm run db:which` prints the target host. `db:migrate` / `db:seed` / `db:push` are all gated by `scripts/db-guard.ts --assert`, which refuses non-`development` `DB_ENV`.
+- Treat every migration as semi-prod: validate the SQL diff before applying.
+- `npm run db:verify-owned` / `db:verify-isolation` audit tenant scoping after schema changes that add owned models.
 
 ## Scripts
 
-- `npm run dev` — Next.js dev server
-- `npx prisma generate` — regenerate client after schema edits
-- `npx prisma migrate dev --name <name>` — create + apply migration locally
-- `npx prisma db seed` — run `prisma/seed.ts`
+- `npm run dev` · `npm run build` · `npm run lint` · `npm run test` (Vitest, ~540 tests) · `npx tsc --noEmit`
+- `npx prisma generate` — after any schema edit (postinstall also runs it + copies zxing wasm)
+- `npm run db:migrate` / `db:seed` / `db:push` — guarded (see above)
+- `npx tsx scripts/mint-invite.ts` — invite-gated signup tokens
 
 ## Conventions
 
-- Mobile-first responsive — this is a phone-first app
-- Server components by default, `"use client"` only where needed
-- All DB access via the `prisma` singleton from `src/lib/db.ts`
-- Tool schemas validated with `zod` (Phase 3)
-- Workouts compared via `startedAt` (DateTime), not date-only — Strong-app exports include time-of-day
+- Mobile-first responsive — this is a phone-first PWA. Server components by default, `"use client"` only where needed.
+- Owned-model DB access via `getDb()` (scoped); the raw singleton is for auth/OAuth infra only.
+- All tool inputs validated with Zod; tools return structured content, no prose.
+- All date math through `src/lib/calendar.ts` (USER_TZ vs Vercel-UTC).
+- Workouts compared via `startedAt` (DateTime), not date-only — Strong exports include time-of-day.
+- Keep `readiness.ts` / `rarity-core.ts` pure and client-safe (no Prisma imports).
+- New MCP read tools: add leaky-reads coverage. New owned models: run the isolation verifiers.
+- Tests sit next to source (`*.test.ts`); run `npm run test` before committing engine/OAuth/plan changes.
