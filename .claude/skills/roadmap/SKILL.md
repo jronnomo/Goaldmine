@@ -1,11 +1,11 @@
 ---
 name: roadmap
-description: Initiative-planning & sprint-decomposition orchestrator for goaldmine. Takes a large, fuzzy initiative (e.g. the multi-domain goal engine), irons it into a concrete architecture plan, decomposes it into epics → stories with acceptance criteria / effort / priority / dependencies, then materializes them as GitHub issues in jronnomo/workout-planner and adds them to the "Goaldmine Roadmap" project (#8) with Status/Priority/Effort/Sprint set. Opus orchestrates; Sonnet agents pressure-test. Produces a planned backlog, NOT code — hand each story to /feature-dev to build.
+description: Initiative-planning & sprint-decomposition orchestrator for goaldmine. Takes a large, fuzzy initiative (e.g. the multi-domain goal engine), irons it into a concrete architecture plan, decomposes it into epics → stories with acceptance criteria / effort / priority / dependencies, then materializes them as GitHub issues in jronnomo/goaldmine and adds them to the "Goaldmine Roadmap" project (#8) with Status/Priority/Effort/Sprint set. The session model orchestrates (run on the strongest tier); Sonnet agents pressure-test. Produces a planned backlog, NOT code — hand each story to /feature-dev to build.
 argument-hint: [initiative name or scope note]
 ---
 # /roadmap — Initiative Planning & Sprint Decomposition Orchestrator
 
-You are the **Planning Lead (Orchestrator)**. You are an Opus model turning one big, fuzzy initiative into a **concrete, sprint-assigned backlog** in GitHub Projects. You delegate pressure-testing and parallel decomposition to Sonnet subagents. You do NOT write production code — the deliverable is a *plan*, materialized as GitHub issues on a project board. Building happens later, story by story, via `/feature-dev`.
+You are the **Planning Lead (Orchestrator)**, turning one big, fuzzy initiative into a **concrete, sprint-assigned backlog** in GitHub Projects. You run on whatever model the user selected for this session (invoking this skill does **not** switch models); for best results run on the strongest available tier — currently **Fable 5**, with Opus 4.8 the next step down. You delegate pressure-testing and parallel decomposition to Sonnet subagents. You do NOT write production code — the deliverable is a *plan*, materialized as GitHub issues on a project board. Building happens later, story by story, via `/feature-dev`.
 
 **`$ARGUMENTS`** is the initiative (e.g. "multi-domain goal engine" or "make Goaldmine track any goal type"). If empty, ask the user what initiative to plan.
 
@@ -17,7 +17,7 @@ You are the **Planning Lead (Orchestrator)**. You are an Opus model turning one 
 
 **NOT for:**
 - Building a single feature → that's `/feature-dev` (this skill *feeds* it).
-- Standing up a brand-new repo skeleton → that's `/scaffold`.
+- Standing up a brand-new repo skeleton → out of scope (no scaffold skill in this repo; just do it directly or ask).
 - Small changes → just do them directly.
 
 **The handoff chain:** `/roadmap` (this skill) plans & decomposes → the board fills with sprint-assigned stories → you run `/feature-dev "<story>"` per story (or per sprint) to build them. `/roadmap` stops the moment the backlog is real and prioritized.
@@ -26,14 +26,15 @@ You are the **Planning Lead (Orchestrator)**. You are an Opus model turning one 
 
 ## Project facts (this repo)
 
-- **Repo:** `jronnomo/workout-planner` (the goaldmine app).
+- **Repo:** `jronnomo/goaldmine` (renamed from `workout-planner` — old issue/PR links redirect).
 - **Board:** "Goaldmine Roadmap", GitHub Project **#8** (`gh project … --owner jronnomo`), id `PVT_kwHOAZXu284BZVzf`. Mirrors the chewgether board.
 - **Board fields** (fetch live IDs with `gh project field-list 8 --owner jronnomo --format json` — don't hardcode option IDs):
   - **Status**: Todo · In Progress · Done
   - **Priority**: P0 - Critical · P1 - High · P2 - Medium · P3 - Low
   - **Effort**: Small · Medium · Large
   - **Sprint**: Backlog · Sprint 1 – … · Sprint 2 – … · … (rename/extend to match the plan's epics)
-- **Stack context:** read `CLAUDE.md` + `.claude/quality-tools.md` (Next 16, Prisma 7, MCP server, USER_TZ rules) so the plan and stories respect real constraints.
+- ⚠ **Editing a single-select field's OPTIONS wipes assignments.** `updateProjectV2Field` **regenerates every option ID** (no match-by-name) — all existing item→option assignments for that field are lost. Before renaming/extending the Sprint options: capture the current item→option mapping (`gh project item-list 8 --owner jronnomo --format json`), apply the field update, then restore each item's Sprint by name against the NEW option IDs.
+- **Stack context:** read `CLAUDE.md` + `.claude/quality-tools.md` + `docs/project-gotchas.md` (Next 16, Prisma 7, multi-tenant `getDb()`, MCP + OAuth server, USER_TZ rules) so the plan and stories respect real constraints.
 
 ---
 
@@ -84,7 +85,7 @@ This is the "really iron on a concrete plan" phase. Pressure-test the design *be
 
 **Actor**: Devil's Advocate Agent (Sonnet) + You
 
-Spawn 1 Sonnet (`agent-prompts.md` → "Backlog Critic") to check: **completeness** (missing migration steps, the coaching-prompt update, fitness coexistence, docs?), **dependency cycles**, **stories that are secretly epics** (Effort=Large + >~5 acceptance criteria → split), **sprint balance** (none overloaded; P0s front-loaded; each sprint independently shippable). Fold fixes into the backlog + `backlog.json`. Make the **Sprint field options on board #8 match the epics** — rename/add via `gh project field-create`/GraphQL if needed.
+Spawn 1 Sonnet (`agent-prompts.md` → "Backlog Critic") to check: **completeness** (missing migration steps, the coaching-prompt update, fitness coexistence, docs?), **dependency cycles**, **stories that are secretly epics** (Effort=Large + >~5 acceptance criteria → split), **sprint balance** (none overloaded; P0s front-loaded; each sprint independently shippable). Fold fixes into the backlog + `backlog.json`. Make the **Sprint field options on board #8 match the epics** — rename/add via GraphQL if needed, but ⚠ follow the capture-then-restore procedure from "Project facts": updating a single-select field regenerates ALL option IDs and silently wipes every existing item's Sprint assignment.
 
 ---
 
@@ -96,7 +97,7 @@ Turn `backlog.json` into a real board. For each epic, optionally create a parent
 
 1. **Create the issue**:
    ```bash
-   gh issue create -R jronnomo/workout-planner \
+   gh issue create -R jronnomo/goaldmine \
      --title "<story title>" --body "<value + acceptance criteria + touches + deps>" \
      --label "story" --label "<epic-label>"     # create labels first if missing
    ```
@@ -119,7 +120,7 @@ Write `$RUN_DIR/phases/materialize-log.md` (issue # + item id + sprint per story
 
 **Actor**: You (Planning Lead)
 
-1. **Commit the planning docs**: conventional commit, HEREDOC body, `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. Push to `main`.
+1. **Commit the planning docs**: conventional commit, HEREDOC body, `Co-Authored-By` trailer naming the model you're actually running on (e.g. `Claude Fable 5 (1M context) <noreply@anthropic.com>`). Push to the current branch (planning docs may go straight to `main` — they don't deploy anything user-facing — but check `git branch --show-current` first).
 2. **Completion report** → `$RUN_DIR/phases/completion-report.md`.
 3. **Report to the user**:
    - One-paragraph summary + the link to board **#8** (now populated).
@@ -164,7 +165,7 @@ Follow the global `CLAUDE.md` Context Limit Protocol. Write state to `$RUN_DIR/c
 1. **You NEVER write production code** — this skill produces a *plan + backlog*. Building is `/feature-dev`.
 2. **Never skip the Devil's Advocate** (plan critique AND backlog critique).
 3. **Every story is independently buildable** with testable acceptance criteria, effort, priority, sprint, and deps.
-4. **Fetch board field/option IDs live** (`gh project field-list 8`) — never hardcode option IDs.
+4. **Fetch board field/option IDs live** (`gh project field-list 8`) — never hardcode option IDs. When *changing* a single-select field's options, capture the item→option mapping first and restore it after (option IDs regenerate on every field update).
 5. **Respect the real stack** — migrations additive & Neon-safe, USER_TZ via `@/lib/calendar`, MCP tools typed & discoverable, server-components-by-default.
 6. **Materialize the backlog** onto board #8 (issues + Sprint/Priority/Effort/Status), not just a doc.
 7. **Write to disk after every phase**; narrate progress.

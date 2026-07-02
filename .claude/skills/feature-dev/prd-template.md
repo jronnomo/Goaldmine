@@ -1,4 +1,4 @@
-# PRD Template (workout-planner)
+# PRD Template (goaldmine)
 
 Reference document for `/feature-dev`. The orchestrator uses this template when creating the Product Requirements Document in Phase 2.
 
@@ -34,7 +34,7 @@ How do we know this feature is successful? Measurable outcomes (e.g., "Today ren
 
 ## 2. User Stories
 
-This is a single-user app. Frame stories as the user (Gabe) acting through the PWA or via Claude in claude.ai (MCP).
+This is a multi-user, multi-tenant app (founder + invite-gated users). Frame stories per actor: a user acting through the PWA, the coach (Claude in claude.ai) acting via MCP, or a brand-new user onboarding with zero rows. Call out if a story is founder-only.
 
 | ID     | As a... | I want to... | So that... | Priority |
 |--------|---------|--------------|------------|----------|
@@ -64,12 +64,14 @@ Schema additions and modifications. Use code blocks for clarity:
 
 ```prisma
 // New / modified models, with fields, types, nullability, defaults, indexes
+// Owned models MUST carry userId (+ index) and be accessed via getDb()
 ```
 
 Migration plan:
 - Migration name: `<slug>`
-- Commands: `npx prisma migrate dev --name <slug>` then `npx prisma generate`
-- ⚠ Neon-shared: confirm migration is additive / reversible / safe for existing rows
+- Commands: `npm run db:migrate -- --name <slug>` (guarded; `npm run db:which` first) then `npx prisma generate`
+- ⚠ Migrations reach prod at deploy: confirm additive / reversible / safe for existing rows; validate the SQL diff
+- If an owned model is added/changed: run `npm run db:verify-owned` + `npm run db:verify-isolation`
 - Backfill plan if any rows need updating
 
 ### 4.2 MCP Tool Surface
@@ -82,6 +84,7 @@ For each entry, document:
 - **Title**, **description** (what claude.ai sees)
 - Full **Zod inputSchema** (with `.describe()` annotations)
 - **Return shape** (named arrays / `{ id, message }`-style)
+- **Read tools**: the leaky-reads test case being added (`src/lib/mcp/leaky-reads.test.ts`) — no private note types, no cross-tenant rows
 - Sample `tools/call` curl invocation:
   ```sh
   curl -s -X POST http://localhost:3000/api/mcp \
@@ -108,12 +111,17 @@ List every new / modified server action in `src/lib/workout-actions.ts` (or new 
 - Any new MCP tool with a `date: string` input must use `parseDateInput`
 - DST behavior verified — week math uses `startOfWeekMonday` / `endOfWeekSunday` / `addDays` (USER_TZ-aware)
 
-### 4.6 Override-Awareness
-- Does any new view depend on per-day plan state? If so, document that it reads via `resolveDay(now)` (override-aware), not `getTodayContext()` (rotation-only)
+### 4.6 Deferral / Override Awareness
+- Does any new view depend on per-day plan state? If so, document that it reads via `resolveDay(now)` — switching on `todayTask` and rendering `activeWorkout`/`deferredWorkout` — not `getTodayContext()` (rotation-only). The old `resolveDay(...).workoutTemplate` field no longer exists.
 - Does this feature add a new `PlanDayOverride` field or change semantics? Document migration of existing override rows
 
-### 4.7 Third-Party Dependencies
-Any new packages or external APIs. Justify each.
+### 4.7 Tenant Scoping & Auth
+- Which owned models are read/written? Confirm all access is via `getDb()` (never the raw `prisma` singleton)
+- New routes: protected by default via `src/middleware.ts` / `route-access.ts`? Any intentionally public route justified?
+- Does the feature touch session, invite gate, or OAuth flows? (If so: run the auth/OAuth test suites; don't modify token/grant logic lightly)
+
+### 4.8 Third-Party Dependencies
+Any new packages or external APIs. Justify each. (Never an LLM API — reasoning stays in claude.ai.)
 
 ---
 
@@ -145,6 +153,7 @@ How the user gets to/from this feature. Entry points, exit points, back behavior
 | Scenario | Expected Behavior |
 |----------|------------------|
 | No active program | |
+| Brand-new user (zero rows, mid-onboarding) | |
 | Empty data (no rows yet) | |
 | Invalid input | |
 | Concurrent log + view (stale revalidation) | |
@@ -156,7 +165,10 @@ How the user gets to/from this feature. Entry points, exit points, back behavior
 
 ## 7. Security Considerations
 
-- MCP bearer-token coverage: any new public route bypassing auth?
+- Tenant isolation: every owned-model query via `getDb()`; no cross-tenant leakage possible; MCP read tools covered by leaky-reads tests
+- Route protection: new routes covered by `src/middleware.ts` / `route-access.ts` unless intentionally public (justify)
+- MCP auth coverage: OAuth 2.1 (primary) + legacy bearer — any new endpoint bypassing both?
+- Rate limiting: does the new surface need it (Upstash, fails open)?
 - Input validation: Zod for MCP tools; FormData parsing in server actions; Prisma type safety on the way out
 - No `dangerouslySetInnerHTML` on user-provided strings
 - No raw SQL (Prisma only) unless explicitly justified
@@ -189,23 +201,25 @@ Any unresolved decisions or questions. **Should be empty before development star
 
 How will we verify this works end-to-end?
 
-### 10.1 Typecheck / Lint / Build
+### 10.1 Typecheck / Lint / Tests / Build
 - `npx tsc --noEmit` — must be clean
 - `npm run lint` — no new errors
+- `npm run test` — Vitest, no new failures; list the suites this feature adds/updates
 - `npm run build` — Turbopack build succeeds
 
 ### 10.2 MCP curl smoke
-For each new/modified tool, paste the curl invocation and the expected response shape.
+For each new/modified tool, paste the curl invocation and the expected response shape. New read tools: confirm the leaky-reads case passes.
 
 ### 10.3 Browser smoke
 1. `npm run dev`
-2. Open http://localhost:3000 at 390 px width
+2. Open http://localhost:3000 at 390 px width (sign in — routes are auth-protected)
 3. Walk: <list of flows>
-4. Cross-check each flow against `get_today_plan` / `recent_history` curl output
+4. Cross-check each flow against `get_today_plan` / `get_session_brief` curl output
 
 ### 10.4 Migration verification (if applicable)
-- Confirm `prisma migrate dev` succeeds against Neon
+- Confirm `npm run db:which` shows the dev branch, then `npm run db:migrate` succeeds
 - Confirm `src/generated/prisma` regenerates
+- If an owned model was added/changed: `npm run db:verify-owned` + `npm run db:verify-isolation` pass
 - Confirm existing rows still render correctly
 
 ---

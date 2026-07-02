@@ -57,3 +57,7 @@ docs/strategy/
 
 # zxing wasm — copied from node_modules by postinstall; never committed
 public/zxing/
+
+# /test-app run reports + run-dir pointer (local artifacts — never commit)
+/test-reports/
+.current-test-run

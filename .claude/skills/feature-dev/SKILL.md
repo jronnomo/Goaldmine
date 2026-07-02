@@ -1,6 +1,6 @@
 ---
 name: feature-dev
-description: Full feature development lifecycle for the workout-planner repo — discovery, PRD, optional GitHub issue, requirements, parallel Sonnet dev team, QA, iteration. The session model orchestrates (run on the strongest tier — Fable 5, or Opus); Sonnet agents build. Tuned for Next.js 16 + Prisma 7 + MCP server stack.
+description: Full feature development lifecycle for the goaldmine repo — discovery, PRD, optional GitHub issue, requirements, parallel Sonnet dev team, QA, iteration. The session model orchestrates (run on the strongest tier — Fable 5, or Opus); Sonnet agents build. Tuned for the Next.js 16 + Prisma 7 + Auth.js + MCP/OAuth server stack.
 argument-hint: <feature-description-or-title>
 ---
 # /feature-dev — Full-Lifecycle Feature Development Orchestrator
@@ -13,7 +13,7 @@ You are the **Tech Lead (Orchestrator)**, running the entire feature development
 
 ## Before you begin
 
-Read `CLAUDE.md` (project root) for architecture and conventions. Read `.claude/quality-tools.md` for stack-specific commands and gotchas — you will reference it from every agent prompt.
+Read `CLAUDE.md` (project root) for architecture and conventions. Read `.claude/quality-tools.md` for stack-specific commands and gotchas — you will reference it from every agent prompt. If the feature touches plan writes, records/PRs, or the MCP tool surface, also read `docs/project-gotchas.md` (§B is the dev section) — it's the log of scenarios that have actually bitten this codebase.
 
 Supporting files are read on-demand at the phase where they're needed — not upfront:
 
@@ -25,17 +25,18 @@ Supporting files are read on-demand at the phase where they're needed — not up
 
 ## Solo-developer defaults (this repo specifically)
 
-The Chewabl version of this skill insists on a feature branch + GitHub issue + PR for every feature. **This repo is solo and pushes directly to `main`** with conventional commits. Defaults below reflect that:
+The Chewabl version of this skill insists on a feature branch + GitHub issue + PR for every feature. **This repo is solo, with no PR ceremony** — but note that **`main` auto-deploys to prod on Vercel**, and current practice is to accumulate work on a long-lived phase branch (e.g. `feature/phase1-auth`) rather than committing straight to `main`. Defaults below reflect that:
 
 | Step                             | Default | Opt-in flag                     |
 |----------------------------------|---------|---------------------------------|
 | Create GitHub issue (Phase 2)    | Skip    | User says "with issue" / "open issue" |
-| Create feature branch (Phase 3)  | Skip — work on `main` in worktrees | User says "branch this" / "feature branch" |
-| Open PR at the end (Phase 7)     | Skip — direct commit + push to `main` | User says "open a PR" |
+| Create a NEW feature branch (Phase 3) | Skip — work on the **currently checked-out branch** in worktrees | User says "branch this" / "feature branch" |
+| Open PR at the end (Phase 7)     | Skip — direct commit + push to the current branch | User says "open a PR" |
+| Merge to `main` (= deploy)       | **Ask first** — merging/pushing `main` deploys prod; run `/launch-gate` before any merge to `main` | User says "ship it" / "deploy" |
 | Write PRD to `docs/prds/`        | **Always** | — |
 | Worktree isolation per agent     | **Always** | — |
 
-When in doubt, ask the user once at the start: *"Default flow is PRD doc → worktree dev → direct commit to main. Want a feature branch or GH issue for this one?"*
+When in doubt, ask the user once at the start: *"Default flow is PRD doc → worktree dev → commit to `<current branch>`. Want a new branch, a GH issue, or a merge to main (deploy) at the end?"*
 
 ---
 
@@ -49,26 +50,27 @@ When in doubt, ask the user once at the start: *"Default flow is PRD doc → wor
 Read `$ARGUMENTS`. If the user provided a file path, read it. Then:
 
 1. **Explore the codebase** to understand current state of related areas. Glob the relevant directories — for this repo that's some subset of:
-   - `src/app/` (App Router routes & pages)
+   - `src/app/` (App Router routes & pages; also `src/app/oauth/` + `src/app/api/auth/`)
    - `src/components/` (reusable UI)
-   - `src/lib/` (calendar/db/program/records/readiness/parsers/formatters/mcp)
-   - `src/lib/mcp/tools.ts` (MCP tool surface)
-   - `prisma/schema.prisma` (data model)
-   - `prisma/seed.ts` and `src/lib/program-template.ts` (program template)
+   - `src/lib/` (calendar/db/plan/records/readiness/game/parsers/formatters/mcp)
+   - `src/lib/mcp/tools.ts` + packs in `src/lib/mcp/tools/` (MCP tool surface, ~106 tools)
+   - `src/lib/auth/` + `src/lib/oauth/` + `src/middleware.ts` (Auth.js glue, OAuth 2.1 server, route protection)
+   - `prisma/schema.prisma` (data model — 30 models, owned models carry `userId`)
    - `src/app/api/mcp/` (MCP HTTP transport)
    Read whichever files the feature will touch or depend on. Identify existing patterns the feature must follow.
 
 2. **Ask comprehensive follow-up questions** with `AskUserQuestion`. Cover:
    - **Scope**: in vs out
-   - **User stories / flows**: this is a single user — frame stories as "I want to ..." with the user as the actor
-   - **Edge cases**: empty state, error state, what happens when offline / when MCP curl fails
-   - **Data model**: new Prisma models / fields / indexes / Json shapes; migrations needed
-   - **MCP tool surface**: new read tools? new write tools? changes to existing tool input schemas?
+   - **User stories / flows**: multi-user app — is this founder-only, all tenants, or onboarding-path? Frame stories per actor (user in the PWA, coach via MCP in claude.ai)
+   - **Edge cases**: empty state (brand-new user with zero rows!), error state, what happens when offline / when MCP curl fails
+   - **Data model**: new Prisma models / fields / indexes / Json shapes; migrations needed; **is the new model owned (needs `userId` + tenant scoping)?**
+   - **MCP tool surface**: new read tools (→ leaky-reads test coverage required)? new write tools? changes to existing tool input schemas?
+   - **Auth surface**: does a new route need protection (`src/middleware.ts` / `route-access.ts`)? Does it touch session, invite gate, or OAuth flows?
    - **UI/UX**: routes, components, interactions (mobile-first; PWA on phone)
    - **Date / TZ semantics**: any new date math must be USER_TZ-correct via `@/lib/calendar`
    - **Server actions**: if a write path exists, which paths must `revalidatePath`?
-   - **Override-aware reads**: do new views need to honor `PlanDayOverride` (use `resolveDay`) or are they orthogonal?
-   - **Testing**: what to verify via browser smoke + MCP curl + typecheck
+   - **Deferral-aware reads**: do new views need `resolveDay` (`todayTask`/`activeWorkout`/`deferredWorkout`) or are they orthogonal to per-day plan state?
+   - **Testing**: which unit tests to add/update (tests sit next to source), plus browser smoke + MCP curl + typecheck
    Ask in batches of 3–4 focused questions per round. Continue until the user confirms full clarity.
 
 3. **Summarize understanding** back to the user before moving on.
@@ -131,7 +133,7 @@ The wait is what makes the pipeline work — research-informed design produces b
 
 ### Step 1 (opt-in): Feature branch
 
-Default: stay on `main`.
+Default: stay on the currently checked-out branch (verify with `git branch --show-current` — often a long-lived phase branch like `feature/phase1-auth`, not `main`).
 
 If opted in:
 ```bash
@@ -281,8 +283,9 @@ The QA Agent must:
 3. Verify mobile-first responsiveness (verify in-prompt against the PRD's "Responsive Spec" section)
 4. Verify USER_TZ correctness (`grep -n 'setHours\|setDate\|getHours\|getDate()\|getMonth()\|getFullYear' <changed-files>` should be empty for app code; only `@/lib/calendar` is allowed to use those primitives)
 5. Verify `revalidatePath` coverage on every server-action mutation
-6. Check for security issues (OWASP top 10) and Prisma migration safety
-7. Identify requirements not fully implemented
+6. Verify tenant scoping: owned-model access goes through `getDb()`, never the raw `prisma` singleton; new MCP read tools have leaky-reads coverage
+7. Check for security issues (OWASP top 10) and Prisma migration safety
+8. Identify requirements not fully implemented
 
 Write report to `$RUN_DIR/agents/qa-report.md`.
 
@@ -295,11 +298,13 @@ Run `npx tsc --noEmit`. Capture output. If errors:
 
 ### Step 3: Lint (you)
 
-Run `npm run lint`. Pre-existing lint warnings in unmodified files are not blockers; new ones are.
+Run `npm run lint`. Pre-existing lint warnings in unmodified files are not blockers; new ones are. ⚠ Phantom eslint errors can come from `.claude/worktrees/*/.next` build artifacts — remove/prune merged worktrees before trusting lint output.
 
-### Step 4: Build (you)
+### Step 4: Unit tests + Build (you)
 
-Run `npm run build`. Must produce a successful Turbopack build. Build errors are blockers.
+Run `npm run test` (Vitest, ~540 tests) — failures in suites touching the changed code are blockers. If the schema gained/changed an owned model, also run `npm run db:verify-owned` and `npm run db:verify-isolation`.
+
+Then run `npm run build`. Must produce a successful Turbopack build. Build errors are blockers.
 
 ### Step 5: MCP smoke + Browser smoke
 
@@ -308,7 +313,7 @@ Per `.claude/quality-tools.md`:
 - `tools/list` curl + `tools/call` curl on every new/changed tool
 - Walk every changed flow in the browser at phone width
 
-Capture results.
+Capture results. (This is a *targeted* smoke of what the feature touched — for a full-app sweep, e.g. before a big merge, that's `/test-app`.)
 
 ### Step 6: Compile issue list
 
@@ -341,6 +346,7 @@ If Phase 5 found issues:
   - All requirements pass acceptance criteria
   - `npx tsc --noEmit` returns 0 errors
   - `npm run lint` introduces no new errors
+  - `npm run test` passes (no new failures)
   - `npm run build` succeeds
   - Manual MCP smoke + browser smoke clean
   - QA Agent confirms no remaining issues
@@ -353,7 +359,7 @@ If Phase 5 found issues:
 
 ### Step 1: Final validation
 
-Run all gates one more time: `npx tsc --noEmit`, `npm run lint`, `npm run build`. Read every changed file yourself.
+Run all gates one more time: `npx tsc --noEmit`, `npm run lint`, `npm run test`, `npm run build`. Read every changed file yourself.
 
 ### Step 1b: Tick the Recommendation Ledger (R5 — `outcome.ledger`)
 
@@ -379,10 +385,10 @@ git commit -F - <<'EOF'
 
 Co-Authored-By: Claude <your-running-model> (1M context) <noreply@anthropic.com>
 EOF
-git push origin main
+git push origin "$(git branch --show-current)"
 ```
 
-If a feature branch was created in Phase 3, push to that branch and (opt-in) `gh pr create` per the conventional template in `CLAUDE.md`.
+Before committing: `pwd` + `git branch --show-current` — orchestrator shells drift into worktree directories mid-run, and committing from the wrong checkout (or `git add -A` in the main checkout picking up stray worktree files) has happened before. Push to the **current** branch; merging to `main` deploys prod and needs the user's go-ahead. If a feature branch was created in Phase 3, push to that branch and (opt-in) `gh pr create` per the conventional template in `CLAUDE.md`.
 
 ### Step 3: Worktree cleanup
 
@@ -432,9 +438,9 @@ When agents conflict, **architecture blueprint** is source of truth for design; 
 
 ---
 
-## 92% context limit
+## 85% context limit
 
-Follow the Context Limit Protocol from the user's global `CLAUDE.md`. Write all current state to `$RUN_DIR/coordination/manifest.json` before handoff.
+Follow the Context Limit Protocol from the user's global `CLAUDE.md` (it triggers at Context ≥ 85%). Write all current state to `$RUN_DIR/coordination/manifest.json` before handoff.
 
 ---
 
@@ -457,8 +463,14 @@ Verify with `git worktree list` — only the main worktree should remain.
 ### Lesson 4: Never bypass `@/lib/calendar`
 Raw `setHours(0,0,0,0)` / `getDate()` against Vercel's UTC runtime is the foot-gun on this codebase — it silently rolls "today" at the wrong moment in user-local time. Every Date helper must go through `@/lib/calendar` (`dateKey`, `parseDateKey`, `startOfDay`, `endOfDay`, `addDays`, `startOfWeekMonday`, `endOfWeekSunday`). MCP write tools that accept a `date: string` must use `parseDateInput` (handles bare `yyyy-mm-dd` as USER_TZ midnight). Reinforce this in every Devil's-Advocate critique.
 
-### Lesson 5: Always use override-aware reads on Today / Day pages
-`getTodayContext()` returns the rotation default. `resolveDay(now)` is the override-aware view. Today's workout, baselines, and any per-day display must come from `resolveDay`. The same trap will keep biting if not consciously checked at architecture time.
+### Lesson 5: Always use the deferral-aware resolved day
+`getTodayContext()` returns the rotation default. `resolveDay(now)` (`src/lib/calendar.ts`) is the override- and deferral-aware view — switch on its `todayTask` and render `activeWorkout` / `deferredWorkout`. The old `resolveDay(...).workoutTemplate` field was **removed** and the `workoutDeferredFor*` flags are deprecated — never re-derive the day's task from them. The same trap will keep biting if not consciously checked at architecture time.
+
+### Lesson 6: Worktree agents can start stale and must commit their work
+A freshly-created worktree can branch from an older HEAD than you expect. Every Developer Agent prompt must include: (a) verify the worktree's base commit matches the expected branch HEAD (sync if not), (b) symlink `node_modules` / copy `.env` from the main checkout so builds and guarded scripts work, and (c) **commit their changes inside the worktree** before finishing — uncommitted worktree changes can't be merged.
+
+### Lesson 7: Tenant scoping is not optional
+All owned-model DB access goes through `getDb()` (the scoped client); the raw `prisma` singleton is for auth/OAuth infra only. A new owned model needs `userId` + the isolation verifiers (`npm run db:verify-owned` / `db:verify-isolation`). A new MCP read tool needs leaky-reads test coverage. Bake all three into architecture review — retrofitting scoping is much more expensive.
 
 ---
 
@@ -466,9 +478,9 @@ Raw `setHours(0,0,0,0)` / `getDate()` against Vercel's UTC runtime is the foot-g
 
 1. **You NEVER write production code** — all code comes from Developer Agents.
 2. **You ALWAYS read agent output files** before merging or approving.
-3. **You ALWAYS run `npx tsc --noEmit`, `npm run lint`, and `npm run build`** before declaring done.
-4. **Mobile-first responsive + USER_TZ-correct**: every UI verified at phone width; every Date helper goes through `@/lib/calendar`; server components by default.
-5. **Agents use worktrees** for code changes — never modify the working branch directly.
+3. **You ALWAYS run `npx tsc --noEmit`, `npm run lint`, `npm run test`, and `npm run build`** before declaring done.
+4. **Mobile-first responsive + USER_TZ-correct + tenant-scoped**: every UI verified at phone width; every Date helper goes through `@/lib/calendar`; owned-model access via `getDb()`; server components by default.
+5. **Agents use worktrees** for code changes — never modify the working branch directly. Worktree agents verify their base commit, get `node_modules`/`.env` wired, and commit inside their worktree.
 6. **Max 3 development iterations** — report remaining issues to user if not converged.
 7. **Write to disk after every phase** — partial work must survive context limits.
 8. **Narrate progress to the user** — announce phases, report agent results, show decisions.
