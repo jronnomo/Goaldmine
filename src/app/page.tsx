@@ -30,15 +30,21 @@ export default async function HomePage() {
   ]);
   const presentation = presentationForGoal(focusGoal);
 
-  // AC-C: null goal + null program (or fitness focus + no program) → existing NoActiveProgram card.
+  // AC-C: null goal + null program (or fitness focus + no program) → get-started card.
   if (!program && focusGoal?.kind !== "project") {
     return (
       <div className="max-w-md mx-auto p-4">
-        <Card title="No active program">
+        <Card title="Get started">
           <p className="text-sm text-[var(--muted)]">
-            <strong className="font-semibold text-[var(--foreground)]">No active program yet.</strong>{" "}
-            Run <code className="text-xs bg-[var(--card)] px-1 rounded">npx prisma db seed</code> to create the 90-day plan.
+            Welcome to Goaldmine — start by creating your first goal. Once you add a goal with a
+            target date, your Today view fills in automatically.
           </p>
+          <Link
+            href="/goals"
+            className="mt-3 inline-block text-sm font-medium text-[var(--accent)] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+          >
+            Create your first goal →
+          </Link>
         </Card>
       </div>
     );

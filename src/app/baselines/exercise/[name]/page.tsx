@@ -64,26 +64,30 @@ export default async function ExerciseRecordDetail({
       </Card>
 
       <Card title="Sessions">
-        <ul className="divide-y divide-[var(--border)]">
-          {[...history].reverse().map((h) => (
-            <li key={h.workoutId} className="py-2">
-              <Link
-                href={`/workouts/${h.workoutId}`}
-                className="flex justify-between items-baseline gap-3"
-              >
-                <div>
-                  <p className="font-mono text-sm">{rawText(h, summary?.primary)}</p>
-                  {h.workoutTitle && (
-                    <p className="text-xs text-[var(--muted)]">{h.workoutTitle}</p>
-                  )}
-                </div>
-                <p className="text-xs text-[var(--muted)] shrink-0">
-                  {new Date(h.date).toLocaleDateString()}
-                </p>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        {history.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No sessions logged yet.</p>
+        ) : (
+          <ul className="divide-y divide-[var(--border)]">
+            {[...history].reverse().map((h) => (
+              <li key={h.workoutId} className="py-2">
+                <Link
+                  href={`/workouts/${h.workoutId}`}
+                  className="flex justify-between items-baseline gap-3"
+                >
+                  <div>
+                    <p className="font-mono text-sm">{rawText(h, summary?.primary)}</p>
+                    {h.workoutTitle && (
+                      <p className="text-xs text-[var(--muted)]">{h.workoutTitle}</p>
+                    )}
+                  </div>
+                  <p className="text-xs text-[var(--muted)] shrink-0">
+                    {new Date(h.date).toLocaleDateString()}
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
     </div>
   );
