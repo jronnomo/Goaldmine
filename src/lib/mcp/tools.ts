@@ -628,7 +628,16 @@ function registerReadTools(server: McpServer) {
           }).catch(() => null);
           return shapeProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
         }
-        return { ...r, standingRules, focusGoal: activeGoal, activeGoal, todayItems }; // activeGoal: saved-prompt compat, remove next release
+        return {
+          ...r,
+          standingRules,
+          focusGoal: activeGoal,
+          activeGoal, // activeGoal: saved-prompt compat, remove next release
+          todayItems,
+          ...(activeGoal === null
+            ? { message: "No goals set up yet — create your first goal to get a daily plan and coaching." }
+            : {}),
+        };
       }),
   );
 
@@ -681,7 +690,18 @@ function registerReadTools(server: McpServer) {
       safe(async () => {
         const baseDate = startDate ? parseDateInput(startDate) : new Date();
         const program = await getActiveProgram();
-        if (!program) return { error: "No active program" };
+        if (!program) {
+          return {
+            weekIndex: null,
+            startDate: null,
+            endDate: null,
+            totalWeeks: null,
+            days: [],
+            otherGoalEvents: [],
+            crossGoalConflicts: [],
+            message: "No active program yet — create a goal with a target date to generate a plan.",
+          };
+        }
 
         const startMid = startOfDay(program.startedOn);
         const baseDayStart = startOfDay(baseDate);
@@ -1581,6 +1601,9 @@ function registerReadTools(server: McpServer) {
           otherActiveGoals,
           currentWeekConflicts,
           stackRarity,
+          ...(goal === null
+            ? { message: "No goals set up yet — create your first goal to get a daily plan, session briefs, and progress tracking." }
+            : {}),
         };
       }),
   );
