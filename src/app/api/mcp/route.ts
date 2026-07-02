@@ -5,6 +5,7 @@ import { COACH_INSTRUCTIONS } from "@/lib/mcp/instructions";
 import { resolveUserIdFromToken } from "@/lib/auth/current-user";
 import { runWithUser } from "@/lib/db";
 import { deriveOrigin } from "@/lib/oauth/tokens";
+import { checkRateLimit, plainRateLimitResponse } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,6 +28,29 @@ async function handler(req: Request): Promise<Response> {
       headers: {
         "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
       },
+    });
+  }
+
+  // ── E-2: Per-userId rate limit (60 req/min) ─────────────────────────────
+  //
+  // Transport-level reject: occurs before MCP server construction + JSON-RPC
+  // dispatch. Return a plain HTTP 429, NOT a JSON-RPC error envelope (the
+  // limiter sits before transport.handleRequest, so there is no JSON-RPC
+  // context to wrap). claude.ai backs off on 429 + Retry-After.
+  //
+  // CORS headers are required: claude.ai calls /api/mcp cross-origin. A 429
+  // without Access-Control-Allow-Origin is blocked by the browser before
+  // claude.ai can read the Retry-After header. Headers match the OPTIONS
+  // export exactly.
+  const { ok: rateLimitOk, retryAfterSeconds } = await checkRateLimit(
+    "mcp",
+    userId,
+  );
+  if (!rateLimitOk) {
+    return plainRateLimitResponse(retryAfterSeconds, {
+      "Access-Control-Allow-Origin":  "*",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id",
     });
   }
 
