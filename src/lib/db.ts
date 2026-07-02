@@ -330,11 +330,12 @@ export function runWithUser<T>(userId: string, fn: () => T): T {
 //    else creates/reuses the founder-scoped client (RSC / server-action context
 //    where getCurrentUserId resolves via React.cache → FOUNDER_USER_ID in Phase 0).
 //
-//    IMPORT CYCLE ANALYSIS (confirmed safe):
+//    IMPORT CYCLE ANALYSIS (confirmed safe, A-2 updated):
 //      db.ts → imports getCurrentUserId from @/lib/auth/current-user
-//      current-user.ts → imports FOUNDER_USER_ID from @/lib/auth/founder
-//      founder.ts → no imports from this project
-//      No cycle. founder.ts and current-user.ts do NOT import from db.ts.
+//      current-user.ts (Phase 1) → dynamically imports auth from @/lib/auth/auth
+//        (static import would create: current-user.ts → auth.ts → prisma ← db.ts → cycle)
+//      Dynamic import defers resolution past module init, breaking the TDZ crash.
+//      No static import cycle remains.
 // ---------------------------------------------------------------------------
 
 /**

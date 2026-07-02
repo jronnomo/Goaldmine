@@ -1,7 +1,15 @@
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SessionMenu } from "@/components/SessionMenu";
-import { auth } from "@/lib/auth/auth";
+
+interface AppHeaderProps {
+  /** Resolved from auth() in the root layout. null when signed out or during static prerender. */
+  user?: {
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+  } | null;
+}
 
 /**
  * Sticky brand strip rendered at the top of every page by `app/layout.tsx`.
@@ -10,10 +18,15 @@ import { auth } from "@/lib/auth/auth";
  * uses both the Tailwind `font-display` utility AND inline `style.fontFamily`
  * for safety — redundancy is intentional (v2 §C.2.3). Right-aligned slot
  * holds the ThemeToggle (system / light / dark cycle) and the SessionMenu.
+ *
+ * A-2: session is now resolved in the root layout (single auth() call per
+ * request) and passed down via the `user` prop. AppHeader no longer calls
+ * auth() itself — this prevents a double-fetch and, critically, avoids a
+ * throw during static prerender of public pages (/signin, /request-access)
+ * where UntrustedHost would otherwise produce a NEXT_REDIRECT in the
+ * pre-rendered output.
  */
-export async function AppHeader(): Promise<React.JSX.Element> {
-  const session = await auth();
-
+export function AppHeader({ user = null }: AppHeaderProps): React.JSX.Element {
   return (
     <header className="sticky top-0 z-30 bg-[var(--background)]/95 backdrop-blur border-b border-[var(--border)]">
       <div className="h-12 flex items-center px-4 gap-2">
@@ -25,7 +38,7 @@ export async function AppHeader(): Promise<React.JSX.Element> {
           Goaldmine
         </span>
         <ThemeToggle />
-        <SessionMenu user={session?.user ?? null} />
+        <SessionMenu user={user} />
       </div>
     </header>
   );
