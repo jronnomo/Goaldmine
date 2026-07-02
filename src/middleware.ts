@@ -29,7 +29,16 @@ export function middleware(req: NextRequest): NextResponse {
 
   // Public paths are always allowed — no cookie check needed.
   if (isPublicPath(pathname)) {
-    return NextResponse.next();
+    const res = NextResponse.next();
+    // C-2: Frame-busting headers for the OAuth consent screen.
+    // Prevents clickjacking on the Allow/Deny buttons.
+    // Set here (in middleware) because Next.js 16 RSC pages cannot set
+    // arbitrary response headers directly.
+    if (pathname === "/oauth/authorize") {
+      res.headers.set("X-Frame-Options", "DENY");
+      res.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+    }
+    return res;
   }
 
   // Optimistic session-cookie check (HTTP or HTTPS variant).
