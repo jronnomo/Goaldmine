@@ -10,14 +10,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function handler(req: Request): Promise<Response> {
-  const expected = process.env.MCP_AUTH_TOKEN;
-  if (!expected) {
-    return new Response("Server misconfigured: MCP_AUTH_TOKEN not set", { status: 500 });
-  }
+  // ── Auth: per-user OAuth token (C-3a) with legacy-token fallback ──────────
+  // resolveUserIdFromToken returns null when no valid identity is established.
+  // The caller MUST null-guard before runWithUser (which accepts string only).
+  const authz = req.headers.get("authorization") ?? "";
+  const token = authz.startsWith("Bearer ") ? authz.slice(7).trim() : null;
+  const userId = token ? await resolveUserIdFromToken(token) : null;
 
-  const auth = req.headers.get("authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : null;
-  if (!token || token !== expected) {
+  if (!userId) {
     // C-1 (REQ-005 + DA fix #1): exact spike-proven format — NO realm.
     // claude.ai reads this header to discover the protected-resource metadata URL,
     // then fetches /.well-known/oauth-protected-resource to begin the OAuth flow.
@@ -30,7 +30,6 @@ async function handler(req: Request): Promise<Response> {
     });
   }
 
-  const userId = await resolveUserIdFromToken(token);
   // E4a: open the AsyncLocalStorage scope so getDb() resolves to this user
   // inside the tool-call chain. Tools still use raw `prisma` until E4b
   // migrates them — this wiring is forward-setup only; no behavior change.

@@ -6,7 +6,7 @@
  * tests can import it without mocking Prisma.
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Token generation
@@ -60,6 +60,44 @@ export const AUTH_CODE_TTL_S = 300;
  * client-facing invariants of this server.
  */
 export const OAUTH_SCOPE = "mcp";
+
+// ---------------------------------------------------------------------------
+// PKCE helpers (RFC 7636)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the S256 PKCE code challenge from a verifier.
+ *
+ * Per RFC 7636 §4.2:
+ *   code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))
+ *
+ * This is base64url WITHOUT padding — the `"base64url"` digest encoding in
+ * Node.js produces unpadded output by default (confirmed: same as the RFC).
+ *
+ * DA revision (C-3a): MUST use base64url encoding here — NOT hex. The
+ * authorize endpoint stores `codeChallenge` as base64url (from the
+ * claude.ai request); the token endpoint must produce the same encoding to
+ * compare with timingSafeEqualStr.
+ */
+export function pkceChallengeFromVerifier(verifier: string): string {
+  return createHash("sha256").update(verifier, "ascii").digest("base64url");
+}
+
+/**
+ * Constant-time string comparison.
+ *
+ * DA revision (C-3a): LENGTH-GUARD is MANDATORY — `timingSafeEqual` throws
+ * a `RangeError` when the two Buffers have different lengths. The short-
+ * circuit `ab.length === bb.length &&` prevents that throw.
+ *
+ * Encodes both strings as UTF-8 Buffers. For ASCII tokens (all tokens in
+ * this codebase), byte-length equals character-length.
+ */
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
 
 // ---------------------------------------------------------------------------
 // Origin derivation

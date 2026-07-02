@@ -7,6 +7,8 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   generateSecret,
   hashSecret,
+  pkceChallengeFromVerifier,
+  timingSafeEqualStr,
   ACCESS_TOKEN_TTL_S,
   REFRESH_TOKEN_TTL_S,
   AUTH_CODE_TTL_S,
@@ -93,6 +95,67 @@ describe("TTL constants", () => {
 
   it("OAUTH_SCOPE = 'mcp'", () => {
     expect(OAUTH_SCOPE).toBe("mcp");
+  });
+});
+
+describe("pkceChallengeFromVerifier", () => {
+  it("produces base64url output with no padding characters", () => {
+    const challenge = pkceChallengeFromVerifier("some-verifier-string");
+    expect(challenge).not.toContain("=");
+    expect(challenge).not.toContain("+");
+    expect(challenge).not.toContain("/");
+    expect(challenge).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it("RFC 7636 Appendix B known-answer test vector", () => {
+    // Normative test vector from RFC 7636 Appendix B:
+    //   code_verifier  = dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+    //   code_challenge = E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const expectedChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
+    expect(pkceChallengeFromVerifier(verifier)).toBe(expectedChallenge);
+  });
+
+  it("is deterministic — same verifier → same challenge", () => {
+    const v = "my-secret-verifier-value";
+    expect(pkceChallengeFromVerifier(v)).toBe(pkceChallengeFromVerifier(v));
+  });
+
+  it("different verifiers produce different challenges", () => {
+    expect(pkceChallengeFromVerifier("verifier-a")).not.toBe(
+      pkceChallengeFromVerifier("verifier-b"),
+    );
+  });
+});
+
+describe("timingSafeEqualStr", () => {
+  it("returns true for identical strings", () => {
+    expect(timingSafeEqualStr("hello", "hello")).toBe(true);
+  });
+
+  it("returns false for different strings of same length", () => {
+    expect(timingSafeEqualStr("hello", "world")).toBe(false);
+  });
+
+  it("returns false for strings of different lengths — no throw (length-guard)", () => {
+    // timingSafeEqual would throw RangeError without the length guard.
+    // DA revision: length-guard is MANDATORY.
+    expect(() => timingSafeEqualStr("short", "much-longer-string-here")).not.toThrow();
+    expect(timingSafeEqualStr("short", "much-longer-string-here")).toBe(false);
+  });
+
+  it("returns false for empty vs non-empty string", () => {
+    expect(timingSafeEqualStr("", "nonempty")).toBe(false);
+  });
+
+  it("returns true for two empty strings", () => {
+    expect(timingSafeEqualStr("", "")).toBe(true);
+  });
+
+  it("works correctly for typical token values (base64url length 43)", () => {
+    const token = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    expect(timingSafeEqualStr(token, token)).toBe(true);
+    expect(timingSafeEqualStr(token, token.slice(0, -1) + "X")).toBe(false);
   });
 });
 
