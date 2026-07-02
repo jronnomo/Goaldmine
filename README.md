@@ -4,7 +4,7 @@
 
 Goaldmine started as a personal Mt. Elbert training planner and grew into a generic platform for pursuing *any* measurable goal — a fitness peak, a software launch, a creative project — with a coach that tells you the truth about where you actually stand.
 
-The architectural twist: **the app contains no LLM calls, no API keys, and no per-token cost.** Claude does all of its reasoning in **claude.ai**, connected to the app as a first-class OAuth connector, reading and writing through a **106-tool MCP server** the app exposes. The app itself is a deterministic logger, dashboard, and honesty engine — you get a frontier-model coach for $0 beyond an existing Claude subscription.
+The architectural twist: **the app contains no LLM calls, no API keys, and no per-token cost.** Claude does all of its reasoning in **claude.ai**, connected to the app as a first-class OAuth connector, reading and writing through a **107-tool MCP server** the app exposes. The app itself is a deterministic logger, dashboard, and honesty engine — you get a frontier-model coach for $0 beyond an existing Claude subscription.
 
 > Repo/package legacy name: `workout-planner`. Product name: **Goaldmine**.
 
@@ -16,9 +16,9 @@ The architectural twist: **the app contains no LLM calls, no API keys, and no pe
 |---|---|
 | **What it is** | Goal tracker + coaching dashboard + MCP server that an AI coach drives |
 | **Stack** | Next.js 16 (App Router) · React 19 · TypeScript (strict) · Tailwind v4 · Prisma 7 · Postgres (Neon) |
-| **AI integration** | `@modelcontextprotocol/sdk` — 106 read/write tools, streamable HTTP |
+| **AI integration** | `@modelcontextprotocol/sdk` — 107 read/write tools, streamable HTTP |
 | **Auth** | Hand-built **OAuth 2.1 authorization server** (PKCE, dynamic client registration, refresh rotation) + Auth.js with Google sign-in, invite-gated multi-tenant |
-| **Testing** | ~540 Vitest unit tests across 32 files |
+| **Testing** | 613 Vitest unit tests across 34 files |
 | **Cost to run** | $0 marginal — no LLM calls in the app |
 
 ---
@@ -33,7 +33,7 @@ flowchart LR
 
     subgraph App["Next.js 16 app (Vercel)"]
         OAUTH["OAuth 2.1 server<br/>PKCE · DCR · refresh rotation<br/>.well-known discovery"]
-        MCP["/api/mcp<br/>106 MCP tools<br/>deterministic read/write — no LLM"]
+        MCP["/api/mcp<br/>107 MCP tools<br/>deterministic read/write — no LLM"]
         ENGINE["Honesty engine<br/>readiness · feasibility · gates<br/>plan linter · PR detection · XP"]
         DASH["Dashboard PWA<br/>Today · Calendar · Goals · Records<br/>Recap · Character · Coach"]
         OAUTH --> MCP --> ENGINE
@@ -96,11 +96,12 @@ sequenceDiagram
 - **Nutrition with barcode scanning** — zxing-wasm scanner in the browser → OpenFoodFacts/USDA lookup → a shared food catalog with per-user usage history (split for tenant isolation).
 - **Shareable recap pipeline** — footage markers tag which clip is which moment on a day; a `DayRenderJob` queue manages a full render lifecycle (pending → claimed → drafted → approved → rendered); and a server-rendered (resvg) 9:16 recap card ships with auto-captions and Web Share.
 - **Ops discipline unusual for a side project** — a `db-guard` script that refuses to migrate anything but a development database branch, tenant-isolation verification scripts, rate limiting (Upstash, fails open), and a `docs/project-gotchas.md` capturing hard-won traps.
-- **~540 unit tests** covering the readiness math, game engine scenarios, MCP read-leak safety (reads must not leak private note types), goal presentation, plan integrity, tenant isolation, and the full OAuth suite.
+- **Two-date snapshot comparison ("glance back, forge ahead")** — pick any two dates and see the latest-known value of *every* tracked metric **as of end-of-day** at each (never "what was logged that day"): per-goal readiness, strength PRs, baseline tests, body & wearables, trailing-7-day nutrition, plus "the work between" (workouts, hikes, elevation, XP earned between the dates). One pure core (`src/lib/compare.ts`) powers three surfaces — the `/compare` page, a two-tap compare mode on the calendar, and the `compare_dates` MCP tool so the coach can narrate the same numbers in conversation.
+- **613 unit tests** covering the readiness math, comparison semantics, game engine scenarios, MCP read-leak safety (reads must not leak private note types), goal presentation, plan integrity, tenant isolation, and the full OAuth suite.
 
 ---
 
-## The MCP surface (106 tools)
+## The MCP surface (107 tools)
 
 Registered in `src/lib/mcp/tools.ts` (+ GitHub / project / render packs). A sampler:
 
@@ -108,6 +109,7 @@ Registered in `src/lib/mcp/tools.ts` (+ GitHub / project / render packs). A samp
 |----------|-----------------|
 | Session context | `get_today_plan` (kind-routes fitness vs project payloads), `get_session_brief`, `recent_history`, `weekly_summary_data` |
 | Honest math | `compute_readiness`, `preview_goal_feasibility`, `get_rarity`, `lint_plan` |
+| Comparison | `compare_dates` — as-of snapshot of every metric family at two dates, with direction-aware deltas |
 | Logging | `log_workout` (returns new PRs), `log_hike`, `log_baseline`, `log_nutrition`, `log_note`, `log_metric` |
 | Plan control | `apply_plan_revision`, `apply_day_override`, `confirm_week`, `baseline_ops` / `workout_ops` (batched mutations) |
 | Goals | `create_goal`, `update_goal_targets`, `promote_note_to_goal`, `set_goal_feasibility` |
@@ -129,7 +131,7 @@ curl -s -X POST http://localhost:3000/api/mcp \
 
 ## The dashboard
 
-Mobile-first PWA. Highlights: **Today** (session brief + celebrations), **Calendar** and per-day detail with logging forms and footage markers, **Goals** with plan view, revision diffs, and trend charts (Recharts + custom SVG viz: bullseye, reach meter, readiness breakdown), **Baselines** with retest scheduling, **Records**, **Character** (levels, attributes, badges), **Recap** (shareable card), **Coach** (proactive-coach nudges), Strong **import**, **Nutrition** with barcode scan, and invite-gated onboarding with Google sign-in.
+Mobile-first PWA. Highlights: **Today** (session brief + celebrations), **Calendar** and per-day detail with logging forms and footage markers, **Compare** (two-date snapshot with deltas, entered via presets or two taps on the calendar), **Goals** with plan view, revision diffs, and trend charts (Recharts + custom SVG viz: bullseye, reach meter, readiness breakdown), **Baselines** with retest scheduling, **Records**, **Character** (levels, attributes, badges), **Recap** (shareable card), **Coach** (proactive-coach nudges), Strong **import**, **Nutrition** with barcode scan, and invite-gated onboarding with Google sign-in.
 
 ---
 

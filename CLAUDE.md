@@ -10,7 +10,7 @@ See: `docs/project-gotchas.md` for the non-obvious scenarios that have bitten us
 
 ```
 claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp  ──▶  Postgres (Neon)
-   (the coach: reasons,          (OAuth 2.1 or           │  106 deterministic tools
+   (the coach: reasons,          (OAuth 2.1 or           │  107 deterministic tools
     writes back via tools)        legacy bearer)         └──▶  Dashboard PWA (Today, Calendar,
                                                                Goals, Records, Recap, Character…)
 ```
@@ -37,6 +37,7 @@ claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp
 - `src/lib/readiness.ts`, `rarity-core.ts` — the honesty math (untested=0, gate caps at 80, coverage, feasibility tiers). Pure + unit-tested; keep it that way.
 - `src/lib/plan.ts`, `plan-lint.ts`, `snapshot-diff.ts`, `override-integrity.ts` — plan revisions (full snapshot + reasoning), day overrides, and the linter (`lintTemplate()` pure pre-write check; `lintActivePlan()` backs the `lint_plan` tool).
 - `src/lib/records.ts` — baseline scheduling + PR detection (canonical exercise names — see gotchas).
+- `src/lib/compare.ts` + `compare-core.ts` — two-date snapshot comparison ("as of end-of-day" semantics, USER_TZ cutoffs). Serves `/compare`, the calendar compare mode, and the `compare_dates` tool; readiness numbers must stay byte-identical to `/progress` (same `computeReadiness` path).
 - `src/lib/game/` — XP curves, day-ledger engine, badges, attributes.
 - `src/lib/parsers/strong.ts` + `formatters/` — Strong-app txt parser (regression-tested against `examples/`) and round-trip export formatters.
 - `src/lib/oauth/`, `src/lib/auth/` — OAuth 2.1 server + Auth.js glue. Fully unit-tested; don't modify token/grant logic without running the suite.
@@ -44,7 +45,7 @@ claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp
 
 ## MCP server
 
-`POST /api/mcp` (GET/DELETE for the streamable-HTTP protocol). Fresh server per request; ~106 tools. Session entrypoint for the coach is `get_today_plan` → kind-routes: fitness payload (workout/baselines/nutrition) vs project payload (scheduled items, feasibility, GitHub). Batched mutation tools (`baseline_ops`, `workout_ops`, `nutrition_log_ops`) exist specifically to avoid full-snapshot rewrites — prefer them.
+`POST /api/mcp` (GET/DELETE for the streamable-HTTP protocol). Fresh server per request; ~107 tools. Session entrypoint for the coach is `get_today_plan` → kind-routes: fitness payload (workout/baselines/nutrition) vs project payload (scheduled items, feasibility, GitHub). Batched mutation tools (`baseline_ops`, `workout_ops`, `nutrition_log_ops`) exist specifically to avoid full-snapshot rewrites — prefer them.
 
 Read tools must not leak private note types (standing_rule/review/open_item) — `mcp/leaky-reads.test.ts` enforces this; new read tools need coverage there.
 
@@ -60,7 +61,7 @@ Smoke test: see README "MCP server" section for the curl.
 
 ## Scripts
 
-- `npm run dev` · `npm run build` · `npm run lint` · `npm run test` (Vitest, ~540 tests) · `npx tsc --noEmit`
+- `npm run dev` · `npm run build` · `npm run lint` · `npm run test` (Vitest, ~613 tests) · `npx tsc --noEmit`
 - `npx prisma generate` — after any schema edit (postinstall also runs it + copies zxing wasm)
 - `npm run db:migrate` / `db:seed` / `db:push` — guarded (see above)
 - `npx tsx scripts/mint-invite.ts` — invite-gated signup tokens
