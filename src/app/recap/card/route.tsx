@@ -1,11 +1,12 @@
-// GET /recap/card?weekOffset=&goalId=&template=
-// Returns a 1080×1920 PNG of the weekly recap card.
+// GET /recap/card?weekOffset=&goalId=&template=&format=
+// Returns a PNG of the weekly recap card.
+// format: "story" 1080×1920 (default) · "post" 1080×1350 (4:5 feed) · "square" 1080×1080.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { z } from "zod";
-import { computeWeeklyRecap, resolveHighlight } from "@/lib/recap";
+import { computeWeeklyRecap, resolveHighlight, RECAP_CARD_FORMATS } from "@/lib/recap";
 import { renderRecapCard } from "@/lib/recap-render";
 
 const CardParamsSchema = z.object({
@@ -14,6 +15,7 @@ const CardParamsSchema = z.object({
   template: z.enum(["coal", "parchment"]).default("coal"),
   /** Featured highlight: candidate id, "auto", "custom:<text>", or absent for none. */
   highlight: z.string().optional(),
+  format: z.enum(RECAP_CARD_FORMATS).default("story"),
 });
 
 export async function GET(request: Request): Promise<Response> {
@@ -22,10 +24,10 @@ export async function GET(request: Request): Promise<Response> {
   if (!parsed.success) {
     return new Response("Invalid parameters", { status: 400 });
   }
-  const { weekOffset, goalId, template, highlight } = parsed.data;
+  const { weekOffset, goalId, template, highlight, format } = parsed.data;
 
   const recap = await computeWeeklyRecap(new Date(), { weekOffset, goalId });
   const fh = resolveHighlight(recap, highlight);
   // renderRecapCard returns an ImageResponse — return it directly.
-  return renderRecapCard(recap, template, fh);
+  return renderRecapCard(recap, template, fh, format);
 }

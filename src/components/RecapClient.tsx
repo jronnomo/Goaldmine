@@ -9,7 +9,7 @@
 // comes from weeks[weekIdx].label (pre-computed server-side by weekRangeLabel).
 
 import { useState, useEffect } from "react";
-import type { RecapTemplate, RecapHighlight } from "@/lib/recap";
+import type { RecapTemplate, RecapCardFormat, RecapHighlight } from "@/lib/recap";
 import { markRecapPosted } from "@/lib/recap-actions";
 
 type WeekItem = { offset: number; label: string };
@@ -26,6 +26,7 @@ export function RecapClient({
   // weekIdx: 0 = current week, 1 = one week ago, etc.
   const [weekIdx, setWeekIdx] = useState(0);
   const [template, setTemplate] = useState<RecapTemplate>(defaultTemplate);
+  const [format, setFormat] = useState<RecapCardFormat>("story");
   const [imageLoading, setImageLoading] = useState(true);
 
   // ── Highlight state ──────────────────────────────────────────────────────
@@ -101,7 +102,14 @@ export function RecapClient({
   const highlightParam = highlightValue
     ? `&highlight=${encodeURIComponent(highlightValue)}`
     : "";
-  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}${highlightParam}`;
+  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}&format=${format}${highlightParam}`;
+  const cardFileName = `recap-card-${format}.png`;
+  // Preview intrinsic dimensions per format (display is responsive via CSS).
+  const previewSize: Record<RecapCardFormat, { w: number; h: number }> = {
+    story: { w: 540, h: 960 },
+    post: { w: 540, h: 675 },
+    square: { w: 540, h: 540 },
+  };
 
   function storyUrl(slide: 1 | 2 | 3): string {
     // Story slides do NOT carry a highlight param — slides are unchanged.
@@ -145,7 +153,7 @@ export function RecapClient({
         return;
       }
       const blob = await imgRes.blob();
-      const file = new File([blob], "recap-card.png", { type: "image/png" });
+      const file = new File([blob], cardFileName, { type: "image/png" });
 
       if (typeof navigator !== "undefined" && navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file], text: caption });
@@ -165,7 +173,7 @@ export function RecapClient({
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = "recap-card.png";
+        a.download = cardFileName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -198,8 +206,8 @@ export function RecapClient({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={cardUrl}
-          width={540}
-          height={960}
+          width={previewSize[format].w}
+          height={previewSize[format].h}
           alt="Weekly recap card preview"
           className="w-full h-auto rounded-lg"
           onLoadStart={() => setImageLoading(true)}
@@ -230,6 +238,34 @@ export function RecapClient({
         >
           ▶
         </button>
+      </div>
+
+      {/* Format toggle — output dimensions for the shareable card */}
+      <div className="flex gap-2">
+        {(
+          [
+            { value: "story", label: "Story 9:16" },
+            { value: "post", label: "Post 4:5" },
+            { value: "square", label: "Square 1:1" },
+          ] as const
+        ).map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            aria-pressed={format === f.value}
+            onClick={() => {
+              setFormat(f.value);
+              setImageLoading(true);
+            }}
+            className={`flex-1 min-h-[44px] rounded-lg border text-sm font-medium transition-colors ${
+              format === f.value
+                ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                : "border-[var(--border)] text-[var(--muted)] hover:text-foreground"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
 
       {/* Template toggle */}
@@ -335,7 +371,7 @@ export function RecapClient({
       {/* Download card — secondary action (border style) */}
       <a
         href={cardUrl}
-        download="recap-card.png"
+        download={cardFileName}
         className="flex items-center justify-center min-h-[44px] w-full rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
       >
         Download Card

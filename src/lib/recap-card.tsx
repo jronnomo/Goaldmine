@@ -1,11 +1,13 @@
 // src/lib/recap-card.tsx
-// Satori-compatible JSX for the weekly recap card (1080×1920).
+// Satori-compatible JSX for the weekly recap card.
+// Formats: story 1080×1920 (default) · post 1080×1350 · square 1080×1080.
+// Story slides are always 1080×1920.
 // Inline styles ONLY — no Tailwind, no CSS vars, no CSS grid.
 // Flex-only layout. No DOM/browser APIs.
 // Goal-generic — no hardcoded references to specific goals or people.
 
 import React from "react";
-import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight, ResolvedStatSlot } from "@/lib/recap";
+import type { WeeklyRecap, RecapTemplate, RecapCardFormat, RecapSlide, RecapHighlight, ResolvedStatSlot } from "@/lib/recap";
 import { getTemplate, type TemplateTokens } from "@/lib/recap-templates";
 import { presentationForGoal } from "@/lib/goal-presentation";
 
@@ -191,8 +193,8 @@ function HighlightBand({
           alignItems: "center",
           flex: 1,
           gap: 20,
-          paddingTop: 28,
-          paddingBottom: 28,
+          paddingTop: tok.highlightPadY,
+          paddingBottom: tok.highlightPadY,
           paddingLeft: 24,
           paddingRight: 28,
         }}
@@ -201,7 +203,7 @@ function HighlightBand({
         <div
           style={{
             display: "flex",
-            fontSize: 60,
+            fontSize: tok.highlightIconSize,
             flexShrink: 0,
             lineHeight: 1,
           }}
@@ -222,7 +224,7 @@ function HighlightBand({
           {/* so the motivating numbers are never the thing that gets clipped.   */}
           <div
             style={{
-              fontSize: 40,
+              fontSize: tok.fontSize.highlightName,
               fontFamily: displayFont,
               fontWeight: displayWeight,
               color: tok.primaryText,
@@ -284,10 +286,11 @@ function HighlightBand({
   );
 }
 
-// ─── RecapCard — full 1080×1920 card ─────────────────────────────────────────
+// ─── RecapCard — the full recap card (format-aware dimensions) ───────────────
 
 /**
- * Satori-compatible JSX for the 1080×1920 full card.
+ * Satori-compatible JSX for the full card. Canvas size comes from the
+ * format-resolved tokens (story 1080×1920, post 1080×1350, square 1080×1080).
  * Inline styles only — no Tailwind classes, no CSS vars, no CSS grid.
  * Flex-only layout. No DOM/browser APIs.
  * Used by: /recap/card route handler AND generate_recap_card MCP tool.
@@ -296,13 +299,16 @@ export function RecapCard({
   recap,
   template,
   featuredHighlight,
+  format = "story",
 }: {
   recap: WeeklyRecap;
   template: RecapTemplate;
   /** When non-null, renders a gold-accented callout band after the goal block. */
   featuredHighlight?: RecapHighlight | null;
+  /** Output dimensions — "story" (9:16, default), "post" (4:5), "square" (1:1). */
+  format?: RecapCardFormat;
 }): React.JSX.Element {
-  const tok = getTemplate(template);
+  const tok = getTemplate(template, format);
   const isParchment = template === "parchment";
 
   // Presentation registry
@@ -717,7 +723,8 @@ function StatGrid({
   displayWeight: number;
 }) {
   const rows: ResolvedStatSlot[][] = [];
-  for (let i = 0; i < statSlots.length; i += 2) rows.push(statSlots.slice(i, i + 2));
+  const cols = tok.statColumns;
+  for (let i = 0; i < statSlots.length; i += cols) rows.push(statSlots.slice(i, i + cols));
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       {rows.map((row, ri) => (

@@ -37,6 +37,16 @@ export type RecapTemplate = "coal" | "parchment";
 
 export type RecapSlide = 1 | 2 | 3;
 
+/**
+ * Output dimensions for the recap card.
+ * - "story":  1080×1920 (9:16) — IG/FB Stories, TikTok. The original format.
+ * - "post":   1080×1350 (4:5)  — IG/FB feed post (max portrait feed size).
+ * - "square": 1080×1080 (1:1)  — universal feed (IG, X, LinkedIn).
+ * Story slides are always 9:16 — this applies to the single recap card only.
+ */
+export const RECAP_CARD_FORMATS = ["story", "post", "square"] as const;
+export type RecapCardFormat = (typeof RECAP_CARD_FORMATS)[number];
+
 // ─── Sub-types ───────────────────────────────────────────────────────────────
 
 /** Goal progress completeness state — drives goal-zone rendering. (DC-4) */

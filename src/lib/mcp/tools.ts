@@ -5467,11 +5467,12 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Generate weekly recap card (shareable image + stats)",
       description:
-        "Render the week's recap as a share-ready 9:16 image plus the underlying numbers. " +
+        "Render the week's recap as a share-ready image plus the underlying numbers. " +
         "Defaults to the focus goal and the current week (through today). " +
         'Use for "make my recap card", "weekly recap image", "card for last week". ' +
         "Progress relates to the focus goal's baseline→target metrics. " +
-        "Pass goalId for a specific catalogued goal, weekOffset (0=this week, -1=last week) for a different week.",
+        "Pass goalId for a specific catalogued goal, weekOffset (0=this week, -1=last week) for a different week, " +
+        'format for the target surface: "story" 9:16 (default), "post" 4:5 feed post, "square" 1:1.',
       inputSchema: {
         weekOffset: z
           .number()
@@ -5500,14 +5501,21 @@ function registerWriteTools(server: McpServer) {
             'or "auto" to use the week\'s top achievement automatically. ' +
             'Omit (or pass "none") for no callout band.',
           ),
+        format: z
+          .enum(["story", "post", "square"])
+          .optional()
+          .describe(
+            'Output dimensions: "story" 1080×1920 (9:16 Stories, default), ' +
+            '"post" 1080×1350 (4:5 Instagram/Facebook feed post), "square" 1080×1080 (1:1 universal feed)',
+          ),
       },
     },
-    async ({ weekOffset, goalId, template, highlight }) => {
+    async ({ weekOffset, goalId, template, highlight, format }) => {
       try {
         const recap = await computeWeeklyRecap(new Date(), { weekOffset, goalId });
         const tpl: RecapTemplate = template ?? "coal";
         const fh = resolveHighlight(recap, highlight);
-        const res = renderRecapCard(recap, tpl, fh);
+        const res = renderRecapCard(recap, tpl, fh, format ?? "story");
         const buf = Buffer.from(await res.arrayBuffer());
         // stats block includes recap.highlights so Claude can see and choose candidates
         return imageAndJsonResult(buf, recap);

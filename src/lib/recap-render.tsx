@@ -10,7 +10,7 @@ import fs from "fs";
 import path from "path";
 import React from "react";
 import { ImageResponse } from "next/og";
-import type { WeeklyRecap, RecapTemplate, RecapSlide, RecapHighlight } from "@/lib/recap";
+import type { WeeklyRecap, RecapTemplate, RecapCardFormat, RecapSlide, RecapHighlight } from "@/lib/recap";
 import { RecapCard, RecapStorySlide } from "@/lib/recap-card";
 
 // ─── Font loading (DC-1 safe slice) ──────────────────────────────────────────
@@ -51,7 +51,14 @@ function getFont(name: string, field: "reg" | "semi" | "serif"): ArrayBuffer | n
 
 // ─── IMAGE_OPTIONS ────────────────────────────────────────────────────────────
 
-function buildImageOptions(): ConstructorParameters<typeof ImageResponse>[1] {
+/** Canvas dimensions per card format. Story slides always use "story". */
+const FORMAT_DIMENSIONS: Record<RecapCardFormat, { width: number; height: number }> = {
+  story: { width: 1080, height: 1920 },
+  post: { width: 1080, height: 1350 },
+  square: { width: 1080, height: 1080 },
+};
+
+function buildImageOptions(format: RecapCardFormat): ConstructorParameters<typeof ImageResponse>[1] {
   type FontEntry = { name: string; data: ArrayBuffer; weight: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900; style: "normal" | "italic" };
   const fonts: FontEntry[] = [];
 
@@ -69,32 +76,43 @@ function buildImageOptions(): ConstructorParameters<typeof ImageResponse>[1] {
   }
 
   return {
-    width: 1080,
-    height: 1920,
+    ...FORMAT_DIMENSIONS[format],
     fonts,
   };
 }
 
-export const IMAGE_OPTIONS = buildImageOptions();
+export const IMAGE_OPTIONS = buildImageOptions("story");
+
+// Post/square options built lazily on first use (fonts are shared ArrayBuffers).
+const _formatOptions: Partial<Record<RecapCardFormat, ConstructorParameters<typeof ImageResponse>[1]>> = {
+  story: IMAGE_OPTIONS,
+};
+
+function imageOptionsFor(format: RecapCardFormat): ConstructorParameters<typeof ImageResponse>[1] {
+  return (_formatOptions[format] ??= buildImageOptions(format));
+}
 
 // ─── Render functions ─────────────────────────────────────────────────────────
 
 /**
- * Renders the full 1080×1920 recap card as an ImageResponse (PNG stream).
+ * Renders the recap card as an ImageResponse (PNG stream).
  * Routes return this directly; MCP tool calls .arrayBuffer().
  *
  * @param featuredHighlight  When non-null, renders a gold-accented callout band
  *                           after the goal block. Omit or pass null for the default
  *                           card layout (identical to pre-highlight behaviour).
+ * @param format  Output dimensions: "story" 1080×1920 (default), "post" 1080×1350
+ *                (4:5 feed post), "square" 1080×1080.
  */
 export function renderRecapCard(
   recap: WeeklyRecap,
   template: RecapTemplate,
   featuredHighlight?: RecapHighlight | null,
+  format: RecapCardFormat = "story",
 ): ImageResponse {
   return new ImageResponse(
-    React.createElement(RecapCard, { recap, template, featuredHighlight }),
-    IMAGE_OPTIONS,
+    React.createElement(RecapCard, { recap, template, featuredHighlight, format }),
+    imageOptionsFor(format),
   );
 }
 

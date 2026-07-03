@@ -4,7 +4,7 @@
 // These are the ONLY hardcoded hex values in the feature — documented exception
 // to the no-color-literals invariant (satori cannot read CSS vars).
 
-import type { RecapTemplate } from "@/lib/recap";
+import type { RecapTemplate, RecapCardFormat } from "@/lib/recap";
 
 export type TemplateTokens = {
   // Background
@@ -46,7 +46,15 @@ export type TemplateTokens = {
     statValue: number; // 2×2 stat cell values
     statLabel: number; // 2×2 stat cell labels
     footerWordmark: number; // GOALDMINE footer
+    highlightName: number; // featured-highlight band headline
   };
+
+  // Featured-highlight band sizing (compact on shorter canvases)
+  highlightIconSize: number; // emoji icon
+  highlightPadY: number; // band vertical padding
+
+  // Stat grid columns per row (2 = 2×2 grid; square uses 4-across single row)
+  statColumns: number;
 
   // Font weights
   fontWeight: {
@@ -112,7 +120,13 @@ export const COAL: TemplateTokens = {
     statValue: 88,
     statLabel: 30,
     footerWordmark: 40,
+    highlightName: 40,
   },
+
+  highlightIconSize: 60,
+  highlightPadY: 28,
+
+  statColumns: 2,
 
   fontWeight: {
     regular: 400,
@@ -176,7 +190,13 @@ export const PARCHMENT: TemplateTokens = {
     statValue: 68, // DM Serif Display
     statLabel: 26, // Geist Regular (muted)
     footerWordmark: 40, // DM Serif Display
+    highlightName: 40,
   },
+
+  highlightIconSize: 60,
+  highlightPadY: 28,
+
+  statColumns: 2,
 
   fontWeight: {
     regular: 400,
@@ -205,6 +225,82 @@ export const PARCHMENT: TemplateTokens = {
   statDivider: "#D9C8A2",
 };
 
-export function getTemplate(t: RecapTemplate): TemplateTokens {
-  return t === "parchment" ? PARCHMENT : COAL;
+// ── Format layout overrides ───────────────────────────────────────────────────
+// The card was designed at 1080×1920 (story). Post (4:5) and square (1:1) reuse
+// the same palette/typography but compress the fixed-height zones so the
+// flex:1 stat grid keeps enough room. Story slides always render at 1920 —
+// these overrides apply to the single recap card only.
+// topChrome: story reserves IG overlay chrome; feed posts have none, so it
+// shrinks to simple breathing room.
+
+type FormatLayoutOverride = {
+  canvasHeight: number;
+  igTopChrome: number;
+  goalBlock: number;
+  streakBand: number;
+  heroDiameter: number;
+  streakNumeral: number;
+  statValue: number;
+  highlightName: number;
+  highlightIconSize: number;
+  highlightPadY: number;
+  statLabel: number;
+  statColumns: number;
+};
+
+const FORMAT_LAYOUT: Record<Exclude<RecapCardFormat, "story">, FormatLayoutOverride> = {
+  post: {
+    canvasHeight: 1350,
+    igTopChrome: 48,
+    goalBlock: 380,
+    streakBand: 180,
+    heroDiameter: 240,
+    streakNumeral: 110,
+    statValue: 68,
+    highlightName: 36,
+    highlightIconSize: 52,
+    highlightPadY: 24,
+    statLabel: 28,
+    statColumns: 2,
+  },
+  square: {
+    canvasHeight: 1080,
+    igTopChrome: 40,
+    goalBlock: 330,
+    streakBand: 140,
+    heroDiameter: 200,
+    streakNumeral: 90,
+    statValue: 60,
+    highlightName: 32,
+    highlightIconSize: 44,
+    highlightPadY: 18,
+    // 4-across single row — two stacked rows don't fit the 1:1 canvas
+    // alongside the highlight band. Label shrinks so "ELEVATION (FT)"
+    // fits a ~270px-wide cell.
+    statLabel: 22,
+    statColumns: 4,
+  },
+};
+
+export function getTemplate(t: RecapTemplate, format: RecapCardFormat = "story"): TemplateTokens {
+  const base = t === "parchment" ? PARCHMENT : COAL;
+  if (format === "story") return base;
+  const o = FORMAT_LAYOUT[format];
+  return {
+    ...base,
+    canvasHeight: o.canvasHeight,
+    igTopChrome: o.igTopChrome,
+    zoneHeight: { ...base.zoneHeight, goalBlock: o.goalBlock, streakBand: o.streakBand },
+    fontSize: {
+      ...base.fontSize,
+      streakNumeral: o.streakNumeral,
+      statValue: o.statValue,
+      statLabel: Math.min(base.fontSize.statLabel, o.statLabel),
+      highlightName: o.highlightName,
+    },
+    bullseyeHeroDiameter: o.heroDiameter,
+    highlightIconSize: o.highlightIconSize,
+    highlightPadY: o.highlightPadY,
+    statColumns: o.statColumns,
+  };
 }
