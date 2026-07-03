@@ -72,6 +72,8 @@ export type RecapPR = {
   name: string; // canonicalExerciseName output
   bestValue: number;
   units: string; // derived via UNIT_FROM_PRIMARY (NOT a field on ExerciseSummary)
+  /** The actual set that produced the record (ExerciseSummary.bestRaw). */
+  raw: { weightLb: number | null; reps: number | null; durationSec: number | null; distanceMi: number | null } | null;
 };
 
 /** Goal progress block. Null when no focus goal exists. */
@@ -183,6 +185,20 @@ function formatPrValue(value: number, units: string): string {
     return `${m}:${String(s).padStart(2, "0")}`;
   }
   return String(Math.round(value));
+}
+
+/**
+ * Stat sub-line for a PR highlight. Weighted lifts ("lb") show the actual set
+ * — "65 lb × 12" — because the bare Epley estimate reads as a (weak) actual
+ * lift to anyone outside the app. Other kinds (reps/duration/distance/time)
+ * already ARE the real performance, so they keep the value formatting.
+ * Falls back to the estimate if the raw set is unavailable.
+ */
+function prMeta(pr: RecapPR): string {
+  if (pr.units === "lb" && pr.raw?.weightLb != null && pr.raw.reps != null) {
+    return `${Math.round(pr.raw.weightLb)} lb × ${pr.raw.reps}`;
+  }
+  return `${formatPrValue(pr.bestValue, pr.units)} ${pr.units}`;
 }
 
 // ─── resolveStatSlot ─────────────────────────────────────────────────────────
@@ -392,6 +408,7 @@ export async function computeWeeklyRecap(
       name: s.name,
       bestValue: s.bestValue,
       units: UNIT_FROM_PRIMARY[s.primary],
+      raw: s.bestRaw,
     }));
     const prCount = prs.length;
 
@@ -555,7 +572,7 @@ export async function computeWeeklyRecap(
           kind: "pr" as const,
           icon: "🏆",
           label: pr.name,
-          meta: `${formatPrValue(pr.bestValue, pr.units)} ${pr.units}`,
+          meta: prMeta(pr),
           sub: "new PR",
         }));
 
