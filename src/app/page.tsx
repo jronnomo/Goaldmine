@@ -287,7 +287,7 @@ export default async function HomePage() {
         {/* Date + summary */}
         <p className="text-sm text-[var(--muted)]">
           {dayLabel}
-          {summaryText ? ` · ${summaryText}` : summaryText === null && !isOutOfPlan ? " · plan details unavailable" : ""}
+          {summaryText ? ` · ${summaryText}` : summaryText === null && !isOutOfPlan ? " · ask your coach to fill in this day's details" : ""}
           {resolved.isOverride ? " · day overridden" : ""}
         </p>
 
