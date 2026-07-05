@@ -185,6 +185,19 @@ describe("checkRateLimit — allowed (limit() returns success:true)", () => {
     expect(mockLimit).toHaveBeenCalledTimes(1);
     expect(mockLimit).toHaveBeenCalledWith("1.2.3.4");
   });
+
+  it("calls limiter.limit() for the invite-preview-hour bucket when configured", async () => {
+    mockLimit.mockResolvedValueOnce({
+      success:   true,
+      limit:     20,
+      remaining: 19,
+      reset:     Date.now() + 3_600_000,
+      pending:   Promise.resolve(),
+    });
+    await checkRateLimit("invite-preview-hour", "1.2.3.4");
+    expect(mockLimit).toHaveBeenCalledTimes(1);
+    expect(mockLimit).toHaveBeenCalledWith("1.2.3.4");
+  });
 });
 
 // ─── checkRateLimit — rate-limited ───────────────────────────────────────────

@@ -1,13 +1,23 @@
 // src/app/request-access/page.tsx
 // A-3: Public page shown when an unauthenticated visitor is rejected by the invite gate.
-// Static — no form. Branded card matching /signin styling.
+// #223: now dynamic — prefills the email from ?email= (set by auth.ts's signIn
+// callback redirect) and renders a real request form (submitAccessRequest)
+// instead of a mailto link. Branded card matching /signin styling.
 
 import { Logo } from "@/components/Logo";
 import Link from "next/link";
+import { AccessRequestForm } from "@/components/AccessRequestForm";
 
-export const dynamic = "force-static";
+export const dynamic = "force-dynamic";
 
-export default function RequestAccessPage() {
+interface RequestAccessPageProps {
+  searchParams: Promise<{ email?: string }>;
+}
+
+export default async function RequestAccessPage({ searchParams }: RequestAccessPageProps) {
+  // Next 16: searchParams is a Promise — must be awaited.
+  const { email } = await searchParams;
+
   return (
     <div className="min-h-[calc(100vh-48px)] flex items-center justify-center px-4 py-12">
       <div
@@ -34,17 +44,11 @@ export default function RequestAccessPage() {
             Goaldmine is invite-only right now.
           </p>
           <p className="text-sm text-[var(--muted)] leading-relaxed">
-            We&apos;re in a closed beta. If you&apos;d like access, send a quick
-            note and we&apos;ll be in touch.
+            We&apos;re in a closed beta. Leave your email below and we&apos;ll
+            reach out as soon as a spot opens up.
           </p>
 
-          {/* Request access mailto */}
-          <a
-            href="mailto:ggronnii@gmail.com?subject=Goaldmine%20access%20request"
-            className="mt-2 inline-flex items-center justify-center rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            Request access
-          </a>
+          <AccessRequestForm defaultEmail={email} />
 
           {/* Back link */}
           <Link

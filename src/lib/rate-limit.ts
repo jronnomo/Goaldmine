@@ -30,9 +30,16 @@ export const RATE_LIMITS = {
   registerHour: { requests: 5,  window: "1 h" as const },  // per IP, /oauth/register extra bucket
   signinHour:   { requests: 5,  window: "1 h" as const },  // per IP, /api/auth/signin*
   accessRequestHour: { requests: 5, window: "1 h" as const }, // per IP, /request-access form
+  invitePreviewHour: { requests: 20, window: "1 h" as const }, // per IP, previewInviteCode advisory action
 } as const;
 
-export type Bucket = "mcp" | "oauth" | "register-hour" | "signin-hour" | "access-request-hour";
+export type Bucket =
+  | "mcp"
+  | "oauth"
+  | "register-hour"
+  | "signin-hour"
+  | "access-request-hour"
+  | "invite-preview-hour";
 
 // ─── isConfigured ─────────────────────────────────────────────────────────────
 
@@ -60,6 +67,7 @@ export function isConfigured(): boolean {
 //   register-hr rl:rhr        <ip>         → rl:rhr:<ip>
 //   signin-hr   rl:shr        <ip>         → rl:shr:<ip>
 //   access-req-hr rl:arhr     <ip>         → rl:arhr:<ip>
+//   invite-preview-hr rl:iph  <ip>         → rl:iph:<ip>
 //
 // ephemeralCache is omitted: serverless/edge workers start cold each request
 // so an in-process LRU provides no benefit.
@@ -76,6 +84,7 @@ let _oauthLimiter:        Ratelimit | undefined;
 let _registerHourLimiter: Ratelimit | undefined;
 let _signinLimiter:       Ratelimit | undefined;
 let _accessRequestHourLimiter: Ratelimit | undefined;
+let _invitePreviewHourLimiter: Ratelimit | undefined;
 
 function getLimiter(bucket: Bucket): Ratelimit {
   switch (bucket) {
@@ -138,6 +147,18 @@ function getLimiter(bucket: Bucket): Ratelimit {
           prefix: "rl:arhr",
         });
       return _accessRequestHourLimiter;
+
+    case "invite-preview-hour":
+      if (!_invitePreviewHourLimiter)
+        _invitePreviewHourLimiter = new Ratelimit({
+          redis:   getRedis(),
+          limiter: Ratelimit.slidingWindow(
+            RATE_LIMITS.invitePreviewHour.requests,
+            RATE_LIMITS.invitePreviewHour.window,
+          ),
+          prefix: "rl:iph",
+        });
+      return _invitePreviewHourLimiter;
   }
 }
 

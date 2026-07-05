@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth/auth";
 import { Logo } from "@/components/Logo";
 import { signInWithGoogle } from "@/lib/auth/auth-actions";
 import { safeNext } from "@/lib/auth/safe-next";
+import { InviteCodeField } from "@/components/InviteCodeField";
 
 export const dynamic = "force-dynamic";
 
@@ -36,9 +37,11 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
     redirect(redirectTo);
   }
 
-  // Bind the server action to the safe redirect target and the invite code.
-  // signInWithGoogle(next?, inviteCode?) — both positional.
-  const boundSignIn = signInWithGoogle.bind(null, redirectTo, invite);
+  // Bind the server action to the safe redirect target only. The invite
+  // code is NOT bound here — it's read live from the form's FormData inside
+  // signInWithGoogle (name="invite" below), so whatever the user typed in
+  // the field always wins over the ?invite= URL param it was prefilled from.
+  const boundSignIn = signInWithGoogle.bind(null, redirectTo);
 
   return (
     <div className="min-h-[calc(100vh-48px)] flex items-center justify-center px-4 py-12">
@@ -70,15 +73,10 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           </div>
         )}
 
-        {/* Invite code hint — shown when ?invite= is present */}
-        {invite && (
-          <div className="mb-5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-2.5 text-center text-xs font-medium text-[var(--accent)]">
-            Invite code detected ✓
-          </div>
-        )}
-
         {/* Sign-in form */}
         <form action={boundSignIn}>
+          <InviteCodeField defaultValue={invite} />
+
           <button
             type="submit"
             className="w-full flex items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/10 active:bg-[var(--accent)]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"

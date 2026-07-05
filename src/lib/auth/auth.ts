@@ -72,8 +72,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (result.allowed) {
         return true
       }
-      // Auth.js v5: returning a string path redirects there.
-      return result.redirect ?? "/request-access"
+      // checkInviteGate's reject path always returns redirect:"/request-access"
+      // today (result.redirect is never anything else) — build the templated
+      // string directly so the request-access page can prefill the email,
+      // rather than relying on the (currently dead) `result.redirect` fallback.
+      return `/request-access?email=${encodeURIComponent(email)}`
     },
   },
 
