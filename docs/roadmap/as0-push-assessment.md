@@ -120,19 +120,22 @@ resolves whether Track 2 (native shell) is worth starting.
 ## 7. Device-test runbook
 
 **Setup:**
-1. Generate a VAPID keypair: `npx web-push generate-vapid-keys`.
-2. In Vercel → Settings → Environment Variables, set `SPIKE_PUSH_KEY`,
-   `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` for the
-   `spike/web-push` branch.
-   - **Explicitly confirm these are set in Preview scope, not just
-     Production** — a var set only for Production is invisible to a
-     `spike/web-push` preview deploy. Also confirm `DATABASE_URL` and
-     `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are present in
-     Preview scope (the send route's note-read and subscription-store both
-     need them at runtime on preview).
-3. Disable Vercel Deployment Protection for this preview, or generate a
-   bypass token, so the founder's phone can reach the URL without a
-   Vercel-account login gate.
+1. ✅ DONE (2026-07-05): VAPID keypair generated; `SPIKE_PUSH_KEY`,
+   `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` set in the
+   `workout-planner` project's **Preview** scope via `vercel env add`.
+   Retrieve the key value locally (never printed in logs):
+   `npx vercel env pull .env.preview.local --environment=preview`, read
+   `SPIKE_PUSH_KEY` from that file, then delete the file.
+   - Still confirm `DATABASE_URL` and `UPSTASH_REDIS_REST_URL`/`_TOKEN`
+     exist in Preview scope (send falls back to a static body if the DB
+     read fails, so only the Upstash pair is load-bearing).
+2. **Stable preview URL (verified building & gated, 2026-07-05):**
+   `https://workout-planner-git-spike-web-push-jronnomos-projects.vercel.app`
+3. ⚠ **REMAINING BLOCKER:** Vercel Deployment Protection currently 302s the
+   preview to `vercel.com/sso-api` (verified via curl). In the dashboard:
+   Project `workout-planner` → Settings → Deployment Protection → set
+   Vercel Authentication to **Only Production Deployments** (or Disabled),
+   so the phone can reach the URL without a Vercel login.
 
 **Device test (on the founder's iPhone):**
 4. Open the preview URL in Safari, tap Share → Add to Home Screen.
