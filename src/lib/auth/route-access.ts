@@ -16,6 +16,7 @@
  *   - /api/render-jobs/peek               – worker-token gated peek endpoint
  *   - /oauth/*                            – future C-1 OAuth server endpoints
  *   - /.well-known/*                      – future C-1 OAuth discovery endpoints
+ *   - /spike/push, /api/spike/push/*      – AS-0 spike, self-gated by SPIKE_PUSH_KEY
  */
 export function isPublicPath(pathname: string): boolean {
   // Auth pages
@@ -37,6 +38,10 @@ export function isPublicPath(pathname: string): boolean {
 
   // Future C-1 OAuth discovery (include now per PRD)
   if (pathname.startsWith("/.well-known/")) return true;
+
+  // SPIKE (AS-0) — self-gated behind SPIKE_PUSH_KEY; removed with spike/web-push.
+  if (pathname === "/spike/push") return true;
+  if (pathname.startsWith("/api/spike/push/")) return true;
 
   return false;
 }

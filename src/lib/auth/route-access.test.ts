@@ -35,6 +35,11 @@ const PUBLIC_CASES: [string, string][] = [
   // Well-known discovery (future C-1)
   ["/.well-known/oauth-authorization-server", "OAuth AS discovery"],
   ["/.well-known/openid-configuration", "OIDC discovery"],
+
+  // SPIKE (AS-0) — self-gated web push spike
+  ["/spike/push", "spike push page"],
+  ["/api/spike/push/subscribe", "spike push subscribe route"],
+  ["/api/spike/push/send", "spike push send route"],
 ];
 
 const PROTECTED_CASES: [string, string][] = [
@@ -62,6 +67,11 @@ const PROTECTED_CASES: [string, string][] = [
   // Other API routes that ARE protected
   ["/api/goals", "goals API"],
   ["/api/workouts", "workouts API"],
+
+  // SPIKE (AS-0) — prefix-safety checks
+  ["/spike/pushX", "does NOT match /spike/push (prefix safety)"],
+  ["/spike-other", "does NOT match /spike/push (different path)"],
+  ["/api/spike/push", "does NOT match /api/spike/push/ without trailing slash"],
 ];
 
 describe("isPublicPath()", () => {
