@@ -445,3 +445,130 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
       "User's stated lean target. Marginal effect on uphill efficiency (every 5 lb saved ≈ 1-2 min/hour), but capped low because user already trains near goal weight.",
   },
 ];
+
+/**
+ * Career/job-hunt/networking goal — curated default targets.
+ *
+ * A career goal is a flavor of kind='project' (no new goal kind). The five
+ * targets below are a starting funnel model: applications → interviews,
+ * plus outreach/coffee-chats as the leading-indicator activity metrics, plus
+ * a network-size snapshot. Every number here is a starting default — the
+ * coach interviews the user at intake and adjusts via update_goal_targets;
+ * these are NOT researched benchmarks the way MT_ELBERT_DEFAULT_TARGETS's
+ * hike numbers are (there is no equivalent "standard prep advice" corpus for
+ * an individual's job search — the defaults exist so create_goal(template:
+ * 'career') never leaves the coach improvising JSON from scratch).
+ *
+ * `log:*` metrics here are ad-hoc (not in the curated METRICS[] registry) —
+ * getLogMetricSeries falls back to the target's own label/units for display,
+ * which is the existing, confirmed-fine behavior for any ad-hoc log: metric.
+ *
+ * Total weight = 1.00.
+ */
+export const CAREER_DEFAULT_TARGETS: GoalTarget[] = [
+  {
+    metric: "log:applications_sent",
+    label: "Applications sent",
+    units: "apps",
+    direction: "increase",
+    target: 50,
+    weight: 0.3,
+    cumulative: true,
+    rationale:
+      "Application volume is the top-of-funnel lever for any job search — more applications sent means more chances at interviews downstream. 50 is a starting default sized for a multi-month active search; adjust it at intake based on the user's timeline, target-role seniority, and whether their strategy is high-volume or highly selective.",
+  },
+  {
+    metric: "log:interviews",
+    label: "Interviews landed",
+    units: "interviews",
+    direction: "increase",
+    target: 8,
+    weight: 0.25,
+    cumulative: true,
+    rationale:
+      "Interviews are the clearest signal the funnel is converting. 8 interviews against a 50-application starting target implies a rough 6:1 ratio — a reasonable starting assumption, not a researched benchmark. This number is a starting default the coach should adapt at intake once the user's industry, role, and network strength are known.",
+  },
+  {
+    metric: "log:outreach_messages",
+    label: "Outreach messages",
+    units: "messages",
+    direction: "increase",
+    target: 60,
+    weight: 0.2,
+    cumulative: true,
+    rationale:
+      "Direct outreach (cold or warm messages to recruiters, hiring managers, and connections) often outperforms cold applications for landing interviews. 60 is a starting default of roughly 5/week over a ~3-month search; the coach should adapt this at intake based on the user's existing network size and comfort with outreach.",
+  },
+  {
+    metric: "log:coffee_chats",
+    label: "Coffee chats",
+    units: "chats",
+    direction: "increase",
+    target: 10,
+    weight: 0.15,
+    cumulative: true,
+    rationale:
+      "Informational interviews and coffee chats build the relationships that produce referrals — often the highest-leverage path into a role. 10 is a starting default (roughly one per week); the coach should adapt this at intake based on how central networking is to the user's strategy versus direct applications.",
+  },
+  {
+    metric: "log:connections",
+    label: "LinkedIn connections",
+    units: "connections",
+    direction: "increase",
+    target: 500,
+    weight: 0.1,
+    rationale:
+      "A broader first-degree network expands the reach of every outreach message and raises the odds of a warm introduction. 500 is a starting default network-size target; the coach should adapt it at intake based on the user's current connection count and industry norms. This is a snapshot metric (cumulative omitted, not false) — LinkedIn reports a running total, not per-event increments, so summing would overcount.",
+  },
+];
+
+/** Named goal templates, keyed by the `create_goal` `template` param's Zod enum values. */
+export const GOAL_TEMPLATES = { career: CAREER_DEFAULT_TARGETS } as const;
+
+export type GoalTemplateKey = keyof typeof GOAL_TEMPLATES;
+
+/**
+ * Returns a fresh, mutation-safe copy of a template's targets. GoalTarget is
+ * plain JSON-safe data (no Date/function fields) so a shallow per-object
+ * copy is sufficient — callers get their own array AND their own objects,
+ * so mutating the result (e.g. adjusting a target's `target` number during
+ * intake) never mutates the shared CAREER_DEFAULT_TARGETS constant.
+ */
+export function targetsForTemplate(key: GoalTemplateKey): GoalTarget[] {
+  return GOAL_TEMPLATES[key].map((t) => ({ ...t }));
+}
+
+/**
+ * Pure resolver — decides what targets array (if any) create_goal should use.
+ * Semantics (PRD §4.2 + architecture blueprint R2, order matters):
+ *   1. targets provided (non-empty)          → return targets unchanged (template ignored, even if set)
+ *   2. template set, kind !== "project"       → throw Error(...) mentioning kind='project'
+ *   3. template set, copyFromGoalId also set  → throw Error(...) mentioning copyFromGoalId (would silently
+ *                                                override the copied goal's targets — ambiguous, so reject)
+ *   4. template set, no targets, no copyFrom  → return targetsForTemplate(template) (fresh copy)
+ *   5. neither template nor targets set       → return undefined
+ *
+ * Pure — no DB, no I/O. Throws on template/kind and template/copyFromGoalId mismatches so the
+ * MCP handler's safe() wrapper can turn them into normal tool errors BEFORE any DB write.
+ */
+export function resolveTemplateTargets(input: {
+  template?: GoalTemplateKey;
+  targets?: GoalTarget[];
+  kind: string;
+  copyFromGoalId?: string;
+}): GoalTarget[] | undefined {
+  const { template, targets, kind, copyFromGoalId } = input;
+  if (targets && targets.length > 0) return targets; // explicit targets always win
+  if (!template) return undefined; // nothing to seed
+  if (kind !== "project") {
+    throw new Error(
+      `template '${template}' requires kind='project' — fitness goals use fitness metrics, not the ${template} pack.`,
+    );
+  }
+  if (copyFromGoalId) {
+    throw new Error(
+      `template '${template}' cannot be combined with copyFromGoalId — the template would silently override the copied goal's targets. Pass explicit targets, or drop one of the two.`,
+    );
+  }
+  return targetsForTemplate(template);
+}

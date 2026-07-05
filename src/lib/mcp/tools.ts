@@ -93,6 +93,7 @@ import {
   BODY_METRIC_BY_KEY,
   BODY_METRICS,
   resolveBodyMetric,
+  resolveTemplateTargets,
 } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
@@ -4533,11 +4534,27 @@ function registerWriteTools(server: McpServer) {
             "Canonical exercise names that count as training this goal (exactly as logged — check get_records_summary). " +
               "Drives the 'trained Nd ago' indicator on the goals page and in list_goals/get_goal.",
           ),
+        template: z.enum(["career"]).optional().describe(
+          "Seed default readiness targets from a curated template when `targets` is omitted. " +
+          "'career' = job-hunt/networking pack: cumulative log:applications_sent / log:outreach_messages / " +
+          "log:interviews / log:coffee_chats + snapshot log:connections (weights sum 1.0). " +
+          "Numbers are starting defaults — interview the user and adapt via update_goal_targets. " +
+          "Requires kind='project'; ignored when `targets` is provided. " +
+          "Cannot be combined with copyFromGoalId unless explicit targets are provided."
+        ),
       },
     },
-    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints }) =>
+    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints, template }) =>
       safe(async () => {
         const parsedDate = targetDate ? parseDateInput(targetDate) : null;
+
+        // Resolve targets BEFORE any DB write — a template/kind or template/copyFromGoalId
+        // mismatch throws here and safe() converts it to a normal tool error; createGoalCore
+        // is never reached, so zero goal rows are created (mirrors resolve_open_item's
+        // read-check-throw-before-write shape, tools.ts:2887-2917).
+        const resolvedTargets = resolveTemplateTargets({ template, targets, kind, copyFromGoalId });
+        const seededFromTemplate = template !== undefined && targets === undefined;
+
         const { goal, planId } = await createGoalCore({
           objective,
           targetDate: parsedDate,
@@ -4545,7 +4562,7 @@ function registerWriteTools(server: McpServer) {
           kind,
           copyFromGoalId,
           legend,
-          targets,
+          targets: resolvedTargets,
           coachFeasibility,
           attributionHints,
         });
@@ -4571,7 +4588,10 @@ function registerWriteTools(server: McpServer) {
           // Stack warning is advisory — never let it fail the create.
         }
 
-        const baseMsg = `Goal created: ${objective}${legend && legend.length > 0 ? " (with custom legend)" : ""}`;
+        const baseMsg =
+          `Goal created: ${objective}` +
+          `${legend && legend.length > 0 ? " (with custom legend)" : ""}` +
+          `${seededFromTemplate ? " (seeded from career template)" : ""}`;
         const message = parsedDate === null
           ? `${baseMsg} (someday — no plan scaffolded; add a target date later to scaffold one)`
           : baseMsg;
