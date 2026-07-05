@@ -87,6 +87,24 @@ const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string 
     prompt:
       "Call get_goal for my active goal and check references[]. For each reference that has no claudeSummary yet, fetch its content (web fetch the URL, or read the doc text), distill the method and key takeaways that are relevant to coaching my training, and write each summary back via update_goal_reference. When done, tell me what you learned from each source and how it will influence programming.",
   },
+  {
+    title: "Start a job-hunt goal",
+    when: "Beginning a job search or networking push",
+    prompt:
+      "I want to start a career/job-hunt goal. Create it with create_goal(objective, kind='project', template='career') — that seeds a standard funnel pack (applications sent, interviews, outreach messages, coffee chats, connections). Then interview me about my target role, industry, and timeline, and adjust the seeded numbers via update_goal_targets to match my real situation. Store any positioning notes via add_goal_reference (claudeSummary for the distilled takeaway).",
+  },
+  {
+    title: "Log this week's job-hunt activity",
+    when: "No LinkedIn MCP tools available (web/mobile), or just prefer to report numbers",
+    prompt:
+      "Let's log this week's job-hunt activity. Ask me for: applications sent, outreach messages sent, interviews, and coffee chats this week (log each as an increment via log_metric — these are cumulative counters, not running totals), plus my current total LinkedIn connections (log the total itself via log_metric — that one's a snapshot, not an increment).",
+  },
+  {
+    title: "Weekly career review",
+    when: "End of every week, career/job-hunt goal active",
+    prompt:
+      "Run my weekly career review: pull get_metric_trend on applications_sent and interviews to check funnel conversion, list_log_entries for recent outreach activity, and list_scheduled_items(status='planned') for upcoming interviews and follow-ups. Call out if the funnel looks stalled (lots of applications, few interviews) rather than just telling me to send more applications.",
+  },
 ];
 
 export default async function CoachPage() {
@@ -161,6 +179,12 @@ export default async function CoachPage() {
             applies to every chat in the project.
           </li>
           <li>Use the prompts below from any chat in that project.</li>
+          <li>
+            Optional — job-hunt/networking goal? See{" "}
+            <code className="text-xs">docs/linkedin-mcp-setup.md</code> for
+            pairing Goaldmine with the third-party LinkedIn MCP server
+            (Claude Desktop only).
+          </li>
         </ol>
       </Card>
 

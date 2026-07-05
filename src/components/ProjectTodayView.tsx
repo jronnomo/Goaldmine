@@ -172,7 +172,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
           <p className="text-xs font-medium text-[var(--foreground)] truncate">{goal.objective}</p>
           {daysToGoal !== null && (
             <span className="shrink-0 text-xs rounded-full bg-[var(--accent-soft)] border border-[var(--accent)]/30 px-2 py-0.5 text-[var(--accent)] font-medium">
-              {daysToGoal > 0 ? `${daysToGoal}d to launch` : daysToGoal === 0 ? "Launch day!" : "Overdue"}
+              {daysToGoal > 0 ? `${daysToGoal}d to target` : daysToGoal === 0 ? "Target day!" : "Overdue"}
             </span>
           )}
         </div>
@@ -210,7 +210,7 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
             className="text-sm text-[var(--muted)]"
             data-testid="project-today-empty"
           >
-            Nothing scheduled today — open Claude to plan tomorrow or log MRR.
+            Nothing scheduled today — open Claude to plan tomorrow or log progress.
           </p>
         ) : (
           <ul

@@ -15,6 +15,7 @@ import { RevokeConnectionButton } from "@/components/RevokeConnectionButton";
 import { USER_TZ } from "@/lib/calendar-core";
 import { originFromHeaders } from "@/lib/oauth/tokens";
 import { ConnectClaudePanel } from "@/components/ConnectClaudePanel";
+import { ConnectLinkedInPanel } from "@/components/ConnectLinkedInPanel";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -68,6 +69,9 @@ export default async function SettingsPage() {
           connected={connections.length > 0}
           connection={connections[0] ?? null}
         />
+
+        {/* Career: LinkedIn coaching tools walkthrough */}
+        <ConnectLinkedInPanel />
 
         {/* Connected apps card */}
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] overflow-hidden shadow-sm">
