@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/lib/auth/auth";
 import { Logo } from "@/components/Logo";
 import { signInWithGoogle } from "@/lib/auth/auth-actions";
@@ -7,17 +8,31 @@ import { safeNext } from "@/lib/auth/safe-next";
 export const dynamic = "force-dynamic";
 
 interface SignInPageProps {
-  searchParams: Promise<{ next?: string; callbackUrl?: string; invite?: string }>;
+  searchParams: Promise<{ next?: string; callbackUrl?: string; invite?: string; error?: string }>;
 }
+
+// Auth.js redirects here with ?error=<code> (see pages.error in auth.ts).
+// Mapping corrected against @auth/core source — do not invent other semantics.
+const ERROR_COPY: Record<string, string> = {
+  OAuthCallbackError: "Sign-in was cancelled or Google reported a problem. Please try again.",
+  OAuthAccountNotLinked:
+    "This email is already registered with a different sign-in. Contact the founder to relink your account.",
+  // Fires only when the invite gate THROWS — must not imply the user lacks an invite.
+  AccessDenied: "Something went wrong checking your access. Try again in a moment.",
+  Configuration: "Sign-in is temporarily unavailable. Please try again shortly.",
+};
+const DEFAULT_ERROR_COPY = "Something went wrong signing in. Please try again.";
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   // Next 16: searchParams is a Promise — must be awaited.
-  const { next, callbackUrl, invite } = await searchParams;
+  const { next, callbackUrl, invite, error } = await searchParams;
   const redirectTo = safeNext(next ?? callbackUrl);
+  const errorMessage = error ? (ERROR_COPY[error] ?? DEFAULT_ERROR_COPY) : undefined;
 
-  // Don't show the form to already-signed-in users.
+  // Don't show the form to already-signed-in users — unless there's an error to
+  // surface, in which case auto-redirecting would silently eat the message.
   const session = await auth();
-  if (session) {
+  if (session && !errorMessage) {
     redirect(redirectTo);
   }
 
@@ -44,6 +59,16 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             Mining for goals — an honest tracker for any goal, any domain.
           </p>
         </div>
+
+        {/* Error banner — shown when Auth.js redirects with ?error= */}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mb-5 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/8 px-4 py-2.5 text-center text-sm text-[var(--danger)]"
+          >
+            {errorMessage}
+          </div>
+        )}
 
         {/* Invite code hint — shown when ?invite= is present */}
         {invite && (
@@ -87,6 +112,16 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             Continue with Google
           </button>
         </form>
+
+        {/* Already signed in, but there's an error to surface — offer a manual way
+            forward instead of silently auto-redirecting past the banner. */}
+        {session && errorMessage && (
+          <div className="mt-4 text-center">
+            <Link href={redirectTo} className="text-sm text-[var(--accent)]">
+              Continue →
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
