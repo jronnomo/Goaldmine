@@ -17,6 +17,7 @@ import {
 import { getDb } from "@/lib/db";
 import {
   presentationForGoal,
+  statSlotsForGoal,
   fmtComma,
   fmtVolume,
   fmtElevation,
@@ -314,11 +315,17 @@ export async function computeWeeklyRecap(
     );
 
     // ── 3. Presentation + slot keys ────────────────────────────────────────
+    // presentation is still needed for headerStyle (step 10); the slot ARRAY
+    // comes from statSlotsForGoal so career-flavored project goals (no mrr
+    // target) derive slots from their own top-weighted targets. Computed once
+    // here and reused at step 13 so the prefetch derivations below and the
+    // final resolution never diverge.
     const presentation = presentationForGoal(goal);
-    const logKeys = presentation.statSlots
+    const slots = statSlotsForGoal(goal);
+    const logKeys = slots
       .filter((s) => s.source.from === "logLatest")
       .map((s) => (s.source as { from: "logLatest"; metricKey: string }).metricKey);
-    const schedTypes = presentation.statSlots
+    const schedTypes = slots
       .filter((s) => s.source.from === "scheduledItem")
       .map(
         (s) =>
@@ -531,7 +538,7 @@ export async function computeWeeklyRecap(
     const emptyWeek = workoutsCompleted === 0 && hikeElevationFt === null;
 
     // ── 13. Stat slots ────────────────────────────────────────────────────
-    const statSlots = presentation.statSlots.map((s) =>
+    const statSlots = slots.map((s) =>
       resolveStatSlot(s, {
         recap: { workoutsCompleted, volumeLb, prCount, hikeElevationFt },
         logLatest,

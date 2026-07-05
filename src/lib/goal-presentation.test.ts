@@ -22,6 +22,7 @@ vi.mock("@/lib/db", () => ({ prisma: {}, getDb: vi.fn() }));
 import { resolveStatSlot } from "@/lib/recap";
 import {
   presentationForGoal,
+  statSlotsForGoal,
   FITNESS_PRESENTATION,
   PROJECT_PRESENTATION,
   DEFAULT_PRESENTATION,
@@ -315,5 +316,115 @@ describe("PROJECT_PRESENTATION anti-vertical guardrail", () => {
     expect(keys).not.toContain("conversion");
     // Positive sanity: only the two declared slots are present
     expect(keys).toEqual(["mrr", "milestones"]);
+  });
+});
+
+// ─── Case 8: statSlotsForGoal — career-flavored project goal ─────────────────
+// Fixture is an inline literal (career-template shape), NOT an import of
+// CAREER_DEFAULT_TARGETS — that constant is owned by metrics-registry.ts and
+// this suite must not couple to it.
+
+describe("statSlotsForGoal — career-flavored project goal (no mrr target)", () => {
+  const careerGoal = {
+    kind: "project",
+    targets: [
+      { metric: "log:applications_sent", label: "Applications sent", units: "apps", direction: "increase", target: 50, weight: 0.3, cumulative: true },
+      { metric: "log:interviews", label: "Interviews landed", units: "interviews", direction: "increase", target: 8, weight: 0.25, cumulative: true },
+      { metric: "log:outreach_messages", label: "Outreach messages", units: "messages", direction: "increase", target: 60, weight: 0.2, cumulative: true },
+      { metric: "log:coffee_chats", label: "Coffee chats", units: "chats", direction: "increase", target: 10, weight: 0.15, cumulative: true },
+      { metric: "log:connections", label: "LinkedIn connections", units: "connections", direction: "increase", target: 500, weight: 0.1 },
+    ],
+  };
+
+  it("returns exactly 2 slots, top-weighted first (applications_sent then interviews)", () => {
+    const slots = statSlotsForGoal(careerGoal);
+    expect(slots).toHaveLength(2);
+    expect(slots[0].key).toBe("applications_sent");
+    expect(slots[1].key).toBe("interviews");
+  });
+
+  it("slot source is targetCurrent with the matching metric string", () => {
+    const slots = statSlotsForGoal(careerGoal);
+    expect(slots[0].source).toEqual({ from: "targetCurrent", metric: "log:applications_sent" });
+    expect(slots[1].source).toEqual({ from: "targetCurrent", metric: "log:interviews" });
+  });
+
+  it("label is uppercased + ellipsis-truncated to ≤14 chars; format is int", () => {
+    const slots = statSlotsForGoal(careerGoal);
+    // "APPLICATIONS SENT" (17 chars) → slice(0,13) + "…" = "APPLICATIONS …"
+    expect(slots[0].label).toBe("APPLICATIONS …");
+    // "INTERVIEWS LANDED" (17 chars) → "INTERVIEWS LA…"
+    expect(slots[1].label).toBe("INTERVIEWS LA…");
+    expect(slots[0].label.length).toBeLessThanOrEqual(14);
+    expect(slots[1].label.length).toBeLessThanOrEqual(14);
+    expect(slots[0].format).toBe("int");
+    expect(slots[1].format).toBe("int");
+  });
+
+  it("a short label (≤14 chars) passes through uppercased, no ellipsis", () => {
+    const slots = statSlotsForGoal({
+      kind: "project",
+      targets: [
+        { metric: "log:coffee_chats", label: "Coffee chats", weight: 1 },
+      ],
+    });
+    expect(slots).toHaveLength(1);
+    expect(slots[0].label).toBe("COFFEE CHATS");
+  });
+});
+
+describe("statSlotsForGoal — mrr-guard (mrr-bearing goal unchanged)", () => {
+  it("project goal WITH a log:mrr target falls back to PROJECT_PRESENTATION.statSlots", () => {
+    const goal = {
+      kind: "project",
+      targets: [{ metric: "log:mrr", label: "MRR", units: "usd", direction: "increase", target: 10000, weight: 1 }],
+    };
+    expect(statSlotsForGoal(goal)).toEqual(PROJECT_PRESENTATION.statSlots);
+  });
+
+  it("bare 'mrr' metric spelling also triggers the guard (defense-in-depth)", () => {
+    const goal = {
+      kind: "project",
+      targets: [{ metric: "mrr", label: "MRR", units: "usd", direction: "increase", target: 10000, weight: 1 }],
+    };
+    expect(statSlotsForGoal(goal)).toEqual(PROJECT_PRESENTATION.statSlots);
+  });
+});
+
+describe("statSlotsForGoal — fallback cases", () => {
+  it("project goal with no targets → PROJECT_PRESENTATION.statSlots", () => {
+    expect(statSlotsForGoal({ kind: "project", targets: [] })).toEqual(PROJECT_PRESENTATION.statSlots);
+  });
+
+  it("project goal with malformed targets → PROJECT_PRESENTATION.statSlots, never throws", () => {
+    expect(() => statSlotsForGoal({ kind: "project", targets: "not-an-array" })).not.toThrow();
+    expect(statSlotsForGoal({ kind: "project", targets: "not-an-array" })).toEqual(PROJECT_PRESENTATION.statSlots);
+    expect(statSlotsForGoal({ kind: "project", targets: { foo: "bar" } })).toEqual(PROJECT_PRESENTATION.statSlots);
+    expect(statSlotsForGoal({ kind: "project", targets: null })).toEqual(PROJECT_PRESENTATION.statSlots);
+    expect(statSlotsForGoal({ kind: "project", targets: [null, 42, "x"] })).toEqual(PROJECT_PRESENTATION.statSlots);
+  });
+
+  it("project goal whose targets all lack numeric weights → fallback (no rankable targets)", () => {
+    const goal = {
+      kind: "project",
+      targets: [{ metric: "log:applications_sent", label: "Applications sent", weight: "heavy" }],
+    };
+    expect(statSlotsForGoal(goal)).toEqual(PROJECT_PRESENTATION.statSlots);
+  });
+
+  it("fitness kind → FITNESS_PRESENTATION.statSlots regardless of targets shape", () => {
+    expect(statSlotsForGoal({ kind: "fitness", targets: [] })).toEqual(FITNESS_PRESENTATION.statSlots);
+    expect(
+      statSlotsForGoal({
+        kind: "fitness",
+        targets: [{ metric: "log:applications_sent", label: "Applications sent", weight: 1 }],
+      }),
+    ).toEqual(FITNESS_PRESENTATION.statSlots);
+  });
+
+  it("unknown/missing kind → DEFAULT_PRESENTATION.statSlots", () => {
+    expect(statSlotsForGoal({ kind: "galaxy-brain" })).toEqual(DEFAULT_PRESENTATION.statSlots);
+    expect(statSlotsForGoal(null)).toEqual(DEFAULT_PRESENTATION.statSlots);
+    expect(statSlotsForGoal(undefined)).toEqual(DEFAULT_PRESENTATION.statSlots);
   });
 });

@@ -26,7 +26,7 @@ vi.mock("@/lib/db", () => {
     goal: { findFirst: vi.fn() },
     workout: { findMany: vi.fn() },
     hike: { findMany: vi.fn() },
-    logEntry: { findFirst: vi.fn() },
+    logEntry: { findFirst: vi.fn(), aggregate: vi.fn() },
     scheduledItem: { groupBy: vi.fn() },
     baseline: { findMany: vi.fn() },
   };
@@ -385,6 +385,39 @@ const MOCK_PROJECT_GOAL = {
   targetDate: new Date("2026-09-30"),
 };
 
+// Career-flavored project goal — two cumulative career-template-shaped targets
+// (inline literal, NOT imported from metrics-registry.ts). GoalTarget fixtures
+// use the full "log:*" metric strings; the logEntry mocks below match the BARE
+// keys because resolveMetricValue (goal-targets.ts) strips the log: prefix
+// before building the Prisma where clause.
+const MOCK_CAREER_GOAL = {
+  id: "goal-career-1",
+  kind: "project",
+  isFocus: true,
+  objective: "Land a senior PM role",
+  targets: [
+    { metric: "log:applications_sent", label: "Applications sent", units: "apps", direction: "increase", target: 50, weight: 0.3, cumulative: true },
+    { metric: "log:interviews", label: "Interviews landed", units: "interviews", direction: "increase", target: 8, weight: 0.25, cumulative: true },
+  ],
+  updatedAt: new Date("2026-06-01"),
+  targetDate: new Date("2026-10-01"),
+};
+
+// mrr-guard fixture (R3): a project goal that HAS an mrr target must keep the
+// static PROJECT_PRESENTATION slots (mrr + milestones) — statSlotsForGoal must
+// return the registry slots untouched, not derive targetCurrent slots.
+const MOCK_MRR_PROJECT_GOAL = {
+  id: "goal-mrr-1",
+  kind: "project",
+  isFocus: true,
+  objective: "Ship Chewgether to the App Store",
+  targets: [
+    { metric: "log:mrr", label: "MRR", units: "USD", direction: "increase", target: 1000, weight: 1 },
+  ],
+  updatedAt: new Date("2026-06-01"),
+  targetDate: new Date("2026-09-30"),
+};
+
 // ─── B-1: Fitness goal ────────────────────────────────────────────────────────
 
 describe("computeWeeklyRecap — fitness goal: statSlots byte-identical to legacy fields", () => {
@@ -522,5 +555,106 @@ describe("computeWeeklyRecap — project goal: MRR null + milestones 0/7", () =>
     expect(recap.hikeElevationFt).toBeNull();
     // Project slots correct count
     expect(recap.statSlots).toHaveLength(2);
+  });
+});
+
+// ─── B-3: Career-flavored project goal (cumulative targetCurrent) ────────────
+//
+// First suite in this file to exercise the REAL computeReadiness →
+// resolveMetricValue chain (MOCK_CAREER_GOAL has non-empty targets). The
+// cumulative path sums via db.logEntry.aggregate; the start value for a
+// cumulative target short-circuits to 0 with no DB call, so no findFirst mock
+// is needed here. R1: the mock's where.metric is the BARE key ("applications_sent"),
+// because resolveMetricValue strips the "log:" prefix before querying.
+
+describe("computeWeeklyRecap — career-flavored project goal: targetCurrent slot resolves a cumulative sum", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pm.goal.findFirst.mockResolvedValue(MOCK_CAREER_GOAL);
+    pm.workout.findMany.mockResolvedValue([]);
+    pm.hike.findMany.mockResolvedValue([]);
+    pm.scheduledItem.groupBy.mockResolvedValue([]);
+    pm.baseline.findMany.mockResolvedValue([]);
+    // Deterministic sum: two logged increments (5 + 5) for applications_sent → 10.
+    // interviews: no entries logged → _sum.value null (honest no-data, not 0).
+    pm.logEntry.aggregate.mockImplementation(({ where }: { where: { metric: string } }) => {
+      if (where.metric === "applications_sent") return Promise.resolve({ _sum: { value: 10 } });
+      return Promise.resolve({ _sum: { value: null } });
+    });
+    mockGetExerciseSummaries.mockResolvedValue([]);
+    mockGetActiveProgram.mockResolvedValue(null);
+    mockComputeGameState.mockResolvedValue({
+      ...MOCK_GAME_STATE_FITNESS,
+      goalKind: "project",
+      streak: { current: 0, longest: 0, todayCounted: false },
+    });
+  });
+
+  it("emits exactly 2 statSlots derived from the top-weighted career targets", async () => {
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+    expect(recap.statSlots).toHaveLength(2);
+    expect(recap.statSlots.map((s) => s.key)).toEqual(["applications_sent", "interviews"]);
+  });
+
+  it("applications_sent slot resolves the cumulative sum (10), not a single logged value", async () => {
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+    const slot = recap.statSlots.find((s) => s.key === "applications_sent")!;
+    expect(slot.value).toBe("10");
+    expect(slot.isNull).toBe(false);
+    expect(slot.label).toBe("APPLICATIONS …");
+  });
+
+  it("interviews slot with zero logged entries → honest '—'/isNull:true", async () => {
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+    const slot = recap.statSlots.find((s) => s.key === "interviews")!;
+    expect(slot.value).toBe("—");
+    expect(slot.isNull).toBe(true);
+  });
+});
+
+// ─── B-4: mrr-guard — mrr-bearing project goal keeps registry slots (R3) ─────
+
+describe("computeWeeklyRecap — mrr-bearing project goal: statSlotsForGoal falls back to registry slots", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pm.goal.findFirst.mockResolvedValue(MOCK_MRR_PROJECT_GOAL);
+    pm.workout.findMany.mockResolvedValue([]);
+    pm.hike.findMany.mockResolvedValue([]);
+    // Bare key "mrr" (R1) — satisfies BOTH call sites: recap.ts's step-5
+    // logLatest prefetch (feeds the registry mrr slot, source logLatest) and
+    // computeReadiness's snapshot resolveMetricValue (log:mrr has no
+    // cumulative flag → findFirst branch). Single target → no where filtering needed.
+    pm.logEntry.findFirst.mockResolvedValue({ value: 250 });
+    pm.scheduledItem.groupBy.mockResolvedValue([
+      { status: "planned", _count: { _all: 7 } },
+    ]);
+    pm.baseline.findMany.mockResolvedValue([]);
+    mockGetExerciseSummaries.mockResolvedValue([]);
+    mockGetActiveProgram.mockResolvedValue(null);
+    mockComputeGameState.mockResolvedValue({
+      ...MOCK_GAME_STATE_FITNESS,
+      goalKind: "project",
+      streak: { current: 0, longest: 0, todayCounted: false },
+    });
+  });
+
+  it("statSlots match the PROJECT_PRESENTATION-derived shape exactly (mrr currency + milestones ratio)", async () => {
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+    // Registry slots untouched: keys mrr + milestones, currency + ratioOfTotal
+    // formats — proves statSlotsForGoal returned PROJECT_PRESENTATION.statSlots
+    // because an mrr target exists, instead of deriving targetCurrent slots.
+    expect(recap.statSlots).toEqual([
+      { key: "mrr",        label: "MRR",        value: "$250", isNull: false },
+      { key: "milestones", label: "MILESTONES",  value: "0/7",  isNull: false },
+    ]);
+  });
+
+  it("does not emit a targetCurrent-derived slot for the mrr target", async () => {
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+    expect(recap.statSlots.map((s) => s.key)).toEqual(["mrr", "milestones"]);
+    // A derived slot would have had the bare metric as its key with int format
+    // ("$"-less value) — assert the currency rendering came through instead.
+    const mrrSlot = recap.statSlots.find((s) => s.key === "mrr")!;
+    expect(mrrSlot.value.startsWith("$")).toBe(true);
   });
 });
