@@ -37,6 +37,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [Google],
   session: { strategy: "database" },
+  pages: { signIn: "/signin", error: "/signin" },
   callbacks: {
     session({ session, user }) {
       // `user` is AdapterUser (populated by database strategy) — has .id from the User row.
