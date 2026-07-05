@@ -9,7 +9,10 @@
  */
 
 import { headers } from "next/headers";
+import Image from "next/image";
+import { auth } from "@/lib/auth/auth";
 import { getCurrentUserId } from "@/lib/auth/current-user";
+import { signOutAction } from "@/lib/auth/auth-actions";
 import { listConnections } from "@/lib/oauth/connections";
 import { RevokeConnectionButton } from "@/components/RevokeConnectionButton";
 import { USER_TZ } from "@/lib/calendar-core";
@@ -35,6 +38,19 @@ function fmtDate(d: Date): string {
   return dateFmt.format(d);
 }
 
+/**
+ * Extract up to 2 uppercase initials from a display name or email.
+ * Inlined from SessionMenu.tsx:16-23 (deliberately not imported — that
+ * component is a client island and this page is a server component).
+ */
+function initials(name?: string | null, email?: string | null): string {
+  const src = name ?? email ?? "";
+  const parts = src.split(/[\s@._-]+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0]![0]!.toUpperCase();
+  return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -42,9 +58,13 @@ function fmtDate(d: Date): string {
 export default async function SettingsPage() {
   // getCurrentUserId redirects to /signin when there's no session.
   const uid = await getCurrentUserId();
+  const session = await auth();
   const connections = await listConnections(uid);
   const h = await headers();
   const connectorUrl = `${originFromHeaders(h)}/api/mcp`;
+
+  const user = session?.user;
+  const abbrev = initials(user?.name, user?.email);
 
   return (
     <div className="min-h-[calc(100vh-48px)] px-4 py-8">
@@ -61,6 +81,60 @@ export default async function SettingsPage() {
             Manage how external apps connect to your Goaldmine data.
           </p>
         </div>
+
+        {/* Account card — identity + sign-out (#224) */}
+        {user && (
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-[var(--border)]">
+              <h2 className="text-sm font-semibold text-[var(--foreground)]">
+                Account
+              </h2>
+            </div>
+            <div className="px-4 py-4 flex items-center gap-3">
+              {/* Avatar */}
+              <div className="flex-shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-full border border-[var(--border)] overflow-hidden text-sm font-semibold text-[var(--foreground)] bg-[var(--accent)]/20">
+                {user.image ? (
+                  <Image
+                    src={user.image}
+                    alt={user.name ?? "Avatar"}
+                    width={44}
+                    height={44}
+                    className="w-full h-full object-cover"
+                    unoptimized
+                  />
+                ) : (
+                  <span aria-hidden className="leading-none select-none">
+                    {abbrev}
+                  </span>
+                )}
+              </div>
+
+              {/* Name + email */}
+              <div className="min-w-0 flex-1">
+                {user.name && (
+                  <p className="text-sm font-medium text-[var(--foreground)] truncate">
+                    {user.name}
+                  </p>
+                )}
+                {user.email && (
+                  <p className="text-xs text-[var(--muted)] truncate mt-0.5">
+                    {user.email}
+                  </p>
+                )}
+              </div>
+
+              {/* Sign out */}
+              <form action={signOutAction} className="flex-shrink-0">
+                <button
+                  type="submit"
+                  className="text-xs font-medium px-3 py-1.5 min-h-11 rounded-lg border border-red-500/40 text-red-500 hover:bg-red-500/10 active:bg-red-500/20 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50"
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* D-2: Connect Claude walkthrough panel */}
         <ConnectClaudePanel
