@@ -172,6 +172,19 @@ describe("checkRateLimit — allowed (limit() returns success:true)", () => {
     const result = await checkRateLimit("mcp", "user1");
     expect(result).toEqual({ ok: true, retryAfterSeconds: 0 });
   });
+
+  it("calls limiter.limit() for the access-request-hour bucket when configured", async () => {
+    mockLimit.mockResolvedValueOnce({
+      success:   true,
+      limit:     5,
+      remaining: 4,
+      reset:     Date.now() + 3_600_000,
+      pending:   Promise.resolve(),
+    });
+    await checkRateLimit("access-request-hour", "1.2.3.4");
+    expect(mockLimit).toHaveBeenCalledTimes(1);
+    expect(mockLimit).toHaveBeenCalledWith("1.2.3.4");
+  });
 });
 
 // ─── checkRateLimit — rate-limited ───────────────────────────────────────────

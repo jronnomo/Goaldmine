@@ -29,9 +29,10 @@ export const RATE_LIMITS = {
   oauth:        { requests: 10, window: "1 m" as const },  // per IP, all /oauth/*
   registerHour: { requests: 5,  window: "1 h" as const },  // per IP, /oauth/register extra bucket
   signinHour:   { requests: 5,  window: "1 h" as const },  // per IP, /api/auth/signin*
+  accessRequestHour: { requests: 5, window: "1 h" as const }, // per IP, /request-access form
 } as const;
 
-export type Bucket = "mcp" | "oauth" | "register-hour" | "signin-hour";
+export type Bucket = "mcp" | "oauth" | "register-hour" | "signin-hour" | "access-request-hour";
 
 // ─── isConfigured ─────────────────────────────────────────────────────────────
 
@@ -58,6 +59,7 @@ export function isConfigured(): boolean {
 //   oauth       rl:oauth      <ip>         → rl:oauth:<ip>
 //   register-hr rl:rhr        <ip>         → rl:rhr:<ip>
 //   signin-hr   rl:shr        <ip>         → rl:shr:<ip>
+//   access-req-hr rl:arhr     <ip>         → rl:arhr:<ip>
 //
 // ephemeralCache is omitted: serverless/edge workers start cold each request
 // so an in-process LRU provides no benefit.
@@ -73,6 +75,7 @@ let _mcpLimiter:          Ratelimit | undefined;
 let _oauthLimiter:        Ratelimit | undefined;
 let _registerHourLimiter: Ratelimit | undefined;
 let _signinLimiter:       Ratelimit | undefined;
+let _accessRequestHourLimiter: Ratelimit | undefined;
 
 function getLimiter(bucket: Bucket): Ratelimit {
   switch (bucket) {
@@ -123,6 +126,18 @@ function getLimiter(bucket: Bucket): Ratelimit {
           prefix: "rl:shr",
         });
       return _signinLimiter;
+
+    case "access-request-hour":
+      if (!_accessRequestHourLimiter)
+        _accessRequestHourLimiter = new Ratelimit({
+          redis:   getRedis(),
+          limiter: Ratelimit.slidingWindow(
+            RATE_LIMITS.accessRequestHour.requests,
+            RATE_LIMITS.accessRequestHour.window,
+          ),
+          prefix: "rl:arhr",
+        });
+      return _accessRequestHourLimiter;
   }
 }
 

@@ -636,6 +636,25 @@ model Invite {
 }
 
 // ---------------------------------------------------------------------------
+// A-3b: request-access model (pre-invite "notify me" form)
+// NOT in SCOPED_MODELS — the requester has no User row yet at write time.
+// The action uses raw `prisma` singleton directly (never getDb()).
+// ---------------------------------------------------------------------------
+
+model AccessRequest {
+  id           String    @id @default(cuid())
+  email        String                              // lowercased at write time
+  note         String?                             // optional message from requester
+  status       String    @default("pending")       // "pending" | "approved" | "denied"
+  createdAt    DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedNote String?
+
+  @@index([status])
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
 // C-1: OAuth server models (E-C)
 // These are auth infrastructure — cross-user by design (OAuthClient has no
 // userId at all; OAuthAuthCode/AccessToken/RefreshToken are owned by userId
