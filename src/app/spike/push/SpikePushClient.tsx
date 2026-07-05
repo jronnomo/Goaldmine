@@ -261,7 +261,7 @@ export function SpikePushClient({
                 type="button"
                 onClick={handleEnable}
                 disabled={enableDisabled}
-                className="min-h-11 flex-1 rounded-xl bg-[var(--foreground)] text-[var(--background)] text-sm font-medium disabled:opacity-40"
+                className="min-h-11 flex-1 rounded-xl bg-[var(--accent)] text-[var(--accent-fg)] text-sm font-medium disabled:opacity-40"
               >
                 Enable notifications
               </button>
