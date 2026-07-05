@@ -122,7 +122,6 @@ export async function logManualWorkout(
   revalidatePath("/calendar");
   revalidatePath(`/days/${input.dateKey}`);
   revalidatePath("/progress");
-  revalidatePath("/stats");
   revalidatePath("/character");
 
   return result;
@@ -187,7 +186,7 @@ export async function skipDay(input: SkipDayInput): Promise<{ id: string }> {
     revalidatePath("/days");
     revalidatePath(`/days/${input.dateKey}`);
     revalidatePath("/history");
-    revalidatePath("/stats");
+    revalidatePath("/progress");
     return { id: existing.id };
   }
 
@@ -205,7 +204,7 @@ export async function skipDay(input: SkipDayInput): Promise<{ id: string }> {
   revalidatePath("/days");
   revalidatePath(`/days/${input.dateKey}`);
   revalidatePath("/history");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
 
   return { id: result.id };
 }
@@ -238,7 +237,7 @@ export async function unskipDay(dateKey: string): Promise<{ deleted: number }> {
   revalidatePath("/days");
   revalidatePath(`/days/${dateKey}`);
   revalidatePath("/history");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
 
   return { deleted: result.count };
 }
@@ -295,7 +294,6 @@ export async function logHikeForDay(input: LogHikeForDayInput) {
   revalidatePath("/calendar");
   revalidatePath("/days");
   revalidatePath(`/days/${input.dateKey}`);
-  revalidatePath("/stats");
   revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/character");

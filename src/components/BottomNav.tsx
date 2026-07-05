@@ -53,10 +53,9 @@ const TABS: Tab[] = [
     type: "link",
     href: "/progress",
     label: "Progress",
-    // Progress active for /progress, /stats, /baselines (those pages are sub-routes of Progress)
+    // Progress active for /progress, /baselines (those pages are sub-routes of Progress)
     match: (p) =>
       p.startsWith("/progress") ||
-      p.startsWith("/stats") ||
       p.startsWith("/baselines") ||
       p.startsWith("/recap"),
   },

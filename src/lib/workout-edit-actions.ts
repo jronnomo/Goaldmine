@@ -79,7 +79,6 @@ export async function saveWorkoutEdits(
   revalidatePath(`/days/${dk}`);
   revalidatePath("/calendar");
   revalidatePath("/progress");
-  revalidatePath("/stats");
 }
 
 // ─── deleteWorkoutAction ──────────────────────────────────────────────────────
@@ -100,7 +99,6 @@ export async function deleteWorkoutAction(workoutId: string): Promise<never> {
   revalidatePath(`/days/${dk}`);
   revalidatePath("/calendar");
   revalidatePath("/progress");
-  revalidatePath("/stats");
 
   redirect("/history");
 }

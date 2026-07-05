@@ -36,7 +36,6 @@ export async function logMeasurement(form: FormData) {
   revalidatePath("/");
   revalidatePath("/history");
   revalidatePath("/progress");
-  revalidatePath("/stats");
 }
 
 export async function logBodyMetric(form: FormData) {
@@ -61,7 +60,6 @@ export async function logBodyMetric(form: FormData) {
   revalidatePath("/");
   revalidatePath("/history");
   revalidatePath("/progress");
-  revalidatePath("/stats");
 }
 
 export async function logNote(form: FormData) {
@@ -105,7 +103,7 @@ export async function logBaselineInline(form: FormData) {
   revalidatePath("/");
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   revalidatePath("/history");
 }
 
@@ -131,7 +129,7 @@ export async function logBaseline(form: FormData) {
 
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(testName)}`);
@@ -167,7 +165,7 @@ export async function updateBaseline(id: string, form: FormData) {
 
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(updated.testName)}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(updated.testName)}`);
@@ -180,7 +178,7 @@ export async function deleteBaselineRow(id: string) {
   await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
   revalidatePath("/baselines");
   revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/");
   redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);

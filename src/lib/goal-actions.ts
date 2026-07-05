@@ -91,7 +91,7 @@ export async function createGoal(form: FormData) {
   revalidatePath("/");
   revalidatePath("/goals");
   revalidatePath("/calendar");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   if (stack.tier === "epic" || stack.tier === "legendary") {
     const stackDest = redirectTo ?? `/goals/${goal.id}`;
     redirect(`${stackDest}${stackDest.includes("?") ? "&" : "?"}stackWarning=${stack.tier}`);
@@ -108,7 +108,7 @@ export async function copyTargetsFromGoal(toId: string, fromId: string) {
     data: { targets: source.targets ?? undefined },
   });
   revalidatePath(`/goals/${toId}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
 }
 
 export async function updateGoal(id: string, form: FormData) {
@@ -152,7 +152,7 @@ export async function updateGoal(id: string, form: FormData) {
   revalidatePath("/goals");
   revalidatePath(`/goals/${id}`);
   revalidatePath("/calendar");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
 }
 
 export async function setFocusGoal(id: string) {
@@ -168,7 +168,7 @@ export async function setFocusGoal(id: string) {
   revalidatePath("/goals");
   revalidatePath(`/goals/${id}`);
   if (oldFocusId && oldFocusId !== id) revalidatePath(`/goals/${oldFocusId}`);
-  revalidatePath("/stats");
+  revalidatePath("/progress");
 
   // Land the user on the calendar so the focus switch is visible immediately
   // (this matches the workflow of "select a goal, see its calendar").
@@ -183,7 +183,7 @@ export async function setGoalTracked(id: string, tracked: boolean) {
   revalidatePath("/");
   revalidatePath("/calendar");
   revalidatePath("/goals");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   // No redirect — stays on /goals (pill action)
 }
 
@@ -193,7 +193,7 @@ export async function deleteGoal(id: string) {
   revalidatePath("/");
   revalidatePath("/calendar");
   revalidatePath("/goals");
-  revalidatePath("/stats");
+  revalidatePath("/progress");
   redirect("/goals");
 }
 

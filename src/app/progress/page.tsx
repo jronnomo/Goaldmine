@@ -7,6 +7,7 @@ import { ReadinessChart } from "@/components/ReadinessChart";
 import { WeightChart } from "@/components/WeightChart";
 import { RecordsSummary } from "@/components/RecordsSummary";
 import { BodyMetricsSection } from "@/components/BodyMetricsSection";
+import { StatTile } from "@/components/StatTile";
 import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
@@ -15,12 +16,15 @@ export const dynamic = "force-dynamic";
 
 export default async function ProgressPage() {
   const db = await getDb();
-  const [measurements, activeGoals] = await Promise.all([
+  const [measurements, activeGoals, baselineCount, workoutCount, hikeCount] = await Promise.all([
     db.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
     db.goal.findMany({
       where: { active: true },
       orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
     }),
+    db.baseline.count(),
+    db.workout.count({ where: { status: "completed" } }),
+    db.hike.count(),
   ]);
 
   const weights = measurements
@@ -252,6 +256,14 @@ export default async function ProgressPage() {
 
       {/* Records summary */}
       <RecordsSummary />
+
+      <Card title="Totals">
+        <div className="grid grid-cols-3 gap-2">
+          <StatTile label="Workouts" value={workoutCount} />
+          <StatTile label="Baselines" value={baselineCount} />
+          <StatTile label="Hikes" value={hikeCount} />
+        </div>
+      </Card>
     </div>
   );
 }
