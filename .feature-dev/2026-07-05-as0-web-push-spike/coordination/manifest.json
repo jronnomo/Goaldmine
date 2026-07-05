@@ -1,0 +1,23 @@
+{
+  "feature": "AS-0 Web Push spike (push-value assessment + iOS viability)",
+  "branch": "spike/web-push",
+  "prd_path": "docs/prds/PRD-as0-web-push-spike.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/189",
+  "requirements": [
+    "REQ-001",
+    "REQ-002",
+    "REQ-003",
+    "REQ-004",
+    "REQ-005"
+  ],
+  "agents": [
+    "explore-research",
+    "architect",
+    "devils-advocate",
+    "developer",
+    "qa",
+    "fix"
+  ],
+  "iteration": 1,
+  "status": "complete"
+}
