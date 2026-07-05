@@ -56,7 +56,7 @@ const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string 
     title: "Refine readiness from research",
     when: "Just added a URL or doc reference to the goal",
     prompt:
-      "I added a reference to my Mt. Elbert goal: [paste URL or summary]. Pull the goal, read what's there, and propose target adjustments grounded in this source.",
+      "I added a reference to my [goal name] goal: [paste URL or summary]. Pull that goal, read what's there, and propose target adjustments grounded in this source.",
   },
   {
     title: "Log a baseline result",
@@ -85,7 +85,7 @@ const PROMPTS: Array<{ title: string; when: string; prompt: string; id?: string 
     title: "Ingest goal references",
     when: "Goal has references without a saved summary",
     prompt:
-      "Call get_goal for my active goal and check references[]. For each reference that has no claudeSummary yet, fetch its content (web fetch the URL, or read the doc text), distill the method and key takeaways that are relevant to coaching my training, and write each summary back via update_goal_reference. When done, tell me what you learned from each source and how it will influence programming.",
+      "Call get_goal for my focus goal and check references[]. For each reference that has no claudeSummary yet, fetch its content (web fetch the URL, or read the doc text), distill the method and key takeaways that are relevant to coaching my training, and write each summary back via update_goal_reference. When done, tell me what you learned from each source and how it will influence programming.",
   },
   {
     title: "Start a job-hunt goal",

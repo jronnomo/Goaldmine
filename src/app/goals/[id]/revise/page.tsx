@@ -72,8 +72,8 @@ export default async function RevisePage({
 
       <p className="text-xs text-[var(--muted)] px-1">
         For a substantive revision (cascades, week shifts, nutrition tuning), the cleanest path is
-        to chat with Claude in claude.ai once Phase 3 MCP ships — Claude will read the note, reason
-        over the cascade, and apply the revision directly. This form is the manual fallback.
+        to chat with your coach in claude.ai — it will read the note, reason over the cascade, and
+        apply the revision directly. This form is the manual fallback.
       </p>
     </div>
   );
