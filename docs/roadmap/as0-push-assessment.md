@@ -77,15 +77,23 @@ not re-litigated here.
 | Notification received locally | _fill in_ |
 | Delivery latency (`ms` from send response) | _fill in_ |
 
-### 4.2 iPhone (fill in during founder device test — see runbook, §7)
+### 4.2 iPhone — ✅ PASSED (founder device test, 2026-07-05)
 
 | Field | Value |
 |---|---|
-| Device / iOS version | _fill in_ |
-| Installed to Home Screen (standalone)? | _fill in_ |
-| Enable notifications result | _fill in_ |
-| Push received with app closed? | _fill in_ |
-| **Lock-screen delivery confirmed?** | _fill in_ |
+| Device / iOS version | Founder's iPhone (screenshot evidence in session; iOS ≥16.4) |
+| Installed to Home Screen (standalone)? | Yes — via the page-scoped A2HS metadata fix ("GM Push Spike" install) |
+| Enable notifications result | Granted; subscription stored in Upstash |
+| Push received with app closed? | Yes — app fully closed, send triggered by curl from desktop |
+| **Lock-screen delivery confirmed?** | **YES** — lock-screen notification "Goaldmine coach / from GM Push Spike" |
+| Payload | A REAL coach nudge — the Sunday routine's `[recap:2026-W27]` open_item note, read from the founder's data via runWithUser/getDb on the preview deployment (fallback body was not needed) |
+
+**Conclusion of the technical spike: iOS Web Push is fully viable for coach-nudge
+delivery from the installed PWA — no native shell required for this capability.**
+Two field notes for any future permanent implementation (AS-B3-style SW or
+Track 1 web push): (1) A2HS start_url vs deliberately-unlinked pages needs a UI
+entry point or page-scoped metadata; (2) Vercel project renames move the
+branch-alias hostname.
 | Notes / gotchas encountered | _fill in_ |
 
 ---
