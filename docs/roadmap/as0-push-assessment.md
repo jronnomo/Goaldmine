@@ -130,7 +130,10 @@ resolves whether Track 2 (native shell) is worth starting.
      exist in Preview scope (send falls back to a static body if the DB
      read fails, so only the Upstash pair is load-bearing).
 2. **Stable preview URL (verified building & gated, 2026-07-05):**
-   `https://workout-planner-git-spike-web-push-jronnomos-projects.vercel.app`
+   `https://goaldmine-git-spike-web-push-jronnomos-projects.vercel.app`
+   (the Vercel project was renamed workout-planner → goaldmine on 2026-07-05;
+   the old `workout-planner-git-…` alias is frozen on a stale deployment —
+   don't use it)
 3. ⚠ **REMAINING BLOCKER:** Vercel Deployment Protection currently 302s the
    preview to `vercel.com/sso-api` (verified via curl). In the dashboard:
    Project `workout-planner` → Settings → Deployment Protection → set
