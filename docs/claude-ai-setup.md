@@ -104,7 +104,7 @@ Claude reasons through it, *describes* the cascading effects, doesn't call apply
 | Update goal targets from research | | ✅ Claude reads references + updates |
 | Baseline result | Both — `/baselines/new` form, or "Did X today" in Claude | |
 | Weekly review | | ✅ Claude bundles data + summarizes |
-| Browse history / charts / records | ✅ `/calendar`, `/baselines`, `/stats` | |
+| Browse history / charts / records | ✅ `/calendar`, `/baselines`, `/progress` | |
 | View revision before/after | ✅ `/goals/<id>/revisions/<id>` | |
 
 ## 4. Goal intake interview + promote flow

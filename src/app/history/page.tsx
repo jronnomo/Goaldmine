@@ -34,7 +34,7 @@ export default async function HistoryPage() {
 
       <Card title="Weight trend">
         {measurements.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">No measurements yet. Log your first weight on the Today screen.</p>
+          <p className="text-sm text-[var(--muted)]">No measurements yet. Log your first weight from the Log tab below.</p>
         ) : (
           <WeightChart
             data={measurements

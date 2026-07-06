@@ -20,7 +20,7 @@ vi.mock("@/lib/db", () => ({
   getDb: vi.fn(),
 }));
 
-import { checkInviteGate } from "@/lib/auth/invite-gate";
+import { checkInviteGate, previewInviteCodeQuery } from "@/lib/auth/invite-gate";
 import { prisma } from "@/lib/db";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -248,5 +248,92 @@ describe("checkInviteGate", () => {
     vi.stubEnv("FOUNDER_GOOGLE_EMAIL", "");
     const result = await checkInviteGate("anyone@example.com");
     expect(result.redeemInviteId).toBeUndefined();
+  });
+});
+
+// ── previewInviteCodeQuery ───────────────────────────────────────────────────
+//
+// Advisory-only helper: returns boolean ONLY (never a reason). Valid,
+// exhausted, expired, and unknown codes must all resolve to a boolean and —
+// for every well-shaped code — must run the exact same fixed-shape query
+// (`prisma.invite.findFirst({ where: { code } })`), so timing/shape can't
+// leak *why* a code failed.
+
+describe("previewInviteCodeQuery", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockInvite.findFirst.mockResolvedValue(null);
+  });
+
+  it("returns true for a valid, unexpired, unexhausted code", async () => {
+    mockInvite.findFirst.mockResolvedValue(
+      fakeInvite({ code: "goodcode", useCount: 0, maxUses: 3, expiresAt: null }),
+    );
+    const result = await previewInviteCodeQuery("goodcode");
+    expect(result).toBe(true);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("returns false for an exhausted code (useCount >= maxUses)", async () => {
+    mockInvite.findFirst.mockResolvedValue(
+      fakeInvite({ code: "maxedcode", useCount: 2, maxUses: 2 }),
+    );
+    const result = await previewInviteCodeQuery("maxedcode");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for an expired code", async () => {
+    const past = new Date(Date.now() - 60_000);
+    mockInvite.findFirst.mockResolvedValue(
+      fakeInvite({ code: "expiredcode", useCount: 0, maxUses: 3, expiresAt: past }),
+    );
+    const result = await previewInviteCodeQuery("expiredcode");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for an unknown code (not found)", async () => {
+    mockInvite.findFirst.mockResolvedValue(null);
+    const result = await previewInviteCodeQuery("nosuchcode");
+    expect(result).toBe(false);
+  });
+
+  it("returns false without touching the DB for a malformed-shape code", async () => {
+    const result = await previewInviteCodeQuery("has spaces and $ymbols!");
+    expect(result).toBe(false);
+    expect(mockInvite.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("returns false without touching the DB for an over-length code", async () => {
+    const result = await previewInviteCodeQuery("a".repeat(65));
+    expect(result).toBe(false);
+    expect(mockInvite.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("runs the SAME query shape for valid, exhausted, expired, and unknown codes", async () => {
+    const past = new Date(Date.now() - 60_000);
+
+    mockInvite.findFirst.mockResolvedValueOnce(
+      fakeInvite({ code: "code-valid", useCount: 0, maxUses: 1 }),
+    );
+    await previewInviteCodeQuery("code-valid");
+
+    mockInvite.findFirst.mockResolvedValueOnce(
+      fakeInvite({ code: "code-maxed", useCount: 1, maxUses: 1 }),
+    );
+    await previewInviteCodeQuery("code-maxed");
+
+    mockInvite.findFirst.mockResolvedValueOnce(
+      fakeInvite({ code: "code-expired", useCount: 0, maxUses: 1, expiresAt: past }),
+    );
+    await previewInviteCodeQuery("code-expired");
+
+    mockInvite.findFirst.mockResolvedValueOnce(null);
+    await previewInviteCodeQuery("code-unknown");
+
+    expect(mockInvite.findFirst).toHaveBeenCalledTimes(4);
+    expect(mockInvite.findFirst).toHaveBeenNthCalledWith(1, { where: { code: "code-valid" } });
+    expect(mockInvite.findFirst).toHaveBeenNthCalledWith(2, { where: { code: "code-maxed" } });
+    expect(mockInvite.findFirst).toHaveBeenNthCalledWith(3, { where: { code: "code-expired" } });
+    expect(mockInvite.findFirst).toHaveBeenNthCalledWith(4, { where: { code: "code-unknown" } });
   });
 });

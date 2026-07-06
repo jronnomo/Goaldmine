@@ -92,3 +92,56 @@ export async function checkInviteGate(
   // ── Check 6: Reject ────────────────────────────────────────────────────────
   return { allowed: false, redirect: "/request-access" };
 }
+
+// ---------------------------------------------------------------------------
+// Advisory preview (NOT enforcement)
+//
+// previewInviteCodeQuery is a PURE helper — deliberately NOT marked
+// "use server". This file must never gain a "use server" directive: doing so
+// would turn checkInviteGate (which decides real access) into a callable
+// public server action. The "use server" action wrapper lives in
+// src/lib/auth/auth-actions.ts (previewInviteCode), which imports this
+// helper and applies rate limiting before calling it.
+//
+// checkInviteGate remains the ONLY enforcement path (re-run at signIn time
+// and again in events.createUser). This helper only powers a soft, advisory
+// UI hint on /signin — it must never leak *why* a code is invalid, only
+// whether it currently looks valid.
+// ---------------------------------------------------------------------------
+
+// Same shape used when persisting the invite_code cookie (signInWithGoogle).
+const INVITE_CODE_SHAPE_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Advisory-only check of whether an invite code currently looks valid
+ * (exists, not exhausted, not expired). Returns a boolean ONLY — never a
+ * reason — so the UI can never be used to enumerate *why* a code fails
+ * (unknown vs exhausted vs expired all look identical from the outside).
+ *
+ * Query shape is fixed: exactly one `prisma.invite.findFirst({ where: { code } })`
+ * call for every syntactically well-shaped code, regardless of whether that
+ * code turns out to be valid, exhausted, expired, or unknown. This keeps the
+ * DB-round-trip timing identical across those four outcomes.
+ *
+ * The one exception is the shape regex above, which early-returns `false`
+ * without touching the DB for garbage input (e.g. absurdly long strings or
+ * disallowed characters). This creates a residual timing difference between
+ * "malformed shape" and "well-shaped but otherwise invalid" — accepted here
+ * because (a) this endpoint is advisory-only (checkInviteGate is the real
+ * gate) and (b) it's rate-limited to 20/hour/IP, making any timing side
+ * channel impractical to exploit.
+ */
+export async function previewInviteCodeQuery(code: string): Promise<boolean> {
+  if (!INVITE_CODE_SHAPE_RE.test(code)) {
+    return false;
+  }
+
+  const now = new Date();
+  const invite = await prisma.invite.findFirst({ where: { code } });
+
+  return !!(
+    invite &&
+    invite.useCount < invite.maxUses &&
+    (invite.expiresAt === null || invite.expiresAt > now)
+  );
+}

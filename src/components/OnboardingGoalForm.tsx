@@ -91,7 +91,7 @@ export function OnboardingGoalForm() {
           name="objective"
           required
           maxLength={200}
-          placeholder={kind === "fitness" ? "Summit Mt. Elbert" : "Reach $1k/mo MRR"}
+          placeholder={kind === "fitness" ? "Run a sub-2:00 half marathon" : "Ship v1.0 of my app"}
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
         />
       </label>

@@ -47,7 +47,6 @@ const PROTECTED_CASES: [string, string][] = [
   ["/", "root / dashboard"],
   ["/history", "history page"],
   ["/goals/abc", "goal detail page"],
-  ["/stats", "stats page"],
   ["/today", "today page"],
   ["/nutrition", "nutrition page"],
   ["/workout/new", "new workout page"],

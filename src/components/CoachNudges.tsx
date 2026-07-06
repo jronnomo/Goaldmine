@@ -99,7 +99,7 @@ export function CoachNudges({
           }`}
         >
           {lastNudgeDaysAgo > 8
-            ? `Last coach brief: ${agoLabel} — the weekly brief may not be running (check claude.ai/code/routines).`
+            ? `Last coach brief: ${agoLabel} — nudges refresh when your coach's weekly routine runs.`
             : `Last coach brief: ${agoLabel}.`}
         </p>
       )}

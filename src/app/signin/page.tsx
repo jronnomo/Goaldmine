@@ -1,29 +1,47 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { auth } from "@/lib/auth/auth";
 import { Logo } from "@/components/Logo";
 import { signInWithGoogle } from "@/lib/auth/auth-actions";
 import { safeNext } from "@/lib/auth/safe-next";
+import { InviteCodeField } from "@/components/InviteCodeField";
 
 export const dynamic = "force-dynamic";
 
 interface SignInPageProps {
-  searchParams: Promise<{ next?: string; callbackUrl?: string; invite?: string }>;
+  searchParams: Promise<{ next?: string; callbackUrl?: string; invite?: string; error?: string }>;
 }
+
+// Auth.js redirects here with ?error=<code> (see pages.error in auth.ts).
+// Mapping corrected against @auth/core source — do not invent other semantics.
+const ERROR_COPY: Record<string, string> = {
+  OAuthCallbackError: "Sign-in was cancelled or Google reported a problem. Please try again.",
+  OAuthAccountNotLinked:
+    "This email is already registered with a different sign-in. Contact the founder to relink your account.",
+  // Fires only when the invite gate THROWS — must not imply the user lacks an invite.
+  AccessDenied: "Something went wrong checking your access. Try again in a moment.",
+  Configuration: "Sign-in is temporarily unavailable. Please try again shortly.",
+};
+const DEFAULT_ERROR_COPY = "Something went wrong signing in. Please try again.";
 
 export default async function SignInPage({ searchParams }: SignInPageProps) {
   // Next 16: searchParams is a Promise — must be awaited.
-  const { next, callbackUrl, invite } = await searchParams;
+  const { next, callbackUrl, invite, error } = await searchParams;
   const redirectTo = safeNext(next ?? callbackUrl);
+  const errorMessage = error ? (ERROR_COPY[error] ?? DEFAULT_ERROR_COPY) : undefined;
 
-  // Don't show the form to already-signed-in users.
+  // Don't show the form to already-signed-in users — unless there's an error to
+  // surface, in which case auto-redirecting would silently eat the message.
   const session = await auth();
-  if (session) {
+  if (session && !errorMessage) {
     redirect(redirectTo);
   }
 
-  // Bind the server action to the safe redirect target and the invite code.
-  // signInWithGoogle(next?, inviteCode?) — both positional.
-  const boundSignIn = signInWithGoogle.bind(null, redirectTo, invite);
+  // Bind the server action to the safe redirect target only. The invite
+  // code is NOT bound here — it's read live from the form's FormData inside
+  // signInWithGoogle (name="invite" below), so whatever the user typed in
+  // the field always wins over the ?invite= URL param it was prefilled from.
+  const boundSignIn = signInWithGoogle.bind(null, redirectTo);
 
   return (
     <div className="min-h-[calc(100vh-48px)] flex items-center justify-center px-4 py-12">
@@ -45,15 +63,20 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
           </p>
         </div>
 
-        {/* Invite code hint — shown when ?invite= is present */}
-        {invite && (
-          <div className="mb-5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/8 px-4 py-2.5 text-center text-xs font-medium text-[var(--accent)]">
-            Invite code detected ✓
+        {/* Error banner — shown when Auth.js redirects with ?error= */}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mb-5 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/8 px-4 py-2.5 text-center text-sm text-[var(--danger)]"
+          >
+            {errorMessage}
           </div>
         )}
 
         {/* Sign-in form */}
         <form action={boundSignIn}>
+          <InviteCodeField defaultValue={invite} />
+
           <button
             type="submit"
             className="w-full flex items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]/10 active:bg-[var(--accent)]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
@@ -87,6 +110,16 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
             Continue with Google
           </button>
         </form>
+
+        {/* Already signed in, but there's an error to surface — offer a manual way
+            forward instead of silently auto-redirecting past the banner. */}
+        {session && errorMessage && (
+          <div className="mt-4 text-center">
+            <Link href={redirectTo} className="text-sm text-[var(--accent)]">
+              Continue →
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
