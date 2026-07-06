@@ -2,7 +2,7 @@
 
 **Branch:** `spike/web-push` (off `feature/phase1-auth`; deleted after verdict)
 **Issue:** #189 ([AS-0] Spike — Track 2 gate for the App Store initiative)
-**Status:** VERDICT OPEN — awaiting founder device test.
+**Status:** ✅ VERDICT: **NO-GO on the native track — productize Web Push instead** (founder decision, 2026-07-05, after a passing device test).
 
 ---
 
@@ -121,7 +121,27 @@ resolves whether Track 2 (native shell) is worth starting.
 
 ---
 
-## 6. VERDICT: OPEN — awaiting founder device test.
+## 6. VERDICT: NO-GO — productize Web Push (founder, 2026-07-05)
+
+The device test passed decisively (§4.2): a real coach nudge on the lock
+screen from the installed PWA, no native shell. Push — the App Store
+initiative's primary justification — is solved on the web platform.
+
+**Consequences executed:**
+- Track 2 (~18 stories + 4 epics, #196–#213, #215–#218) closed as not-planned.
+- AS-0 (#189) closed as completed.
+- Apple-specific Track 1 stories (#192 sign-in, #193 linking, #195 enrollment)
+  downgraded to P3 — their forcing function (Guideline 4.8) died with the
+  store listing; reopen-worthy only if Apple sign-in becomes product-desired.
+- Compliance stories #190 (privacy), #191 (deletion), #194 (terms) remain —
+  web go-live (#188) wants them regardless.
+- New story: **productize Web Push nudge delivery** (supersedes the spirit of
+  #103) — per-user subscriptions (owned model + SCOPED_MODELS + verifiers),
+  real service worker, settings toggle, send-on-write hook. The spike's code
+  is preserved at tag `spike/web-push-final` as a reference implementation.
+- Spike teardown: branch deleted after merge+strip; Vercel Preview env vars
+  removed; founder deletes the "GM Push Spike" icon (this also discards the
+  spike SW + subscription — required before a permanent SW ships).
 
 ---
 

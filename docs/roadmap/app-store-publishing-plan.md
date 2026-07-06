@@ -42,9 +42,17 @@
 
 **Critical path:** A1 → A4/A5 → B1 → B2a → B2b → E1 → E2. B2b is the highest-variance story — spike before trusting any estimate. Full story definitions with acceptance criteria: `docs/roadmap/app-store-publishing-backlog.md` + the GitHub issues.
 
-## AS-0 gate — what a NO-GO means
+## AS-0 gate — RESOLVED: NO-GO (2026-07-05)
 
-If the spike shows the in-app nudge loop suffices (or Web Push on the installed PWA covers the need): close the unstarted Track 2 issues, keep Track 1 (all four stories are web-valuable), and the total spend was a ~1-day spike instead of 3–6 weeks. That outcome is a success, not a failure.
+**The gate fired exactly as designed.** The spike delivered a real coach nudge to the founder's iPhone lock screen via Web Push from the installed PWA (evidence: `as0-push-assessment.md` §4.2) — push is solved without a native shell. Founder verdict: **NO-GO on Track 2; productize Web Push instead.**
+
+- Track 2 closed (#196–#213 stories, #215–#218 epics, not-planned); AS-0 #189 closed completed.
+- Apple-specific stories #192/#193/#195 downgraded P0→P3 (no store listing → no Guideline 4.8 mandate).
+- Compliance stories #190/#191/#194 remain open — required by web go-live (#188) anyway.
+- Replacement story: **productize Web Push nudge delivery** (see issue created 2026-07-05; supersedes #103's intent). Spike code preserved at git tag `spike/web-push-final`.
+- Total initiative spend: one spike (~1 day) instead of 3–6 weeks. This outcome is a success, not a failure — the whole point of the gate.
+
+This initiative is now **closed**. Revisit natively only if discoverability/HealthKit become independently business-critical (see Future flags).
 
 ## Future flags (out of scope)
 
