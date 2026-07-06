@@ -2,11 +2,30 @@
 // Deliberately unreachable except by URL (no BottomNav/navigation entry).
 // Public route, self-gated by SPIKE_PUSH_KEY (see route-access.ts).
 
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SpikePushClient } from "./SpikePushClient";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+// iOS "Add to Home Screen" launches the installed app at the manifest's
+// start_url ("/"), not the URL the user was viewing — and standalone mode
+// has no address bar, so this deliberately unlinked spike page would be
+// unreachable once installed. Dropping the inherited manifest link + opting
+// into legacy iOS standalone mode makes A2HS-from-this-page install with
+// this exact URL as the entry point instead.
+//
+// `appleWebApp.capable` only emits the modern, unprefixed
+// `mobile-web-app-capable` meta tag in this Next.js version — the legacy
+// `apple-mobile-web-app-capable` tag (still what older iOS Safari checks
+// for standalone mode) has to be added explicitly via `other`.
+export const metadata: Metadata = {
+  title: "Goaldmine Push Spike",
+  manifest: null,
+  appleWebApp: { capable: true, title: "GM Push Spike", statusBarStyle: "default" },
+  other: { "apple-mobile-web-app-capable": "yes" },
+};
 
 type PageProps = { searchParams: Promise<{ key?: string }> };
 
