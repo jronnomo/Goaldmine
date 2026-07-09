@@ -1,0 +1,10 @@
+{
+  "feature": "#227 compare-vs-progress readiness parity for today",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-227-compare-today-parity.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/227",
+  "requirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004"],
+  "agents": [],
+  "iteration": 1,
+  "status": "architecture"
+}
