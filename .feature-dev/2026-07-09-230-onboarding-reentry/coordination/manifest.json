@@ -1,0 +1,10 @@
+{
+  "feature": "#230 onboarding re-entry + calendar first-run (+#248 goal-count dedupe)",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-230-onboarding-reentry.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/230",
+  "requirements": ["goal-count-helper(#248)", "layout-thread", "moresheet-row", "calendar-card"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
