@@ -1,0 +1,10 @@
+{
+  "feature": "#229 gate fitness idioms behind goal kind (amended)",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-229-goal-kind-idioms.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/229",
+  "requirements": ["classLabel+tests", "character-label", "goal-detail-title", "compare-tile-gating"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
