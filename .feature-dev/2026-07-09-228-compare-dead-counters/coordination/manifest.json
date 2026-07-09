@@ -1,0 +1,10 @@
+{
+  "feature": "#228 compare dead counters + small UI gaps",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-228-compare-dead-counters.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/228",
+  "requirements": ["AC1-tiles+aria", "AC2-max", "AC3-sameday-copy", "AC4-error-card"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
