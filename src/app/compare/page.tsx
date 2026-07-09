@@ -19,6 +19,7 @@ import {
   formatDelta,
   formatValue,
   type CompareEntry,
+  type ComparisonResult,
   type GoalCompareSection,
 } from "@/lib/compare-core";
 import { addDays, dateKey } from "@/lib/calendar-core";
@@ -136,6 +137,50 @@ function GoalCard({ section, dateA }: { section: GoalCompareSection; dateA: stri
 const chipClass =
   "inline-flex min-h-11 items-center whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--card)] px-4 text-[13px] font-medium";
 
+/** Date-range GET form — shared by the happy path and the error-recovery
+ *  Card so the two never drift (architecture-critique C3). Plain GET, no
+ *  server action (PRD §4.3); `max` bounds both inputs to today (PRD §3.1.2). */
+function CompareDateForm({
+  dateA,
+  dateB,
+  todayKey,
+}: {
+  dateA: string;
+  dateB: string;
+  todayKey: string;
+}) {
+  return (
+    <form method="get" className="flex items-end gap-2">
+      <label className="flex-1 text-xs text-[var(--muted)]">
+        From
+        <input
+          type="date"
+          name="a"
+          defaultValue={dateA}
+          max={todayKey}
+          className="mt-1 block min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm tabular-nums"
+        />
+      </label>
+      <label className="flex-1 text-xs text-[var(--muted)]">
+        To
+        <input
+          type="date"
+          name="b"
+          defaultValue={dateB}
+          max={todayKey}
+          className="mt-1 block min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm tabular-nums"
+        />
+      </label>
+      <button
+        type="submit"
+        className="min-h-11 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)]"
+      >
+        Go
+      </button>
+    </form>
+  );
+}
+
 export default async function ComparePage({
   searchParams,
 }: {
@@ -155,16 +200,45 @@ export default async function ComparePage({
   const rawB = paramsValid ? (params.b ?? todayKey) : todayKey;
 
   const db = await getDb();
-  const [result, focusGoal, activeProgram] = await Promise.all([
-    computeComparison(rawA, rawB),
-    db.goal
-      .findFirst({ where: { active: true, isFocus: true }, orderBy: { createdAt: "asc" } })
-      .then(
-        async (fg) =>
-          fg ?? (await db.goal.findFirst({ where: { active: true }, orderBy: { createdAt: "asc" } })),
-      ),
-    getActiveProgram(),
-  ]);
+
+  // Architecture-critique C1: the comparison fetch is the only one wrapped in
+  // try/catch. `focusGoal`/`activeProgram` stay outside it — they're
+  // unrelated Prisma calls, and bundling them under the same catch would let
+  // an infra hiccup in either one produce a false "comparison failed"
+  // message while a healthy computeComparison result gets discarded. All
+  // three promises still start together (no waterfall regression); only the
+  // await/catch placement differs.
+  const focusGoalPromise = db.goal
+    .findFirst({ where: { active: true, isFocus: true }, orderBy: { createdAt: "asc" } })
+    .then(
+      async (fg) =>
+        fg ?? (await db.goal.findFirst({ where: { active: true }, orderBy: { createdAt: "asc" } })),
+    );
+  const activeProgramPromise = getActiveProgram();
+
+  let result: ComparisonResult | null = null;
+  let comparisonFailed = false;
+  try {
+    result = await computeComparison(rawA, rawB);
+  } catch (err) {
+    console.error("compare: computeComparison failed", err);
+    comparisonFailed = true;
+  }
+
+  const [focusGoal, activeProgram] = await Promise.all([focusGoalPromise, activeProgramPromise]);
+
+  if (comparisonFailed || result === null) {
+    return (
+      <div className="mx-auto max-w-md space-y-4 p-4">
+        <Card title="Couldn't build this comparison.">
+          <p className="text-sm text-[var(--muted)]">Try again, or pick different dates.</p>
+          <div className="mt-3">
+            <CompareDateForm dateA={rawA} dateB={rawB} todayKey={todayKey} />
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   // Hero focus goal = first goals[] entry with targets (UX amendment §5);
   // null-safe when absent → HeroSpan renders the date span only.
@@ -176,6 +250,20 @@ export default async function ComparePage({
   const baselineEntries = winFirst(result.baselines);
   const strengthEntries = winFirst(result.strength);
   const bodyEntries = winFirst(result.body);
+
+  // aria-label for "The work between" must enumerate exactly what's
+  // rendered (architecture-critique S4) — the Level tile is conditional on
+  // both levels being non-null, so the label clause is too, or it'd assert
+  // content that isn't there.
+  const workBetweenLabel =
+    `The work between ${formatHeroDate(result.dateA)} and ${formatHeroDate(result.dateB)}: ` +
+    `${between.workoutsCompleted} workouts, ${between.hikesCompleted} hikes, ` +
+    `${between.baselineTestsLogged} baseline tests logged, ${between.notesLogged} notes logged, ` +
+    `${between.hikeElevationFt} feet climbed, ${between.hikeDistanceMi} miles hiked, ` +
+    `${between.xpEarned} XP earned` +
+    (between.levelA !== null && between.levelB !== null
+      ? `, level ${between.levelA} to ${between.levelB}`
+      : "");
 
   return (
     <div className="mx-auto max-w-md space-y-4 p-4">
@@ -217,32 +305,7 @@ export default async function ComparePage({
       </div>
 
       {/* Date form — plain GET, no server action (PRD §4.3). */}
-      <form method="get" className="flex items-end gap-2">
-        <label className="flex-1 text-xs text-[var(--muted)]">
-          From
-          <input
-            type="date"
-            name="a"
-            defaultValue={result.dateA}
-            className="mt-1 block min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm tabular-nums"
-          />
-        </label>
-        <label className="flex-1 text-xs text-[var(--muted)]">
-          To
-          <input
-            type="date"
-            name="b"
-            defaultValue={result.dateB}
-            className="mt-1 block min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-2 py-2 text-sm tabular-nums"
-          />
-        </label>
-        <button
-          type="submit"
-          className="min-h-11 rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)]"
-        >
-          Go
-        </button>
-      </form>
+      <CompareDateForm dateA={result.dateA} dateB={result.dateB} todayKey={todayKey} />
 
       {!result.hasAnyDataA && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--accent-soft)] p-3 text-sm">
@@ -281,12 +344,15 @@ export default async function ComparePage({
       )}
 
       <Card title="The work between">
-        <div
-          aria-label={`The work between ${formatHeroDate(result.dateA)} and ${formatHeroDate(result.dateB)}: ${between.workoutsCompleted} workouts, ${between.hikesCompleted} hikes, ${between.hikeElevationFt} feet climbed, ${between.xpEarned} XP earned`}
-        >
+        <div aria-label={workBetweenLabel}>
           <div className="grid grid-cols-3 gap-2">
             <StatTile label="workouts" value={formatValue(between.workoutsCompleted, "")} />
             <StatTile label="hikes" value={formatValue(between.hikesCompleted, "")} />
+            <StatTile
+              label="baseline tests"
+              value={formatValue(between.baselineTestsLogged, "")}
+            />
+            <StatTile label="notes" value={formatValue(between.notesLogged, "")} />
             <StatTile label="ft climbed" value={formatValue(between.hikeElevationFt, "ft")} />
             <StatTile label="mi hiked" value={formatValue(between.hikeDistanceMi, "mi")} />
             <StatTile label="XP" value={formatDelta(between.xpEarned, "")} />
