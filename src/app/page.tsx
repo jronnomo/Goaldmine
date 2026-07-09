@@ -11,6 +11,7 @@ import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay, U
 import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
 import { getDb } from "@/lib/db";
 import { getCurrentUserId } from "@/lib/auth/current-user";
+import { getGoalCount } from "@/lib/goal-count";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
@@ -33,9 +34,8 @@ export default async function HomePage() {
   // getCurrentUserId() is React.cache-deduped — this call is free (same session user).
   const uid = await getCurrentUserId();
   const cookieName = `gm_onboarding_dismissed_${uid.slice(0, 16)}`;
-  const gateDb = await getDb();
   const [gateGoalCount, gateCookieJar] = await Promise.all([
-    gateDb.goal.count(),
+    getGoalCount(),
     cookies(),
   ]);
   if (gateGoalCount === 0 && !gateCookieJar.get(cookieName)) {

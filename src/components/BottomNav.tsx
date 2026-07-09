@@ -76,12 +76,14 @@ export function BottomNav({
   libraryFoods,
   trackedSoFar,
   dayTarget,
+  goalCount,
 }: {
   todaysMeals?: TodayMealLite[];
   quickPickFoods?: LibraryFood[];
   libraryFoods?: LibraryFood[];
   trackedSoFar?: DayMacros;
   dayTarget?: DayMacros | null;
+  goalCount: number;
 }) {
   const pathname = usePathname();
   const [logOpen, setLogOpen] = useState(false);
@@ -190,7 +192,7 @@ export function BottomNav({
         onClose={() => setMoreOpen(false)}
         title="More"
       >
-        <MoreSheet onClose={() => setMoreOpen(false)} />
+        <MoreSheet onClose={() => setMoreOpen(false)} goalCount={goalCount} />
       </BottomSheet>
     </>
   );

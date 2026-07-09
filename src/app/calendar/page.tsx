@@ -4,6 +4,7 @@ import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { getCalendarMonth } from "@/lib/calendar";
 import { resolveLegend } from "@/lib/legend";
+import { getGoalCount } from "@/lib/goal-count";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,12 @@ export default async function CalendarPage({
 
   const { cells, monthStart, goal, program, otherGoals } = await getCalendarMonth({ year, month });
   const legend = resolveLegend(goal);
+  // First-run signal: goalCount, NOT !goal — `goal` is the focus goal only
+  // (getCalendarMonth's findFirst({ isFocus: true })), and focus-goal deletion
+  // has no reassignment guard, so !goal is reachable with goalCount > 0 (an
+  // established user whose focus goal was deleted). goalCount===0 is the
+  // precise "truly no goals" signal, matching Today's gate (page.tsx).
+  const goalCount = await getGoalCount();
 
   const prevYear = month === 0 ? year - 1 : year;
   const prevMonth = month === 0 ? 11 : month - 1;
@@ -61,6 +68,21 @@ export default async function CalendarPage({
           {new Date(nextYear, nextMonth, 1).toLocaleDateString(undefined, { month: "short" })} →
         </Link>
       </div>
+
+      {goalCount === 0 && (
+        <Card title="Get started">
+          <p className="text-sm text-[var(--muted)]">
+            Welcome to Goaldmine — start by creating your first goal. Your calendar fills in as
+            you log.
+          </p>
+          <Link
+            href="/onboarding"
+            className="mt-3 inline-block text-sm font-medium text-[var(--accent)] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+          >
+            Get started →
+          </Link>
+        </Card>
+      )}
 
       <Card className="!px-2">
         <CalendarMonth
@@ -130,7 +152,7 @@ export default async function CalendarPage({
           {goal.targetDate ? ` — ${new Date(goal.targetDate).toLocaleDateString()}` : ""}
         </p>
       )}
-      {!program && (
+      {!program && goalCount > 0 && (
         <p className="text-xs text-[var(--muted)] text-center">
           No active plan. <Link href="/goals" className="text-[var(--accent)]">Create a goal</Link> to populate the calendar.
         </p>

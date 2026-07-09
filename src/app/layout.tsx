@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth/auth";
 import { getDb } from "@/lib/db";
 import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { getGoalCount } from "@/lib/goal-count";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
 import {
   sumLoggedDayMacros,
@@ -162,6 +163,10 @@ export default async function RootLayout({
     // nutrition-plan target. Mirrors /nutrition/page.tsx exactly.
     resolveDay(now),
   ]);
+  // Standalone statement (not folded into the meal Promise.all above) — keeps
+  // #230's diff to pure additions so #233 (N2 layout-fetch-deferral, slated to
+  // gut the 4-item meal array) can delete around it without touching this line.
+  const goalCount = await getGoalCount();
 
   const todaysMeals: TodayMealLite[] = rawMeals.map((m) => ({
     id: m.id,
@@ -199,6 +204,7 @@ export default async function RootLayout({
         libraryFoods={libraryFoods}
         trackedSoFar={trackedTodayMacros}
         dayTarget={dayTargetMacros}
+        goalCount={goalCount}
       />
     </Shell>
   );

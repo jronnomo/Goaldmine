@@ -5,6 +5,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 
 export type MoreSheetProps = {
   onClose: () => void;
+  goalCount: number;
 };
 
 type NavRow = {
@@ -145,9 +146,35 @@ const navRows: NavRow[] = [
   },
 ];
 
-export function MoreSheet({ onClose }: MoreSheetProps) {
+export function MoreSheet({ onClose, goalCount }: MoreSheetProps) {
   return (
     <div className="py-2">
+      {/* 0-goal re-entry row — cookie-independent, so a user who dismissed the
+          Today onboarding card still has a nav path back to the guided flow
+          (Today's raw /goals row only reaches GoalCreateForm, not /onboarding). */}
+      {goalCount === 0 && (
+        <Link
+          href="/onboarding"
+          onClick={onClose}
+          className="flex items-center gap-3 px-4 py-3 min-h-[48px] hover:bg-[var(--border)]/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset"
+        >
+          <span className="text-[var(--accent)] shrink-0">
+            <GoalsIcon />
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-medium text-[var(--foreground)]">
+              Set up your first goal
+            </span>
+            <span className="block text-xs text-[var(--muted)]">
+              Guided setup — goal, targets, and your Claude coach
+            </span>
+          </span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden className="text-[var(--muted)] shrink-0">
+            <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </Link>
+      )}
+
       {navRows.map(({ href, label, sub, icon }) => (
         <Link
           key={href}
