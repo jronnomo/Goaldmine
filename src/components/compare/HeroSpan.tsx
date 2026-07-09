@@ -63,6 +63,7 @@ export function HeroSpan({
         {formatHeroDate(dateA)} → {formatHeroDate(dateB)}{" "}
         <span className="text-[var(--muted)]">· {spanDays} days</span>
       </h1>
+      <p className="mt-1 text-xs text-[var(--muted)]">Values as of end of each day.</p>
       <p className="mt-2 text-[15px] text-[var(--muted)]">{spanDays} days of showing up.</p>
       {swapped && <p className="mt-1 text-xs text-[var(--muted)]">Dates reordered.</p>}
       {sameDay && <p className="mt-1 text-xs text-[var(--muted)]">Same day selected.</p>}
