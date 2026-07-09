@@ -50,6 +50,7 @@ export type GoalPresentation = {
   statSlots: StatSlot[];
   restCopy: string | null;
   legendDefault: "fitness" | "project";
+  classLabel: string;
 };
 
 // ─── Entries ──────────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ export const FITNESS_PRESENTATION: GoalPresentation = {
   restCopy:
     "A short walk or light stretch today builds the aerobic base and joint resilience your goal needs — treat recovery as training, not a day off.",
   legendDefault: "fitness",
+  classLabel: "Adventurer",
 };
 
 export const PROJECT_PRESENTATION: GoalPresentation = {
@@ -109,12 +111,14 @@ export const PROJECT_PRESENTATION: GoalPresentation = {
   ],
   restCopy: null,
   legendDefault: "project",
+  classLabel: "Builder",
 };
 
 export const DEFAULT_PRESENTATION: GoalPresentation = {
   ...FITNESS_PRESENTATION,
   kind: "__default__",
   restCopy: null, // recovery tip is fitness-specific; unknown kinds get no tip
+  // classLabel deliberately NOT overridden — unknown kinds inherit "Adventurer" from the spread (documented AC choice, see PRD §6).
 };
 
 // ─── Registry + resolver ──────────────────────────────────────────────────────

@@ -134,6 +134,11 @@ describe("presentationForGoal — fitness kind", () => {
     const p = presentationForGoal({ kind: "fitness" });
     expect(p.legendDefault).toBe("fitness");
   });
+
+  it("classLabel is 'Adventurer'", () => {
+    const p = presentationForGoal({ kind: "fitness" });
+    expect(p.classLabel).toBe("Adventurer");
+  });
 });
 
 // ─── Case 4: Default fallback ─────────────────────────────────────────────────
@@ -177,12 +182,21 @@ describe("presentationForGoal — default fallback", () => {
     ]);
   });
 
+  it("unknown kind → classLabel is 'Adventurer' (inherited, documented AC choice)", () => {
+    const p = presentationForGoal({ kind: "galaxy-brain" });
+    expect(p.classLabel).toBe("Adventurer");
+  });
+
   it("DEFAULT_PRESENTATION kind is __default__", () => {
     expect(DEFAULT_PRESENTATION.kind).toBe("__default__");
   });
 
   it("DEFAULT_PRESENTATION.restCopy is null (recovery tip is fitness-specific)", () => {
     expect(DEFAULT_PRESENTATION.restCopy).toBeNull();
+  });
+
+  it("DEFAULT_PRESENTATION.classLabel inherits 'Adventurer' from the FITNESS spread (deliberate)", () => {
+    expect(DEFAULT_PRESENTATION.classLabel).toBe("Adventurer");
   });
 });
 
@@ -234,6 +248,11 @@ describe("presentationForGoal — project kind (structural)", () => {
   it("legendDefault is 'project'", () => {
     const p = presentationForGoal({ kind: "project" });
     expect(p.legendDefault).toBe("project");
+  });
+
+  it("classLabel is 'Builder'", () => {
+    const p = presentationForGoal({ kind: "project" });
+    expect(p.classLabel).toBe("Builder");
   });
 });
 

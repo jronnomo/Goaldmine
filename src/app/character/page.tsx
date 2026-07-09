@@ -15,6 +15,7 @@ import { ReachMeter } from "@/components/ReachMeter";
 import { computeGameState } from "@/lib/game/engine";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { computeStackRarity } from "@/lib/rarity";
+import { presentationForGoal } from "@/lib/goal-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -73,7 +74,7 @@ export default async function CharacterPage() {
               </span>
               {" "}
               <span className="text-sm font-normal" style={{ color: "var(--muted)" }}>
-                {state.goalKind === "fitness" ? "Adventurer" : state.goalKind}
+                {presentationForGoal({ kind: state.goalKind }).classLabel}
               </span>
             </p>
             <div className="mt-2">

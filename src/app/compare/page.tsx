@@ -251,19 +251,42 @@ export default async function ComparePage({
   const strengthEntries = winFirst(result.strength);
   const bodyEntries = winFirst(result.body);
 
+  // #229: fitness-framed tiles/rows in "The work between" (workouts, hikes,
+  // baseline tests, ft climbed, mi hiked, and the whole cumulative[] block —
+  // 100% fitness-domain per compare.ts:397-401) render only when at least
+  // one compared goal is kind==="fitness". Notes/XP/Level stay kind-neutral
+  // and always render. For any fitness-present compare this is a pure
+  // superset-wrap of the existing JSX — no reordering — so the rendered
+  // output stays byte-identical (architecture-critique S2).
+  const hasFitnessGoal = result.goals.some((g) => g.kind === "fitness");
+
   // aria-label for "The work between" must enumerate exactly what's
-  // rendered (architecture-critique S4) — the Level tile is conditional on
-  // both levels being non-null, so the label clause is too, or it'd assert
-  // content that isn't there.
+  // rendered (architecture-critique S4/C1) — built as a clause array so the
+  // fitness-gate and the Level-tile gate (2 independent booleans, 4 combos)
+  // can't drift out of sync with the rendered tile set via string-concat
+  // comma bugs.
+  const workBetweenClauses: string[] = [];
+  if (hasFitnessGoal) {
+    workBetweenClauses.push(
+      `${between.workoutsCompleted} workouts`,
+      `${between.hikesCompleted} hikes`,
+      `${between.baselineTestsLogged} baseline tests logged`,
+    );
+  }
+  workBetweenClauses.push(`${between.notesLogged} notes logged`);
+  if (hasFitnessGoal) {
+    workBetweenClauses.push(
+      `${between.hikeElevationFt} feet climbed`,
+      `${between.hikeDistanceMi} miles hiked`,
+    );
+  }
+  workBetweenClauses.push(`${between.xpEarned} XP earned`);
+  if (between.levelA !== null && between.levelB !== null) {
+    workBetweenClauses.push(`level ${between.levelA} to ${between.levelB}`);
+  }
   const workBetweenLabel =
     `The work between ${formatHeroDate(result.dateA)} and ${formatHeroDate(result.dateB)}: ` +
-    `${between.workoutsCompleted} workouts, ${between.hikesCompleted} hikes, ` +
-    `${between.baselineTestsLogged} baseline tests logged, ${between.notesLogged} notes logged, ` +
-    `${between.hikeElevationFt} feet climbed, ${between.hikeDistanceMi} miles hiked, ` +
-    `${between.xpEarned} XP earned` +
-    (between.levelA !== null && between.levelB !== null
-      ? `, level ${between.levelA} to ${between.levelB}`
-      : "");
+    workBetweenClauses.join(", ");
 
   return (
     <div className="mx-auto max-w-md space-y-4 p-4">
@@ -307,6 +330,13 @@ export default async function ComparePage({
       {/* Date form — plain GET, no server action (PRD §4.3). */}
       <CompareDateForm dateA={result.dateA} dateB={result.dateB} todayKey={todayKey} />
 
+      {/* #229 architecture-critique C3: hasAnyDataA is computed compare.ts-side
+          from raw workout/hike counts regardless of goal kind, independent of
+          the page-level hasFitnessGoal gate below. A project-only-goals user
+          who nonetheless has historical workout data could see this banner
+          reference data that's now hidden by the fitness-tile gate. Accepted
+          scope boundary (PRD explicitly forbids touching compare.ts's
+          hasAnyDataA logic here) — do not "fix" hasAnyDataA into a regression. */}
       {!result.hasAnyDataA && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--accent-soft)] p-3 text-sm">
           Nothing was logged as of {formatHeroDate(result.dateA)} — everything below is new
@@ -346,25 +376,35 @@ export default async function ComparePage({
       <Card title="The work between">
         <div aria-label={workBetweenLabel}>
           <div className="grid grid-cols-3 gap-2">
-            <StatTile label="workouts" value={formatValue(between.workoutsCompleted, "")} />
-            <StatTile label="hikes" value={formatValue(between.hikesCompleted, "")} />
-            <StatTile
-              label="baseline tests"
-              value={formatValue(between.baselineTestsLogged, "")}
-            />
+            {hasFitnessGoal && (
+              <>
+                <StatTile label="workouts" value={formatValue(between.workoutsCompleted, "")} />
+                <StatTile label="hikes" value={formatValue(between.hikesCompleted, "")} />
+                <StatTile
+                  label="baseline tests"
+                  value={formatValue(between.baselineTestsLogged, "")}
+                />
+              </>
+            )}
             <StatTile label="notes" value={formatValue(between.notesLogged, "")} />
-            <StatTile label="ft climbed" value={formatValue(between.hikeElevationFt, "ft")} />
-            <StatTile label="mi hiked" value={formatValue(between.hikeDistanceMi, "mi")} />
+            {hasFitnessGoal && (
+              <>
+                <StatTile label="ft climbed" value={formatValue(between.hikeElevationFt, "ft")} />
+                <StatTile label="mi hiked" value={formatValue(between.hikeDistanceMi, "mi")} />
+              </>
+            )}
             <StatTile label="XP" value={formatDelta(between.xpEarned, "")} />
             {between.levelA !== null && between.levelB !== null && (
               <StatTile label="Level" value={`${between.levelA} → ${between.levelB}`} />
             )}
           </div>
-          <div className="mt-3">
-            {cumulative.map((e) => (
-              <DeltaRow key={e.key} entry={e} />
-            ))}
-          </div>
+          {hasFitnessGoal && (
+            <div className="mt-3">
+              {cumulative.map((e) => (
+                <DeltaRow key={e.key} entry={e} />
+              ))}
+            </div>
+          )}
         </div>
       </Card>
 

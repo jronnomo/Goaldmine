@@ -19,8 +19,16 @@ import { USER_TZ } from "@/lib/calendar";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
+import { presentationForGoal } from "@/lib/goal-presentation";
 
 export const dynamic = "force-dynamic";
+
+// Word-aware title-case for reusing ringLabel ("READINESS"/"PROGRESS") as a
+// Card title — architecture-critique S1. Not `s[0] + s.slice(1).toLowerCase()`
+// so a hypothetical future multi-word ringLabel title-cases every word.
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export default async function GoalDetail({
   params,
@@ -235,7 +243,7 @@ export default async function GoalDetail({
       </Card>
 
       {readiness && (
-        <Card title="Readiness">
+        <Card title={titleCase(presentationForGoal(goal).ringLabel)}>
           <div className="flex items-baseline justify-between mb-2">
             <p className="text-4xl font-semibold tracking-tight">{readiness.score}<span className="text-base text-[var(--muted)]">/100</span></p>
             {readiness.missing.length > 0 && (
