@@ -178,9 +178,11 @@ export default async function ProgressPage() {
                   </p>
                 )}
                 {series.length > 1 ? (
-                  <div aria-label={readinessAriaLabel}>
-                    <ReadinessChart data={series} targetDate={goal.targetDate?.toISOString()} />
-                  </div>
+                  <ReadinessChart
+                    data={series}
+                    targetDate={goal.targetDate?.toISOString()}
+                    ariaLabel={readinessAriaLabel}
+                  />
                 ) : (
                   <p className="text-xs text-[var(--muted)] mb-3">
                     Trend appears once you have at least two weeks of data.
@@ -209,7 +211,7 @@ export default async function ProgressPage() {
           {hasMrrTarget && (
             mrrPoints.length > 0 ? (
               <Card title="MRR Trend">
-                <HistoryChart data={mrrPoints} units="$" />
+                <HistoryChart data={mrrPoints} units="$" ariaLabel="MRR trend chart" />
               </Card>
             ) : (
               <Card title="MRR Trend">
@@ -243,9 +245,7 @@ export default async function ProgressPage() {
                   }
                 />
               </div>
-              <div aria-label={weightAriaLabel}>
-                <WeightChart data={weights} />
-              </div>
+              <WeightChart data={weights} ariaLabel={weightAriaLabel} />
             </>
           )}
         </Card>

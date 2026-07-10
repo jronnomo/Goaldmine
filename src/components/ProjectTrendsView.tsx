@@ -76,7 +76,12 @@ export function ProjectTrendsView({
                   No {s.label} logged yet — log one to see the trend.
                 </p>
               ) : (
-                <HistoryChart data={s.points} units={s.units} domain={s.domain} />
+                <HistoryChart
+                  data={s.points}
+                  units={s.units}
+                  domain={s.domain}
+                  ariaLabel={`${s.label} trend chart`}
+                />
               )}
             </Card>
           );

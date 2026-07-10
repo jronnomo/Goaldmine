@@ -76,7 +76,12 @@ export default async function MetricDetailPage({
         {series.points.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No readings yet.</p>
         ) : (
-          <HistoryChart data={series.points} units={series.units} domain={series.domain} />
+          <HistoryChart
+            data={series.points}
+            units={series.units}
+            domain={series.domain}
+            ariaLabel={`${series.label} trend chart`}
+          />
         )}
       </Card>
 

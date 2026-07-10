@@ -151,7 +151,7 @@ export function GoalCreateForm({
       )}
 
       {error && (
-        <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
+        <p role="alert" className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
