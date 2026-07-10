@@ -4,13 +4,17 @@
 // Client component for the /recap page.
 // Owns: week selector, template toggle, highlight picker, preview image, download links.
 //
-// CRIT-2 compliance: receives ONLY {offset, label}[] + postedWeeks: number[] from the server.
-// No Date objects, no WeeklyRecap, no client-side TZ math. Label always
+// CRIT-2 compliance: receives ONLY {offset, label}[] + postedWeeks/weeksWithData: number[]
+// from the server. No Date objects, no WeeklyRecap, no client-side TZ math. Label always
 // comes from weeks[weekIdx].label (pre-computed server-side by weekRangeLabel).
 
 import { useState, useEffect } from "react";
 import type { RecapTemplate, RecapCardFormat, RecapHighlight } from "@/lib/recap";
 import { markRecapPosted } from "@/lib/recap-actions";
+
+// #231: max manual Retry attempts against the uncached satori/resvg render
+// (route.tsx `force-dynamic`, no caching) before showing a terminal message.
+const MAX_RETRY_ATTEMPTS = 3;
 
 type WeekItem = { offset: number; label: string };
 
@@ -18,16 +22,24 @@ export function RecapClient({
   weeks,
   defaultTemplate = "coal",
   postedWeeks = [],
+  weeksWithData = [],
 }: {
   weeks: WeekItem[];
   defaultTemplate?: RecapTemplate;
   postedWeeks?: number[]; // plain offsets — no Date objects (CRIT-2)
+  weeksWithData?: number[]; // plain offsets — no Date objects (CRIT-2)
 }) {
   // weekIdx: 0 = current week, 1 = one week ago, etc.
   const [weekIdx, setWeekIdx] = useState(0);
   const [template, setTemplate] = useState<RecapTemplate>(defaultTemplate);
   const [format, setFormat] = useState<RecapCardFormat>("story");
   const [imageLoading, setImageLoading] = useState(true);
+  // #231: onError fallback state — separate from the empty-week skip-mount
+  // guard below. imageFailed covers a genuine render failure (card route
+  // responds but the <img> errors); reset at every cardUrl-mutating site.
+  const [imageFailed, setImageFailed] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // ── Highlight state ──────────────────────────────────────────────────────
   // candidates: null = loading in progress, [] = loaded (no candidates found)
@@ -60,9 +72,24 @@ export function RecapClient({
   }, [postedWeeks]);
 
   // ── Fetch candidates when weekIdx changes (purely async — no synchronous setState) ──
+  // #231: gated on hasData — an empty week has no PRs/hikes/badges/baselines to
+  // feature (all four highlight sources require the same rows weeksWithData is
+  // gating on), so short-circuit without hitting the server's computeWeeklyRecap.
   useEffect(() => {
     const offset = weeks[weekIdx]?.offset ?? 0;
+    const weekHasData = weeksWithData.includes(offset);
     let cancelled = false;
+
+    if (!weekHasData) {
+      // Async (microtask), matching the fetch branch below — no synchronous
+      // setState in the effect body.
+      Promise.resolve().then(() => {
+        if (!cancelled) setCandidates([]);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     fetch(`/recap/highlights?weekOffset=${offset}`)
       .then((r) => (r.ok ? r.json() : Promise.resolve({ highlights: [] })))
@@ -76,7 +103,7 @@ export function RecapClient({
     return () => {
       cancelled = true;
     };
-  }, [weekIdx, weeks]);
+  }, [weekIdx, weeks, weeksWithData]);
 
   // ── Week navigation — also resets highlight + share state ───────────────
   // locallyPosted is intentionally NOT reset here; posted state persists across week nav.
@@ -87,6 +114,9 @@ export function RecapClient({
     setHighlightValue("");
     setCustomText("");
     setImageLoading(true);
+    setImageFailed(false);
+    setRetryCount(0);
+    setRetryNonce(0);
     // Reset share state so the button is never locked on the new week
     setSharing(false);
     setShareError(null);
@@ -94,6 +124,9 @@ export function RecapClient({
 
   // ── Derived values ────────────────────────────────────────────────────────
   const currentWeek = weeks[weekIdx];
+  // hasData: #231 image-mount gate — see page.tsx comment for the 5-model set
+  // this is computed from. Independent of recap.ts's caption-only `emptyWeek`.
+  const hasData = weeksWithData.includes(currentWeek.offset);
   // isPosted: true when this week's offset is in the server list OR locally optimistic
   const isPosted =
     postedWeeks.includes(currentWeek.offset) ||
@@ -102,7 +135,10 @@ export function RecapClient({
   const highlightParam = highlightValue
     ? `&highlight=${encodeURIComponent(highlightValue)}`
     : "";
-  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}&format=${format}${highlightParam}`;
+  // _retry cache-busts the browser's image cache after a failed load — image
+  // error responses are cacheable by some browsers/CDNs, so a bare re-render
+  // without a URL change won't reliably re-fire the request.
+  const cardUrl = `/recap/card?weekOffset=${currentWeek.offset}&template=${template}&format=${format}${highlightParam}&_retry=${retryNonce}`;
   const cardFileName = `recap-card-${format}.png`;
   // Preview intrinsic dimensions per format (display is responsive via CSS).
   const previewSize: Record<RecapCardFormat, { w: number; h: number }> = {
@@ -124,6 +160,20 @@ export function RecapClient({
       setHighlightValue(value);
     }
     setImageLoading(true);
+    setImageFailed(false);
+  }
+
+  // ── onError / Retry handlers ────────────────────────────────────────────
+  function handleImageError() {
+    setImageFailed(true);
+    setImageLoading(false);
+  }
+
+  function handleRetry() {
+    setImageFailed(false);
+    setImageLoading(true);
+    setRetryCount((c) => c + 1);
+    setRetryNonce((n) => n + 1);
   }
 
   const selectValue = highlightValue.startsWith("custom:")
@@ -194,25 +244,56 @@ export function RecapClient({
     }
   }
 
+  const emptyCopy =
+    currentWeek.offset === 0
+      ? "Nothing to recap yet this week — log a workout, hike, or project progress and this card fills in."
+      : "Nothing was logged this week — pick another week.";
+
   return (
     <div className="space-y-4">
-      {/* Preview image zone */}
-      <div className="relative flex justify-center overflow-hidden rounded-lg bg-[var(--card)]">
-        {imageLoading && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-sm text-[var(--muted)]">Loading…</span>
+      {/* Preview zone — three mutually exclusive states, same frame/aspect slot:
+          #231 empty week (no data, no img mount) / render failure (onError) / normal preview. */}
+      <div
+        className="relative flex items-center justify-center overflow-hidden rounded-lg bg-[var(--card)]"
+        style={{ aspectRatio: `${previewSize[format].w} / ${previewSize[format].h}` }}
+      >
+        {!hasData ? (
+          <p className="px-6 text-center text-sm text-[var(--muted)]">{emptyCopy}</p>
+        ) : imageFailed ? (
+          <div className="flex flex-col items-center gap-3 px-6 text-center">
+            <p className="text-sm text-[var(--muted)]">Preview couldn&apos;t render.</p>
+            {retryCount < MAX_RETRY_ATTEMPTS ? (
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="min-h-[44px] px-4 rounded-lg border border-[var(--accent)] text-sm font-medium text-[var(--accent)] hover:bg-[var(--accent)]/10 transition-colors"
+              >
+                Retry
+              </button>
+            ) : (
+              <p className="text-xs text-[var(--muted)]">Still not loading — try again later.</p>
+            )}
           </div>
+        ) : (
+          <>
+            {imageLoading && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-sm text-[var(--muted)]">Loading…</span>
+              </div>
+            )}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cardUrl}
+              width={previewSize[format].w}
+              height={previewSize[format].h}
+              alt="Weekly recap card preview"
+              className="w-full h-auto rounded-lg"
+              onLoadStart={() => setImageLoading(true)}
+              onLoad={() => setImageLoading(false)}
+              onError={handleImageError}
+            />
+          </>
         )}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={cardUrl}
-          width={previewSize[format].w}
-          height={previewSize[format].h}
-          alt="Weekly recap card preview"
-          className="w-full h-auto rounded-lg"
-          onLoadStart={() => setImageLoading(true)}
-          onLoad={() => setImageLoading(false)}
-        />
       </div>
 
       {/* Week selector */}
@@ -240,97 +321,108 @@ export function RecapClient({
         </button>
       </div>
 
-      {/* Format toggle — output dimensions for the shareable card */}
-      <div className="flex gap-2">
-        {(
-          [
-            { value: "story", label: "Story 9:16" },
-            { value: "post", label: "Post 4:5" },
-            { value: "square", label: "Square 1:1" },
-          ] as const
-        ).map((f) => (
-          <button
-            key={f.value}
-            type="button"
-            aria-pressed={format === f.value}
-            onClick={() => {
-              setFormat(f.value);
-              setImageLoading(true);
-            }}
-            className={`flex-1 min-h-[44px] rounded-lg border text-sm font-medium transition-colors ${
-              format === f.value
-                ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
-                : "border-[var(--border)] text-[var(--muted)] hover:text-foreground"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
+      {/* Format toggle — output dimensions for the shareable card.
+          #231: hidden on !hasData — cosmetic for a card that won't render. */}
+      {hasData && (
+        <div className="flex gap-2">
+          {(
+            [
+              { value: "story", label: "Story 9:16" },
+              { value: "post", label: "Post 4:5" },
+              { value: "square", label: "Square 1:1" },
+            ] as const
+          ).map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              aria-pressed={format === f.value}
+              onClick={() => {
+                setFormat(f.value);
+                setImageLoading(true);
+                setImageFailed(false);
+              }}
+              className={`flex-1 min-h-[44px] rounded-lg border text-sm font-medium transition-colors ${
+                format === f.value
+                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-foreground"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Template toggle */}
-      <div className="flex gap-2">
-        {(["coal", "parchment"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            aria-pressed={template === t}
-            onClick={() => {
-              setTemplate(t);
-              setImageLoading(true);
-            }}
-            className={`flex-1 min-h-[44px] rounded-lg border text-sm font-medium capitalize transition-colors ${
-              template === t
-                ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
-                : "border-[var(--border)] text-[var(--muted)] hover:text-foreground"
-            }`}
-          >
-            {t === "coal" ? "Coal" : "Parchment"}
-          </button>
-        ))}
-      </div>
+      {/* Template toggle — #231: hidden on !hasData, same reasoning as format toggle. */}
+      {hasData && (
+        <div className="flex gap-2">
+          {(["coal", "parchment"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={template === t}
+              onClick={() => {
+                setTemplate(t);
+                setImageLoading(true);
+                setImageFailed(false);
+              }}
+              className={`flex-1 min-h-[44px] rounded-lg border text-sm font-medium capitalize transition-colors ${
+                template === t
+                  ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent)]/10"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-foreground"
+              }`}
+            >
+              {t === "coal" ? "Coal" : "Parchment"}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {/* Highlight picker */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-[var(--muted)]">Featured Highlight</span>
-          {highlightLoading && (
-            <span className="text-xs text-[var(--muted)]">Loading…</span>
+      {/* Highlight picker — #231: hidden on !hasData. Candidates would be empty
+          anyway (all four highlight sources require the same rows hasData gates on). */}
+      {hasData && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--muted)]">Featured Highlight</span>
+            {highlightLoading && (
+              <span className="text-xs text-[var(--muted)]">Loading…</span>
+            )}
+          </div>
+
+          <select
+            value={selectValue}
+            onChange={(e) => handleHighlightSelectChange(e.target.value)}
+            aria-label="Select featured highlight"
+            disabled={highlightLoading}
+            className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)] disabled:opacity-50"
+          >
+            <option value="">None</option>
+            {(candidates ?? []).map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.icon} {h.label}{h.meta ? ` — ${h.meta}` : ""}
+              </option>
+            ))}
+            <option value="__custom__">Custom…</option>
+          </select>
+
+          {highlightValue.startsWith("custom:") && (
+            <input
+              type="text"
+              placeholder="Enter your highlight text"
+              value={customText}
+              onChange={(e) => {
+                const text = e.target.value;
+                setCustomText(text);
+                setHighlightValue(`custom:${text}`);
+                setImageLoading(true);
+                setImageFailed(false);
+              }}
+              aria-label="Custom highlight text"
+              className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)]"
+            />
           )}
         </div>
-
-        <select
-          value={selectValue}
-          onChange={(e) => handleHighlightSelectChange(e.target.value)}
-          aria-label="Select featured highlight"
-          disabled={highlightLoading}
-          className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)] disabled:opacity-50"
-        >
-          <option value="">None</option>
-          {(candidates ?? []).map((h) => (
-            <option key={h.id} value={h.id}>
-              {h.icon} {h.label}{h.meta ? ` — ${h.meta}` : ""}
-            </option>
-          ))}
-          <option value="__custom__">Custom…</option>
-        </select>
-
-        {highlightValue.startsWith("custom:") && (
-          <input
-            type="text"
-            placeholder="Enter your highlight text"
-            value={customText}
-            onChange={(e) => {
-              const text = e.target.value;
-              setCustomText(text);
-              setHighlightValue(`custom:${text}`);
-              setImageLoading(true);
-            }}
-            aria-label="Custom highlight text"
-            className="w-full min-h-[44px] rounded-lg border border-[var(--border)] text-sm px-3 bg-[var(--card)] text-[var(--foreground)]"
-          />
-        )}
-      </div>
+      )}
 
       {/* Posted status — persistent polite live region, reserved height, no layout shift.
           Mounted empty so the optimistic text mutation announces (LogNoteForm.tsx:83 pattern).
@@ -347,49 +439,61 @@ export function RecapClient({
       </p>
 
       {/* Share — primary accent CTA when not posted; secondary border + "Share again" when posted.
-          disabled only while sharing (never on isPosted); focus ring preserved. */}
-      <button
-        type="button"
-        onClick={handleShare}
-        disabled={sharing}
-        className={`flex items-center justify-center min-h-[44px] w-full rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
-          isPosted
-            ? "border border-[var(--border)] text-[var(--muted)] hover:text-foreground" // secondary
-            : "bg-[var(--accent)] text-[var(--accent-fg)] hover:opacity-90" // primary
-        }`}
-      >
-        {sharing ? "Preparing…" : isPosted ? "Share again" : "Share"}
-      </button>
+          disabled only while sharing (never on isPosted); focus ring preserved.
+          #231: hidden on !hasData — sharing fetches cardUrl + caption; nothing to share. */}
+      {hasData && (
+        <button
+          type="button"
+          onClick={handleShare}
+          disabled={sharing}
+          className={`flex items-center justify-center min-h-[44px] w-full rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+            isPosted
+              ? "border border-[var(--border)] text-[var(--muted)] hover:text-foreground" // secondary
+              : "bg-[var(--accent)] text-[var(--accent-fg)] hover:opacity-90" // primary
+          }`}
+        >
+          {sharing ? "Preparing…" : isPosted ? "Share again" : "Share"}
+        </button>
+      )}
 
-      {/* Share error — muted note, hidden unless set (W-4: role=alert for screen readers) */}
-      {shareError && (
+      {/* Share error — muted note, hidden unless set (W-4: role=alert for screen readers).
+          #231: gated on hasData explicitly (not just Share's unreachability) so a stale
+          shareError from before a week-nav can never render over an empty week. */}
+      {hasData && shareError && (
         <p role="alert" className="text-xs text-[var(--muted)] text-center -mt-2">
           {shareError}
         </p>
       )}
 
-      {/* Download card — secondary action (border style) */}
-      <a
-        href={cardUrl}
-        download={cardFileName}
-        className="flex items-center justify-center min-h-[44px] w-full rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
-      >
-        Download Card
-      </a>
+      {/* Download card — secondary action (border style).
+          #231: hidden on !hasData — same render-waste class as the preview img. */}
+      {hasData && (
+        <a
+          href={cardUrl}
+          download={cardFileName}
+          className="flex items-center justify-center min-h-[44px] w-full rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
+        >
+          Download Card
+        </a>
+      )}
 
-      {/* Download stories (no highlight — slides are unchanged) */}
-      <div className="flex gap-2">
-        {([1, 2, 3] as const).map((slide) => (
-          <a
-            key={slide}
-            href={storyUrl(slide)}
-            download={`recap-story-${slide}.png`}
-            className="flex-1 flex items-center justify-center min-h-[44px] rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
-          >
-            Story {slide}
-          </a>
-        ))}
-      </div>
+      {/* Download stories (no highlight — slides are unchanged).
+          #231: hidden on !hasData — /recap/story/[slide] also calls computeWeeklyRecap
+          + renders a PNG, the same expensive-render class the guard exists to avoid. */}
+      {hasData && (
+        <div className="flex gap-2">
+          {([1, 2, 3] as const).map((slide) => (
+            <a
+              key={slide}
+              href={storyUrl(slide)}
+              download={`recap-story-${slide}.png`}
+              className="flex-1 flex items-center justify-center min-h-[44px] rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-foreground transition-colors"
+            >
+              Story {slide}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

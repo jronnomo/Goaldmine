@@ -202,3 +202,29 @@ export function weekRangeLabel(asOf: Date, weekOffset: number): string {
 
   return `${fmt.format(monday)} – ${fmt.format(sunday)}`;
 }
+
+// ─── bucketDatesToWeekOffsets ─────────────────────────────────────────────────
+
+/**
+ * Pure helper (#231): bucket a list of row dates into week offsets against a
+ * list of week-start Mondays, via dateKey(startOfWeekMonday(d)) equality —
+ * the same pattern recap/page.tsx already hand-rolls for `postedWeeks`.
+ *
+ * `mondays` must be ordered so `mondays[i]` corresponds to offset `-i`
+ * (mondays[0] = current week's Monday, matching recap/page.tsx's construction
+ * via `addDays(startOfWeekMonday(now), -i * 7)`). A date whose USER_TZ week
+ * doesn't match any entry in `mondays` (outside the window) is dropped.
+ * Deduped via Set; result order is not guaranteed — sort at the call site if
+ * a stable order matters.
+ */
+export function bucketDatesToWeekOffsets(dates: Date[], mondays: Date[]): number[] {
+  const offsets = new Set<number>();
+  for (const d of dates) {
+    const dk = dateKey(startOfWeekMonday(d));
+    const matchIdx = mondays.findIndex((m) => dateKey(m) === dk);
+    if (matchIdx !== -1) {
+      offsets.add(-matchIdx);
+    }
+  }
+  return [...offsets];
+}

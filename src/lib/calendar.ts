@@ -44,6 +44,7 @@ export {
   shiftWallClock,
   toDatetimeLocalValue,
   weekRangeLabel,
+  bucketDatesToWeekOffsets,
 } from "./calendar-core";
 
 export type CalendarDayCell = {

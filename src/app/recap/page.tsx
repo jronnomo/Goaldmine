@@ -7,7 +7,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { weekRangeLabel } from "@/lib/recap";
-import { startOfWeekMonday, addDays, dateKey } from "@/lib/calendar";
+import {
+  startOfWeekMonday,
+  endOfWeekSunday,
+  addDays,
+  bucketDatesToWeekOffsets,
+} from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { RecapClient } from "@/components/RecapClient";
 
@@ -27,41 +32,81 @@ export default async function RecapPage() {
   const mondays = Array.from({ length: 13 }, (_, i) =>
     addDays(thisMonday, -i * 7),
   );
+  // Full 13-week window as [oldest Monday 00:00, newest Sunday 23:59:59.999],
+  // shared by the postedWeeks and weeksWithData queries below.
+  const windowStart = mondays[12]!;
+  const windowEnd = endOfWeekSunday(mondays[0]!);
 
-  // Query shared_recap notes in the 13-week window
-  // [mondays[12], mondays[0]] = [oldest Monday, newest Monday]
   const db = await getDb();
+
+  // Query shared_recap notes in the 13-week window.
   const postedNotes = await db.note.findMany({
     where: {
       type: "shared_recap",
-      targetDate: {
-        gte: mondays[12], // monday(-12) — oldest
-        lte: mondays[0], // monday(0)  — current
-      },
+      targetDate: { gte: windowStart, lte: windowEnd },
     },
     select: { targetDate: true },
   });
-
-  // Map each note's targetDate → offset via dateKey equality.
-  // Use a Set to dedup (handles rare duplicate rows for same Monday).
   // CRIT-2: no Date objects cross to client — only numbers.
-  const postedWeekSet = new Set<number>();
-  for (const note of postedNotes) {
-    if (!note.targetDate) continue;
-    const noteDk = dateKey(note.targetDate);
-    const matchIdx = mondays.findIndex((m) => dateKey(m) === noteDk);
-    if (matchIdx !== -1) {
-      postedWeekSet.add(-matchIdx); // offset = -(index into mondays)
-    }
-  }
-  const postedWeeks: number[] = [...postedWeekSet];
+  const postedWeeks: number[] = bucketDatesToWeekOffsets(
+    postedNotes.map((n) => n.targetDate).filter((d): d is Date => d !== null),
+    mondays,
+  );
+
+  // #231: weeksWithData is an IMAGE-MOUNT gate for RecapClient — independent of,
+  // and broader than, recap.ts's `emptyWeek` (which stays workout/hike-only by
+  // design; see recap.ts:538). It answers "did the user log anything at all
+  // this week, across every model the recap card can draw from" so the client
+  // never mounts /recap/card (or fetches /recap/highlights) for a week that
+  // would only render a zero card. Model set + field/status choices verified
+  // against recap.ts's own query shapes (PRD-231 §1.2 premise correction):
+  //   - workout: status "completed", startedAt (recap.ts:345-348)
+  //   - hike: status "completed", date (recap.ts:352-355)
+  //   - baseline: date, no status column (recap.ts:614-615)
+  //   - logEntry: date (project metric logs, recap.ts:369-374, all-goals here)
+  //   - scheduledItem: completedAt non-null (project completions, recap.ts:376-390)
+  const [weekWorkouts, weekHikes, weekBaselines, weekLogEntries, weekScheduledItems] =
+    await Promise.all([
+      db.workout.findMany({
+        where: { status: "completed", startedAt: { gte: windowStart, lte: windowEnd } },
+        select: { startedAt: true },
+      }),
+      db.hike.findMany({
+        where: { status: "completed", date: { gte: windowStart, lte: windowEnd } },
+        select: { date: true },
+      }),
+      db.baseline.findMany({
+        where: { date: { gte: windowStart, lte: windowEnd } },
+        select: { date: true },
+      }),
+      db.logEntry.findMany({
+        where: { date: { gte: windowStart, lte: windowEnd } },
+        select: { date: true },
+      }),
+      db.scheduledItem.findMany({
+        where: { completedAt: { gte: windowStart, lte: windowEnd } },
+        select: { completedAt: true },
+      }),
+    ]);
+
+  const dataDates: Date[] = [
+    ...weekWorkouts.map((w) => w.startedAt),
+    ...weekHikes.map((h) => h.date),
+    ...weekBaselines.map((b) => b.date),
+    ...weekLogEntries.map((l) => l.date),
+    ...weekScheduledItems
+      .map((s) => s.completedAt)
+      .filter((d): d is Date => d !== null),
+  ];
+  // CRIT-2: no Date objects cross to client — only numbers.
+  const weeksWithData: number[] = bucketDatesToWeekOffsets(dataDates, mondays);
 
   return (
     <main className="max-w-md mx-auto p-4 space-y-4">
       <header className="pt-2">
         <h1 className="text-2xl font-semibold tracking-tight">Weekly Recap</h1>
       </header>
-      <RecapClient weeks={weeks} postedWeeks={postedWeeks} />
+      <RecapClient weeks={weeks} postedWeeks={postedWeeks} weeksWithData={weeksWithData} />
     </main>
   );
 }
