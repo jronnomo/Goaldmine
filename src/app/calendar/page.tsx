@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
+import { StatTile } from "@/components/StatTile";
 import { getCalendarMonth } from "@/lib/calendar";
 import { resolveLegend } from "@/lib/legend";
 import { getGoalCount } from "@/lib/goal-count";
@@ -138,12 +139,12 @@ export default async function CalendarPage({
       </Card>
 
       <Card title="This month">
-        <ul className="grid grid-cols-4 gap-2 text-center">
-          <Stat label="Completed" value={completedCount} />
-          <Stat label="Hikes" value={hikeCount} />
-          <Stat label="Overrides" value={overrideCount} />
-          <Stat label="Tests due" value={baselinesDueCount} />
-        </ul>
+        <div className="grid grid-cols-4 gap-2">
+          <StatTile label="Completed" value={completedCount} />
+          <StatTile label="Hikes" value={hikeCount} />
+          <StatTile label="Overrides" value={overrideCount} />
+          <StatTile label="Tests due" value={baselinesDueCount} />
+        </div>
       </Card>
 
       {goal && (
@@ -158,15 +159,6 @@ export default async function CalendarPage({
         </p>
       )}
     </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <li className="rounded-lg border border-[var(--border)] py-2 list-none">
-      <p className="text-lg font-semibold">{value}</p>
-      <p className="text-xs text-[var(--muted)]">{label}</p>
-    </li>
   );
 }
 
