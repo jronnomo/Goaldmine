@@ -232,9 +232,9 @@ export default async function ProgressPage() {
           ) : (
             <>
               <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-                <WeightStat label="Current" value={latest !== undefined ? `${latest} lb` : "—"} />
-                <WeightStat label="Start" value={start !== undefined ? `${start} lb` : "—"} />
-                <WeightStat
+                <StatTile label="Current" value={latest !== undefined ? `${latest} lb` : "—"} />
+                <StatTile label="Start" value={start !== undefined ? `${start} lb` : "—"} />
+                <StatTile
                   label="Δ"
                   value={
                     delta !== null
@@ -264,15 +264,6 @@ export default async function ProgressPage() {
           <StatTile label="Hikes" value={hikeCount} />
         </div>
       </Card>
-    </div>
-  );
-}
-
-function WeightStat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg border border-[var(--border)] py-2 text-center">
-      <p className="text-lg font-semibold">{value}</p>
-      <p className="text-xs text-[var(--muted)]">{label}</p>
     </div>
   );
 }

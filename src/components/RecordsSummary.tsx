@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { StatusPill } from "@/components/StatusPill";
+import { countByStatus, formatBest, statusTextClass } from "@/lib/baseline-format";
 import {
   getBaselineSchedule,
   getExerciseSummaries,
@@ -164,67 +166,3 @@ function nextCheckpoint(s: ScheduledBaseline) {
   );
 }
 
-function countByStatus(list: ScheduledBaseline[]): Record<CheckpointStatus, number> {
-  const out: Record<CheckpointStatus, number> = { done: 0, due: 0, overdue: 0, upcoming: 0 };
-  for (const s of list) {
-    for (const c of s.checkpoints) out[c.status]++;
-  }
-  return out;
-}
-
-function statusTextClass(s: CheckpointStatus): string {
-  switch (s) {
-    case "done":
-      return "text-[var(--success)]";
-    case "due":
-      return "text-[var(--warning)]";
-    case "overdue":
-      return "text-[var(--danger)]";
-    default:
-      return "text-[var(--muted)]";
-  }
-}
-
-function StatusPill({
-  label,
-  count,
-  tone,
-}: {
-  label: string;
-  count: number;
-  tone: "success" | "warning" | "danger" | "muted";
-}) {
-  const cls =
-    tone === "success"
-      ? "border-[var(--success)]/40 text-[var(--success)]"
-      : tone === "warning"
-        ? "border-[var(--warning)]/40 text-[var(--warning)]"
-        : tone === "danger"
-          ? "border-[var(--danger)]/40 text-[var(--danger)]"
-          : "border-[var(--border)] text-[var(--muted)]";
-  return (
-    <div className={`rounded-lg border ${cls} py-2`}>
-      <p className="text-lg font-semibold tabular-nums">{count}</p>
-      <p className="text-xs">{label}</p>
-    </div>
-  );
-}
-
-function formatBest(e: {
-  primary: string;
-  bestValue: number;
-  bestRaw: { weightLb: number | null; reps: number | null; durationSec: number | null };
-}): string {
-  if (e.primary === "rm") return `~${Math.round(e.bestValue)} lb 1RM (${e.bestRaw.weightLb} × ${e.bestRaw.reps})`;
-  if (e.primary === "reps") return `${e.bestValue} reps`;
-  if (e.primary === "duration") return formatDuration(e.bestValue);
-  if (e.primary === "distance") return `${e.bestValue.toFixed(2)} mi`;
-  if (e.primary === "time") return formatDuration(e.bestValue);
-  return String(e.bestValue);
-}
-
-function formatDuration(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${String(sec).padStart(2, "0")}`;
-}

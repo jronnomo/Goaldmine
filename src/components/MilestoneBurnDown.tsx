@@ -3,6 +3,7 @@
 // REQ-006: burn-down card for progress page. Returns null when no milestones.
 
 import { Card } from "@/components/Card";
+import { StatTile } from "@/components/StatTile";
 import { getDb } from "@/lib/db";
 import { startOfDay, USER_TZ } from "@/lib/calendar";
 
@@ -62,9 +63,9 @@ export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
 
         {/* 3-stat grid (UXR-s4-12) */}
         <div className="grid grid-cols-3 gap-2 mb-3 text-center">
-          <BurndownStat label="Total" value={total} testId="burndown-stat-total" />
-          <BurndownStat label="Done" value={done} testId="burndown-stat-done" />
-          <BurndownStat label="Remaining" value={remaining} testId="burndown-stat-remaining" />
+          <StatTile label="Total" value={total} testId="burndown-stat-total" />
+          <StatTile label="Done" value={done} testId="burndown-stat-done" />
+          <StatTile label="Remaining" value={remaining} testId="burndown-stat-remaining" />
         </div>
 
         {/* Thin accent scope bar — NO Bullseye per UXR-s4-12; NO animation per UXR-s4-17 */}
@@ -104,26 +105,6 @@ export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
           </div>
         )}
       </Card>
-    </div>
-  );
-}
-
-function BurndownStat({
-  label,
-  value,
-  testId,
-}: {
-  label: string;
-  value: number;
-  testId: string;
-}) {
-  return (
-    <div
-      className="rounded-lg border border-[var(--border)] py-2 text-center"
-      data-testid={testId}
-    >
-      <p className="text-lg font-semibold">{value}</p>
-      <p className="text-xs text-[var(--muted)]">{label}</p>
     </div>
   );
 }

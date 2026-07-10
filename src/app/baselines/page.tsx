@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
-import { getBaselineSchedule, getExerciseSummaries, checkpointLabel, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
+import { StatusPill } from "@/components/StatusPill";
+import { countByStatus, formatBest, statusTextClass } from "@/lib/baseline-format";
+import { getBaselineSchedule, getExerciseSummaries, checkpointLabel, type ScheduledBaseline } from "@/lib/records";
 
 export const dynamic = "force-dynamic";
 
@@ -31,9 +33,9 @@ export default async function BaselinesPage() {
 
       {schedule.scheduled.length > 0 && (
         <div className="grid grid-cols-4 gap-2 text-center">
-          <StatusPill label="Done" count={totals.done} tone="emerald" />
-          <StatusPill label="Due" count={totals.due} tone="amber" />
-          <StatusPill label="Overdue" count={totals.overdue} tone="red" />
+          <StatusPill label="Done" count={totals.done} tone="success" />
+          <StatusPill label="Due" count={totals.due} tone="warning" />
+          <StatusPill label="Overdue" count={totals.overdue} tone="danger" />
           <StatusPill label="Upcoming" count={totals.upcoming} tone="muted" />
         </div>
       )}
@@ -145,7 +147,7 @@ function ScheduledRow({ s }: { s: ScheduledBaseline }) {
             : "no results yet"}
         </p>
         <p className="text-xs">
-          <span className={statusClass(next.status)}>
+          <span className={statusTextClass(next.status)}>
             {checkpointLabel(next)} {next.status}
           </span>
           <span className="text-[var(--muted)]">
@@ -163,67 +165,6 @@ function ScheduledRow({ s }: { s: ScheduledBaseline }) {
   );
 }
 
-function StatusPill({
-  label,
-  count,
-  tone,
-}: {
-  label: string;
-  count: number;
-  tone: "emerald" | "amber" | "red" | "muted";
-}) {
-  const cls =
-    tone === "emerald"
-      ? "border-[var(--success)]/40 text-[var(--success)]"
-      : tone === "amber"
-        ? "border-[var(--warning)]/40 text-[var(--warning)]"
-        : tone === "red"
-          ? "border-[var(--danger)]/40 text-[var(--danger)]"
-          : "border-[var(--border)] text-[var(--muted)]";
-  return (
-    <div className={`rounded-lg border ${cls} py-2`}>
-      <p className="text-lg font-semibold tabular-nums">{count}</p>
-      <p className="text-xs">{label}</p>
-    </div>
-  );
-}
-
-function statusClass(s: CheckpointStatus): string {
-  switch (s) {
-    case "done":
-      return "text-[var(--success)]";
-    case "due":
-      return "text-[var(--warning)]";
-    case "overdue":
-      return "text-[var(--danger)]";
-    default:
-      return "text-[var(--muted)]";
-  }
-}
-
-function countByStatus(list: ScheduledBaseline[]): Record<CheckpointStatus, number> {
-  const out: Record<CheckpointStatus, number> = { done: 0, due: 0, overdue: 0, upcoming: 0 };
-  for (const s of list) {
-    for (const c of s.checkpoints) out[c.status]++;
-  }
-  return out;
-}
-
 function formatNum(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
-}
-
-function formatBest(e: { primary: string; bestValue: number; bestRaw: { weightLb: number | null; reps: number | null; durationSec: number | null } }): string {
-  if (e.primary === "rm") return `~${Math.round(e.bestValue)} lb 1RM (${e.bestRaw.weightLb} × ${e.bestRaw.reps})`;
-  if (e.primary === "reps") return `${e.bestValue} reps`;
-  if (e.primary === "duration") return formatDuration(e.bestValue);
-  if (e.primary === "distance") return `${e.bestValue.toFixed(2)} mi`;
-  if (e.primary === "time") return formatDuration(e.bestValue);
-  return String(e.bestValue);
-}
-
-function formatDuration(s: number): string {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${String(sec).padStart(2, "0")}`;
 }
