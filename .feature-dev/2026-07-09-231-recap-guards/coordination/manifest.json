@@ -1,0 +1,10 @@
+{
+  "feature": "#231 recap empty-week guard + preview-failure fallback",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-231-recap-empty-week-guard.md",
+  "prd_issue": "https://github.com/jronnomo/goaldmine/issues/231",
+  "requirements": ["weeksWithData-5model", "bucket-helper+test", "skip-mount+copy", "onError-fallback"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
