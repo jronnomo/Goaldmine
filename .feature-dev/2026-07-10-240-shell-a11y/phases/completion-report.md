@@ -18,3 +18,13 @@ Premise check (BottomSheet line stale post-#253; focus mgmt from scratch; fallba
 ## Notes
 - Sprint 13 remaining: #241–#244, #249.
 - Browser-debt ledger: #237 (nutrition labels parity), #238 (plan-format parity), #239 (skeleton flash checks), **#240 (keyboard pass — REQUIRED before deploy)**.
+
+## ADDENDUM — Browser-debt pass completed (2026-07-10, Chrome reconnected)
+The consolidated #237–#240 debt pass ran live. Results:
+- **#237 ✓**: /nutrition group headers correct per day; all six labels present; composer chip order Preworkout→Dinner via testids.
+- **#238 ✓**: Today + /days/2026-07-10 + /goals/<elbert>/plan render canonical formats — "45 min"/"2 min"/"240 min"/"2:30" durations, "4× 12"/"5× max" compact prescriptions (string reps intact), Mobility/Cardio labels.
+- **#239 ✓**: all five skeletons caught live via MutationObserver during soft navigation (calendar's 7-col grid shape confirmed); real pages land cleanly after.
+- **#240**: tap targets 44×44 (JS-measured), aria-haspopup="menu" + aria-controls wired, Enter opens with focus on Settings ✓, outside-click theft-prevention ✓ — but **Escape/close refocus was BROKEN** (focus fell to <body>: the menu unmounts in the same commit, so the browser drops focus before React's cleanup containment check runs — the DA's guard verification was wrong on this path). **Fixed in df92c3e** (merged): guard now also refocuses when activeElement === body (the unmounted-menuitem case) while preserving the theft-prevention branch. Re-verified live: Escape → focus returns to trigger ✓; reopen → Settings focused ✓; outside-click → focus stays on clicked element ✓; Settings activation navigates cleanly ✓. Console clean throughout.
+- Gates post-fix: tsc 0 / lint 0 errors (after clearing a stale worktree's .next artifacts — the known gotcha) / 794/794.
+
+**The debt ledger is CLEAR. #240's required keyboard pass is done; the deploy blocker is lifted.**
