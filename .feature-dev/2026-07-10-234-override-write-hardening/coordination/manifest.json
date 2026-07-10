@@ -1,0 +1,10 @@
+{
+  "feature": "#234 day-override write-path hardening (shared validation + baseline guard)",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-234-override-write-hardening.md",
+  "prd_issue": "https://github.com/jronnomo/Goaldmine/issues/234",
+  "requirements": ["guard-extraction", "core-refactor", "day-actions-validation+datefix", "tests-first-guard-coverage"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
