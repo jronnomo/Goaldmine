@@ -1,7 +1,18 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+
+// Module-level: React keys the effect that (re)subscribes to this store off
+// the identity of the `subscribe` function passed to useSyncExternalStore. An
+// inline arrow would be a new identity every render, forcing a needless
+// resubscribe each time. This store never actually changes (see the
+// docstring below for why the flip doesn't come from a subscription event),
+// so the callback is never invoked — but the identity still needs to be
+// stable.
+function subscribeNever() {
+  return () => {};
+}
 
 export type BottomSheetProps = {
   open: boolean;
@@ -32,18 +43,34 @@ export type BottomSheetProps = {
  * inner one is dismissed. Both dialogs become body siblings in the DOM — the
  * native top-layer stacking is unchanged; only DOM ancestry is fixed.
  *
- * SSR guard: createPortal requires document, which doesn't exist on the server.
- * `typeof document === "undefined"` returns null during the server pass and the
- * initial hydration render. All sheets start closed (open=false), so there is
- * no visible flash — the dialog is simply absent from server HTML and inserted
- * on the client immediately after hydration. The existing useEffect([open])
- * for showModal/close fires after the portal is in the DOM and handles open
- * transitions correctly. This avoids calling setState inside an effect, which
- * is flagged by the project's react-hooks/set-state-in-effect lint rule.
+ * Two-phase mount: createPortal requires document, which doesn't exist on the
+ * server. We gate the portal on a `mounted` flag read via useSyncExternalStore,
+ * whose getServerSnapshot always returns false. Both the server render AND the
+ * client's first (hydration) render call getServerSnapshot — not getSnapshot —
+ * so both produce `mounted === false` and both return null. Server HTML and
+ * the hydration output agree; no mismatch.
+ *
+ * After hydration completes, React runs its own built-in post-hydration
+ * consistency check: it re-reads getSnapshot() (which returns true), sees
+ * that this differs from the value used at render time, and force-rerenders
+ * the component — flipping `mounted` to true and mounting the portal on that
+ * second client commit. Note this flip does NOT come from subscribeNever's
+ * callback firing (it's a permanent no-op subscription, see above the
+ * component) — it comes from React's internal recheck. Don't "simplify" this
+ * by replacing it with useState + useEffect(() => setMounted(true), []); that
+ * idiom trips the project's react-hooks/set-state-in-effect lint rule, which
+ * is exactly why this useSyncExternalStore idiom was chosen instead
+ * (precedent: ThemeToggle.tsx).
+ *
+ * All sheets start closed (open=false), so there is no visible flash — the
+ * dialog is simply absent until the second client commit. The existing
+ * useEffect([open]) for showModal/close no-ops on a null dialogRef until the
+ * portal exists, then fires normally and handles open transitions correctly.
  */
 export function BottomSheet({ open, onClose, title, children, "data-testid": testId }: BottomSheetProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
 
   // Keep the native dialog in sync with the `open` prop.
   // Cleanup (blueprint v2 §7.2): close the dialog on unmount or open→false
@@ -75,10 +102,12 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
     };
   }, [open]);
 
-  // SSR guard: document does not exist on the server or during the initial
-  // hydration pass. Return null to skip rendering — all sheets start closed,
-  // so there is no flash. The portal renders on the next client commit.
-  if (typeof document === "undefined") return null;
+  // Two-phase mount guard (see docstring above): `mounted` is false on the
+  // server render and the client hydration render alike (both call
+  // getServerSnapshot), so this returns null for both — no hydration
+  // mismatch. React's post-hydration consistency recheck flips it to true on
+  // the next client commit, at which point the portal mounts.
+  if (!mounted) return null;
 
   return createPortal(
     <dialog
