@@ -1,0 +1,10 @@
+{
+  "feature": "#235 structured Day Override editor v1 + Advanced JSON tab",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-235-day-override-editor.md",
+  "prd_issue": "https://github.com/jronnomo/Goaldmine/issues/235",
+  "requirements": ["day-template-edit-lib", "structured-tab", "advanced-tab-idiom", "save-through-hardened-path"],
+  "agents": [],
+  "iteration": 1,
+  "status": "ux-research"
+}
