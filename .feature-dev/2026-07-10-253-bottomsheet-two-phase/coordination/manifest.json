@@ -1,0 +1,15 @@
+{
+  "feature": "BottomSheet real two-phase mount (#253)",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-253-bottomsheet-two-phase.md",
+  "prd_issue": "https://github.com/jronnomo/Goaldmine/issues/253",
+  "base_head": "54b6e6c",
+  "test_baseline": 770,
+  "requirements": ["REQ-001"],
+  "agents": [
+    {"role": "devils-advocate", "id": "a18eedd1421c527d0", "verdict": "APPROVE-WITH-CONDITIONS"},
+    {"role": "developer", "id": "a3f5e45f8ad5141cc", "commit": "708044d"}
+  ],
+  "iteration": 1,
+  "status": "complete"
+}
