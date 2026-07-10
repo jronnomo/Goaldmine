@@ -78,14 +78,19 @@ export function SessionMenu({ user }: SessionMenuProps) {
   }, [open]);
 
   // Focus management (#240): menu open moves focus to the first item; any
-  // close path returns it to the trigger. The cleanup guard prevents the
-  // mousedown outside-close from yanking focus off an element the user just
-  // clicked into (native focus-on-mousedown runs before this cleanup) — only
-  // refocus if focus is still inside the menu container. Note: this also
-  // depends on the app router's own navigation-time focus call being a no-op
-  // (it targets the new route segment's root element, which is a plain,
-  // non-focusable <div> today) — if a future page root becomes focusable,
-  // revisit this ordering assumption.
+  // close path returns it to the trigger. The cleanup guard covers two
+  // cases: (a) focus has fallen to <body> because the focused menuitem was
+  // unmounted in the same commit that closed the menu — Escape and item-
+  // activation both close the menu and unmount [role="menu"] before this
+  // cleanup runs, so the browser drops focus to body first; refocus the
+  // trigger. (b) focus is on a real outside element the user clicked into
+  // (native focus-on-mousedown runs before this cleanup) — leave it alone,
+  // otherwise the mousedown outside-close would yank focus off an element
+  // the user just clicked into. Note: this also depends on the app router's
+  // own navigation-time focus call being a no-op (it targets the new route
+  // segment's root element, which is a plain, non-focusable <div> today) —
+  // if a future page root becomes focusable, revisit this ordering
+  // assumption.
   useEffect(() => {
     if (!open) return;
     firstItemRef.current?.focus();
@@ -94,7 +99,8 @@ export function SessionMenu({ user }: SessionMenuProps) {
     const container = containerRef.current;
     const trigger = triggerRef.current;
     return () => {
-      if (container?.contains(document.activeElement)) {
+      const ae = document.activeElement;
+      if (ae === document.body || container?.contains(ae)) {
         trigger?.focus();
       }
     };
