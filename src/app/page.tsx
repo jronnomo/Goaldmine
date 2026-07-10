@@ -339,9 +339,13 @@ export default async function HomePage() {
         </>
       ) : (
         <>
-          {dayBlocks.map((block, i) => (
-            <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
-          ))}
+          {dayBlocks.length === 0 ? (
+            <p className="text-sm text-[var(--muted)] px-1">Nothing scheduled today.</p>
+          ) : (
+            dayBlocks.map((block, i) => (
+              <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
+            ))
+          )}
 
           {/* Deferred rotation workout — stepped aside for today's baseline test or hike.
               Dimmed + labelled so it reads as "normally here, not today", never the task. */}

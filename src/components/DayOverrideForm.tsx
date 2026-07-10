@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { ConfirmButton } from "@/components/ConfirmButton";
+import { DayWorkoutEditor, type DayWorkoutEditorHandle } from "@/components/DayWorkoutEditor";
 import { clearDayOverride, upsertDayOverrideFromForm } from "@/lib/day-actions";
 
 export function DayOverrideForm({
@@ -15,12 +16,18 @@ export function DayOverrideForm({
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [hasFieldErrors, setHasFieldErrors] = useState(false);
+  const editorRef = useRef<DayWorkoutEditorHandle>(null);
 
   return (
     <form
       action={(fd) =>
         startTransition(async () => {
           setError(null);
+          // Advanced-tab pre-submit gate (#235 R6): malformed JSON must never
+          // reach the server round-trip — block here, error stays in the
+          // Advanced tab's own switchError slot.
+          if (editorRef.current && !editorRef.current.validateBeforeSubmit()) return;
           try {
             await upsertDayOverrideFromForm(dateKey, fd);
           } catch (e) {
@@ -30,16 +37,11 @@ export function DayOverrideForm({
       }
       className="flex flex-col gap-3"
     >
-      <details>
-        <summary className="text-sm font-medium cursor-pointer">Workout JSON</summary>
-        <textarea
-          name="workoutJson"
-          rows={12}
-          defaultValue={defaults.workoutJson}
-          placeholder="Leave blank to use the rotation default."
-          className="mt-2 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-xs font-mono resize-y"
-        />
-      </details>
+      <DayWorkoutEditor
+        ref={editorRef}
+        defaultWorkoutJson={defaults.workoutJson}
+        onFieldErrorsChange={setHasFieldErrors}
+      />
 
       <label className="flex flex-col gap-1">
         <span className="text-sm font-medium">Nutrition (override)</span>
@@ -73,8 +75,17 @@ export function DayOverrideForm({
         />
       </label>
 
+      {/* Shared error slot (#235 R9/UXR-235-09/10): the baseline-guard covenant
+          throw and any other save error land here — below the editor and
+          nutrition/mobility/notes fields, above Save/Clear, aria-live so a
+          blocked save is announced regardless of scroll position. This is
+          the `saveError` root slot; it's a sibling of DayWorkoutEditor's own
+          `key={mode}` tab-fade wrapper, so a tab switch never clears it. */}
       {error && (
-        <p className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2">
+        <p
+          aria-live="polite"
+          className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2"
+        >
           {error}
         </p>
       )}
@@ -82,7 +93,7 @@ export function DayOverrideForm({
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || hasFieldErrors}
           className="flex-1 rounded-lg bg-[var(--accent)] text-[var(--accent-fg)] px-4 py-2 font-medium disabled:opacity-50"
         >
           {pending ? "Saving…" : hasOverride ? "Update override" : "Save override"}

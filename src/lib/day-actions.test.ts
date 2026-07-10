@@ -52,6 +52,7 @@ vi.mock("@/lib/program", () => ({ getActiveProgram: mockGetActiveProgram }));
 import { clearDayOverride, upsertDayOverrideFromForm } from "@/lib/day-actions";
 import { parseDateKey, rotationBaselineNamesForDate, startOfDay } from "@/lib/calendar";
 import type { ActiveProgramSnapshot } from "@/lib/program";
+import { Prisma } from "@/generated/prisma/client";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -260,27 +261,138 @@ describe("upsertDayOverrideFromForm — audible-with-baselines guard matrix", ()
     expect(mockUpsert).toHaveBeenCalledTimes(1);
   });
 
-  it("passes: clearing an existing baseline-day override's workout (all fields blank → delete path)", async () => {
+  // Superseded by the tri-state fix (#235 R1) — see the tri-state matrix
+  // below (case 4). Under the OLD two-state collapse, an entirely-absent
+  // workoutJson field was indistinguishable from "explicitly cleared", so an
+  // all-blank form on a day with an existing workout override used to DELETE
+  // the whole row. That was the exact C2 lockout bug: the structured editor
+  // only ever omits the field (never sends a blank one) when the workout is
+  // untouched, so this path needed to start preserving the row instead.
+  it("workoutJson field ABSENT + all other fields blank + existing override HAS a workout: row is preserved, not deleted (tri-state)", async () => {
     mockFindUnique.mockResolvedValue({
       id: "override-existing",
       baselineTestNames: null,
       workoutJson: VALID_WORKOUT,
     });
     await expect(upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({}))).resolves.not.toThrow();
-    expect(mockDeleteMany).toHaveBeenCalledTimes(1);
-    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.update).not.toHaveProperty("workoutJson");
   });
 });
 
-// Named per the architecture critique (G1): the form's blank-textarea handling
-// collapses two different user intents — "never touched this field" and
-// "explicitly cleared a previously-populated workout" — into the identical
-// `workoutJson === null`. Both must silently skip the guard (nothing to audit
-// when no workout is being set), and this must match the MCP path's
-// notes-only-patch behavior (applyDayOverrideCore: input.workoutJson
-// undefined → touchedWorkout false → settingWorkout false → guard silent).
-describe("blank workout + notes-only save — explicit-clear vs never-touched collapse to null", () => {
-  it("never-touched workout field + notes-only edit on a baseline day: guard stays silent, save succeeds", async () => {
+// Tri-state workoutJson (#235 R1): the structured editor only renders the
+// hidden `workoutJson` input when the user actually touched the workout
+// (isTemplateDirty). day-actions.ts must distinguish three FormData states —
+// field ABSENT (untouched), field PRESENT + blank (explicit wipe), field
+// PRESENT + real JSON (full #234 pipeline) — not the old two-state collapse
+// that treated "never touched" and "explicitly cleared" identically.
+describe("tri-state workoutJson matrix (#235 R1 — architecture-blueprint-v2.md R9)", () => {
+  it("1. absent + existing override HAS workoutJson: column untouched after save; guard not evaluated; other fields still update", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "override-existing",
+      baselineTestNames: null,
+      workoutJson: VALID_WORKOUT,
+    });
+    await expect(
+      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ notes: "Skipped it, logged why" })),
+    ).resolves.not.toThrow(); // baseline day + no decision on file — guard would fire if evaluated
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.update).not.toHaveProperty("workoutJson");
+    expect(call.update.notes).toBe("Skipped it, logged why");
+  });
+
+  it("2. absent + no existing override + nutritionText provided: CREATE with workoutJson undefined (rotation stays live), no guard", async () => {
+    mockFindUnique.mockResolvedValue(null); // no existing override, non-baseline day
+    await expect(
+      upsertDayOverrideFromForm(NO_BASELINE_DAY_KEY, fd({ nutritionText: "Extra carbs today" })),
+    ).resolves.not.toThrow();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.create.workoutJson).toBeUndefined();
+    expect(call.create.nutritionText).toBe("Extra carbs today");
+  });
+
+  it("3. absent + no existing override + all fields blank: no-op delete (harmless, row never existed)", async () => {
+    mockFindUnique.mockResolvedValue(null);
+    await expect(upsertDayOverrideFromForm(NO_BASELINE_DAY_KEY, fd({}))).resolves.not.toThrow();
+    expect(mockDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("4. absent + existing override HAS workoutJson + all other fields now blank: row PRESERVED (not deleted) — finalWorkoutPresent keeps it alive", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "override-existing",
+      baselineTestNames: ["Pull-Up Max Reps"], // decision already on file so this isn't also a guard test
+      workoutJson: VALID_WORKOUT,
+    });
+    await expect(upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({}))).resolves.not.toThrow();
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.update).not.toHaveProperty("workoutJson");
+  });
+
+  it("5. present + blank + existing override HAS workoutJson: wipes to Prisma.JsonNull (today's semantics, unchanged); guard skipped", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "override-existing",
+      baselineTestNames: null,
+      workoutJson: VALID_WORKOUT,
+    });
+    await expect(
+      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ workoutJson: "", notes: "Cleared the workout on purpose" })),
+    ).resolves.not.toThrow();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.update).toHaveProperty("workoutJson");
+    expect(call.update.workoutJson).toEqual(Prisma.JsonNull);
+  });
+
+  it("6. present + blank + all else blank + existing override had ONLY workoutJson: delete-collapse fires, row removed", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "override-existing",
+      baselineTestNames: ["Pull-Up Max Reps"],
+      workoutJson: VALID_WORKOUT,
+    });
+    await expect(upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ workoutJson: "" }))).resolves.not.toThrow();
+    expect(mockDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("7. present + real value, baseline day, no baselineTestNames on file: guard fires (v1 cap, unchanged) — distinct from case 1's silence", async () => {
+    mockFindUnique.mockResolvedValue(null);
+    await expect(
+      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ workoutJson: JSON.stringify(VALID_WORKOUT) })),
+    ).rejects.toThrowError(/didn't make a baseline decision/);
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("8. present + real value, valid: full #234 pipeline unchanged (size, shape, guard, upsert)", async () => {
+    mockFindUnique.mockResolvedValue({
+      id: "override-existing",
+      baselineTestNames: ["Pull-Up Max Reps"],
+      workoutJson: null,
+    });
+    await expect(
+      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ workoutJson: JSON.stringify(VALID_WORKOUT) })),
+    ).resolves.not.toThrow();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0]![0];
+    expect(call.update.workoutJson).toEqual(VALID_WORKOUT);
+  });
+});
+
+// Named per the architecture critique (C2) and resolved by the tri-state fix
+// (#235 R1): under the OLD two-state collapse, "never touched this field"
+// and "explicitly cleared a previously-populated workout" were both
+// indistinguishable `workoutJson === null` — this suite now exercises them
+// as the genuinely distinct states the structured editor produces (field
+// absent vs field present-and-blank), both of which must still silently
+// skip the guard (nothing to audit when no workout is being SET).
+describe("notes-only save on a baseline day — guard silence for both tri-states that set no workout", () => {
+  it("field ABSENT (untouched workout) + notes-only edit on a baseline day: guard stays silent, save succeeds", async () => {
     mockFindUnique.mockResolvedValue(null); // no baseline decision on file
     await expect(
       upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ notes: "Felt great, no changes needed" })),
@@ -290,25 +402,24 @@ describe("blank workout + notes-only save — explicit-clear vs never-touched co
     expect(call.create.notes).toBe("Felt great, no changes needed");
   });
 
-  it("explicit clear of a previously-set workout on a baseline day: guard stays silent, save succeeds", async () => {
-    // A previously-populated workoutJson exists on the row; the user blanks
-    // the textarea and resubmits with only notes changed. workoutJson still
-    // parses to null (form has no way to distinguish "blank" from "clear").
+  it("field PRESENT + blank (explicit wipe) + notes-only edit on a baseline day: guard stays silent, save succeeds", async () => {
+    // A previously-populated workoutJson exists on the row; the Advanced tab
+    // was blanked and resubmitted with only notes also changed.
     mockFindUnique.mockResolvedValue({
       id: "override-existing",
       baselineTestNames: null,
       workoutJson: VALID_WORKOUT,
     });
     await expect(
-      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ notes: "Skipped it, logged why" })),
+      upsertDayOverrideFromForm(BASELINE_DAY_KEY, fd({ workoutJson: "", notes: "Skipped it, logged why" })),
     ).resolves.not.toThrow();
     expect(mockUpsert).toHaveBeenCalledTimes(1);
   });
 
   it("matches the MCP path's guard silence for a notes-only patch: settingWorkout=false on both sides", async () => {
-    // day-actions side: workoutJson parses to null when the field is blank —
-    // this IS the settingWorkout=false input the shared guard receives (see
-    // upsertDayOverrideFromForm's `settingWorkout: workoutJson !== null`).
+    // day-actions side: workoutJson stays null when the field is absent or
+    // blank — this IS the settingWorkout=false input the shared guard
+    // receives (see upsertDayOverrideFromForm's `settingWorkout: workoutJson !== null`).
     const formSideSettingWorkout = (null as unknown) !== null; // false, mirrors day-actions.ts
     // MCP side: applyDayOverrideCore computes `workoutValue !== undefined && workoutValue !== null`
     // for a notes-only patch, where workoutValue stays `undefined` (input.workoutJson never passed).

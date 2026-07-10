@@ -9,7 +9,16 @@ import { getActiveProgram } from "@/lib/program";
 import { assertBaselineDecisionMade, assertDayTemplateWithinSize, assertValidDayTemplate } from "@/lib/day-template-validation";
 
 export async function upsertDayOverrideFromForm(dateKey: string, form: FormData) {
-  const workoutRaw = (form.get("workoutJson") as string | null)?.trim() || null;
+  // Tri-state workoutJson (#235 R1): the structured editor only renders the
+  // hidden `workoutJson` input when the user actually touched the workout
+  // (isTemplateDirty). Three distinct FormData states, not two:
+  //   - field ABSENT entirely → untouched: skip the guard, don't touch the
+  //     workoutJson column at all (a pure nutrition/mobility/notes save on a
+  //     day with an existing workout override must leave that workout alone).
+  //   - field present, blank → explicit wipe (today's semantics, unchanged).
+  //   - field present, real JSON → full #234 pipeline (parse/size/shape/guard).
+  const workoutFieldProvided = form.has("workoutJson");
+  const workoutRaw = workoutFieldProvided ? ((form.get("workoutJson") as string | null) ?? "").trim() || null : null;
   const nutritionText = (form.get("nutritionText") as string | null)?.trim() || null;
   const mobilityText = (form.get("mobilityText") as string | null)?.trim() || null;
   const notes = (form.get("notes") as string | null)?.trim() || null;
@@ -35,10 +44,10 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
   // Audible-with-baselines guard: the dashboard form has no baselineTestNames
   // affordance yet (#235), so baselineInputProvided is always false here —
   // matches the MCP path's guard semantics for a caller that never touches
-  // that field. settingWorkout mirrors the form's blank-vs-populated collapse:
-  // a never-touched textarea and an explicit clear both parse to `null`
-  // workoutJson, so both correctly skip the guard (nothing to audit when no
-  // workout is being set).
+  // that field. settingWorkout is true only when the field was PROVIDED and
+  // parsed to a real template — an absent field (untouched workout) and an
+  // explicit blank (wipe) both correctly skip the guard (nothing to audit
+  // when no workout is being set).
   const existing = await prisma.planDayOverride.findUnique({ // non-scoped: plan override table
     where: { planId_date: { planId: program.id, date } },
   });
@@ -50,8 +59,16 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
     dateKey,
   });
 
-  // If everything is null/empty, treat as "remove override".
-  if (!workoutJson && !nutritionText && !mobilityText && !notes) {
+  // Delete-collapse must reason about the FINAL workout state, not the raw
+  // local `workoutJson` var — when the field is absent, "no workout" isn't
+  // true just because the local var is null; the existing row's workout (if
+  // any) survives untouched. Without this, a nutrition-only save that blanks
+  // the other three text fields on a day whose override has ONLY a workout
+  // override would silently delete the whole row, destroying the untouched
+  // workout (#235 R1).
+  const finalWorkoutPresent = workoutFieldProvided ? workoutJson !== null : !!existing?.workoutJson;
+
+  if (!finalWorkoutPresent && !nutritionText && !mobilityText && !notes) {
     await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } }); // non-scoped: plan override table
   } else {
     await prisma.planDayOverride.upsert({ // non-scoped: plan override table
@@ -65,7 +82,11 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
         notes,
       },
       update: {
-        workoutJson: workoutJson === null ? Prisma.JsonNull : (workoutJson as Prisma.InputJsonValue),
+        // Omit the key entirely when the field wasn't provided so Prisma
+        // leaves the existing workoutJson column untouched.
+        ...(workoutFieldProvided
+          ? { workoutJson: workoutJson === null ? Prisma.JsonNull : (workoutJson as Prisma.InputJsonValue) }
+          : {}),
         nutritionText,
         mobilityText,
         notes,
