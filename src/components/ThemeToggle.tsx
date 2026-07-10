@@ -48,7 +48,7 @@ export function ThemeToggle() {
       aria-label={aria}
       title={aria}
       suppressHydrationWarning
-      className="ml-auto inline-flex items-center justify-center w-9 h-9 rounded-full border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--accent)] transition-colors"
+      className="ml-auto inline-flex items-center justify-center w-11 h-11 rounded-full border border-[var(--border)] text-[var(--foreground)] hover:border-[var(--accent)] transition-colors"
     >
       <span aria-hidden className="text-base leading-none" suppressHydrationWarning>{glyph}</span>
     </button>
