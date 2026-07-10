@@ -1,0 +1,10 @@
+{
+  "feature": "#233 layout fetch deferral (meal props + dead query removal)",
+  "branch": "feature/phase1-auth",
+  "prd_path": "docs/prds/PRD-233-layout-fetch-deferral.md",
+  "prd_issue": "https://github.com/jronnomo/Goaldmine/issues/233",
+  "requirements": ["layout-deletion", "bottomnav-collapse", "loglauncher-deseed", "page-dead-query"],
+  "agents": [],
+  "iteration": 1,
+  "status": "critique"
+}
