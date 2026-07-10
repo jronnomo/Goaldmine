@@ -12,12 +12,32 @@ const cellInputBase =
   "w-full min-w-[3.5rem] rounded-lg border border-[var(--border)] bg-transparent px-2 py-2.5 " +
   "text-center font-mono text-base min-h-[44px] focus:outline-none focus:border-[var(--accent)] " +
   "disabled:opacity-50";
+// Foreign (Advanced-inserted) rows are read-only in Structured — restored
+// per the original PRD §3.1/§6 spec after QA (#235 iter2) found blueprint
+// v2's "fully editable" R2 supersession was shipped without the Tech-Lead
+// sign-off it explicitly flagged as required. Same grid geometry as
+// cellInputBase for layout continuity, no border/focus ring/background —
+// reads as static chrome, not a pressable field.
+const cellStaticBase =
+  "w-full min-w-[3.5rem] flex items-center justify-center rounded-lg px-2 py-2.5 " +
+  "text-center font-mono text-base min-h-[44px] text-[var(--foreground)]";
 
 function formatSecPlaceholder(sec: number | undefined): string {
   if (sec === undefined) return "—";
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Read-only cell for foreign rows — plain text, same grid geometry as an
+ * input cell, no interactive affordance. */
+function StaticCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className={labelClass}>{label}</span>
+      <div className={`${cellStaticBase} mt-0.5`}>{value || "—"}</div>
+    </div>
+  );
 }
 
 export function ExerciseRow({
@@ -27,7 +47,7 @@ export function ExerciseRow({
   onToggleSkip,
 }: {
   ex: ExerciseEditState;
-  /** The aligned base exercise (undefined for foreign rows — no placeholder, always editable). */
+  /** The aligned base exercise (undefined for foreign rows — no placeholder, read-only). */
   baseEx: ExercisePrescription | undefined;
   onFieldChange: (field: ExerciseFieldName, value: string) => void;
   onToggleSkip: () => void;
@@ -86,76 +106,100 @@ export function ExerciseRow({
       <div className={ex.skipped ? "opacity-50 pointer-events-none" : undefined} aria-hidden={ex.skipped}>
         {isTimed ? (
           <div className="grid grid-cols-[4.5rem_1fr] gap-2">
-            <div>
-              <span className={labelClass}>Sets</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                aria-label={`${ex.name} sets`}
-                value={ex.sets.value}
-                placeholder={ex.foreign ? "—" : String(baseEx?.sets ?? "—")}
-                disabled={ex.skipped}
-                onChange={(e) => onFieldChange("sets", e.target.value)}
-                className={`${cellInputBase} mt-0.5 ${setsError ? "border-[var(--danger)]" : ""}`}
-              />
-            </div>
-            <div>
-              <span className={labelClass}>Time (sec)</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                aria-label={`${ex.name} duration in seconds`}
-                value={ex.durationSec.value}
-                placeholder={
-                  ex.foreign ? "—" : formatSecPlaceholder(baseEx?.durationSec) + ` (${baseEx?.durationSec ?? "—"}s)`
-                }
-                disabled={ex.skipped}
-                onChange={(e) => onFieldChange("durationSec", e.target.value)}
-                className={`${cellInputBase} mt-0.5 ${durationError ? "border-[var(--danger)]" : ""}`}
-              />
-            </div>
+            {ex.foreign ? (
+              <>
+                <StaticCell label="Sets" value={ex.sets.value} />
+                <StaticCell
+                  label="Time (sec)"
+                  value={
+                    ex.durationSec.value !== "" && /^\d+$/.test(ex.durationSec.value)
+                      ? `${formatSecPlaceholder(Number(ex.durationSec.value))} (${ex.durationSec.value}s)`
+                      : ex.durationSec.value
+                  }
+                />
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className={labelClass}>Sets</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label={`${ex.name} sets`}
+                    value={ex.sets.value}
+                    placeholder={String(baseEx?.sets ?? "—")}
+                    disabled={ex.skipped}
+                    onChange={(e) => onFieldChange("sets", e.target.value)}
+                    className={`${cellInputBase} mt-0.5 ${setsError ? "border-[var(--danger)]" : ""}`}
+                  />
+                </div>
+                <div>
+                  <span className={labelClass}>Time (sec)</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label={`${ex.name} duration in seconds`}
+                    value={ex.durationSec.value}
+                    placeholder={formatSecPlaceholder(baseEx?.durationSec) + ` (${baseEx?.durationSec ?? "—"}s)`}
+                    disabled={ex.skipped}
+                    onChange={(e) => onFieldChange("durationSec", e.target.value)}
+                    className={`${cellInputBase} mt-0.5 ${durationError ? "border-[var(--danger)]" : ""}`}
+                  />
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-[4.5rem_1fr_1fr] gap-2">
-            <div>
-              <span className={labelClass}>Sets</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                aria-label={`${ex.name} sets`}
-                value={ex.sets.value}
-                placeholder={ex.foreign ? "—" : String(baseEx?.sets ?? "—")}
-                disabled={ex.skipped}
-                onChange={(e) => onFieldChange("sets", e.target.value)}
-                className={`${cellInputBase} mt-0.5 ${setsError ? "border-[var(--danger)]" : ""}`}
-              />
-            </div>
-            <div>
-              <span className={labelClass}>Reps</span>
-              <input
-                type="text"
-                inputMode="text"
-                aria-label={`${ex.name} reps`}
-                value={ex.reps.value}
-                placeholder={ex.foreign ? "—" : String(baseEx?.reps ?? "—")}
-                disabled={ex.skipped}
-                onChange={(e) => onFieldChange("reps", e.target.value)}
-                className={`${cellInputBase} mt-0.5`}
-              />
-            </div>
-            <div>
-              <span className={labelClass}>Weight</span>
-              <input
-                type="text"
-                inputMode="text"
-                aria-label={`${ex.name} weight hint`}
-                value={ex.weightHint.value}
-                placeholder={ex.foreign ? "—" : (baseEx?.weightHint ?? "—")}
-                disabled={ex.skipped}
-                onChange={(e) => onFieldChange("weightHint", e.target.value)}
-                className={`${cellInputBase} mt-0.5`}
-              />
-            </div>
+            {ex.foreign ? (
+              <>
+                <StaticCell label="Sets" value={ex.sets.value} />
+                <StaticCell label="Reps" value={ex.reps.value} />
+                <StaticCell label="Weight" value={ex.weightHint.value} />
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className={labelClass}>Sets</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    aria-label={`${ex.name} sets`}
+                    value={ex.sets.value}
+                    placeholder={String(baseEx?.sets ?? "—")}
+                    disabled={ex.skipped}
+                    onChange={(e) => onFieldChange("sets", e.target.value)}
+                    className={`${cellInputBase} mt-0.5 ${setsError ? "border-[var(--danger)]" : ""}`}
+                  />
+                </div>
+                <div>
+                  <span className={labelClass}>Reps</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    aria-label={`${ex.name} reps`}
+                    value={ex.reps.value}
+                    placeholder={String(baseEx?.reps ?? "—")}
+                    disabled={ex.skipped}
+                    onChange={(e) => onFieldChange("reps", e.target.value)}
+                    className={`${cellInputBase} mt-0.5`}
+                  />
+                </div>
+                <div>
+                  <span className={labelClass}>Weight</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    aria-label={`${ex.name} weight hint`}
+                    value={ex.weightHint.value}
+                    placeholder={baseEx?.weightHint ?? "—"}
+                    disabled={ex.skipped}
+                    onChange={(e) => onFieldChange("weightHint", e.target.value)}
+                    className={`${cellInputBase} mt-0.5`}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -170,14 +214,19 @@ export function ExerciseRow({
           </p>
         )}
 
-        {/* Notes disclosure — ephemeral open/closed state, excluded from EditorState */}
+        {/* Notes — foreign rows show the parsed literal as plain text (if
+            any); no disclosure toggle since there's nothing to edit.
+            Non-foreign notes disclosure has ephemeral open/closed state,
+            excluded from EditorState. */}
         <div className="mt-1.5">
-          {notesOpen ? (
+          {ex.foreign ? (
+            ex.notes.value && <p className="text-sm text-[var(--foreground)]">{ex.notes.value}</p>
+          ) : notesOpen ? (
             <input
               type="text"
               aria-label={`${ex.name} notes`}
               value={ex.notes.value}
-              placeholder={ex.foreign ? "—" : (baseEx?.notes ?? "Notes…")}
+              placeholder={baseEx?.notes ?? "Notes…"}
               disabled={ex.skipped}
               onChange={(e) => onFieldChange("notes", e.target.value)}
               className="item-row-anim w-full rounded-lg border border-[var(--border)] bg-transparent px-2 py-2 text-sm min-h-[44px] focus:outline-none focus:border-[var(--accent)]"

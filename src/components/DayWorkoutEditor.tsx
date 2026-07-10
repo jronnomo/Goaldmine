@@ -5,8 +5,10 @@ import { BlockCard } from "@/components/day-editor/BlockCard";
 import {
   baseToEditorState,
   computeNumericFieldError,
+  isAdvancedJsonDirty,
   isTemplateDirty,
   mergeTemplateEdits,
+  serializeForAdvanced,
   templateToEditorState,
 } from "@/lib/day-template-edit";
 import type { EditorState, ExerciseFieldName } from "@/lib/day-template-edit";
@@ -119,7 +121,7 @@ export const DayWorkoutEditor = forwardRef<
   }
 
   function openAdvanced() {
-    setAdvancedJson(JSON.stringify(mergeTemplateEdits(base, edits), null, 2));
+    setAdvancedJson(serializeForAdvanced(base, edits));
     setSwitchError(null);
     setMode("advanced");
   }
@@ -140,13 +142,23 @@ export const DayWorkoutEditor = forwardRef<
     }
   }
 
-  // Hidden input rendered whenever there's something to submit: either the
-  // structured diff is non-empty, or the user is actively in the Advanced
-  // tab (which always submits verbatim — no diff-gating there, matching
-  // TargetsBuilder's own unconditional-when-active hidden input). Omitted
-  // entirely otherwise, so a pure nutrition/mobility/notes save never
-  // touches the workoutJson column or the baseline guard (#235 R1/R6).
-  const showHiddenInput = mode === "advanced" || dirty;
+  // Hidden input rendered only when there's an actual workout edit to
+  // submit — mode-aware, NOT "mode === advanced" alone (#235 iter2 fix for
+  // the C1-deviation QA found: merely visiting Advanced, then saving a
+  // nutrition/notes-only change without switching back, must NOT re-arm the
+  // workoutJson column or the baseline guard). In Structured, that's the
+  // existing whole-blob diff (`isTemplateDirty`). In Advanced, it's whether
+  // the live textarea content diverges from `base` itself — deliberately
+  // NOT from whatever `openAdvanced()` last seeded the textarea with,
+  // because that seed already bakes in any prior Structured edits; diffing
+  // against the seed would report "not dirty" for those real edits too and
+  // silently drop them on Save. Diffing against `base` stays true for any
+  // genuine change (Structured-then-parked-in-Advanced, or typed directly
+  // into the JSON) and only goes false when the merged content is
+  // byte-identical to `base` — same "no diff → nothing to submit" contract
+  // `isTemplateDirty` already enforces for the Structured path.
+  const advancedDirty = isAdvancedJsonDirty(base, advancedJson);
+  const showHiddenInput = mode === "advanced" ? advancedDirty : dirty;
   const hiddenValue = mode === "advanced" ? advancedJson : JSON.stringify(mergeTemplateEdits(base, edits));
 
   return (
@@ -208,7 +220,13 @@ export const DayWorkoutEditor = forwardRef<
               : "border-[var(--border)] text-[var(--muted)]"
           }`}
         >
-          Advanced <span className="text-xs">⚠ raw</span>
+          {/* UXR-235-20: the "⚠ raw" sub-cue rides the button's inactive
+              text-[var(--muted)] color at 12px — light passes at
+              --muted-on-card, dark risks undershooting AA at this size, so
+              `dwe-raw-cue` (globals.css) bumps it to --foreground in dark
+              only. Only applied while inactive/muted; the active state's
+              --accent color is a separate, already-benchmarked contrast. */}
+          Advanced <span className={`text-xs ${mode !== "advanced" ? "dwe-raw-cue" : ""}`}>⚠ raw</span>
         </button>
       </div>
 

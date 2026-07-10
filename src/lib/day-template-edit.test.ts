@@ -11,6 +11,8 @@ import {
   templateToEditorState,
   mergeTemplateEdits,
   isTemplateDirty,
+  isAdvancedJsonDirty,
+  serializeForAdvanced,
   computeNumericFieldError,
   type EditorState,
 } from "@/lib/day-template-edit";
@@ -383,6 +385,43 @@ describe("16. isTemplateDirty regression guards (Co3)", () => {
     expect(b.blocks[0]!.exercises[0]!.weightHint).toBeUndefined();
     edits.blocks[0]!.exercises[0]!.weightHint = { touched: true, value: "   " };
     expect(isTemplateDirty(b, edits)).toBe(false);
+  });
+});
+
+describe("17. isAdvancedJsonDirty (#235 iter2 — C1-deviation fix)", () => {
+  it("a totally clean editor state, parked in Advanced without typing, reports NOT dirty (the exact QA repro)", () => {
+    const b = base();
+    const edits = baseToEditorState(b); // nothing touched anywhere
+    const seeded = serializeForAdvanced(b, edits); // what openAdvanced() would set
+    // User looks at Advanced, changes nothing, hits Save while still on the
+    // Advanced tab — must NOT re-arm workoutJson / the baseline guard.
+    expect(isAdvancedJsonDirty(b, seeded)).toBe(false);
+  });
+
+  it("editing the textarea after opening Advanced reports dirty", () => {
+    const b = base();
+    const edits = baseToEditorState(b);
+    const seeded = serializeForAdvanced(b, edits);
+    const typed = seeded.replace('"Pull-Up"', '"Pull-Up Variant"');
+    expect(isAdvancedJsonDirty(b, typed)).toBe(true);
+  });
+
+  it("a prior Structured edit, parked in Advanced without further typing, still reports DIRTY — comparing against the seed (not base) would silently drop this real edit", () => {
+    const b = base();
+    const edits = baseToEditorState(b);
+    // A real Structured-mode edit exists before the user ever opens Advanced.
+    edits.blocks[0]!.exercises[0]!.weightHint = { touched: true, value: "45 lb" };
+    const seeded = serializeForAdvanced(b, edits); // openAdvanced() snapshot, edit baked in
+    // The user looks at Advanced, changes nothing further, and saves. The
+    // live textarea still equals the seed, but the seed itself diverges
+    // from `base` — the hidden input must still be rendered so this edit
+    // reaches the server.
+    expect(isAdvancedJsonDirty(b, seeded)).toBe(true);
+  });
+
+  it("retyping the JSON back to exactly base's own serialization reports NOT dirty (matches isTemplateDirty's own contract)", () => {
+    const b = base();
+    expect(isAdvancedJsonDirty(b, JSON.stringify(b, null, 2))).toBe(false);
   });
 });
 

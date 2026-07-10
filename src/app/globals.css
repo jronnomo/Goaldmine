@@ -105,6 +105,19 @@ input::placeholder, textarea::placeholder {
   font-style: italic;
 }
 
+/* UXR-235-20 (Day Override editor, #235): the Advanced tab's "⚠ raw" sub-cue
+   is muted at 12px. Light (--muted #7A5E3A on --card #FFFBF0) is verified AA;
+   dark (--muted #9C8866 on --card #1A130C) risks undershooting at this size
+   ("coal is unforgiving" per the UX report) — bump to --foreground in dark
+   as the documented fallback rather than waiting on a device check. */
+.dwe-raw-cue {
+  color: var(--muted);
+}
+@media (prefers-color-scheme: dark) {
+  .dwe-raw-cue { color: var(--foreground); }
+}
+:root[data-theme="dark"] .dwe-raw-cue { color: var(--foreground); }
+
 /* Bullseye-pop: one-shot scale + opacity animation triggered by adding
    the `bullseye-pop` class to a freshly-logged Bullseye. Reduced-motion
    users see no animation. React plumbing for `justLogged` is intentionally

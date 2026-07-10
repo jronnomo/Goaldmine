@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { ConfirmButton } from "@/components/ConfirmButton";
 import { DayWorkoutEditor, type DayWorkoutEditorHandle } from "@/components/DayWorkoutEditor";
 import { clearDayOverride, upsertDayOverrideFromForm } from "@/lib/day-actions";
+import { formatSaveErrorBanner } from "@/lib/day-save-error-copy";
 
 export function DayOverrideForm({
   dateKey,
@@ -18,6 +19,7 @@ export function DayOverrideForm({
   const [error, setError] = useState<string | null>(null);
   const [hasFieldErrors, setHasFieldErrors] = useState(false);
   const editorRef = useRef<DayWorkoutEditorHandle>(null);
+  const saveErrorBanner = error ? formatSaveErrorBanner(error) : null;
 
   return (
     <form
@@ -80,14 +82,23 @@ export function DayOverrideForm({
           nutrition/mobility/notes fields, above Save/Clear, aria-live so a
           blocked save is announced regardless of scroll position. This is
           the `saveError` root slot; it's a sibling of DayWorkoutEditor's own
-          `key={mode}` tab-fade wrapper, so a tab switch never clears it. */}
-      {error && (
-        <p
+          `key={mode}` tab-fade wrapper, so a tab switch never clears it.
+          `formatSaveErrorBanner` (#235 iter2) rewrites the raw guard throw
+          into coach-voiced copy (UXR-235-09); any other error still renders
+          verbatim in `body`. No fake "resolve" button — v1 can't satisfy
+          the guard in-UI, so the hint line names the real path instead. */}
+      {saveErrorBanner && (
+        <div
+          data-testid="dwe-save-error"
           aria-live="polite"
-          className="text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2"
+          className="flex flex-col gap-1 text-sm text-[var(--danger)] border border-[var(--danger)]/30 bg-[var(--danger)]/10 rounded-lg px-3 py-2"
         >
-          {error}
-        </p>
+          <p>
+            {saveErrorBanner.headline && <span className="font-semibold">{saveErrorBanner.headline} </span>}
+            {saveErrorBanner.body}
+          </p>
+          {saveErrorBanner.hint && <p className="italic opacity-80">{saveErrorBanner.hint}</p>}
+        </div>
       )}
 
       <div className="flex gap-2">

@@ -52,8 +52,10 @@ export type ExerciseEditState = {
   durationSec: FieldEdit;
   notes: FieldEdit;
   skipped: boolean;
-  /** true = no base counterpart (added via Advanced) — always editable, no
-   * placeholder, Skip hidden. */
+  /** true = no base counterpart (added via Advanced) — read-only in
+   * Structured (PRD §3.1/§6; restored #235 iter2 after QA found the
+   * blueprint v2 R2 "fully editable" supersession shipped without its
+   * required Tech-Lead sign-off), no placeholder, Skip hidden. */
   foreign: boolean;
   fieldErrors: Partial<Record<NumericFieldName, string>>;
 };
@@ -385,4 +387,39 @@ export function mergeTemplateEdits(base: DayTemplate, edits: EditorState): DayTe
  */
 export function isTemplateDirty(base: DayTemplate, edits: EditorState): boolean {
   return JSON.stringify(mergeTemplateEdits(base, edits)) !== JSON.stringify(base);
+}
+
+/**
+ * Shared pretty-print formatting for the Advanced tab's raw-JSON textarea —
+ * one place so "what `openAdvanced()` seeds the textarea with" and "what the
+ * dirty check compares against" can never drift out of sync on formatting
+ * alone (#235 iter2 fix for the C1-deviation).
+ */
+function stringifyForAdvanced(template: DayTemplate): string {
+  return JSON.stringify(template, null, 2);
+}
+
+/** What `openAdvanced()` seeds `advancedJson` with: the current Structured
+ * edits (if any) merged onto `base`, so nothing already typed in Structured
+ * is lost when switching tabs. */
+export function serializeForAdvanced(base: DayTemplate, edits: EditorState): string {
+  return stringifyForAdvanced(mergeTemplateEdits(base, edits));
+}
+
+/**
+ * True when the live Advanced-tab textarea (`advancedJson`) diverges from
+ * `base` ITSELF — not from whatever `openAdvanced()` last seeded it with.
+ * This is the fix for the C1-deviation: comparing against the seeded value
+ * would report "not dirty" even when real Structured edits were baked into
+ * that seed, silently dropping them on Save. Comparing against `base`
+ * instead correctly stays true for real edits (however they got there —
+ * prior Structured edits or direct JSON typing) and only reports false when
+ * the merged content is genuinely byte-identical to `base`, matching
+ * `isTemplateDirty`'s own "no diff → nothing to submit" contract for the
+ * Structured path. `base` never mutates for the life of the editor session,
+ * so this is a pure, deterministic string compare — no memoized snapshot to
+ * keep in sync.
+ */
+export function isAdvancedJsonDirty(base: DayTemplate, advancedJson: string): boolean {
+  return advancedJson !== stringifyForAdvanced(base);
 }
