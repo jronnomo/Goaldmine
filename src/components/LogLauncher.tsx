@@ -8,10 +8,7 @@ import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import type { TodayMealLite, LogSheetData } from "@/lib/log-sheet-data";
-import type { LibraryFood } from "@/lib/food-types";
-import { formatDayMacros, hasAnyMacros, type DayMacros } from "@/lib/nutrition-macros";
-
-const ZERO_MACROS: DayMacros = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+import { formatDayMacros, hasAnyMacros } from "@/lib/nutrition-macros";
 
 const MEAL_LABELS: Record<string, string> = {
   preworkout: "Preworkout",
@@ -38,13 +35,6 @@ export type LogLauncherProps = {
    *  never renders stale layout-threaded data mid-session. Undefined ⇒ treated
    *  as closed (safe default for a prop-less, post-#233 mount). */
   open?: boolean;
-  todaysMeals?: TodayMealLite[];
-  quickPickFoods?: LibraryFood[];
-  /** Full library for the Browse-library picker in the meal composer. */
-  libraryFoods?: LibraryFood[];
-  /** Today's logged macros + plan target — powers the build-vs-today header. */
-  trackedSoFar?: DayMacros;
-  dayTarget?: DayMacros | null;
 };
 
 type ExpandedRow = "weight" | "metric" | "meal" | "note" | null;
@@ -148,37 +138,10 @@ export function LogLauncher({
   latestWeight = null,
   onClose,
   open,
-  todaysMeals,
-  quickPickFoods,
-  libraryFoods,
-  trackedSoFar,
-  dayTarget,
 }: LogLauncherProps) {
   const [expanded, setExpanded] = useState<ExpandedRow>(null);
 
-  // Seed from props (initial data only, until #233 removes them) so a fresh
-  // navigation renders instantly with no skeleton flash — the self-fetch below
-  // still fires on every closed→open transition and silently replaces
-  // identical prop data.
-  const [state, setState] = useState<LogSheetState>(() => {
-    const hasProps =
-      todaysMeals !== undefined ||
-      quickPickFoods !== undefined ||
-      libraryFoods !== undefined ||
-      trackedSoFar !== undefined ||
-      dayTarget !== undefined;
-    if (!hasProps) return { phase: "idle", data: null };
-    return {
-      phase: "ready",
-      data: {
-        todaysMeals: todaysMeals ?? [],
-        quickPickFoods: quickPickFoods ?? [],
-        libraryFoods: libraryFoods ?? [],
-        trackedSoFar: trackedSoFar ?? ZERO_MACROS,
-        dayTarget: dayTarget ?? null,
-      },
-    };
-  });
+  const [state, setState] = useState<LogSheetState>({ phase: "idle", data: null });
 
   const prevOpenRef = useRef(false);
   const reqIdRef = useRef(0);

@@ -7,9 +7,6 @@ import { Bullseye } from "@/components/Bullseye";
 import { BottomSheet } from "@/components/BottomSheet";
 import { LogLauncher } from "@/components/LogLauncher";
 import { MoreSheet } from "@/components/MoreSheet";
-import type { TodayMealLite } from "@/app/layout";
-import type { LibraryFood } from "@/lib/food-types";
-import type { DayMacros } from "@/lib/nutrition-macros";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tab definitions
@@ -71,18 +68,8 @@ const TABS: Tab[] = [
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function BottomNav({
-  todaysMeals,
-  quickPickFoods,
-  libraryFoods,
-  trackedSoFar,
-  dayTarget,
   goalCount,
 }: {
-  todaysMeals?: TodayMealLite[];
-  quickPickFoods?: LibraryFood[];
-  libraryFoods?: LibraryFood[];
-  trackedSoFar?: DayMacros;
-  dayTarget?: DayMacros | null;
   goalCount: number;
 }) {
   const pathname = usePathname();
@@ -179,11 +166,6 @@ export function BottomNav({
           latestWeight={null}
           onClose={() => setLogOpen(false)}
           open={logOpen}
-          todaysMeals={todaysMeals}
-          quickPickFoods={quickPickFoods}
-          libraryFoods={libraryFoods}
-          trackedSoFar={trackedSoFar}
-          dayTarget={dayTarget}
         />
       </BottomSheet>
 

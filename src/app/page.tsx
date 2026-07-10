@@ -87,9 +87,8 @@ export default async function HomePage() {
   const todayDateKey = dateKey(now);
 
   const db = await getDb();
-  const [latestMeasurement, recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
+  const [recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
     await Promise.all([
-      db.measurement.findFirst({ orderBy: { date: "desc" } }),
       db.workout.findMany({
         where: { status: "completed" },
         orderBy: { startedAt: "desc" },
@@ -126,9 +125,6 @@ export default async function HomePage() {
           })
         : Promise.resolve(null),
     ]);
-
-  // Suppress latestMeasurement unused lint warning — kept for future Log sheet prop
-  void latestMeasurement;
 
   // FeasibilityReadout data — computed sequentially after the Promise.all (D-2).
   // goalForFeas is null when focusGoal is null → feasibility is null → no card rendered.

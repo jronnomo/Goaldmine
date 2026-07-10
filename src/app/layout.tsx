@@ -4,10 +4,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { auth } from "@/lib/auth/auth";
 import { getGoalCount } from "@/lib/goal-count";
-import { getLogSheetData } from "@/lib/log-sheet-data";
 import "./globals.css";
-
-export type { TodayMealLite } from "@/lib/log-sheet-data";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -106,24 +103,13 @@ export default async function RootLayout({
   }
 
   // Signed-in path — identical fetches + render as before the A-2 flip.
-  const logSheet = await getLogSheetData();
-  // Standalone statement (not folded into getLogSheetData above) — keeps
-  // #230's diff to pure additions so #233 (N2 layout-fetch-deferral, slated to
-  // gut the 4-item meal array) can delete around it without touching this line.
   const goalCount = await getGoalCount();
 
   return (
     <Shell className={htmlClass}>
       <AppHeader user={session?.user ?? null} />
       <main className="flex-1 pb-20">{children}</main>
-      <BottomNav
-        todaysMeals={logSheet.todaysMeals}
-        quickPickFoods={logSheet.quickPickFoods}
-        libraryFoods={logSheet.libraryFoods}
-        trackedSoFar={logSheet.trackedSoFar}
-        dayTarget={logSheet.dayTarget}
-        goalCount={goalCount}
-      />
+      <BottomNav goalCount={goalCount} />
     </Shell>
   );
 }
