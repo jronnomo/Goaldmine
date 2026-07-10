@@ -10,6 +10,7 @@
 //   Block label / type → section header in the form.
 
 import type { Block } from "@/lib/program-template";
+import { blockTypeLabel } from "@/lib/plan-format";
 
 export type PrefilledExercise = {
   /** Display name of the exercise. */
@@ -54,21 +55,6 @@ function isFuzzyReps(reps: string | number | undefined): boolean {
   if (typeof reps === "number") return false;
   // Any non-empty string (e.g. "8-12", "max", "AMRAP", "failure") is fuzzy.
   return typeof reps === "string" && reps.trim().length > 0;
-}
-
-function blockTypeLabel(type: Block["type"]): string {
-  switch (type) {
-    case "straight":
-      return "Straight sets";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
 }
 
 /**

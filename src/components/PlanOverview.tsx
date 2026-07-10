@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Phase, ProgramTemplate } from "@/lib/program-template";
+import { formatSecs } from "@/lib/plan-format";
 
 export function PlanOverview({
   plan,
@@ -128,13 +129,4 @@ function PhaseCard({ phase, currentWeek }: { phase: Phase; currentWeek: number }
       </details>
     </div>
   );
-}
-
-function formatSecs(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return r === 0 ? `${m} min` : `${m}:${String(r).padStart(2, "0")}`;
-  }
-  return `${s}s`;
 }

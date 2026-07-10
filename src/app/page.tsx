@@ -16,6 +16,7 @@ import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
 import { getActiveProgram, getTodayContext } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
+import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { getQuickPickFoods } from "@/lib/food-actions";
@@ -453,21 +454,6 @@ function ExerciseRow({ ex }: { ex: ExercisePrescription }) {
   );
 }
 
-function blockTypeLabel(t: Block["type"]): string {
-  switch (t) {
-    case "straight":
-      return "Straight sets";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
-}
-
 function defaultBlockLabel(t: Block["type"]): string {
   switch (t) {
     case "straight":
@@ -481,13 +467,4 @@ function defaultBlockLabel(t: Block["type"]): string {
     case "cardio":
       return "Cardio";
   }
-}
-
-function formatSecs(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return r === 0 ? `${m} min` : `${m}:${String(r).padStart(2, "0")}`;
-  }
-  return `${s}s`;
 }

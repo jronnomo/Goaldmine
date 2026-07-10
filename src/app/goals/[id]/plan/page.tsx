@@ -4,7 +4,8 @@ import { Card } from "@/components/Card";
 import { ProjectPlanView } from "@/components/ProjectPlanView";
 import { getDb } from "@/lib/db";
 import { getBaselineSchedule, type ScheduledBaseline, type CheckpointStatus } from "@/lib/records";
-import type { Block, DayTemplate, ExercisePrescription, Phase, ProgramTemplate } from "@/lib/program-template";
+import type { Block, DayTemplate, Phase, ProgramTemplate } from "@/lib/program-template";
+import { blockTypeLabel, compactPrescription, prescriptionRight } from "@/lib/plan-format";
 
 export const dynamic = "force-dynamic";
 
@@ -317,22 +318,6 @@ function MobilityCard({ phase, currentWeek }: { phase: Phase; currentWeek: numbe
   );
 }
 
-function prescriptionRight(ex: ExercisePrescription): string {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets}×`);
-  if (ex.reps !== undefined) parts.push(String(ex.reps));
-  if (ex.durationSec !== undefined) parts.push(formatSecs(ex.durationSec));
-  return parts.join(" ");
-}
-
-function compactPrescription(ex: ExercisePrescription): string {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets}×`);
-  if (ex.reps !== undefined) parts.push(String(ex.reps));
-  if (ex.durationSec !== undefined) parts.push(formatSecs(ex.durationSec));
-  return parts.join(" ") || "—";
-}
-
 function BaselineRow({ s }: { s: ScheduledBaseline }) {
   const next =
     s.checkpoints.find((c) => c.status === "overdue" || c.status === "due") ??
@@ -380,26 +365,3 @@ function formatNum(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-function blockTypeLabel(t: Block["type"]): string {
-  switch (t) {
-    case "straight":
-      return "Straight sets";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
-}
-
-function formatSecs(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return r === 0 ? `${m} min` : `${m}:${String(r).padStart(2, "0")}`;
-  }
-  return `${s}s`;
-}

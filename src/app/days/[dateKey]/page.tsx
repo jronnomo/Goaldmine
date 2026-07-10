@@ -12,7 +12,8 @@ import {
   endOfDay,
   USER_TZ,
 } from "@/lib/calendar";
-import type { Block, ExercisePrescription } from "@/lib/program-template";
+import type { Block } from "@/lib/program-template";
+import { blockTypeLabel, compactPrescription } from "@/lib/plan-format";
 import { prefillFromTemplate } from "@/lib/prescription-prefill";
 import { WorkoutLoggerForm } from "@/components/days/WorkoutLoggerForm";
 import { SkipDayControl } from "@/components/days/SkipDayControl";
@@ -465,34 +466,3 @@ function BlockView({ block, index }: { block: Block; index: number }) {
   );
 }
 
-function compactPrescription(ex: ExercisePrescription): string {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets}×`);
-  if (ex.reps !== undefined) parts.push(String(ex.reps));
-  if (ex.durationSec !== undefined) parts.push(formatSecs(ex.durationSec));
-  return parts.join(" ") || "—";
-}
-
-function blockTypeLabel(t: Block["type"]): string {
-  switch (t) {
-    case "straight":
-      return "Straight sets";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
-}
-
-function formatSecs(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return r === 0 ? `${m} min` : `${m}:${String(r).padStart(2, "0")}`;
-  }
-  return `${s}s`;
-}
