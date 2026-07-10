@@ -148,3 +148,42 @@ export function assertDayTemplateWithinSize(value: unknown): void {
     );
   }
 }
+
+// Audible-with-baselines guard, shared by the MCP write path
+// (applyDayOverrideCore) and the dashboard form write path (day-actions.ts).
+// Pure — callers own the DB read (existing override row) and the rotation
+// lookup (rotationBaselineNamesForDate); this function only decides whether
+// to throw and what to say.
+//
+// Fires only when ALL of:
+// - the caller is SETTING a new workout (settingWorkout)
+// - no baselineTestNames decision is in scope for this call (!baselineInputProvided)
+// - no prior decision is already on file for this date (existing override's
+//   baselineTestNames isn't an array — Array.isArray, not just non-null, since
+//   a decision-on-file is stored as a JSON array, possibly empty ([] = "no tests"))
+// - the rotation default actually has baselines for this date (otherwise there's
+//   nothing to silently drop)
+//
+// Message is VERBATIM from the pre-extraction inline guard (tools.ts:314-318) —
+// keep the coach voice ("Don't punt this to the UI — own the call.") intact.
+// #235 adds a dashboard-native baselineTestNames affordance later; until then
+// this is the correct (if blunt) stopgap for the form path too.
+export function assertBaselineDecisionMade(args: {
+  settingWorkout: boolean;
+  baselineInputProvided: boolean;
+  existingBaselineTestNames: unknown;
+  rotationBaselineNames: string[];
+  dateKey: string;
+}): void {
+  const { settingWorkout, baselineInputProvided, existingBaselineTestNames, rotationBaselineNames, dateKey } = args;
+  if (!settingWorkout || baselineInputProvided) return;
+  if (Array.isArray(existingBaselineTestNames)) return;
+  if (rotationBaselineNames.length === 0) return;
+
+  throw new Error(
+    `Audible on ${dateKey} touches the workout but didn't make a baseline decision. ` +
+      `Rotation default for this date: [${rotationBaselineNames.join(", ")}]. ` +
+      `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
+      `Don't punt this to the UI — own the call.`,
+  );
+}

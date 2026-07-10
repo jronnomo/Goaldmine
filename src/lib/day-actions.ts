@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma, getDb } from "@/lib/db";
-import { startOfDay } from "@/lib/calendar";
+import { parseDateKey, rotationBaselineNamesForDate, startOfDay } from "@/lib/calendar";
 import { getActiveProgram } from "@/lib/program";
+import { assertBaselineDecisionMade, assertDayTemplateWithinSize, assertValidDayTemplate } from "@/lib/day-template-validation";
 
 export async function upsertDayOverrideFromForm(dateKey: string, form: FormData) {
   const workoutRaw = (form.get("workoutJson") as string | null)?.trim() || null;
@@ -25,7 +26,29 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
     } catch (e) {
       throw new Error(`Invalid workout JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // Structural + size validation — same order and messages as the MCP path
+    // (applyDayOverrideCore, tools.ts). Size first, then shape.
+    assertDayTemplateWithinSize(workoutJson);
+    assertValidDayTemplate(workoutJson);
   }
+
+  // Audible-with-baselines guard: the dashboard form has no baselineTestNames
+  // affordance yet (#235), so baselineInputProvided is always false here —
+  // matches the MCP path's guard semantics for a caller that never touches
+  // that field. settingWorkout mirrors the form's blank-vs-populated collapse:
+  // a never-touched textarea and an explicit clear both parse to `null`
+  // workoutJson, so both correctly skip the guard (nothing to audit when no
+  // workout is being set).
+  const existing = await prisma.planDayOverride.findUnique({ // non-scoped: plan override table
+    where: { planId_date: { planId: program.id, date } },
+  });
+  assertBaselineDecisionMade({
+    settingWorkout: workoutJson !== null,
+    baselineInputProvided: false,
+    existingBaselineTestNames: existing?.baselineTestNames,
+    rotationBaselineNames: rotationBaselineNamesForDate(program, date),
+    dateKey,
+  });
 
   // If everything is null/empty, treat as "remove override".
   if (!workoutJson && !nutritionText && !mobilityText && !notes) {
@@ -82,9 +105,4 @@ export async function logNoteForDate(dateKey: string, form: FormData) {
   revalidatePath(`/days/${dateKey}`);
   revalidatePath("/");
   redirect(`/days/${dateKey}`);
-}
-
-function parseDateKey(k: string): Date {
-  const [y, m, d] = k.split("-").map(Number);
-  return new Date(y!, m! - 1, d!);
 }

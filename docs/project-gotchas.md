@@ -171,6 +171,14 @@ The 16 scoped models all carry a nullable `userId` column (intentionally `String
 
 **Why NOT NULL is deferred:** promoting `userId String?` → `String` in the schema would make the 29 `getDb()` injected create sites fail TypeScript type-checking (they intentionally omit `userId` from the data object). Phase 1 will introduce a typed-create-input approach that handles this cleanly alongside real multi-user identity.
 
+### 13. Historical dashboard-form date-shift bug (2026-05-03 → 2026-07-10, fixed in #234)
+
+`src/lib/day-actions.ts` (`upsertDayOverrideFromForm`, `clearDayOverride`, `logNoteForDate`) shadowed the real USER_TZ-aware `parseDateKey` from `@/lib/calendar` with a local naive `new Date(y, m-1, d)` (runtime-local-TZ midnight, not Denver midnight). On the Vercel/UTC runtime this unconditionally rolled every dashboard-form-written `PlanDayOverride`/`Note.targetDate` **back one calendar day** vs. the `dateKey` shown in the UI — silent, no error, every single write. The MCP path (`applyDayOverrideCore` and everything else touching `PlanDayOverride.date`) was never affected; it always used the correct `calendar-core.ts` primitives.
+
+**Verified clean before the fix shipped:** a read-only prod query on all `PlanDayOverride` rows (53 rows, `db:which` confirmed prod) found every row's `date` at exact Denver-midnight-in-UTC with none of them exhibiting the naive-parse fingerprint — i.e., no evidence any dashboard-form write ever actually landed on prod during the exposure window. No repair script was needed; the swap to the real `parseDateKey` (#234) was a clean forward-fix.
+
+**If a future investigation turns up an override or note that looks off by exactly one day** (same content, wrong date) from a row `updatedAt` between 2026-05-03 and 2026-07-10, this is the mechanism — cross-reference against the founder's memory of dashboard-vs-MCP usage rather than assuming corruption elsewhere.
+
 ---
 
 ## E. RPG game engine gotchas (dev)

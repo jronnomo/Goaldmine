@@ -50,6 +50,7 @@ import {
   MAX_DAY_TEMPLATE_BYTES,
   assertDayTemplateWithinSize,
   assertValidDayTemplate,
+  assertBaselineDecisionMade,
 } from "@/lib/day-template-validation";
 import { WorkoutJsonOpSchema, applyWorkoutJsonOps } from "@/lib/day-template-ops";
 import type { DayTemplate, ProgramTemplate } from "@/lib/program-template";
@@ -304,21 +305,17 @@ async function applyDayOverrideCore(
 
   // Audible-with-baselines guard: fires only when SETTING a new workout, no
   // baselineTestNames is in scope (input undefined AND no prior decision on
-  // file), and the rotation default has baselines for this date.
+  // file), and the rotation default has baselines for this date. Shared with
+  // the dashboard form write path (day-actions.ts) via day-template-validation.ts.
   const settingWorkout = workoutValue !== undefined && workoutValue !== null;
   const baselineInputProvided = input.baselineTestNames !== undefined;
-  const existingBaselineDecision = Array.isArray(existing?.baselineTestNames);
-  if (settingWorkout && !baselineInputProvided && !existingBaselineDecision) {
-    const rotationDefaults = rotationBaselineNamesForDate(program, date);
-    if (rotationDefaults.length > 0) {
-      throw new Error(
-        `Audible on ${input.date} touches the workout but didn't make a baseline decision. ` +
-          `Rotation default for this date: [${rotationDefaults.join(", ")}]. ` +
-          `Re-pass baselineTestNames explicitly: same list to keep them, [] to suppress, or a different set to swap. ` +
-          `Don't punt this to the UI — own the call.`,
-      );
-    }
-  }
+  assertBaselineDecisionMade({
+    settingWorkout,
+    baselineInputProvided,
+    existingBaselineTestNames: existing?.baselineTestNames,
+    rotationBaselineNames: rotationBaselineNamesForDate(program, date),
+    dateKey: input.date,
+  });
 
   const updateData: Prisma.PlanDayOverrideUpdateInput = {};
   const updatedFields: string[] = [];
