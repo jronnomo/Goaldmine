@@ -23,11 +23,16 @@ export function LogNutritionForm({
   libraryFoods,
   trackedSoFar,
   dayTarget,
+  onLogged,
 }: {
   quickPickFoods?: LibraryFood[];
   libraryFoods?: LibraryFood[];
   trackedSoFar?: DayMacros;
   dayTarget?: DayMacros | null;
+  /** Called after a create-mode log lands (post-revalidatePath). Lets the host
+   *  (e.g. LogLauncher's self-fetch) refetch its "Logged today" list without
+   *  requiring the sheet to close — see architecture-critique.md C1. */
+  onLogged?: () => void;
 }) {
   return (
     <MealComposer
@@ -36,6 +41,7 @@ export function LogNutritionForm({
       libraryFoods={libraryFoods}
       trackedSoFar={trackedSoFar}
       dayTarget={dayTarget}
+      onLogged={onLogged}
     />
   );
 }

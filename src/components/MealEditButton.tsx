@@ -39,16 +39,30 @@ export function MealEditButton({
   quickPickFoods,
   buttonClassName,
   buttonLabel = "Edit",
+  onMutated,
 }: {
   meal: MealEditButtonMeal;
   quickPickFoods?: LibraryFood[];
   buttonClassName?: string;
   buttonLabel?: string;
+  /** Called after a save or delete lands — lets the host (e.g. LogLauncher's
+   *  self-fetch) refetch its list. Optional; NutritionToday passes none. */
+  onMutated?: () => void;
 }) {
   const [open, setOpen] = useState(false);
 
   function close() {
     setOpen(false);
+  }
+
+  // Close first (same as today — no visible change to the instant-close UX),
+  // THEN await the write, THEN notify the host. Ordering matters: firing
+  // onMutated before the DB write lands would let a refetch race the delete
+  // and flash the "deleted" meal back (see architecture-critique.md C2).
+  async function handleDeleted() {
+    close();
+    await deleteNutrition(meal.id);
+    onMutated?.();
   }
 
   const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
@@ -85,10 +99,12 @@ export function MealEditButton({
               }}
               quickPickFoods={quickPickFoods}
               plannedTarget={meal.plannedTarget}
-              onSaved={close}
-              onDeleted={() => {
-                void deleteNutrition(meal.id);
+              onSaved={() => {
+                onMutated?.();
                 close();
+              }}
+              onDeleted={() => {
+                void handleDeleted();
               }}
             />
           </div>

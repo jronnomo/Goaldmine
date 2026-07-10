@@ -1,20 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { LogMeasurementForm } from "@/components/LogMeasurementForm";
 import { LogBodyMetricForm } from "@/components/LogBodyMetricForm";
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
-import type { TodayMealLite } from "@/app/layout";
+import type { TodayMealLite, LogSheetData } from "@/lib/log-sheet-data";
 import type { LibraryFood } from "@/lib/food-types";
-import {
-  sumLoggedDayMacros,
-  formatDayMacros,
-  hasAnyMacros,
-  type DayMacros,
-} from "@/lib/nutrition-macros";
+import { formatDayMacros, hasAnyMacros, type DayMacros } from "@/lib/nutrition-macros";
+
+const ZERO_MACROS: DayMacros = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
 
 const MEAL_LABELS: Record<string, string> = {
   preworkout: "Preworkout",
@@ -36,6 +33,11 @@ export type LogLauncherProps = {
    *  Defaults to null (weight input starts empty — by design; BottomNav cannot query Prisma). */
   latestWeight?: number | null;
   onClose: () => void;
+  /** Whether the host BottomSheet is currently open. Drives the self-fetch:
+   *  every closed→open transition re-fetches /api/log-sheet-data so the sheet
+   *  never renders stale layout-threaded data mid-session. Undefined ⇒ treated
+   *  as closed (safe default for a prop-less, post-#233 mount). */
+  open?: boolean;
   todaysMeals?: TodayMealLite[];
   quickPickFoods?: LibraryFood[];
   /** Full library for the Browse-library picker in the meal composer. */
@@ -53,6 +55,15 @@ type RowConfig = {
   sub: string;
   icon: React.ReactNode;
 };
+
+// ── Log-sheet self-fetch state machine ────────────────────────────────────────
+// Four named phases, each carrying `data` so a background refetch failure never
+// blinks away a good render. See PRD-232 / architecture-blueprint.md §4.
+type LogSheetState =
+  | { phase: "idle"; data: null }
+  | { phase: "loading"; data: LogSheetData | null } // data present ⇒ background refresh, no skeleton
+  | { phase: "ready"; data: LogSheetData }
+  | { phase: "error"; data: LogSheetData | null; message: string; code?: number };
 
 const ChevronDown = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
@@ -119,9 +130,24 @@ const ImportIcon = () => (
   </svg>
 );
 
+/** Fixed-height placeholder matching the meal list + macro line — no layout shift. */
+function LogSheetSkeleton() {
+  return (
+    <div className="mb-4 animate-pulse" aria-hidden>
+      <div className="h-3 w-32 rounded bg-[var(--border)] mb-3" />
+      <div className="space-y-2">
+        <div className="h-4 rounded bg-[var(--border)]" />
+        <div className="h-4 rounded bg-[var(--border)]" />
+      </div>
+      <div className="h-3 w-40 rounded bg-[var(--border)] mt-4" />
+    </div>
+  );
+}
+
 export function LogLauncher({
   latestWeight = null,
   onClose,
+  open,
   todaysMeals,
   quickPickFoods,
   libraryFoods,
@@ -130,15 +156,81 @@ export function LogLauncher({
 }: LogLauncherProps) {
   const [expanded, setExpanded] = useState<ExpandedRow>(null);
 
+  // Seed from props (initial data only, until #233 removes them) so a fresh
+  // navigation renders instantly with no skeleton flash — the self-fetch below
+  // still fires on every closed→open transition and silently replaces
+  // identical prop data.
+  const [state, setState] = useState<LogSheetState>(() => {
+    const hasProps =
+      todaysMeals !== undefined ||
+      quickPickFoods !== undefined ||
+      libraryFoods !== undefined ||
+      trackedSoFar !== undefined ||
+      dayTarget !== undefined;
+    if (!hasProps) return { phase: "idle", data: null };
+    return {
+      phase: "ready",
+      data: {
+        todaysMeals: todaysMeals ?? [],
+        quickPickFoods: quickPickFoods ?? [],
+        libraryFoods: libraryFoods ?? [],
+        trackedSoFar: trackedSoFar ?? ZERO_MACROS,
+        dayTarget: dayTarget ?? null,
+      },
+    };
+  });
+
+  const prevOpenRef = useRef(false);
+  const reqIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  async function fetchData() {
+    const id = ++reqIdRef.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setState((prev) => ({ phase: "loading", data: prev.data })); // never clears existing data
+    try {
+      const res = await fetch("/api/log-sheet-data", { signal: controller.signal });
+      if (id !== reqIdRef.current) return; // superseded by a newer open
+      if (res.status === 401) {
+        setState({
+          phase: "error",
+          data: null,
+          message: "Your session expired.",
+          code: 401,
+        });
+        return;
+      }
+      if (!res.ok) throw new Error(`log-sheet-data ${res.status}`);
+      const data: LogSheetData = await res.json();
+      if (id === reqIdRef.current) setState({ phase: "ready", data });
+    } catch {
+      if (controller.signal.aborted) return; // superseded/aborted, not user-facing
+      if (id === reqIdRef.current) {
+        setState((prev) => ({
+          phase: "error",
+          data: prev.data,
+          message: "Couldn't load — try again.",
+        }));
+      }
+    }
+  }
+
+  // Fires on every closed→open transition (AC-2), including when initial prop
+  // data already exists — the response silently replaces identical data.
+  useEffect(() => {
+    if (open && !prevOpenRef.current) void fetchData();
+    prevOpenRef.current = !!open;
+  }, [open]);
+
   const toggle = (key: ExpandedRow & string) => {
     setExpanded((prev) => (prev === key ? null : key));
   };
 
-  // Compact "today so far" total shown above the meal log list when food has
-  // been logged. Computed from todaysMeals (already in scope via layout query).
-  const mealSoFar = todaysMeals
-    ? sumLoggedDayMacros(todaysMeals.map((m) => m.macros))
-    : null;
+  const data = state.data;
+  const showSkeleton = data === null && state.phase === "loading";
+  const mealSoFar = data?.trackedSoFar ?? null;
   const showMealSoFar = mealSoFar !== null && hasAnyMacros(mealSoFar);
 
   return (
@@ -171,47 +263,73 @@ export function LogLauncher({
                 {key === "metric" && <LogBodyMetricForm />}
                 {key === "meal" && (
                   <>
-                    {showMealSoFar && mealSoFar && (
-                      <p className="text-xs text-[var(--muted)] mb-3 tabular-nums">
-                        Today so far · <span className="font-mono">{formatDayMacros(mealSoFar)}</span>
-                      </p>
-                    )}
-                    {todaysMeals && todaysMeals.length > 0 && (
-                      <div className="mb-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] mb-2">
-                          Logged today
-                        </p>
-                        <ul className="space-y-2">
-                          {todaysMeals.map((meal) => {
-                            const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
-                            const summary = mealSummary(meal.items);
-                            return (
-                              <li key={meal.id} className="flex items-baseline justify-between gap-2 border-l-2 border-[var(--border)] pl-3">
-                                <span className="flex-1 min-w-0 text-sm">
-                                  <span className="text-xs uppercase tracking-wide text-[var(--muted)] mr-1">
-                                    {label}
-                                  </span>
-                                  {summary && (
-                                    <span className="text-[var(--foreground)]">· {summary}</span>
-                                  )}
-                                </span>
-                                <MealEditButton
-                                  meal={meal}
-                                  quickPickFoods={quickPickFoods}
-                                />
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        <div className="border-t border-[var(--border)] mt-4 pt-4" />
+                    {state.phase === "error" && (
+                      <div className="mb-4 rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)] flex items-center justify-between gap-2">
+                        <span>{state.message}</span>
+                        {state.code === 401 ? (
+                          <Link href="/signin" className="font-medium underline shrink-0">
+                            Sign in
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void fetchData()}
+                            className="font-medium underline shrink-0"
+                          >
+                            Retry
+                          </button>
+                        )}
                       </div>
                     )}
-                    <LogNutritionForm
-                      quickPickFoods={quickPickFoods}
-                      libraryFoods={libraryFoods}
-                      trackedSoFar={trackedSoFar}
-                      dayTarget={dayTarget}
-                    />
+                    {showSkeleton ? (
+                      <LogSheetSkeleton />
+                    ) : (
+                      <>
+                        {showMealSoFar && mealSoFar && (
+                          <p className="text-xs text-[var(--muted)] mb-3 tabular-nums">
+                            Today so far · <span className="font-mono">{formatDayMacros(mealSoFar)}</span>
+                          </p>
+                        )}
+                        {data && data.todaysMeals.length > 0 && (
+                          <div className="mb-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] mb-2">
+                              Logged today
+                            </p>
+                            <ul className="space-y-2">
+                              {data.todaysMeals.map((meal) => {
+                                const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
+                                const summary = mealSummary(meal.items);
+                                return (
+                                  <li key={meal.id} className="flex items-baseline justify-between gap-2 border-l-2 border-[var(--border)] pl-3">
+                                    <span className="flex-1 min-w-0 text-sm">
+                                      <span className="text-xs uppercase tracking-wide text-[var(--muted)] mr-1">
+                                        {label}
+                                      </span>
+                                      {summary && (
+                                        <span className="text-[var(--foreground)]">· {summary}</span>
+                                      )}
+                                    </span>
+                                    <MealEditButton
+                                      meal={meal}
+                                      quickPickFoods={data.quickPickFoods}
+                                      onMutated={fetchData}
+                                    />
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                            <div className="border-t border-[var(--border)] mt-4 pt-4" />
+                          </div>
+                        )}
+                        <LogNutritionForm
+                          quickPickFoods={data?.quickPickFoods}
+                          libraryFoods={data?.libraryFoods}
+                          trackedSoFar={data?.trackedSoFar}
+                          dayTarget={data?.dayTarget}
+                          onLogged={fetchData}
+                        />
+                      </>
+                    )}
                   </>
                 )}
                 {key === "note" && <LogNoteForm />}

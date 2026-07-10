@@ -61,6 +61,7 @@ const PROTECTED_CASES: [string, string][] = [
   // Other API routes that ARE protected
   ["/api/goals", "goals API"],
   ["/api/workouts", "workouts API"],
+  ["/api/log-sheet-data", "log-sheet-data API"],
 ];
 
 describe("isPublicPath()", () => {

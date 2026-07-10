@@ -86,6 +86,9 @@ export type MealComposerProps =
       quickPickFoods?: LibraryFood[];
       /** Planned calorie target for this slot, when known. Host-provided (TODO). */
       plannedTarget?: number;
+      /** Called after a successful log (post-revalidatePath, form already
+       *  reset) — lets the host refetch a list it owns. See LogNutritionForm. */
+      onLogged?: () => void;
     } & DayContextProps)
   | ({
       mode: "edit";
@@ -1170,7 +1173,10 @@ export function MealComposer(props: MealComposerProps) {
           e.preventDefault();
           createSubmit(logNutrition, {
             successMsg: "✓ Meal logged",
-            onSuccess: resetCreate,
+            onSuccess: () => {
+              resetCreate();
+              props.onLogged?.();
+            },
           });
         }}
         className="flex flex-col gap-3"

@@ -178,6 +178,7 @@ export function BottomNav({
         <LogLauncher
           latestWeight={null}
           onClose={() => setLogOpen(false)}
+          open={logOpen}
           todaysMeals={todaysMeals}
           quickPickFoods={quickPickFoods}
           libraryFoods={libraryFoods}

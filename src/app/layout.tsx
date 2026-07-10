@@ -3,18 +3,11 @@ import { Geist, Geist_Mono, DM_Serif_Display } from "next/font/google";
 import { AppHeader } from "@/components/AppHeader";
 import { BottomNav } from "@/components/BottomNav";
 import { auth } from "@/lib/auth/auth";
-import { getDb } from "@/lib/db";
-import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
-import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { getGoalCount } from "@/lib/goal-count";
-import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
-import {
-  sumLoggedDayMacros,
-  sumPlanTargetMacros,
-  hasAnyMacros,
-  type DayMacros,
-} from "@/lib/nutrition-macros";
+import { getLogSheetData } from "@/lib/log-sheet-data";
 import "./globals.css";
+
+export type { TodayMealLite } from "@/lib/log-sheet-data";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -52,30 +45,6 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",
 };
-
-/** Serializable per-meal shape threaded to the Log sheet. */
-export type TodayMealLite = {
-  id: string;
-  mealType: string;
-  items: NutritionItem[];
-  notes: string | null;
-  dateISO: string;
-  macros: {
-    calories: number | null;
-    proteinG: number | null;
-    carbsG: number | null;
-    fatG: number | null;
-    fiberG: number | null;
-    sodiumMg: number | null;
-  };
-};
-
-// Preserve structured fields so the global Log launcher's edit path keeps live
-// recalc (a stripping map reverted items to freehand steppers — stale macros on
-// size change).
-function toNutritionItems(raw: unknown): NutritionItem[] {
-  return parseStoredItems(raw);
-}
 
 /** Shared html/head chrome — avoids duplicating font variables + theme script. */
 function Shell({
@@ -137,73 +106,22 @@ export default async function RootLayout({
   }
 
   // Signed-in path — identical fetches + render as before the A-2 flip.
-  const db = await getDb();
-  const now = new Date();
-  const [rawMeals, quickPickFoods, libraryFoods, today] = await Promise.all([
-    db.nutritionLog.findMany({
-      where: { date: { gte: startOfDay(now), lte: endOfDay(now) } },
-      orderBy: { date: "asc" },
-      select: {
-        id: true,
-        date: true,
-        mealType: true,
-        items: true,
-        notes: true,
-        calories: true,
-        proteinG: true,
-        carbsG: true,
-        fatG: true,
-        fiberG: true,
-        sodiumMg: true,
-      },
-    }),
-    getQuickPickFoods(),
-    listLibraryFoods(),
-    // Override-aware resolved day — the only source of today's per-slot
-    // nutrition-plan target. Mirrors /nutrition/page.tsx exactly.
-    resolveDay(now),
-  ]);
-  // Standalone statement (not folded into the meal Promise.all above) — keeps
+  const logSheet = await getLogSheetData();
+  // Standalone statement (not folded into getLogSheetData above) — keeps
   // #230's diff to pure additions so #233 (N2 layout-fetch-deferral, slated to
   // gut the 4-item meal array) can delete around it without touching this line.
   const goalCount = await getGoalCount();
-
-  const todaysMeals: TodayMealLite[] = rawMeals.map((m) => ({
-    id: m.id,
-    mealType: m.mealType,
-    items: toNutritionItems(m.items),
-    notes: m.notes,
-    dateISO: m.date.toISOString(),
-    macros: {
-      calories: m.calories,
-      proteinG: m.proteinG,
-      carbsG: m.carbsG,
-      fatG: m.fatG,
-      fiberG: m.fiberG,
-      sodiumMg: m.sodiumMg,
-    },
-  }));
-
-  // Day context for the Log-sheet meal composer (Browse-library + build-vs-today
-  // header). Same override-aware logic as /nutrition/page.tsx.
-  const trackedTodayMacros: DayMacros = sumLoggedDayMacros(
-    todaysMeals.map((m) => m.macros),
-  );
-  const planTarget = sumPlanTargetMacros(today.nutritionPlan);
-  const dayTargetMacros: DayMacros | null = hasAnyMacros(planTarget)
-    ? planTarget
-    : null;
 
   return (
     <Shell className={htmlClass}>
       <AppHeader user={session?.user ?? null} />
       <main className="flex-1 pb-20">{children}</main>
       <BottomNav
-        todaysMeals={todaysMeals}
-        quickPickFoods={quickPickFoods}
-        libraryFoods={libraryFoods}
-        trackedSoFar={trackedTodayMacros}
-        dayTarget={dayTargetMacros}
+        todaysMeals={logSheet.todaysMeals}
+        quickPickFoods={logSheet.quickPickFoods}
+        libraryFoods={logSheet.libraryFoods}
+        trackedSoFar={logSheet.trackedSoFar}
+        dayTarget={logSheet.dayTarget}
         goalCount={goalCount}
       />
     </Shell>
