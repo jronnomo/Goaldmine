@@ -149,7 +149,7 @@ export default async function CalendarPage({
 
       {goal && (
         <p className="text-xs text-[var(--muted)] text-center">
-          🏔️ {goal.objective}
+          <span aria-hidden>🏔️</span><span className="sr-only">Goal target: </span> {goal.objective}
           {goal.targetDate ? ` — ${new Date(goal.targetDate).toLocaleDateString()}` : ""}
         </p>
       )}

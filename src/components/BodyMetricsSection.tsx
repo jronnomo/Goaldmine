@@ -73,7 +73,7 @@ export async function BodyMetricsSection() {
 
         return (
           <Card key={key} title={label}>
-            <HistoryChart data={data} units={units} domain={domain} />
+            <HistoryChart data={data} units={units} domain={domain} ariaLabel={`${label} trend chart`} />
             {data.length === 1 && (
               <p className="text-xs text-[var(--muted)] mt-2">
                 Trend appears with more readings.

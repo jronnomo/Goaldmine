@@ -50,6 +50,7 @@ export default async function BaselineTestDetail({
               tooltip: `${h.value} ${h.units}`,
             }))}
             units={history[0]!.units}
+            ariaLabel={`${testName} trend chart`}
           />
         )}
       </Card>

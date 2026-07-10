@@ -204,7 +204,7 @@ export default async function DayDetail({
         >
           {targetDateEvents.map((e) => (
             <p key={`${e.goalId}-${e.type}`} className="font-medium text-[var(--foreground)]">
-              {e.icon} {e.label} — {e.goalObjective}
+              <span aria-hidden="true">{e.icon}</span> {e.label} — {e.goalObjective}
             </p>
           ))}
         </div>
@@ -240,12 +240,12 @@ export default async function DayDetail({
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight mt-1">{dateLabel}</h1>
         <p className="text-sm text-[var(--muted)]">
-          {r.isGoalDate && <span className="text-[var(--accent)]">🏔️ Goal target — {r.goalObjective} · </span>}
+          {r.isGoalDate && <span className="text-[var(--accent)]"><span aria-hidden="true">🏔️</span> Goal target — {r.goalObjective} · </span>}
           {/* REQ-106: secondary other-goal events as muted inline lines.
               UXR-62-16: {icon} {label} — {objective} matching the isGoalDate idiom. */}
           {secondaryEvents.map((e) => (
             <span key={`${e.goalId}-${e.type}`} className="text-[var(--muted)]">
-              {e.icon} {e.label} — {e.goalObjective} ·{" "}
+              <span aria-hidden="true">{e.icon}</span> {e.label} — {e.goalObjective} ·{" "}
             </span>
           ))}
           {r.isInPlan && r.rotationDay

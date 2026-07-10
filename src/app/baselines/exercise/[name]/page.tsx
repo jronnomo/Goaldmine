@@ -59,6 +59,7 @@ export default async function ExerciseRecordDetail({
               tooltip: tooltipFor(summary?.primary, h),
             }))}
             units={unitsFor(summary?.primary)}
+            ariaLabel={chartTitleFor(summary?.primary)}
           />
         )}
       </Card>
