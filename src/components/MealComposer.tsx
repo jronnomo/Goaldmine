@@ -13,6 +13,8 @@ import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-co
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { DayMacros } from "@/lib/nutrition-macros";
+import { MEAL_LABELS } from "@/lib/nutrition-macros";
+import { MEAL_SLOTS, type MealSlot } from "@/lib/nutrition-plan";
 import {
   recomposeWithResidual,
   recalcItemMacros,
@@ -23,16 +25,9 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-const MEAL_TYPES = [
-  { value: "preworkout", label: "Preworkout" },
-  { value: "breakfast", label: "Breakfast" },
-  { value: "lunch", label: "Lunch" },
-  { value: "snack", label: "Snack" },
-  { value: "postworkout", label: "Postworkout" },
-  { value: "dinner", label: "Dinner" },
-] as const;
+const MEAL_TYPES = MEAL_SLOTS.map((s) => ({ value: s, label: MEAL_LABELS[s] }));
 
-type MealType = (typeof MEAL_TYPES)[number]["value"];
+type MealType = MealSlot;
 
 /** Structured seed for edit mode — items as a typed array, not a text blob. */
 export type MealDefaults = {

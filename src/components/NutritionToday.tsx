@@ -1,21 +1,12 @@
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import { Bullseye } from "@/components/Bullseye";
-import { MEAL_SLOTS, type MealSlot, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
-import { sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
+import { MEAL_SLOTS, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
+import { sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
-
-const MEAL_LABEL: Record<MealSlot, string> = {
-  preworkout: "Preworkout",
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  snack: "Snack",
-  postworkout: "Postworkout",
-  dinner: "Dinner",
-};
 
 type Item = { name: string; qty?: string; notes?: string };
 
@@ -177,7 +168,7 @@ export function NutritionToday({
             {rows.map(({ mt, meals, loggedSummary, planned, actualMacros }) => (
               <li key={mt} className="flex gap-2">
                 <span className="w-24 shrink-0 text-xs uppercase tracking-wide text-[var(--muted)] pt-0.5">
-                  {MEAL_LABEL[mt]}
+                  {MEAL_LABELS[mt]}
                 </span>
                 <div className="flex-1 min-w-0 space-y-1">
                   {loggedSummary ? (

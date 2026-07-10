@@ -1,5 +1,19 @@
-import type { NutritionPlan } from "@/lib/nutrition-plan";
+import type { NutritionPlan, MealSlot } from "@/lib/nutrition-plan";
 import { MEAL_SLOTS } from "@/lib/nutrition-plan";
+
+/**
+ * Single source for meal-type display labels (#237), keyed to the canonical
+ * MealSlot vocabulary so key completeness is compile-time enforced. Ordered
+ * to match MEAL_SLOTS.
+ */
+export const MEAL_LABELS: Record<MealSlot, string> = {
+  preworkout: "Preworkout",
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  snack: "Snack",
+  postworkout: "Postworkout",
+  dinner: "Dinner",
+};
 
 /** The four headline macros we display as "today so far" / "target". */
 export type DayMacros = {

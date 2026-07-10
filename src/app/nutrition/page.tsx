@@ -16,21 +16,12 @@ import {
 } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
-import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros } from "@/lib/nutrition-macros";
+import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
 export const dynamic = "force-dynamic";
-
-const MEAL_LABEL: Record<string, string> = {
-  preworkout: "Preworkout",
-  postworkout: "Postworkout",
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  dinner: "Dinner",
-  snack: "Snack",
-};
 
 // Shared parser preserves structured fields (amount/unit/source) so the list's
 // edit path keeps live recalc — a stripping map dropped them, reverting items to
@@ -92,7 +83,7 @@ export default async function NutritionPage() {
     groupMap.get(k)!.push({
       id: log.id,
       mealType: log.mealType,
-      label: MEAL_LABEL[log.mealType] ?? log.mealType,
+      label: MEAL_LABELS[log.mealType as MealSlot] ?? log.mealType,
       items,
       summary: summarize(items),
       notes: log.notes,
