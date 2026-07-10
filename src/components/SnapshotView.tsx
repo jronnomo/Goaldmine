@@ -3,9 +3,9 @@
 import type {
   Block,
   DayTemplate,
-  ExercisePrescription,
   ProgramTemplate,
 } from "@/lib/program-template";
+import { compactPrescription } from "@/lib/plan-format";
 
 export function SnapshotView({
   template,
@@ -136,19 +136,3 @@ function BlockSnapshot({ block }: { block: Block }) {
   );
 }
 
-function compactPrescription(ex: ExercisePrescription): string {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets}×`);
-  if (ex.reps !== undefined) parts.push(String(ex.reps));
-  if (ex.durationSec !== undefined) parts.push(formatSecs(ex.durationSec));
-  return parts.join(" ") || "—";
-}
-
-function formatSecs(s: number): string {
-  if (s >= 60) {
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return r === 0 ? `${m} min` : `${m}:${String(r).padStart(2, "0")}`;
-  }
-  return `${s}s`;
-}
