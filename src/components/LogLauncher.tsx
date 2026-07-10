@@ -8,16 +8,8 @@ import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import type { TodayMealLite, LogSheetData } from "@/lib/log-sheet-data";
-import { formatDayMacros, hasAnyMacros } from "@/lib/nutrition-macros";
-
-const MEAL_LABELS: Record<string, string> = {
-  preworkout: "Preworkout",
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  snack: "Snack",
-  postworkout: "Postworkout",
-  dinner: "Dinner",
-};
+import { formatDayMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
+import type { MealSlot } from "@/lib/nutrition-plan";
 
 function mealSummary(items: TodayMealLite["items"]): string {
   return items
@@ -260,7 +252,7 @@ export function LogLauncher({
                             </p>
                             <ul className="space-y-2">
                               {data.todaysMeals.map((meal) => {
-                                const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
+                                const label = MEAL_LABELS[meal.mealType as MealSlot] ?? meal.mealType;
                                 const summary = mealSummary(meal.items);
                                 return (
                                   <li key={meal.id} className="flex items-baseline justify-between gap-2 border-l-2 border-[var(--border)] pl-3">

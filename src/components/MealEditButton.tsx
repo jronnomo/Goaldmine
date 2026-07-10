@@ -7,15 +7,8 @@ import { deleteNutrition } from "@/lib/workout-actions";
 import { toDatetimeLocalValue } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
-
-const MEAL_LABELS: Record<string, string> = {
-  preworkout: "Preworkout",
-  breakfast: "Breakfast",
-  lunch: "Lunch",
-  snack: "Snack",
-  postworkout: "Postworkout",
-  dinner: "Dinner",
-};
+import { MEAL_LABELS } from "@/lib/nutrition-macros";
+import type { MealSlot } from "@/lib/nutrition-plan";
 
 export type MealEditButtonMeal = {
   id: string;
@@ -65,7 +58,7 @@ export function MealEditButton({
     onMutated?.();
   }
 
-  const label = MEAL_LABELS[meal.mealType] ?? meal.mealType;
+  const label = MEAL_LABELS[meal.mealType as MealSlot] ?? meal.mealType;
 
   return (
     <>
