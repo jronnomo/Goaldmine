@@ -3,7 +3,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { MT_ELBERT_DEFAULT_TARGETS } from "../src/lib/goal-targets";
+import { HIKE_DEFAULT_TARGETS } from "../src/lib/goal-targets";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -17,7 +17,7 @@ async function main() {
   }
   await prisma.goal.update({
     where: { id: goal.id },
-    data: { targets: MT_ELBERT_DEFAULT_TARGETS },
+    data: { targets: HIKE_DEFAULT_TARGETS },
   });
   console.log(`Reset targets on goal "${goal.objective}" (${goal.id}).`);
 }

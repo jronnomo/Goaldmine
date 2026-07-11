@@ -157,12 +157,12 @@ const BADGE_SPECS: BadgeSpec[] = [
     },
   },
 
-  // ── #9 Elbert Ready — single hike ≥4,000 ft ──────────────────────────────
+  // ── #9 Summit Ready — single hike ≥4,000 ft ──────────────────────────────
   {
-    id: "elbert-ready",
-    name: "Elbert Ready",
+    id: "summit-ready",
+    name: "Summit Ready",
     hint: "Complete a single hike with ≥4,000 ft elevation",
-    monogram: "El",
+    monogram: "SR",
     glyphFamily: "mountain",
     unlock(ctx) {
       const hike = [...ctx.hikesAll]

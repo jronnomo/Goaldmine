@@ -347,11 +347,12 @@ export function resolveBodyMetric(
 }
 
 /**
- * Mt. Elbert via Black Cloud Trail — research-grounded default targets.
+ * Big-mountain hike / summit goal — research-grounded default targets.
  *
- * Route stats: ~11 mi RT, ~5,200 ft gain, 14,440 ft summit, sustained Class 1+
- * climbing. Standard prep advice for similar 14ers (CMC, 14ers.com community,
- * AMC trail-running endurance research) emphasizes:
+ * Modeled on a demanding day hike (~11 mi RT, ~5,200 ft gain, sustained Class 1+
+ * climbing to a high-altitude summit). Standard prep advice for similar big
+ * mountain days (CMC, 14ers.com community, AMC trail-running endurance
+ * research) emphasizes:
  *   1. Repeated exposure to long mountain efforts (most direct predictor)
  *   2. A confirmed single-day big-elevation effort before the attempt
  *   3. Cumulative weekly volume of climbing
@@ -361,7 +362,7 @@ export function resolveBodyMetric(
  *
  * Total weight = 1.00.
  */
-export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
+export const HIKE_DEFAULT_TARGETS: GoalTarget[] = [
   {
     metric: "hike:prep_completion",
     label: "Prep hikes completed (≥5 mi & ≥2000 ft)",
@@ -382,7 +383,7 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
     weight: 0.2,
     gating: true,
     rationale:
-      "Black Cloud Trail's 5,200 ft gain is unforgiving. Successfully completing a 4,000+ ft single-day effort first (e.g. Bierstadt + extension, Quandary, Massive) is the proof that the cardio-vascular and quad-eccentric demands are within reach.",
+      "A 5,200 ft summit day is unforgiving. Successfully completing a 4,000+ ft single-day effort first (e.g. a comparable regional peak) is the proof that the cardio-vascular and quad-eccentric demands are within reach.",
   },
   {
     metric: "hike:total_elevation_ft",
@@ -392,7 +393,7 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
     target: 25000,
     weight: 0.15,
     rationale:
-      "~5× Elbert's elevation gain across the build. Ensures sufficient repeat exposure rather than a single hero hike.",
+      "~5× the summit's elevation gain across the build. Ensures sufficient repeat exposure rather than a single hero hike.",
   },
   {
     metric: "baseline:20 Min Step-Up Reps",
@@ -454,7 +455,7 @@ export const MT_ELBERT_DEFAULT_TARGETS: GoalTarget[] = [
  * plus outreach/coffee-chats as the leading-indicator activity metrics, plus
  * a network-size snapshot. Every number here is a starting default — the
  * coach interviews the user at intake and adjusts via update_goal_targets;
- * these are NOT researched benchmarks the way MT_ELBERT_DEFAULT_TARGETS's
+ * these are NOT researched benchmarks the way HIKE_DEFAULT_TARGETS's
  * hike numbers are (there is no equivalent "standard prep advice" corpus for
  * an individual's job search — the defaults exist so create_goal(template:
  * 'career') never leaves the coach improvising JSON from scratch).
