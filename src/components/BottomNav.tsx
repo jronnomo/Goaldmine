@@ -50,11 +50,14 @@ const TABS: Tab[] = [
     type: "link",
     href: "/progress",
     label: "Progress",
-    // Progress active for /progress, /baselines (those pages are sub-routes of Progress)
+    // Progress active for /progress, /baselines, /recap, and /compare — the
+    // latter two are kinship routes (progress-comparison views) that live
+    // under MoreSheet but light Progress, not More (PRD-249 §1.3).
     match: (p) =>
       p.startsWith("/progress") ||
       p.startsWith("/baselines") ||
-      p.startsWith("/recap"),
+      p.startsWith("/recap") ||
+      p.startsWith("/compare"),
   },
   {
     type: "sheet",
@@ -62,6 +65,18 @@ const TABS: Tab[] = [
     label: "More",
   },
 ];
+
+// Visual-only route match for the More sheet-trigger (PRD-249 §1.3): these six
+// routes are More's own home-menu destinations, so the tab should look "lit"
+// even though the sheet itself is closed. This is deliberately NOT a shared
+// constant with MoreSheet.tsx's navRows (src/components/MoreSheet.tsx:98-147)
+// — navRows also includes /recap and /compare, which light Progress instead
+// (kinship mapping above), so "subset of navRows" isn't a clean relationship.
+// Mirrors navRows MINUS /recap and /compare. If MoreSheet's destinations
+// change, update this list to match.
+// Deliberately excluded (not More destinations): /settings, /stats, /import,
+// /workouts/[id].
+const MORE_ROUTES = ["/coach", "/journal", "/character", "/goals", "/history", "/nutrition"];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Component
@@ -118,9 +133,14 @@ export function BottomNav({
               );
             }
 
-            // Sheet-trigger buttons — never show "active/page" state
+            // Sheet-trigger buttons never get aria-current/aria-pressed=route-match — only
+            // real "sheet is open" reflects in aria-pressed. Route-match drives visual
+            // "lit" styling only (see isOnMoreRoute); aria-pressed stays isSheetOpen.
             const isLog = tab.key === "log";
             const isSheetOpen = isLog ? logOpen : moreOpen;
+            const isOnMoreRoute =
+              tab.key === "more" && MORE_ROUTES.some((r) => (pathname ?? "").startsWith(r));
+            const lit = isSheetOpen || isOnMoreRoute;
 
             return (
               <li key={tab.key} className="flex">
@@ -137,13 +157,13 @@ export function BottomNav({
                   }}
                   aria-pressed={isSheetOpen}
                   className={`flex-1 py-3 text-sm font-medium transition-colors flex flex-col items-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset ${
-                    isSheetOpen
+                    lit
                       ? "text-[var(--accent)]"
                       : "text-[var(--muted)] hover:text-foreground"
                   }`}
                 >
-                  {/* Show filled Bullseye when sheet is open, hollow when closed */}
-                  {isSheetOpen ? (
+                  {/* Show filled Bullseye when sheet is open or on a More-menu route, hollow otherwise */}
+                  {lit ? (
                     <Bullseye filled size={6} aria-hidden />
                   ) : (
                     <Bullseye size={6} aria-hidden />
