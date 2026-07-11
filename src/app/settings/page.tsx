@@ -19,6 +19,7 @@ import { USER_TZ } from "@/lib/calendar-core";
 import { originFromHeaders } from "@/lib/oauth/tokens";
 import { ConnectClaudePanel } from "@/components/ConnectClaudePanel";
 import { ConnectLinkedInPanel } from "@/components/ConnectLinkedInPanel";
+import { DeleteAccountSection } from "@/components/DeleteAccountSection";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -211,6 +212,9 @@ export default async function SettingsPage() {
           Revoking a connection immediately cuts off that app&rsquo;s access.
           You can reconnect at any time.
         </p>
+
+        {/* Danger zone — permanent account deletion (#245). Rendered last. */}
+        <DeleteAccountSection />
       </div>
     </div>
   );
