@@ -1,19 +1,27 @@
 // scripts/verify-tenant-isolation-full.ts
 //
 // E9-1 — Broad cross-tenant isolation verification. Phase-0 done-bar.
+// #245 — upgraded to a LIVE user.delete() cascade proof (was manual per-model
+// deleteMany cleanup, which only proved "deleteMany found N rows," never that
+// the schema's onDelete: Cascade graph itself is complete).
 //
-// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 16 scoped models
+// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 17 scoped models
 // AND the founder's data is byte-for-byte unchanged before/after.
 //
 // Steps (per PRD REQ-001):
 //   1. Founder snapshot: per-model counts (regression baseline).
-//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 16 models as practical).
+//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 17 models as practical),
+//      including a FoodLibrary (shared catalog) + FoodUsage (per-user) pair.
 //   3. Per-model read sweep: founder sees NO usr_e9_b rows; usr_e9_b sees ONLY its own rows.
 //   4. Lib-anchor isolation: getFocusGoal / getActiveProgram / resolveDay /
 //      computeWeeklyRecap / getExerciseSummaries / computeGameState all return B-scoped data.
 //   5. Write isolation: create Note + Workout as usr_e9_b; assert ownership; founder counts unchanged.
-//   6. Founder regression: re-snapshot; assert IDENTICAL to step 1.
-//   7. Cleanup (finally): delete all usr_e9_b rows; assert gone; founder counts == baseline.
+//   6. Founder regression (mid-run): re-snapshot; assert IDENTICAL to step 1.
+//   7. Cleanup (finally): prisma.user.delete({ where: { id: B_USER_ID } }) — a single
+//      cascading DELETE that exercises the schema's real FK graph — then assert (a) all
+//      17 SCOPED_MODELS report ZERO rows for B, (b) founder counts unchanged (post-cleanup
+//      regression), (c) the shared FoodLibrary row SURVIVES (positive assertion — shared
+//      catalog must not cascade from a User delete).
 //   8. PASS/FAIL per assertion; process.exit(failures>0 ? 1 : 0).
 //
 // Never mutates founder rows. Safe to re-run (idempotent cleanup).
@@ -115,7 +123,31 @@ type ModelCounts = {
   logEntry: number;
   plan: number;
   dayRenderJob: number;
+  foodUsage: number;
 };
+
+// The 17 scoped models, mapped to their Prisma client accessor name.
+// Module-scope (not local to Step 3) so Step 7's cleanup/assertion sweep can
+// reuse the exact same list.
+const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
+  { label: "workout",         accessor: "workout" },
+  { label: "measurement",     accessor: "measurement" },
+  { label: "footageMarker",   accessor: "footageMarker" },
+  { label: "baseline",        accessor: "baseline" },
+  { label: "note",            accessor: "note" },
+  { label: "hike",            accessor: "hike" },
+  { label: "nutritionLog",    accessor: "nutritionLog" },
+  { label: "mobilityCheckin", accessor: "mobilityCheckin" },
+  { label: "goal",            accessor: "goal" },
+  { label: "program",         accessor: "program" },
+  { label: "gameBonusXp",     accessor: "gameBonusXp" },
+  { label: "bodyMetric",      accessor: "bodyMetric" },
+  { label: "scheduledItem",   accessor: "scheduledItem" },
+  { label: "logEntry",        accessor: "logEntry" },
+  { label: "plan",            accessor: "plan" },
+  { label: "dayRenderJob",    accessor: "dayRenderJob" },
+  { label: "foodUsage",       accessor: "foodUsage" },
+];
 
 async function founderSnapshot(): Promise<ModelCounts> {
   const w = { where: { userId: FOUNDER_USER_ID } };
@@ -123,6 +155,7 @@ async function founderSnapshot(): Promise<ModelCounts> {
     workout, measurement, footageMarker, baseline, note,
     hike, nutritionLog, mobilityCheckin, goal, program,
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
+    foodUsage,
   ] = await Promise.all([
     prisma.workout.count(w),
     prisma.measurement.count(w),
@@ -140,11 +173,13 @@ async function founderSnapshot(): Promise<ModelCounts> {
     prisma.logEntry.count(w),
     prisma.plan.count(w),
     prisma.dayRenderJob.count(w),
+    prisma.foodUsage.count(w),
   ]);
   return {
     workout, measurement, footageMarker, baseline, note,
     hike, nutritionLog, mobilityCheckin, goal, program,
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
+    foodUsage,
   };
 }
 
@@ -165,7 +200,7 @@ function assertCountsEqual(before: ModelCounts | null, after: ModelCounts, conte
     }
   }
   if (allMatch) {
-    pass(`[${context}] Founder counts identical across all 16 models`);
+    pass(`[${context}] Founder counts identical across all 17 models`);
   }
 }
 
@@ -177,6 +212,7 @@ let bGoalId2 = "";      // secondary Goal for extra ScheduledItem / LogEntry var
 let bPlanId = "";       // Plan owned by B (child of bGoalId2)
 let bWorkoutId = "";    // first Workout (seeded)
 let bHikeId = "";       // Hike row
+let sharedFoodId = "";  // FoodLibrary row (shared catalog) — must SURVIVE the User cascade
 
 
 // ---------------------------------------------------------------------------
@@ -411,32 +447,27 @@ async function main() {
     });
     console.log(`  Program:             ${bProgram.id}`);
 
-    console.log(`\n  [seed complete — 16 models seeded for ${B_USER_ID}]`);
+    // --- FoodLibrary (shared catalog — NOT userId-scoped) + FoodUsage (per-user, E-1) ---
+    // #245: seeded specifically to exercise the shared-vs-owned FK boundary — FoodUsage.user
+    // is onDelete: Cascade (fires on a User delete), FoodUsage.food is also onDelete: Cascade
+    // but in the OTHER direction (fires on a FoodLibrary delete) — a User delete must never
+    // climb from FoodUsage back up to FoodLibrary. Asserted positively in Step 7.
+    const sharedFood = await prisma.foodLibrary.create({
+      data: { name: "e9b-shared-food-catalog-item", source: "manual" },
+    });
+    sharedFoodId = sharedFood.id;
+    const bFoodUsage = await dbB.foodUsage.create({
+      data: { foodId: sharedFood.id, usageCount: 3, isFavorite: true },
+    });
+    console.log(`  FoodLibrary (shared): ${sharedFood.id}`);
+    console.log(`  FoodUsage:           ${bFoodUsage.id} (food=${sharedFood.id})`);
+
+    console.log(`\n  [seed complete — 17 models seeded for ${B_USER_ID}]`);
 
     // =======================================================================
     // STEP 3 — Per-model read sweep (THE CORE PROOF)
     // =======================================================================
     console.log("\n--- Step 3: Per-model read sweep ---");
-
-    // The 16 scoped models, mapped to their Prisma client accessor name
-    const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
-      { label: "workout",         accessor: "workout" },
-      { label: "measurement",     accessor: "measurement" },
-      { label: "footageMarker",   accessor: "footageMarker" },
-      { label: "baseline",        accessor: "baseline" },
-      { label: "note",            accessor: "note" },
-      { label: "hike",            accessor: "hike" },
-      { label: "nutritionLog",    accessor: "nutritionLog" },
-      { label: "mobilityCheckin", accessor: "mobilityCheckin" },
-      { label: "goal",            accessor: "goal" },
-      { label: "program",         accessor: "program" },
-      { label: "gameBonusXp",     accessor: "gameBonusXp" },
-      { label: "bodyMetric",      accessor: "bodyMetric" },
-      { label: "scheduledItem",   accessor: "scheduledItem" },
-      { label: "logEntry",        accessor: "logEntry" },
-      { label: "plan",            accessor: "plan" },
-      { label: "dayRenderJob",    accessor: "dayRenderJob" },
-    ];
 
     for (const { label, accessor } of MODEL_MAP) {
       // Type-safe: all scoped models expose findMany with userId in the result
@@ -671,110 +702,16 @@ async function main() {
     console.log("\n--- Step 7: Cleanup ---");
 
     try {
-      // Children must be deleted before parents (FK constraints).
-      // DayRenderJob → Goal; ScheduledItem → Goal; LogEntry → Goal; Plan → Goal
-      // PlanRevision → Plan (cascade); PlanDayOverride → Plan (cascade)
-      // Note (standalone); Workout (standalone); Measurement; FootageMarker;
-      // Baseline; Hike; NutritionLog; MobilityCheckin; GameBonusXp; BodyMetric; Program
+      // #245 — single cascading DELETE instead of manual per-model deleteMany.
+      // Every owned model's User relation is onDelete: Cascade in the schema
+      // (verified against prisma/schema.prisma + live migration SQL) — this one
+      // statement IS the deletion. If some 18th model exists with a
+      // Restrict/no-action FK the PRD's premise-check missed, this throws and
+      // the outer catch below records it as a FAIL (not a silent no-op).
+      const deletedUser = await prisma.user.delete({ where: { id: B_USER_ID } });
+      console.log(`  User cascade-deleted: ${deletedUser.id}`);
 
-      const deletePlanRevisions = await prisma.planRevision.deleteMany({
-        where: { plan: { userId: B_USER_ID } },
-      });
-      console.log(`  PlanRevisions deleted: ${deletePlanRevisions.count}`);
-
-      const deletePlanOverrides = await prisma.planDayOverride.deleteMany({
-        where: { plan: { userId: B_USER_ID } },
-      });
-      console.log(`  PlanDayOverrides deleted: ${deletePlanOverrides.count}`);
-
-      const deletedDayRenderJobs = await prisma.dayRenderJob.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  DayRenderJobs deleted:   ${deletedDayRenderJobs.count}`);
-
-      const deletedScheduledItems = await prisma.scheduledItem.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  ScheduledItems deleted:  ${deletedScheduledItems.count}`);
-
-      const deletedLogEntries = await prisma.logEntry.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  LogEntries deleted:      ${deletedLogEntries.count}`);
-
-      const deletedPlans = await prisma.plan.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Plans deleted:           ${deletedPlans.count}`);
-
-      const deletedPrograms = await prisma.program.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Programs deleted:        ${deletedPrograms.count}`);
-
-      const deletedWorkouts = await prisma.workout.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Workouts deleted:        ${deletedWorkouts.count}`);
-
-      const deletedNotes = await prisma.note.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Notes deleted:           ${deletedNotes.count}`);
-
-      const deletedMeasurements = await prisma.measurement.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Measurements deleted:    ${deletedMeasurements.count}`);
-
-      const deletedBaselines = await prisma.baseline.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Baselines deleted:       ${deletedBaselines.count}`);
-
-      const deletedHikes = await prisma.hike.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Hikes deleted:           ${deletedHikes.count}`);
-
-      const deletedNutritionLogs = await prisma.nutritionLog.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  NutritionLogs deleted:   ${deletedNutritionLogs.count}`);
-
-      const deletedMobilityCheckins = await prisma.mobilityCheckin.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  MobilityCheckins deleted:${deletedMobilityCheckins.count}`);
-
-      const deletedBodyMetrics = await prisma.bodyMetric.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  BodyMetrics deleted:     ${deletedBodyMetrics.count}`);
-
-      const deletedFootage = await prisma.footageMarker.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  FootageMarkers deleted:  ${deletedFootage.count}`);
-
-      const deletedBonusXp = await prisma.gameBonusXp.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  GameBonusXp deleted:     ${deletedBonusXp.count}`);
-
-      // Goals must come after their children (Plan, LogEntry, ScheduledItem, DayRenderJob, Hike cascade)
-      const deletedGoals = await prisma.goal.deleteMany({
-        where: { userId: B_USER_ID },
-      });
-      console.log(`  Goals deleted:           ${deletedGoals.count}`);
-
-      // Finally delete the user
-      const deletedUsers = await prisma.user.deleteMany({
-        where: { id: B_USER_ID },
-      });
-      console.log(`  Users deleted:           ${deletedUsers.count}`);
-
-      // Verify B is gone
+      // [7a] Verify B is gone
       const remainingB = await prisma.user.findUnique({ where: { id: B_USER_ID } });
       assert(
         remainingB === null,
@@ -782,10 +719,47 @@ async function main() {
         `[7a] ${B_USER_ID} still exists after cleanup!`,
       );
 
-      // Post-cleanup founder regression
-      console.log("\n--- Step 7 post-cleanup founder regression ---");
+      // [7b] Per-model zero-row sweep across all 17 SCOPED_MODELS — the actual
+      // point of the upgrade. Proves the cascade reached every owned model,
+      // not just that a deleteMany() found rows to remove.
+      console.log("\n--- Step 7b: post-cascade zero-row sweep (17 models) ---");
+      for (const { label, accessor } of MODEL_MAP) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const delegate = (prisma as any)[accessor] as {
+          count: (args: { where: { userId: string } }) => Promise<number>;
+        };
+        const remaining = await delegate.count({ where: { userId: B_USER_ID } });
+        assert(
+          remaining === 0,
+          `[7b] ${label}: 0 rows remain for ${B_USER_ID} after cascade`,
+          `[7b] ${label}: ${remaining} row(s) SURVIVED the User cascade — FK gap!`,
+        );
+      }
+
+      // [7c] Shared FoodLibrary row SURVIVES the cascade (positive assertion —
+      // shared catalog must not cascade from a User delete). FK direction is
+      // FoodUsage.food → FoodLibrary (fires on a FoodLibrary delete, not the
+      // reverse) — this is the one place in the sweep that actually exercises
+      // the shared-vs-owned boundary end to end.
+      const survivingFood = await prisma.foodLibrary.findUnique({ where: { id: sharedFoodId } });
+      assert(
+        survivingFood !== null,
+        "[7c] Shared FoodLibrary row SURVIVED the User cascade (correct — shared catalog)",
+        "[7c] Shared FoodLibrary row was DELETED by the User cascade — FK direction regression!",
+      );
+      // Test-owned cleanup — not part of the cascade proof itself.
+      if (survivingFood) {
+        await prisma.foodLibrary.delete({ where: { id: sharedFoodId } });
+        console.log(`  FoodLibrary (shared) cleaned up: ${sharedFoodId}`);
+      }
+
+      // [7d] Post-cleanup founder regression — proves the cascade didn't touch
+      // the founder. Distinct from Step 6's mid-run check (which catches
+      // founder-bleed from B's writes); this one catches founder-bleed from
+      // B's deletion specifically. Both are kept intentionally.
+      console.log("\n--- Step 7d: post-cleanup founder regression ---");
       const founderAfterCleanup = await founderSnapshot();
-      assertCountsEqual(founderBefore, founderAfterCleanup, "step-7 post-cleanup");
+      assertCountsEqual(founderBefore, founderAfterCleanup, "step-7d post-cleanup");
 
     } catch (cleanupErr) {
       console.error("[CLEANUP ERROR]", cleanupErr);
@@ -799,7 +773,7 @@ async function main() {
   console.log("\n=== Results ===");
   if (failures === 0) {
     console.log(
-      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 16 scoped models.\n" +
+      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 17 scoped models.\n" +
       "Founder counts identical before/after. usr_e9_b fully cleaned up.\n" +
       "Phase-0 done-bar: GREEN. Exit 0.\n",
     );

@@ -6,6 +6,9 @@ import { cookies } from "next/headers";
 import { safeNext } from "@/lib/auth/safe-next";
 import { previewInviteCodeQuery } from "@/lib/auth/invite-gate";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { getCurrentUserId } from "@/lib/auth/current-user";
+import { prisma } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 
 /**
  * Initiate Google OAuth sign-in.
@@ -99,4 +102,72 @@ export async function previewInviteCode(code: string): Promise<boolean> {
 export async function signOutAction(redirectTo?: string | FormData) {
   const target = typeof redirectTo === "string" ? safeNext(redirectTo) : "/signin";
   await signOut({ redirectTo: target });
+}
+
+/**
+ * #245 — Permanently delete the signed-in user's account and all owned data.
+ *
+ * `useActionState`-compatible: (prevState, formData) -> next state.
+ *
+ * Mechanics (see .feature-dev/2026-07-11-245-delete-account/agents/architecture-critique.md,
+ * Attacks 1/2/3/4/8 — this function follows that skeleton exactly):
+ *  - uid is ALWAYS session-derived via getCurrentUserId() (OWNERSHIP CRITICAL, same house
+ *    rule as connection-actions.ts) — NEVER a form-supplied id. getCurrentUserId() itself
+ *    redirect()s to /signin (a NEXT_REDIRECT throw) when there's no session; that throw is
+ *    intentionally left unwrapped here so it propagates.
+ *  - The confirmation phrase is validated server-side (trim, then exact case-sensitive
+ *    match) — the client's disabled-until-match button is UX-only defense-in-depth.
+ *  - prisma.user.delete() is the raw singleton (house rule: auth-infra ops use the raw
+ *    client, not the tenant-scoped getDb()) and is a SINGLE SQL statement — every owned
+ *    model + Account/Session + OAuth tokens is `onDelete: Cascade` in the schema, so this
+ *    one call is the entire deletion. No $transaction wrapper: a single statement gains
+ *    nothing from one, and wrapping signOut() in it would be both semantically wrong (mixing
+ *    a DB transaction with a non-DB async call) and would risk swallowing signOut()'s
+ *    NEXT_REDIRECT throw (see below).
+ *  - ONLY the delete call is try/caught. P2025 ("record to delete does not exist") means a
+ *    concurrent double-submit already deleted the row — that's not an error from the user's
+ *    perspective (the account they wanted gone is gone), so we fall through to signOut()
+ *    instead of surfacing a scary error. Any OTHER error rethrows unhandled.
+ *  - signOut() runs OUTSIDE any try/catch. Its redirect to /signin?deleted=1 is a
+ *    NEXT_REDIRECT throw used as control flow by the Next.js framework boundary — catching it
+ *    here (even in a "just in case" outer try/catch) would swallow the redirect and leave the
+ *    user staring at a stale page for an account that no longer exists.
+ */
+export type DeleteAccountState = { error: string | null };
+
+const DELETE_CONFIRMATION_PHRASE = "delete my account";
+
+export async function deleteAccountAction(
+  _prevState: DeleteAccountState,
+  formData: FormData,
+): Promise<DeleteAccountState> {
+  // Session-derived uid ONLY — never a form field. Redirects to /signin (NEXT_REDIRECT,
+  // left unwrapped) when there's no session.
+  const uid = await getCurrentUserId();
+
+  const raw = formData.get("confirmation");
+  const phrase = typeof raw === "string" ? raw.trim() : "";
+  if (phrase !== DELETE_CONFIRMATION_PHRASE) {
+    return { error: "Type the phrase exactly as shown to confirm." };
+  }
+
+  // ONLY the delete call is try/caught — never signOut(), never the whole function body.
+  try {
+    await prisma.user.delete({ where: { id: uid } });
+  } catch (err) {
+    const isAlreadyDeleted =
+      err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
+    if (!isAlreadyDeleted) {
+      throw err; // anything other than "already gone" is a real failure — surface it
+    }
+    // P2025 = row already deleted by a concurrent submit — fall through to signOut anyway.
+  }
+
+  // MUST be outside any try/catch. Its NEXT_REDIRECT throw is the intended exit — in
+  // practice this call never returns (redirect isn't set to false, so next-auth's signOut
+  // always throws). TS's declared-return-type check for this destructured export doesn't
+  // narrow to `never` through the local re-export, so the trailing return below is a
+  // type-satisfying fallback only — NOT a reachable code path, and NOT inside a catch.
+  await signOut({ redirectTo: "/signin?deleted=1" });
+  return { error: null };
 }
