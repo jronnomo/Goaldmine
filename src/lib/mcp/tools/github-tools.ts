@@ -348,10 +348,10 @@ export function registerGitHubTools(server: McpServer): void {
         "Bind a goal to a GitHub repository (and optionally a GitHub Projects v2 board number) " +
         "so the other GitHub tools can operate on it. This is the prerequisite step — call it " +
         "before get_project_overview, list_project_issues, sync_github_milestones, or " +
-        "set_github_issue_status. Primarily for project goals (e.g. chewgether); fitness goals can " +
+        "set_github_issue_status. Primarily for project goals (e.g. a side project or startup); fitness goals can " +
         "be linked but GitHub tools are most useful for project-kind goals. " +
-        "repo must be in 'owner/repo' format (e.g. 'jronnomo/Chewgether'). " +
-        "Bare names ('Chewgether') and full URLs ('https://github.com/...') are rejected by the " +
+        "repo must be in 'owner/repo' format (e.g. 'acme/roadmap-app'). " +
+        "Bare names ('roadmap-app') and full URLs ('https://github.com/...') are rejected by the " +
         "input schema. projectNumber, if provided, enables Projects v2 board column breakdown in " +
         "get_project_overview — it is the integer from the project URL " +
         "(github.com/users/{owner}/projects/{N}). " +
@@ -366,11 +366,11 @@ export function registerGitHubTools(server: McpServer): void {
           .string()
           .regex(
             /^[\w.-]+\/[\w.-]+$/,
-            "Must be owner/repo format (e.g. jronnomo/Chewgether). " +
+            "Must be owner/repo format (e.g. acme/roadmap-app). " +
               "Bare names and full GitHub URLs are rejected.",
           )
           .describe(
-            "GitHub repository in 'owner/repo' format (e.g. 'jronnomo/Chewgether'). " +
+            "GitHub repository in 'owner/repo' format (e.g. 'acme/roadmap-app'). " +
               "Bare names and full URLs are rejected.",
           ),
         projectNumber: z

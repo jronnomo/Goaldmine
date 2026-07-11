@@ -772,7 +772,7 @@ export function registerProjectTools(server: McpServer): void {
         "Exactly one goal holds focus at a time; this clears focus from ALL other goals (they stay tracked, " +
         "their plans and events remain visible — only the daily-prescription driver changes). " +
         "Focusing a goal also re-activates its most recent plan if it was paused, and re-tracks an untracked goal. " +
-        "Works for any goal kind — switch between a fitness goal and a project goal (e.g. chewgether) and back. " +
+        "Works for any goal kind — switch between a fitness goal and a project goal (e.g. a side project) and back. " +
         "If the user is mid-program on a fitness goal, confirm before switching: per operating rules, propose the " +
         "switch, use list_goals to show their goals, and get explicit approval first. " +
         "Returns the new focus goal (id, kind, objective) and the previous focus goal id. " +

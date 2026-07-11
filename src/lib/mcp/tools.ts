@@ -1878,7 +1878,7 @@ function registerReadTools(server: McpServer) {
     {
       title: "List planned / scheduled / upcoming hikes (to review, move, or reschedule)",
       description:
-        "Return every Hike row with status='planned' — the upcoming hikes on the calendar (the faded boot icons): training hikes, the Mt. Elbert build-up, backpacking trips. " +
+        "Return every Hike row with status='planned' — the upcoming hikes on the calendar (the faded boot icons): training hikes, a summit-goal build-up, backpacking trips. " +
         "This is THE tool to call when you need to see or move planned hikes — 'what hikes are scheduled', 'list all planned hikes', 'which Saturdays have a hike between now and date X', 'reschedule/shift the planned hikes'. " +
         "Do NOT poll get_day per Saturday and do NOT read planJson — planned hikes are Hike rows, returned here directly with their ids so you can then finalize (log_hike.replacesPlannedHikeId), delete (delete_hike), or reschedule them. " +
         "Each hike includes goalId (which goal it trains) and goalObjective; null goalId means the hike is attributed to the focus goal at read time. " +
@@ -2749,7 +2749,7 @@ function registerWriteTools(server: McpServer) {
         "Log an out-of-gym training day: completed hike, training hike, scheduled future hike, or backpacking trip. " +
         "Captures route, distance (mi), elevation gain (ft), optional pack weight (lb), duration (min), and post-hike RPE. " +
         "Use status='completed' (default) when the user finished the hike, or status='planned' to put an upcoming hike on the calendar " +
-        "(planned hikes render as faded boot icons). For the Mt. Elbert hero goal especially, planned hikes anchor the progression. " +
+        "(planned hikes render as faded boot icons). For a hero hiking goal especially, planned hikes anchor the progression. " +
         "Pass goalId to attribute the hike to a specific goal (use list_goals to find ids); omit to attribute to the current focus goal. " +
         "Scheduling is idempotent per day per goal: calling with status='planned' for a date + goal that already has a planned hike updates that row in place. " +
         "Two different goals may each plan a hike on the same day — idempotency is scoped per-goal. " +
@@ -3611,7 +3611,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Update a goal's readiness scoring (targets / rubric / weighted metrics)",
       description:
-        "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 155 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
+        "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 175 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
         "Use when adjusting the success criteria / rubric / scoring weights for the goal. " +
         "Each target = { metric, label, target, weight, units, direction, rationale?, gating? }. Weights should sum near 1. " +
         "Set gating:true on a target to make it a hard gate — readiness is capped at 80 until that target reaches progress ≥ 1; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data). " +
@@ -4414,7 +4414,7 @@ function registerWriteTools(server: McpServer) {
       title: "Attach a URL / link / reference document to a goal",
       description:
         "Append a reference (URL, trail report, route guide, article, pasted doc snippet) to a goal so it persists across coaching turns. " +
-        "Use when the user shares a link about their goal — Mt. Elbert trail conditions, a training article, a race course PDF, equipment guides. " +
+        "Use when the user shares a link about their goal — trail conditions, a training article, a race course PDF, equipment guides. " +
         "Optional claudeSummary captures the key takeaway from the reference so future turns don't have to re-fetch. " +
         "Read existing references via get_goal. Update an existing reference's summary via update_goal_reference.",
       inputSchema: {

@@ -4,7 +4,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { MT_ELBERT_DEFAULT_TARGETS } from "../src/lib/goal-targets";
+import { HIKE_DEFAULT_TARGETS } from "../src/lib/goal-targets";
 import { FOUNDER_USER_ID } from "../src/lib/auth/founder";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
@@ -27,7 +27,7 @@ async function main() {
       notes:
         "Hero objective. ~11-12 mi RT, ~5,200 ft gain, 14,440 ft summit. " +
         "Need leg endurance + aerobic base. Pacing matters more than raw strength.",
-      targets: MT_ELBERT_DEFAULT_TARGETS,
+      targets: HIKE_DEFAULT_TARGETS,
     },
   });
 

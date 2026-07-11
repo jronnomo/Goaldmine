@@ -20,7 +20,7 @@ export {
   LOG_METRIC_PREFIX,
   METRICS,
   METRIC_BY_ID,
-  MT_ELBERT_DEFAULT_TARGETS,
+  HIKE_DEFAULT_TARGETS,
 } from "@/lib/metrics-registry";
 
 import { LOG_METRIC_PREFIX } from "@/lib/metrics-registry";
