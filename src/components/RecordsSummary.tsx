@@ -56,7 +56,17 @@ export async function RecordsSummary({
       )}
 
       {/* Next tests due */}
-      <Card title="Tests due">
+      <Card
+        title="Tests due"
+        action={
+          <Link
+            href="/baselines"
+            className="text-sm text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+          >
+            All baselines →
+          </Link>
+        }
+      >
         {testsDue.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
             {schedule.scheduled.length === 0

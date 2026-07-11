@@ -268,12 +268,6 @@ export default async function HomePage() {
             Week {ctx.weekIndex}
             {ctx.phase ? ` · Phase ${ctx.phase.index} · ${ctx.phase.name}` : ""}
           </p>
-          <Link
-            href="/import"
-            className="text-xs rounded-full border border-[var(--border)] px-2 py-0.5 text-[var(--muted)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            + Import
-          </Link>
         </div>
 
         {/* Title */}

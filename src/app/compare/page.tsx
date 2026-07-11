@@ -290,6 +290,13 @@ export default async function ComparePage({
 
   return (
     <div className="mx-auto max-w-md space-y-4 p-4">
+      <Link
+        href="/progress"
+        className="inline-flex items-center min-h-11 text-sm text-[var(--accent)]"
+      >
+        ← Progress
+      </Link>
+
       <HeroSpan
         dateA={result.dateA}
         dateB={result.dateB}
