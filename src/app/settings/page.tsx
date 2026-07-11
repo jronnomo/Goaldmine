@@ -213,6 +213,29 @@ export default async function SettingsPage() {
           You can reconnect at any time.
         </p>
 
+        {/* Your data — export before deletion (#246). Sits above the danger
+            zone: portability before destruction. */}
+        <div className="rounded-2xl border border-[var(--border)] bg-[var(--background)] overflow-hidden shadow-sm">
+          <div className="px-4 py-3 border-b border-[var(--border)]">
+            <h2 className="text-sm font-semibold text-[var(--foreground)]">
+              Your data
+            </h2>
+          </div>
+          <div className="px-4 py-4 space-y-3">
+            <p className="text-sm text-[var(--muted)]">
+              Download everything you&rsquo;ve logged — goals, workouts,
+              nutrition, notes, history — as a single JSON file.
+            </p>
+            <a
+              href="/api/export"
+              download
+              className="block w-full text-center rounded-xl bg-[var(--accent)] text-white px-4 py-3 text-sm font-medium min-h-11 flex items-center justify-center transition-opacity hover:opacity-90"
+            >
+              Export my data
+            </a>
+          </div>
+        </div>
+
         {/* Danger zone — permanent account deletion (#245). Rendered last. */}
         <DeleteAccountSection />
       </div>
