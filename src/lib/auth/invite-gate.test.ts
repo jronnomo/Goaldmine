@@ -16,17 +16,23 @@ vi.mock("@/lib/db", () => ({
     invite: {
       findFirst: vi.fn(),
     },
+    // #247 — $executeRaw is a client-level method (invite-gate.ts calls it as
+    // prisma.$executeRaw`...` directly, not prisma.invite.$executeRaw), so it
+    // lives at the top level of this mock, sibling to user/invite.
+    $executeRaw: vi.fn(),
   },
   getDb: vi.fn(),
 }));
 
-import { checkInviteGate, previewInviteCodeQuery } from "@/lib/auth/invite-gate";
+import { checkInviteGate, previewInviteCodeQuery, claimInvite } from "@/lib/auth/invite-gate";
 import { prisma } from "@/lib/db";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockUser = prisma.user as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockInvite = prisma.invite as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockExecuteRaw = prisma.$executeRaw as any;
 
 // Helper to build an invite-shaped object
 function fakeInvite(overrides: Partial<{
@@ -335,5 +341,57 @@ describe("previewInviteCodeQuery", () => {
     expect(mockInvite.findFirst).toHaveBeenNthCalledWith(2, { where: { code: "code-maxed" } });
     expect(mockInvite.findFirst).toHaveBeenNthCalledWith(3, { where: { code: "code-expired" } });
     expect(mockInvite.findFirst).toHaveBeenNthCalledWith(4, { where: { code: "code-unknown" } });
+  });
+});
+
+// ── claimInvite ──────────────────────────────────────────────────────────
+//
+// #247 — atomic conditional claim. These are shape/contract tests only: they
+// prove claimInvite interprets the affected-row count correctly and passes
+// the invite id through to the raw query. They CANNOT prove atomicity itself
+// (that only exists on real Postgres) — see scripts/verify-invite-race.ts for
+// the real-DB proof.
+
+describe("claimInvite", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("returns true when exactly one row is affected (claim won)", async () => {
+    mockExecuteRaw.mockResolvedValue(1);
+    const result = await claimInvite("inv_1");
+    expect(result).toBe(true);
+  });
+
+  it("returns false when zero rows are affected (claim lost: raced, exhausted, or expired)", async () => {
+    mockExecuteRaw.mockResolvedValue(0);
+    const result = await claimInvite("inv_1");
+    expect(result).toBe(false);
+  });
+
+  it("calls $executeRaw exactly once per claim attempt", async () => {
+    mockExecuteRaw.mockResolvedValue(1);
+    await claimInvite("inv_1");
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the invite id through as a bound parameter of the tagged-template call", async () => {
+    mockExecuteRaw.mockResolvedValue(1);
+    await claimInvite("inv_specific_id");
+    // Tagged-template call shape: fn(stringsArray, ...values). The invite id
+    // is the sole interpolated value.
+    const [strings, ...values] = mockExecuteRaw.mock.calls[0];
+    expect(Array.isArray(strings)).toBe(true);
+    expect(values).toEqual(["inv_specific_id"]);
+  });
+
+  it("SQL text guards on useCount < maxUses and the expiry window", async () => {
+    mockExecuteRaw.mockResolvedValue(1);
+    await claimInvite("inv_1");
+    const [strings] = mockExecuteRaw.mock.calls[0];
+    const sql = (strings as TemplateStringsArray).join("?");
+    expect(sql).toMatch(/"useCount"\s*<\s*"maxUses"/);
+    expect(sql).toMatch(/"expiresAt"/);
+    expect(sql).toMatch(/UPDATE\s+"Invite"/);
   });
 });

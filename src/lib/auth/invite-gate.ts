@@ -94,6 +94,41 @@ export async function checkInviteGate(
 }
 
 // ---------------------------------------------------------------------------
+// claimInvite — #247: atomic conditional claim, closing the concurrent-
+// redemption race between checkInviteGate's JS useCount check (above) and
+// the (now-removed) unguarded increment that used to live in
+// events.createUser. Two simultaneous signups against the same maxUses:1
+// invite could both observe useCount < maxUses in JS before either write
+// landed; the increment must happen in the SAME statement that re-checks
+// the guard, on the database.
+//
+// Why raw SQL: same reason the JS useCount < maxUses check exists above
+// (Check 4/5's comment) — Prisma's query builder cannot compare two columns
+// of the same row in a WHERE clause, so `useCount < maxUses` can't be
+// expressed as a `updateMany({ where: ... } )` guard. A parameterized
+// (injection-safe, tagged-template) `$executeRaw` conditional UPDATE is the
+// only way to make the guard-and-increment atomic.
+//
+// Why the expiry re-guard: `expiresAt` can lapse between the gate's read
+// (checkInviteGate, app-server clock) and this claim (Postgres NOW(),
+// DB-server clock) — re-checking it here closes that window too, not just
+// the useCount race. affected rows === 0 covers both "already claimed by
+// the other concurrent request" and "expired since the gate read it";
+// callers don't need to distinguish the two, both resolve to the same
+// /request-access loser path.
+export async function claimInvite(inviteId: string): Promise<boolean> {
+  const affected = await prisma.$executeRaw`
+    UPDATE "Invite"
+    SET "useCount" = "useCount" + 1,
+        "redeemedAt" = COALESCE("redeemedAt", NOW())
+    WHERE "id" = ${inviteId}
+      AND "useCount" < "maxUses"
+      AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+  `;
+  return affected === 1;
+}
+
+// ---------------------------------------------------------------------------
 // Advisory preview (NOT enforcement)
 //
 // previewInviteCodeQuery is a PURE helper — deliberately NOT marked
