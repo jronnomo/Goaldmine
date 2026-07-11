@@ -29,9 +29,20 @@ import {
   denyAuthorization,
 } from "@/lib/oauth/authorize-actions";
 import { originFromHeaders } from "@/lib/oauth/tokens";
+import { signOutAction } from "@/lib/auth/auth-actions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Scope copy, keyed by scope. One entry per scope; validation guarantees
+// scope ∈ {undefined, "mcp"} today (src/lib/oauth/authorize-validate.ts),
+// so new scopes need a new entry here rather than prose surgery below.
+const SCOPE_COPY: Record<string, string[]> = {
+  mcp: [
+    "Read your goals, workouts, plans, and history",
+    "Log workouts, notes, and progress on your behalf",
+  ],
+};
 
 interface AuthorizePageProps {
   // Next 16: searchParams is a Promise.
@@ -156,25 +167,41 @@ export default async function AuthorizePage({ searchParams }: AuthorizePageProps
             Access requested:
           </p>
           <ul className="space-y-1 text-[var(--muted)]">
-            <li>• Read your goals, workouts, plans, and history</li>
-            <li>• Log workouts, notes, and progress on your behalf</li>
+            {(SCOPE_COPY[scope ?? "mcp"] ?? ["Access your Goaldmine data"]).map(
+              (line) => (
+                <li key={line}>• {line}</li>
+              ),
+            )}
           </ul>
         </div>
 
-        {/* Signed-in-as */}
-        <p className="text-xs text-[var(--muted)] text-center mb-5">
-          Signed in as{" "}
-          <span className="font-medium text-[var(--foreground)]">
-            {userEmail}
-          </span>
-          .{" "}
-          <a
-            href="/signin"
-            className="underline underline-offset-2 hover:text-[var(--foreground)] transition-colors"
+        {/* Signed-in-as — a <form> cannot legally sit inside a <p> (invalid
+            HTML, causes an SSR/hydration mismatch — the browser's parser
+            implicitly closes the <p> at <form>, but React's tree still has
+            it nested), so this wrapper is a <div>, not a <p>. */}
+        <div className="text-xs text-[var(--muted)] text-center mb-5">
+          <span>
+            Signed in as{" "}
+            <span className="font-medium text-[var(--foreground)]">
+              {userEmail}
+            </span>
+            .
+          </span>{" "}
+          <form
+            action={signOutAction.bind(
+              null,
+              "/oauth/authorize?" + originalQueryString,
+            )}
+            className="inline"
           >
-            Not you? Sign out
-          </a>
-        </p>
+            <button
+              type="submit"
+              className="underline underline-offset-2 hover:text-[var(--foreground)] transition-colors bg-transparent border-none p-0 m-0 font-inherit text-inherit cursor-pointer"
+            >
+              Not you? Sign out
+            </button>
+          </form>
+        </div>
 
         {/* Actions — two <form>s posting to server actions */}
         <div className="flex flex-col gap-3">
@@ -230,6 +257,10 @@ export default async function AuthorizePage({ searchParams }: AuthorizePageProps
             >
               Deny
             </button>
+            <p className="mt-2 text-xs text-[var(--muted)] text-center leading-snug">
+              Deny sends you back to claude.ai without connecting. You can
+              reconnect any time.
+            </p>
           </form>
         </div>
 
