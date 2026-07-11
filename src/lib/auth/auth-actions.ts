@@ -66,8 +66,37 @@ export async function previewInviteCode(code: string): Promise<boolean> {
 }
 
 /**
- * Sign out the current user and redirect to /signin.
+ * Sign out the current user.
+ *
+ * This action is used two ways:
+ *   1. Bound: `signOutAction.bind(null, "/oauth/authorize?...")` on a form —
+ *      Next prepends the bound string, so `redirectTo` receives it directly.
+ *      (Next still passes the live FormData as the next positional arg; this
+ *      action never reads it, so it declares no parameter for it — functions
+ *      with fewer declared params are assignable.)
+ *   2. Bare: `<form action={signOutAction}>` (settings page, SessionMenu) —
+ *      Next calls `signOutAction(formData)` with NO bound args, so the
+ *      FormData object itself lands in the `redirectTo` slot. The `typeof`
+ *      guard below catches this and falls back to "/signin", preserving
+ *      the exact behavior those two legacy callers already have — they are
+ *      intentionally left untouched.
+ *
+ * Any string that does land in `redirectTo` is passed through `safeNext`
+ * (open-redirect defense in depth) rather than trusted directly. `safeNext`
+ * rejects non-relative/protocol-relative input and falls back to "/" — NOT
+ * "/signin" — which differs from the FormData-trap fallback above, but is
+ * still safe: middleware bounces an unauthenticated request to "/" over to
+ * "/signin?next=/", landing the signed-out user on the same page, just one
+ * hop later.
+ *
+ * `redirectTo`'s type is `string | FormData` (not just `string`) so the
+ * bare-form call sites above type-check: React's `<form action={fn}>` prop
+ * requires `fn` be assignable to `(formData: FormData) => …`, which means
+ * the first parameter must accept a FormData argument. The runtime guard
+ * below still discriminates on `typeof`, so behavior is unchanged from the
+ * `string`-only shape — this is a type-level widening only.
  */
-export async function signOutAction() {
-  await signOut({ redirectTo: "/signin" });
+export async function signOutAction(redirectTo?: string | FormData) {
+  const target = typeof redirectTo === "string" ? safeNext(redirectTo) : "/signin";
+  await signOut({ redirectTo: target });
 }
