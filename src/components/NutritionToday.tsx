@@ -39,6 +39,7 @@ function asItems(raw: unknown): Item[] {
 }
 
 function summarize(items: Item[]): string {
+  if (items.length === 0) return "Custom entry"; // macros-only log
   return items
     .map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name))
     .join(", ");

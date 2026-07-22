@@ -172,6 +172,21 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
     return () => document.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [open]);
 
+  // ── Body scroll lock while open ───────────────────────────────────────────
+  // Mirrors BottomSheet/LibraryPickerOverlay: without it, iOS Safari can pan the
+  // layout viewport (e.g. when a field focuses), sliding this fixed overlay —
+  // and its ✕ — off-screen. Restore the scroll position on close.
+  useEffect(() => {
+    if (!open) return;
+    const scrollY = window.scrollY;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+      window.scrollTo(0, scrollY);
+    };
+  }, [open]);
+
   // ── Reset state on open/close ─────────────────────────────────────────────
   // On open: full reset to correct initial phase (scan or confirm).
   // On close: reset phase to "scan" so the next open always starts from a
@@ -342,7 +357,7 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
       {/* Panel — mirrors .bottom-sheet-panel CSS values exactly */}
       <div
         className="absolute bottom-0 left-0 right-0 mx-auto max-w-md
-                   flex flex-col max-h-[85vh]"
+                   flex flex-col max-h-[85dvh]"
         style={{
           background: "var(--card)",
           borderTopLeftRadius: "1rem",

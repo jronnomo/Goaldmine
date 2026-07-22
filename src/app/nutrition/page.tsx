@@ -31,6 +31,7 @@ function asItems(raw: unknown): NutritionItem[] {
 }
 
 function summarize(items: NutritionItem[]): string {
+  if (items.length === 0) return "Custom entry"; // macros-only log
   return items.map((i) => (i.qty ? `${i.name} (${i.qty})` : i.name)).join(", ");
 }
 

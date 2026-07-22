@@ -103,6 +103,23 @@ export function LibraryPickerOverlay({
     return () => document.removeEventListener("keydown", handler, { capture: true });
   }, [open]);
 
+  // Lock body scroll while open (mirrors BottomSheet). Without this, iOS Safari
+  // pans the layout viewport when the search keyboard opens; the fixed overlay is
+  // anchored to the layout viewport, so the header (and its ✕) slides off-screen
+  // with no way to scroll it back. Capture scroll position on open and restore it
+  // on close AND on search blur, in case the keyboard pan leaked through anyway.
+  const openScrollYRef = useRef(0);
+  useEffect(() => {
+    if (!open) return;
+    openScrollYRef.current = window.scrollY;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+      window.scrollTo(0, openScrollYRef.current);
+    };
+  }, [open]);
+
   // Client-side filter (no server round-trip — UXR-lib-01)
   // Note: state reset on re-open is handled by key={pickerOpen ? 1 : 0} in useFoodComposer,
   // which remounts this component fresh each time the picker is opened.
@@ -131,7 +148,7 @@ export function LibraryPickerOverlay({
           overflow-hidden clips the scroll area to the rounded top + prevents the
           list from bleeding up over the header/tabs. */}
       <div
-        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85vh] overflow-hidden"
+        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85dvh] overflow-hidden"
         style={{ background: "var(--card)", borderTopLeftRadius: "1rem", borderTopRightRadius: "1rem" }}
       >
         {/* Header */}
@@ -155,6 +172,9 @@ export function LibraryPickerOverlay({
             placeholder="Search foods…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            // Keyboard closed → undo any layout-viewport pan iOS did to reveal
+            // the input, so the header/✕ lands back inside the visible screen.
+            onBlur={() => window.scrollTo(0, openScrollYRef.current)}
             // AA fix: 12px bold min for contrast on cream (UXR-lib-11)
             className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm min-h-[44px]"
           />

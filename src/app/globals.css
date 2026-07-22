@@ -259,7 +259,9 @@ input::placeholder, textarea::placeholder {
   background: var(--card);
   border-top-left-radius: 1rem;
   border-top-right-radius: 1rem;
+  /* dvh tracks the iOS Safari dynamic toolbars/keyboard; vh fallback for old browsers. */
   max-height: 85vh;
+  max-height: 85dvh;
   display: flex;
   flex-direction: column;
   transform: translateY(0);

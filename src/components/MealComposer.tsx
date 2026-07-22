@@ -230,6 +230,9 @@ export function MealComposer(props: MealComposerProps) {
   // Edit-mode submit plumbing
   const [editPending, startEdit] = useTransition();
   const [editError, setEditError] = useState<string | null>(null);
+  // Client-side pre-submit validation (create mode) — server throws are redacted
+  // in prod, so the "nothing to log" case must be caught here with a real message.
+  const [clientError, setClientError] = useState<string | null>(null);
   // Quiet-confirm: briefly show ✓ before onSaved closes the sheet (UXR-18).
   const [editSaved, setEditSaved] = useState(false);
 
@@ -261,6 +264,11 @@ export function MealComposer(props: MealComposerProps) {
     [rawMode, rawText, items],
   );
   const stale = hashItems(effectiveItems) !== snapshotHash;
+
+  // A loggable meal needs items OR at least one entered macro (macros-only
+  // "custom" logs are valid — mirrors the logNutrition/updateNutrition rule).
+  const emptyDraft =
+    effectiveItems.length === 0 && !Object.values(macros).some((v) => v != null);
 
   // Bullseye meter: only a real meter when a planned target exists AND macros are
   // fresh; otherwise hollow. TODO(next slice): host passes `plannedTarget` from
@@ -484,6 +492,7 @@ export function MealComposer(props: MealComposerProps) {
     });
     setSnapshotHash(hashItems([]));
     setPreview(null);
+    setClientError(null);
     setRemovingIndex(null);
     setBumpState(null);
     setFlashMacros(null);
@@ -1078,6 +1087,10 @@ export function MealComposer(props: MealComposerProps) {
           action={(fd) =>
             startEdit(async () => {
               setEditError(null);
+              if (emptyDraft) {
+                setEditError("Add at least one item, or enter macros below.");
+                return;
+              }
               try {
                 await updateNutrition(props.id, fd);
                 // Quiet confirm (UXR-18): flip to ✓ and hold ~150ms so the
@@ -1166,6 +1179,11 @@ export function MealComposer(props: MealComposerProps) {
         ref={createFormRef}
         onSubmit={(e) => {
           e.preventDefault();
+          if (emptyDraft) {
+            setClientError("Add at least one item, or enter macros below.");
+            return;
+          }
+          setClientError(null);
           createSubmit(logNutrition, {
             successMsg: "✓ Meal logged",
             onSuccess: () => {
@@ -1182,8 +1200,8 @@ export function MealComposer(props: MealComposerProps) {
           {createSaved && (
             <span className="text-[var(--success)]">{createSaved}</span>
           )}
-          {createError && !createSaved && (
-            <span className="text-[var(--danger)]">{createError}</span>
+          {(clientError || createError) && !createSaved && (
+            <span className="text-[var(--danger)]">{clientError ?? createError}</span>
           )}
         </p>
 

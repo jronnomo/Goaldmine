@@ -256,14 +256,20 @@ export async function logNutrition(form: FormData) {
   } else {
     items = parseItemsText(String(form.get("items") ?? ""));
   }
-  if (items.length === 0) throw new Error("List at least one food item");
+  // Macros-only "custom" meals are valid: items may be empty when at least one
+  // macro value was entered. (Callers also validate client-side — thrown Errors
+  // here are redacted to a generic digest message in production.)
+  const macros = parseMacros(form);
+  if (items.length === 0 && !Object.values(macros).some((v) => v != null)) {
+    throw new Error("Add at least one item, or enter macros");
+  }
 
   const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
 
   const db = await getDb();
   await db.nutritionLog.create({
-    data: { date, mealType, items, notes, ...parseMacros(form) },
+    data: { date, mealType, items, notes, ...macros },
   });
 
   revalidatePath("/", "layout");
@@ -296,7 +302,11 @@ export async function updateNutrition(id: string, form: FormData) {
   } else {
     items = parseItemsText(String(form.get("items") ?? ""));
   }
-  if (items.length === 0) throw new Error("List at least one food item");
+  // Same macros-only rule as logNutrition: empty items OK when macros present.
+  const macros = parseMacros(form);
+  if (items.length === 0 && !Object.values(macros).some((v) => v != null)) {
+    throw new Error("Add at least one item, or enter macros");
+  }
 
   const date = parseUserTzDate(dateStr);
   if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
@@ -304,7 +314,7 @@ export async function updateNutrition(id: string, form: FormData) {
   const db = await getDb();
   await db.nutritionLog.update({
     where: { id },
-    data: { mealType, items, notes, date, ...parseMacros(form) },
+    data: { mealType, items, notes, date, ...macros },
   });
 
   revalidatePath("/", "layout");
