@@ -1,6 +1,7 @@
 "use client";
 
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
 import { MACRO_KEYS } from "@/lib/food-types";
 import type {
@@ -11,6 +12,12 @@ import type {
 } from "@/lib/food-types";
 import { lookupBarcode, setFoodFavorite } from "@/lib/food-actions";
 import { servingsFromLastPortion } from "@/lib/food-units";
+
+// Stable identity for useSyncExternalStore (same idiom as BottomSheet — see its
+// docstring for why this isn't useState + useEffect).
+function subscribeNever() {
+  return () => {};
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Props
@@ -89,18 +96,23 @@ function scaledMacros(food: LibraryFood, servings: number): FoodMacros {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * ScanFoodSheet — in-sheet overlay for barcode scanning + food confirmation.
+ * ScanFoodSheet — portaled top-layer <dialog> for barcode scanning + food confirmation.
  *
- * Rendered as a plain (non-dialog) fixed overlay INSIDE the Log sheet's single
- * <dialog>. This guarantees there is only ONE native modal dialog open at any
- * time, eliminating the iOS Safari double-dialog dismiss bug where closing one
- * showModal() dialog also dismisses any other showModal() dialog in the top layer.
+ * MUST be a portaled dialog, not an in-place `fixed inset-0` div: a CSS
+ * transform on any ancestor (e.g. .bottom-sheet-panel's translateY) makes that
+ * ancestor the containing block for fixed descendants, so an in-place overlay
+ * gets sized/anchored to the sheet panel instead of the viewport and drifts
+ * off-screen with it (founder-reported stuck-overlay bug, 7/23). Portaling into
+ * document.body as a dialog *sibling* — never a DOM-nested dialog — is the
+ * same pattern BottomSheet uses to dodge the iOS double-dialog dismiss bug
+ * (that bug is about nested dialog ancestry, not sibling top-layer dialogs;
+ * see BottomSheet's docstring). Opened last, this stacks above the Log sheet
+ * and LibraryPickerOverlay in top-layer order.
  *
  * Overlay structure:
- *   - `fixed inset-0 z-[55]` container with bg-black/45 scrim.
+ *   - The dialog element is the full-viewport scrim (bg-black/45; ::backdrop zeroed).
  *   - Bottom-anchored panel that mimics .bottom-sheet-panel (same CSS values).
- *   - Escape handled via a document keydown listener (replacing the native
- *     dialog Esc that we no longer get from a second <dialog>).
+ *   - Escape arrives as the native `cancel` event (top-most dialog only).
  *   - Scrim tap: onClick target===currentTarget guard, same pattern as BottomSheet.
  *   - When open=false, returns null — camera is inactive, overlay is absent.
  *
@@ -153,24 +165,18 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   // Batch mode (no initialFood): camera session — add + keep scanning.
   const isChipMode = initialFood !== undefined;
 
-  // ── Stable ref to onClose — avoids stale closure in Escape handler ────────
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; });
-
-  // ── Escape key handler (replaces native <dialog> Esc) ────────────────────
-  // The Log sheet's dialog handles its own Esc. We need a separate listener
-  // for the overlay so Esc closes the scanner without touching the dialog.
+  // ── Top-layer promotion (two-phase mount, same idiom as BottomSheet) ─────
+  // The component only renders while `open`, so the dialog is opened once on
+  // portal mount and torn down by unmount (removal from the DOM also removes
+  // it from the top layer). Esc is handled by the native `cancel` event on the
+  // dialog itself — only the top-most dialog receives it, so Esc closes this
+  // sheet without touching the Log sheet or the library picker beneath it.
+  const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (!open) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCloseRef.current();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () => document.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [open]);
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  });
 
   // ── Body scroll lock while open ───────────────────────────────────────────
   // Mirrors BottomSheet/LibraryPickerOverlay: without it, iOS Safari can pan the
@@ -338,21 +344,22 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   // Render — when closed, return null (no overlay, no camera)
   // ─────────────────────────────────────────────────────────────────────────
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
-    // Outer div: full-viewport scrim. `fixed inset-0` escapes the Log sheet's
-    // dialog stacking context and covers the viewport. z-[55] sits above the
-    // sheet panel (which has no explicit z-index). bg-black/45 is the scrim.
+  return createPortal(
+    // The dialog element itself is the full-viewport scrim; top-layer, so no
+    // z-index is needed and no ancestor transform can capture it.
     // onClick with target===currentTarget: clicking the scrim (not the panel)
     // calls onClose — same pattern as BottomSheet's dialog onClick guard.
-    // NO dialog.close() is called anywhere — logOpen (BottomNav) is untouched.
-    <div
+    <dialog
+      ref={dialogRef}
       data-testid="scanfood-sheet"
-      className="fixed inset-0 z-[55] bg-black/45"
+      className="m-0 p-0 border-0 fixed inset-0 h-full w-full max-h-full max-w-full overflow-hidden bg-black/45 backdrop:bg-transparent"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
+      onCancel={(e) => { e.preventDefault(); onClose(); }}
+      onClose={onClose}
     >
       {/* Panel — mirrors .bottom-sheet-panel CSS values exactly */}
       <div
@@ -676,6 +683,7 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
           </div>
         </div>
       </div>
-    </div>
+    </dialog>,
+    document.body
   );
 }

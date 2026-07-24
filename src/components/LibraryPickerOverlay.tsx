@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { classifyFood, type MacroGroup } from "@/lib/food-resolve-local";
+import { setFoodFavorite } from "@/lib/food-actions";
 import type { LibraryFood } from "@/lib/food-types";
+
+// Stable identity for useSyncExternalStore (same idiom as BottomSheet — see its
+// docstring for why this isn't useState + useEffect).
+function subscribeNever() {
+  return () => {};
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -72,14 +80,21 @@ function macroLine(food: LibraryFood): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 /**
- * LibraryPickerOverlay — `fixed inset-0` NON-dialog overlay.
+ * LibraryPickerOverlay — portaled top-layer <dialog>.
  *
- * Structural guarantee: NOT a <dialog>. Mirrors ScanFoodSheet's overlay pattern
- * to avoid the iOS Safari double-dialog dismiss bug. z-[50] sits below
- * ScanFoodSheet (z-[55]) so the scan stepper renders on top correctly.
+ * MUST be a portaled dialog, not an in-place `fixed inset-0` div: a CSS
+ * transform on any ancestor (e.g. .bottom-sheet-panel's translateY) makes that
+ * ancestor the containing block for fixed descendants, so an in-place overlay
+ * gets sized/anchored to the sheet panel instead of the viewport and drifts
+ * off-screen with it (founder-reported stuck-overlay bug, 7/23). The top layer
+ * has no ancestors, so no transform can capture it. Rendering into
+ * document.body as a dialog *sibling* (not a nested dialog) is the same
+ * pattern BottomSheet uses to dodge the iOS double-dialog dismiss bug — see
+ * its docstring. Opened after the Log sheet, it stacks above it in top-layer
+ * order; ScanFoodSheet opens later still, so the scan stepper stays on top.
  *
  * Mounted by useFoodComposer in its {sheet} return — OUTSIDE the host <form>.
- * Escape handled via document keydown (same as ScanFoodSheet).
+ * Escape arrives as the native dialog `cancel` event (top-most dialog only).
  * When open=false, returns null (no DOM, no event listeners).
  */
 export function LibraryPickerOverlay({
@@ -90,18 +105,18 @@ export function LibraryPickerOverlay({
 }: LibraryPickerOverlayProps) {
   const [search, setSearch] = useState("");
   const [tab, setTab]       = useState<MacroGroup | "all">("all");
+  // Optimistic favorite-pin state per row; server value is the fallback.
+  const [favOverrides, setFavOverrides] = useState<Record<string, boolean>>({});
 
-  // Escape key handling (same pattern as ScanFoodSheet)
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; });
+  // Two-phase mount + top-layer promotion. The component only renders while
+  // `open`, so the dialog is opened once on portal mount and torn down by
+  // unmount (removal from the DOM also removes it from the top layer).
+  const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (!open) return;
-    function handler(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); onCloseRef.current(); }
-    }
-    document.addEventListener("keydown", handler, { capture: true });
-    return () => document.removeEventListener("keydown", handler, { capture: true });
-  }, [open]);
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  });
 
   // Lock body scroll while open (mirrors BottomSheet). Without this, iOS Safari
   // pans the layout viewport when the search keyboard opens; the fixed overlay is
@@ -135,14 +150,31 @@ export function LibraryPickerOverlay({
     });
   }, [libraryFoods, search, tab]);
 
-  if (!open) return null;
+  // Toggle a row's quick-pick pin, optimistically; roll back on failure.
+  function toggleRowFavorite(food: LibraryFood) {
+    const next = !(favOverrides[food.id] ?? food.isFavorite ?? false);
+    setFavOverrides((o) => ({ ...o, [food.id]: next }));
+    setFoodFavorite(food.id, next)
+      .then((r) => {
+        if (!r.ok) setFavOverrides((o) => ({ ...o, [food.id]: !next }));
+      })
+      .catch(() => setFavOverrides((o) => ({ ...o, [food.id]: !next })));
+  }
 
-  return (
-    // Scrim — click outside panel to close (target===currentTarget guard, same as ScanFoodSheet)
-    <div
+  if (!open || !mounted) return null;
+
+  return createPortal(
+    // The dialog element itself is the full-viewport scrim — click outside the
+    // panel to close (target===currentTarget guard, same as ScanFoodSheet).
+    // Top-layer element: no z-index needed; ::backdrop is zeroed since the
+    // dialog's own background is the scrim.
+    <dialog
+      ref={dialogRef}
       data-testid="library-picker-overlay"
-      className="fixed inset-0 z-[50] bg-black/45"
+      className="m-0 p-0 border-0 fixed inset-0 h-full w-full max-h-full max-w-full overflow-hidden bg-black/45 backdrop:bg-transparent"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onCancel={(e) => { e.preventDefault(); onClose(); }}
+      onClose={onClose}
     >
       {/* Panel — mirrors ScanFoodSheet panel CSS exactly.
           overflow-hidden clips the scroll area to the rounded top + prevents the
@@ -255,6 +287,39 @@ export function LibraryPickerOverlay({
                           {mLine}
                         </p>
                       </div>
+                      {/* ★ — pin to quick-picks without opening the confirm card */}
+                      {(() => {
+                        const isFav = favOverrides[food.id] ?? food.isFavorite ?? false;
+                        return (
+                          <button
+                            type="button"
+                            data-testid={`food-fav-btn-${food.id}`}
+                            aria-pressed={isFav}
+                            aria-label={
+                              isFav
+                                ? `Unpin ${food.name} from quick-picks`
+                                : `Pin ${food.name} to quick-picks`
+                            }
+                            title={isFav ? "Pinned to quick-picks" : "Pin to quick-picks"}
+                            onClick={() => toggleRowFavorite(food)}
+                            className="flex-shrink-0 flex items-center justify-center w-11 h-11 rounded-full text-[var(--muted)] hover:bg-[var(--border)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                            style={isFav ? { color: "var(--accent)" } : undefined}
+                          >
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill={isFav ? "currentColor" : "none"}
+                              stroke="currentColor"
+                              strokeWidth="1.75"
+                              strokeLinejoin="round"
+                              aria-hidden
+                            >
+                              <path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.52l-5.9 3.1 1.13-6.57L2.45 9.4l6.6-.96L12 2.5z" />
+                            </svg>
+                          </button>
+                        );
+                      })()}
                       {/* [+] — ≥44px tap target (UXR-lib-03) */}
                       <button
                         type="button"
@@ -273,6 +338,7 @@ export function LibraryPickerOverlay({
           )}
         </div>
       </div>
-    </div>
+    </dialog>,
+    document.body
   );
 }
