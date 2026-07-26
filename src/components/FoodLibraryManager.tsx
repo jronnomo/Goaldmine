@@ -1,8 +1,12 @@
 "use client";
 
-import { startTransition, useState } from "react";
+import { startTransition, useState, useTransition } from "react";
 import { ConfirmButton } from "@/components/ConfirmButton";
-import { deleteLibraryFood, updateLibraryFood } from "@/lib/food-actions";
+import {
+  createLibraryFood,
+  deleteLibraryFood,
+  updateLibraryFood,
+} from "@/lib/food-actions";
 import type { LibraryFoodRow, UpdateLibraryFoodPatch } from "@/lib/food-actions";
 import { classifyFood, type MacroGroup } from "@/lib/food-resolve-local";
 
@@ -75,6 +79,22 @@ function toDraft(food: LibraryFoodRow): EditDraft {
   };
 }
 
+// Blank draft for the create-food form (custom foods: recipes, deli items —
+// anything without a barcode).
+function blankDraft(): EditDraft {
+  return {
+    name: "",
+    brand: "",
+    servingSize: "",
+    calories: "",
+    proteinG: "",
+    carbsG: "",
+    fatG: "",
+    fiberG: "",
+    sodiumMg: "",
+  };
+}
+
 /** Convert an input string to a macro number or null (empty / NaN / negative → null). */
 function parseMacro(val: string): number | null {
   const s = val.trim();
@@ -127,6 +147,12 @@ export function FoodLibraryManager({ foods: initial }: { foods: LibraryFoodRow[]
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditDraft | null>(null);
   const [activeTab, setActiveTab] = useState<MacroGroup | "all">("all");
+  // Create-food form state — needs a server round-trip for the row id, so it
+  // uses pending/error instead of the edit path's optimistic apply.
+  const [createDraft, setCreateDraft] = useState<EditDraft | null>(null);
+  const [createFav, setCreateFav] = useState(true);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createPending, startCreate] = useTransition();
 
   const visible = foods.filter((f) => {
     if (hidden.has(f.id)) return false;
@@ -192,19 +218,197 @@ export function FoodLibraryManager({ foods: initial }: { foods: LibraryFoodRow[]
     });
   }
 
+  function handleCreateDraftChange(key: keyof EditDraft, value: string) {
+    setCreateDraft((prev) => (prev ? { ...prev, [key]: value } : null));
+  }
+
+  function handleCreateSave() {
+    if (!createDraft || createPending) return;
+    const d = createDraft;
+    const name = d.name.trim();
+    if (!name) {
+      setCreateError("Name is required.");
+      return;
+    }
+    const macros = {
+      calories: parseMacro(d.calories),
+      proteinG: parseMacro(d.proteinG),
+      carbsG: parseMacro(d.carbsG),
+      fatG: parseMacro(d.fatG),
+      fiberG: parseMacro(d.fiberG),
+      sodiumMg: parseMacro(d.sodiumMg),
+    };
+    if (Object.values(macros).every((v) => v == null)) {
+      setCreateError("Enter at least one macro (calories count).");
+      return;
+    }
+    setCreateError(null);
+    startCreate(async () => {
+      const result = await createLibraryFood({
+        name,
+        brand: d.brand.trim() || null,
+        servingSize: d.servingSize.trim() || null,
+        ...macros,
+        favorite: createFav,
+      });
+      if (result.ok) {
+        setFoods((prev) => [
+          { ...result.food, usageCount: 0, lastUsedAt: null },
+          ...prev,
+        ]);
+        setCreateDraft(null);
+        setCreateFav(true);
+      } else {
+        setCreateError(result.message);
+      }
+    });
+  }
+
+  // "+ New food" button, or the expanded create form. Rendered in both the
+  // empty-library branch and the populated list, so first-time users can
+  // create a custom food before ever scanning one.
+  const createSection = createDraft ? (
+    <div
+      data-testid="create-food-form"
+      className="flex flex-col gap-2 rounded-xl border border-[var(--border)] p-3"
+    >
+      <label className="flex flex-col gap-0.5">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          Name
+        </span>
+        <input
+          type="text"
+          value={createDraft.name}
+          onChange={(e) => handleCreateDraftChange("name", e.target.value)}
+          placeholder="e.g. Brookie (protein)"
+          className="rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+        />
+      </label>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          Brand
+        </span>
+        <input
+          type="text"
+          value={createDraft.brand}
+          onChange={(e) => handleCreateDraftChange("brand", e.target.value)}
+          placeholder="—"
+          className="rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+        />
+      </label>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          Serving size
+        </span>
+        <input
+          type="text"
+          value={createDraft.servingSize}
+          onChange={(e) => handleCreateDraftChange("servingSize", e.target.value)}
+          placeholder="e.g. 1 brookie (½ batch)"
+          className="rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+        />
+      </label>
+      <div className="grid grid-cols-3 gap-2">
+        {MACRO_FIELDS.map((f) => (
+          <label key={f.key} className="flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
+              {f.label}
+            </span>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              value={createDraft[f.key]}
+              onChange={(e) => handleCreateDraftChange(f.key, e.target.value)}
+              placeholder={f.placeholder}
+              className="rounded-lg border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm"
+            />
+          </label>
+        ))}
+      </div>
+      {/* Quick-pick pin — defaults ON: custom foods are created to be reused */}
+      <button
+        type="button"
+        data-testid="create-food-fav-toggle"
+        aria-pressed={createFav}
+        onClick={() => setCreateFav((v) => !v)}
+        className="min-h-[44px] flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 text-sm"
+        style={createFav ? { color: "var(--accent)", borderColor: "var(--accent)" } : { color: "var(--muted)" }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill={createFav ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M12 2.5l2.95 5.98 6.6.96-4.77 4.65 1.13 6.57L12 17.52l-5.9 3.1 1.13-6.57L2.45 9.4l6.6-.96L12 2.5z" />
+        </svg>
+        {createFav ? "Pinned to quick-picks" : "Pin to quick-picks"}
+      </button>
+      {createError && (
+        <p className="text-sm text-[var(--danger)]" role="alert">
+          {createError}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          data-testid="create-food-save"
+          onClick={handleCreateSave}
+          disabled={createPending}
+          className="min-h-[44px] flex-1 rounded-lg border border-[var(--accent)] text-[var(--accent)] text-sm font-medium px-3 disabled:opacity-50"
+        >
+          {createPending ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setCreateDraft(null);
+            setCreateError(null);
+          }}
+          className="min-h-[44px] rounded-lg border border-[var(--border)] text-[var(--muted)] text-sm px-3"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  ) : (
+    <button
+      type="button"
+      data-testid="create-food-open"
+      onClick={() => {
+        setCreateDraft(blankDraft());
+        setCreateFav(true);
+        setCreateError(null);
+      }}
+      className="min-h-[44px] w-full rounded-lg border border-dashed border-[var(--border)] text-sm font-medium text-[var(--accent)]"
+    >
+      + New food
+    </button>
+  );
+
   // CRITICAL-2: Gate "empty library" on the un-tab-filtered set.
   // This fires only when the library itself is empty (no foods at all).
   // The per-tab "No foods in this group" is handled BELOW the tab bar.
   if (foods.filter((f) => !hidden.has(f.id)).length === 0) {
     return (
-      <p className="text-sm text-[var(--muted)]">
-        Scanned and estimated foods will appear here.
-      </p>
+      <div className="space-y-3">
+        {createSection}
+        <p className="text-sm text-[var(--muted)]">
+          Scanned and estimated foods will appear here.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {createSection}
       {/* Macro-group segmented tabs (role=radiogroup, UXR-lib-06) */}
       <div
         role="radiogroup"

@@ -459,6 +459,92 @@ export async function updateLibraryFood(
   }
 }
 
+// ── createLibraryFood ─────────────────────────────────────────────────────────
+
+/**
+ * Hand-create a FoodLibrary row — the path for foods that have no barcode:
+ * home recipes (per-serving macros computed elsewhere), deli items, restaurant
+ * staples. Until this existed the catalog could only grow via barcode scans /
+ * candidate resolution, so "reusable homemade food" had nowhere to live.
+ *
+ * Semantics mirror updateLibraryFood:
+ *   name   — required after trim; pipes stripped (LibraryFood contract).
+ *   macros — finite ≥0 numbers set; anything else → null. At least one macro
+ *            must be present, otherwise the row would be unloggable noise.
+ *   source — "manual", so barcode self-heal never overwrites it.
+ *   basis  — always "serving": hand-entered macros describe the portion the
+ *            user typed (e.g. "1 brookie (½ batch)"), not a per-100g basis.
+ *
+ * Also seeds the caller's FoodUsage row (usageCount 0, optional favorite pin)
+ * so the food appears immediately in their manager list, picker, and — when
+ * pinned — the quick-pick chips.
+ *
+ * Never throws — errors surface as { ok: false, message }.
+ */
+export type CreateLibraryFoodInput = {
+  name: string;
+  brand?: string | null;
+  servingSize?: string | null;
+  calories?: number | null;
+  proteinG?: number | null;
+  carbsG?: number | null;
+  fatG?: number | null;
+  fiberG?: number | null;
+  sodiumMg?: number | null;
+  /** Pin straight into the quick-pick chip row. */
+  favorite?: boolean;
+};
+
+export type CreateLibraryFoodResult =
+  | { ok: true; food: LibraryFood }
+  | { ok: false; message: string };
+
+export async function createLibraryFood(
+  input: CreateLibraryFoodInput,
+): Promise<CreateLibraryFoodResult> {
+  try {
+    const name = input.name?.trim().replaceAll("|", "");
+    if (!name) return { ok: false, message: "Name is required" };
+
+    const macros: Partial<Record<MacroPatchKey, number | null>> = {};
+    let hasAnyMacro = false;
+    for (const key of MACRO_PATCH_KEYS) {
+      const raw = input[key];
+      const value =
+        typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : null;
+      macros[key] = value;
+      if (value != null) hasAnyMacro = true;
+    }
+    if (!hasAnyMacro) {
+      return { ok: false, message: "Enter at least one macro (calories count)" };
+    }
+
+    const row = await prisma.foodLibrary.create({
+      data: {
+        name,
+        brand: input.brand?.trim().replaceAll("|", "") || null,
+        servingSize: input.servingSize?.trim() || null,
+        basis: "serving",
+        source: "manual",
+        ...macros,
+      },
+    });
+
+    // Per-user usage row: makes the food show up in this user's lists at once.
+    const isFavorite = input.favorite ?? false;
+    const db = await getDb();
+    await db.foodUsage.create({
+      data: { foodId: row.id, usageCount: 0, isFavorite },
+    });
+
+    safeRevalidate("/nutrition");
+    safeRevalidate("/");
+    return { ok: true, food: { ...toLibraryFood(row), isFavorite } };
+  } catch {
+    return { ok: false, message: "Failed to create food" };
+  }
+}
+
 // ── listLibraryFoods ──────────────────────────────────────────────────────────
 
 /**

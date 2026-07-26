@@ -27,6 +27,7 @@ const { mockFoodUsage, mockFoodLibrary, mockDb, mockPrisma } = vi.hoisted(() => 
     deleteMany: vi.fn(),
     findFirst: vi.fn(),
     update: vi.fn(),
+    create: vi.fn(),
   };
   const mockDb = { foodUsage: mockFoodUsage };
   const mockPrisma = { foodLibrary: mockFoodLibrary };
@@ -38,7 +39,12 @@ vi.mock("@/lib/db", () => ({
   getDb: vi.fn().mockResolvedValue(mockDb),
 }));
 
-import { deleteLibraryFood, setFoodFavorite, recordFoodUse } from "@/lib/food-actions";
+import {
+  createLibraryFood,
+  deleteLibraryFood,
+  setFoodFavorite,
+  recordFoodUse,
+} from "@/lib/food-actions";
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
@@ -150,5 +156,104 @@ describe("recordFoodUse (bumpFoodUsage) — P2002 race retry", () => {
     const unexpected = Object.assign(new Error("Foreign key violation"), { code: "P2003" });
     mockFoodUsage.create.mockRejectedValueOnce(unexpected);
     await expect(recordFoodUse("fl_bad")).rejects.toThrow("Foreign key violation");
+  });
+});
+
+describe("createLibraryFood — custom (no-barcode) foods", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const createdRow = {
+    id: "fl_new",
+    barcode: null,
+    name: "Brookie (protein)",
+    brand: null,
+    servingSize: "1 brookie (½ batch)",
+    basis: "serving",
+    calories: 310,
+    proteinG: 31,
+    carbsG: 42.5,
+    fatG: 6.5,
+    fiberG: null,
+    sodiumMg: null,
+    source: "manual",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it("creates the shared FoodLibrary row via raw prisma and seeds FoodUsage via getDb", async () => {
+    mockFoodLibrary.create.mockResolvedValue(createdRow);
+    mockFoodUsage.create.mockResolvedValue({ id: "fu_new" });
+
+    const result = await createLibraryFood({
+      name: "Brookie (protein)",
+      servingSize: "1 brookie (½ batch)",
+      calories: 310,
+      proteinG: 31,
+      carbsG: 42.5,
+      fatG: 6.5,
+      favorite: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.food.isFavorite).toBe(true);
+    // Shared catalog row: raw prisma, source "manual" (self-heal never overwrites),
+    // basis "serving" (hand-entered macros describe the typed portion).
+    expect(mockFoodLibrary.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: "Brookie (protein)",
+          basis: "serving",
+          source: "manual",
+          calories: 310,
+          proteinG: 31,
+        }),
+      }),
+    );
+    // Per-user pin: goes through the scoped client (getDb), never raw prisma.
+    expect(mockFoodUsage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ foodId: "fl_new", isFavorite: true, usageCount: 0 }),
+      }),
+    );
+  });
+
+  it("rejects an empty name without touching the DB", async () => {
+    const result = await createLibraryFood({ name: "   ", calories: 100 });
+    expect(result).toEqual({ ok: false, message: "Name is required" });
+    expect(mockFoodLibrary.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects when every macro is absent/invalid", async () => {
+    const result = await createLibraryFood({ name: "Mystery", calories: -5, proteinG: NaN });
+    expect(result.ok).toBe(false);
+    expect(mockFoodLibrary.create).not.toHaveBeenCalled();
+  });
+
+  it("coerces negative/NaN macros to null while keeping valid ones", async () => {
+    mockFoodLibrary.create.mockResolvedValue({ ...createdRow, carbsG: null, fatG: null });
+    mockFoodUsage.create.mockResolvedValue({ id: "fu_new" });
+
+    await createLibraryFood({ name: "Brookie (protein)", calories: 310, carbsG: -1, fatG: NaN });
+
+    expect(mockFoodLibrary.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ calories: 310, carbsG: null, fatG: null }),
+      }),
+    );
+  });
+
+  it("strips pipes from name (LibraryFood contract) and defaults favorite to false", async () => {
+    mockFoodLibrary.create.mockResolvedValue({ ...createdRow, name: "AB" });
+    mockFoodUsage.create.mockResolvedValue({ id: "fu_new" });
+
+    const result = await createLibraryFood({ name: "A|B", calories: 1 });
+
+    expect(mockFoodLibrary.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ name: "AB" }) }),
+    );
+    expect(mockFoodUsage.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ isFavorite: false }) }),
+    );
+    if (result.ok) expect(result.food.isFavorite).toBe(false);
   });
 });
