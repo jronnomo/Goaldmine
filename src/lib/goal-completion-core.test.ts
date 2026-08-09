@@ -267,6 +267,97 @@ describe("parseCompletionSnapshot", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// readinessSeries (REQ-002 / S8) — optional field, version stays 1.
+// Malformed series must OMIT the field, never fail the whole parse.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("readinessSeries — build + parse", () => {
+  it("buildCompletionSnapshot spreads the series through when the caller supplies one", () => {
+    const snap = buildCompletionSnapshot(
+      baseInputs({
+        readinessSeries: [
+          { dateKey: "2026-01-05", score: 10 },
+          { dateKey: "2026-01-12", score: 25 },
+        ],
+      }),
+    );
+    expect(snap.readinessSeries).toEqual([
+      { dateKey: "2026-01-05", score: 10 },
+      { dateKey: "2026-01-12", score: 25 },
+    ]);
+  });
+
+  it("buildCompletionSnapshot OMITS the key entirely when the caller supplies none (not null, not [])", () => {
+    const snap = buildCompletionSnapshot(baseInputs());
+    expect(snap.readinessSeries).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(snap, "readinessSeries")).toBe(false);
+  });
+
+  it("round-trips a snapshot WITH a readinessSeries through JSON", () => {
+    const snap = buildCompletionSnapshot(
+      baseInputs({
+        readinessSeries: [
+          { dateKey: "2026-01-05", score: 10 },
+          { dateKey: "2026-01-12", score: 25 },
+        ],
+      }),
+    );
+    const json = JSON.parse(JSON.stringify(snap));
+    expect(parseCompletionSnapshot(json)).toEqual(snap);
+  });
+
+  it("round-trips a snapshot with NO readinessSeries through JSON (legacy-row shape)", () => {
+    const snap = buildCompletionSnapshot(baseInputs());
+    const json = JSON.parse(JSON.stringify(snap));
+    const parsed = parseCompletionSnapshot(json);
+    expect(parsed).toEqual(snap);
+    expect(parsed!.readinessSeries).toBeUndefined();
+  });
+
+  it("S8: a non-array readinessSeries omits ONLY that field — the rest of the snapshot still parses", () => {
+    const snap = buildCompletionSnapshot(
+      baseInputs({ readinessSeries: [{ dateKey: "2026-01-05", score: 10 }] }),
+    );
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, readinessSeries: "not an array" };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.readinessSeries).toBeUndefined();
+    expect(parsed!.objective).toBe(snap.objective);
+    expect(parsed!.targetsMet).toBe(snap.targetsMet);
+  });
+
+  it("S8: a malformed series ELEMENT (missing score) omits the field but keeps the rest of the snapshot", () => {
+    const snap = buildCompletionSnapshot(
+      baseInputs({ readinessSeries: [{ dateKey: "2026-01-05", score: 10 }] }),
+    );
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, readinessSeries: [{ dateKey: "2026-01-05" }] };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.readinessSeries).toBeUndefined();
+    expect(parsed!.daysElapsed).toBe(snap.daysElapsed);
+  });
+
+  it("S8: a series element with the wrong dateKey type omits the field", () => {
+    const snap = buildCompletionSnapshot(
+      baseInputs({ readinessSeries: [{ dateKey: "2026-01-05", score: 10 }] }),
+    );
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, readinessSeries: [{ dateKey: 20260105, score: 10 }] };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.readinessSeries).toBeUndefined();
+  });
+});
+
 describe("parseGoalRetrospective", () => {
   const valid = {
     version: 1 as const,

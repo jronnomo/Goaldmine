@@ -12,13 +12,17 @@ vi.mock("@/lib/db", () => ({
   prisma: {},
   getDb: vi.fn(),
 }));
-vi.mock("@/lib/readiness", () => ({ computeReadiness: vi.fn() }));
+vi.mock("@/lib/readiness", () => ({
+  computeReadiness: vi.fn(),
+  computeReadinessSeriesSampled: vi.fn(),
+}));
 vi.mock("@/lib/rarity", () => ({ computeGoalFeasibility: vi.fn() }));
 
 import { getDb } from "@/lib/db";
-import { computeReadiness } from "@/lib/readiness";
+import { computeReadiness, computeReadinessSeriesSampled } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { Prisma } from "@/generated/prisma/client";
+import { dateKey } from "@/lib/calendar";
 import {
   completeGoalCore,
   computeCompletionSnapshot,
@@ -30,6 +34,8 @@ import type { GoalCompletionSnapshot } from "@/lib/goal-completion-core";
 const mockGetDb = getDb as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockComputeReadiness = computeReadiness as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockComputeReadinessSeriesSampled = computeReadinessSeriesSampled as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockComputeGoalFeasibility = computeGoalFeasibility as any;
 
@@ -82,6 +88,10 @@ function makeFakeDb(overrides: Record<string, any> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockComputeGoalFeasibility.mockResolvedValue(FEASIBILITY_FIXTURE);
+  // Sane default so tests that don't care about the series (most of them)
+  // don't have to stub it — computeCompletionSnapshot only calls it inside
+  // the targets.length>0 branch.
+  mockComputeReadinessSeriesSampled.mockResolvedValue([]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -99,6 +109,10 @@ describe("computeCompletionSnapshot", () => {
     expect(snapshot.targets).toEqual([]);
     expect(snapshot.plan).toEqual({ planId: null, weeksTotal: null, weeksElapsed: null });
     expect(mockComputeReadiness).not.toHaveBeenCalled();
+    // Zero-target goal: nothing to sample a series against — never called,
+    // and the field is omitted entirely (not null, not []) from the snapshot.
+    expect(mockComputeReadinessSeriesSampled).not.toHaveBeenCalled();
+    expect(Object.prototype.hasOwnProperty.call(snapshot, "readinessSeries")).toBe(false);
   });
 
   it("passes completedAt RAW to computeReadiness (R7) — never pre-wrapped with endOfDay", async () => {
@@ -134,6 +148,108 @@ describe("computeCompletionSnapshot", () => {
     // Exact same instant as the input — not shifted to 23:59:59.999.
     expect(asOfArg.getTime()).toBe(COMPLETED_AT.getTime());
     expect(goalIdArg).toBe("g1");
+  });
+
+  it("REQ-002/S2: calls computeReadinessSeriesSampled(goal.createdAt, targets, completedAt, goalId) and maps weekEnd -> dateKey into the snapshot", async () => {
+    const target = {
+      metric: "weightLb",
+      label: "Body weight",
+      units: "lb",
+      direction: "decrease",
+      target: 150,
+      weight: 1,
+    };
+    const fakeDb = makeFakeDb({
+      goal: {
+        findUnique: vi.fn().mockResolvedValue(baseGoalRow({ targets: [target] })),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    });
+    mockGetDb.mockResolvedValue(fakeDb);
+    mockComputeReadiness.mockResolvedValue({
+      score: 80,
+      rawScore: 80,
+      ceiling: 100,
+      coverage: { tested: 1, total: 1 },
+      openGateCount: 0,
+      breakdown: [{ target, current: 150, start: 168, progress: 1 }],
+      missing: [],
+    });
+    const weekEndA = new Date("2020-01-05T23:59:59.999Z");
+    const weekEndB = new Date("2020-02-15T12:00:00Z");
+    mockComputeReadinessSeriesSampled.mockResolvedValue([
+      { weekEnd: weekEndA, score: 10 },
+      { weekEnd: weekEndB, score: 80 },
+    ]);
+
+    const snapshot = await computeCompletionSnapshot("g1", COMPLETED_AT);
+
+    expect(mockComputeReadinessSeriesSampled).toHaveBeenCalledTimes(1);
+    const [createdAtArg, targetsArg, untilArg, goalIdArg] = mockComputeReadinessSeriesSampled.mock.calls[0];
+    expect(createdAtArg).toBe(CREATED_AT);
+    expect(targetsArg).toEqual([target]);
+    expect(untilArg).toBe(COMPLETED_AT);
+    expect(goalIdArg).toBe("g1");
+
+    // weekEnd (Date) -> dateKey (USER_TZ string) mapping, values preserved.
+    expect(snapshot.readinessSeries).toEqual([
+      { dateKey: dateKey(weekEndA), score: 10 },
+      { dateKey: dateKey(weekEndB), score: 80 },
+    ]);
+  });
+
+  it("readinessSeries survives the completeGoalCore snapshot capture (written to tx.goal.update's completionSnapshot)", async () => {
+    const target = {
+      metric: "weightLb",
+      label: "Body weight",
+      units: "lb",
+      direction: "decrease",
+      target: 150,
+      weight: 1,
+    };
+    const txMock = {
+      goal: {
+        update: vi.fn().mockResolvedValue({
+          id: "g1",
+          objective: "Summit Mt. Elbert",
+          kind: "fitness",
+          status: "achieved",
+          completedAt: COMPLETED_AT,
+          isFocus: false,
+          active: false,
+          createdAt: CREATED_AT,
+          targetDate: null,
+        }),
+      },
+      plan: {
+        findMany: vi.fn().mockResolvedValue([]),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const fakeDb = makeFakeDb({
+      goal: {
+        findUnique: vi.fn().mockResolvedValue(baseGoalRow({ targets: [target] })),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      $transaction: vi.fn().mockImplementation(async (cb) => cb(txMock)),
+    });
+    mockGetDb.mockResolvedValue(fakeDb);
+    mockComputeReadiness.mockResolvedValue({
+      score: 80,
+      rawScore: 80,
+      ceiling: 100,
+      coverage: { tested: 1, total: 1 },
+      openGateCount: 0,
+      breakdown: [{ target, current: 150, start: 168, progress: 1 }],
+      missing: [],
+    });
+    const weekEnd = new Date("2020-02-09T23:59:59.999Z");
+    mockComputeReadinessSeriesSampled.mockResolvedValue([{ weekEnd, score: 42 }]);
+
+    await completeGoalCore("g1", COMPLETED_AT);
+
+    const writtenSnapshot = txMock.goal.update.mock.calls[0][0].data.completionSnapshot;
+    expect(writtenSnapshot.readinessSeries).toEqual([{ dateKey: dateKey(weekEnd), score: 42 }]);
   });
 });
 

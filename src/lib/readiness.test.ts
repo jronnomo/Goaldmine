@@ -25,9 +25,10 @@ vi.mock("@/lib/goal-targets", () => ({
   resolveMetricStart: vi.fn(),
 }));
 
-import { progressFor, computeReadiness, GATE_CEILING } from "@/lib/readiness";
+import { progressFor, computeReadiness, computeReadinessSeriesSampled, GATE_CEILING } from "@/lib/readiness";
 import { resolveMetricValue, resolveMetricStart } from "@/lib/goal-targets";
 import { prisma, getDb } from "@/lib/db";
+import { addDays, startOfWeekMonday } from "@/lib/calendar";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockGetDb = getDb as any;
@@ -423,5 +424,170 @@ describe("computeReadiness — edge cases", () => {
     expect(snap.ceiling).toBe(100);
     expect(snap.score).toBe(100);
     expect(snap.rawScore).toBe(100);
+  });
+});
+
+// ── computeReadinessSeriesSampled — cursor generation, stride sampling, batching (S2) ─
+
+describe("computeReadinessSeriesSampled", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
+  });
+
+  const countTarget = (): GoalTarget[] => [
+    mkTarget({ metric: "workout:count", direction: "increase", target: 100, weight: 1 }),
+  ];
+
+  /** Mirrors computeReadinessSeries' cursor construction (weekly Sundays + trailing-point rule). */
+  function buildFullCursors(goalCreatedAt: Date, until: Date): Date[] {
+    const cursors: Date[] = [];
+    const weekStart = startOfWeekMonday(goalCreatedAt);
+    let cursor = addDays(weekStart, 6);
+    while (cursor <= until) {
+      cursors.push(new Date(cursor));
+      cursor = addDays(cursor, 7);
+    }
+    if (cursors.length === 0 || cursors.at(-1)!.getTime() < until.getTime() - 24 * 3600 * 1000) {
+      cursors.push(new Date(until));
+    }
+    return cursors;
+  }
+
+  it("generates weekly Sunday cursors from goalCreatedAt through until, plus the trailing until-point", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(50);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z"); // a Monday
+    const until = new Date("2026-01-26T12:00:00Z"); // 3 weeks later; not itself a weekly cursor
+
+    const expectedCursors = buildFullCursors(goalCreatedAt, until);
+    expect(expectedCursors.length).toBeGreaterThan(1); // sanity: multiple weekly points + trailing
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID);
+
+    expect(points.map((p) => p.weekEnd.getTime())).toEqual(expectedCursors.map((c) => c.getTime()));
+    // constant mocked input => constant score (50/100 progress, weight 1, no gate => rawScore=score=50).
+    expect(points.every((p) => p.score === 50)).toBe(true);
+  });
+
+  it("until-bounding: no cursor is ever built past `until`, and the series matches the independently-built cursor list", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(10);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-02-02T12:00:00Z");
+    const until = new Date("2026-02-10T09:00:00Z");
+
+    const expectedCursors = buildFullCursors(goalCreatedAt, until);
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID);
+
+    expect(points.every((p) => p.weekEnd.getTime() <= until.getTime())).toBe(true);
+    expect(points.map((p) => p.weekEnd.getTime())).toEqual(expectedCursors.map((c) => c.getTime()));
+  });
+
+  it("until-bounding: a window entirely inside the goal's first week produces exactly one point (the trailing `until` point, no weekly cursor exists yet)", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(10);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-02-02T12:00:00Z");
+    const weekStart = startOfWeekMonday(goalCreatedAt);
+    const firstSunday = addDays(weekStart, 6);
+    const until = addDays(firstSunday, -2); // strictly before the first weekly cursor
+    expect(until.getTime()).toBeLessThan(firstSunday.getTime()); // sanity
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID);
+
+    expect(points).toHaveLength(1);
+    expect(points[0]!.weekEnd.getTime()).toBe(until.getTime());
+  });
+
+  it("trailing point is OMITTED when the last weekly cursor already lands within 24h of until", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(10);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z");
+    const weekStart = startOfWeekMonday(goalCreatedAt);
+    const firstSunday = addDays(weekStart, 6);
+    const until = firstSunday; // until IS the weekly cursor itself
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID);
+
+    expect(points).toHaveLength(1);
+    expect(points[0]!.weekEnd.getTime()).toBe(firstSunday.getTime());
+  });
+
+  it("stride-samples down to <= maxPoints, always keeping the first and last cursor", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(10);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z");
+    const until = addDays(goalCreatedAt, 70); // ~10 weekly cursors
+
+    const fullCursors = buildFullCursors(goalCreatedAt, until);
+    expect(fullCursors.length).toBeGreaterThan(5); // sanity: enough points for stride to matter
+
+    const maxPoints = 5;
+    const stride = Math.ceil(fullCursors.length / maxPoints);
+    const expectedSampled = fullCursors.filter((_, i) => i % stride === 0);
+    const lastFull = fullCursors.at(-1)!;
+    if (expectedSampled.at(-1)!.getTime() !== lastFull.getTime()) {
+      expectedSampled.push(lastFull);
+    }
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID, { maxPoints });
+
+    expect(points.length).toBeLessThanOrEqual(maxPoints + 1); // +1 slack only from the forced last-cursor keep
+    expect(points[0]!.weekEnd.getTime()).toBe(fullCursors[0]!.getTime());
+    expect(points.at(-1)!.weekEnd.getTime()).toBe(lastFull.getTime());
+    expect(points.map((p) => p.weekEnd.getTime())).toEqual(expectedSampled.map((c) => c.getTime()));
+  });
+
+  it("does not stride-sample when the full cursor list is already <= maxPoints", async () => {
+    vi.mocked(resolveMetricValue).mockResolvedValue(10);
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z");
+    const until = addDays(goalCreatedAt, 21); // ~3 weekly cursors
+
+    const fullCursors = buildFullCursors(goalCreatedAt, until);
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID, {
+      maxPoints: 104,
+    });
+
+    expect(points.map((p) => p.weekEnd.getTime())).toEqual(fullCursors.map((c) => c.getTime()));
+  });
+
+  it("batching (batchSize) produces the same values, in the same order, as a fully serial run", async () => {
+    // Score varies deterministically with the cursor's timestamp so an
+    // order-scrambling bug in the batching loop would be caught.
+    vi.mocked(resolveMetricValue).mockImplementation(async (_metric, asOf) =>
+      (asOf as Date).getTime() % 97,
+    );
+    vi.mocked(resolveMetricStart).mockResolvedValue(0);
+
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z");
+    const until = addDays(goalCreatedAt, 130); // ~19 weekly cursors — spans multiple batches at size 8
+
+    const serial = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID, {
+      batchSize: 1,
+    });
+    const batched = await computeReadinessSeriesSampled(goalCreatedAt, countTarget(), until, GOAL_ID, {
+      batchSize: 8,
+    });
+
+    expect(batched.length).toBeGreaterThan(8); // sanity: this run actually spans >1 batch
+    expect(batched).toEqual(serial);
+  });
+
+  it("empty targets array still returns a series (score 0 at every point), never throws", async () => {
+    const goalCreatedAt = new Date("2026-01-05T12:00:00Z");
+    const until = addDays(goalCreatedAt, 14);
+
+    const points = await computeReadinessSeriesSampled(goalCreatedAt, [], until, GOAL_ID);
+
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.every((p) => p.score === 0)).toBe(true);
   });
 });
