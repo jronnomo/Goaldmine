@@ -12,7 +12,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { dateKey } from "@/lib/calendar";
-import { computeReadiness } from "@/lib/readiness";
+import { computeReadiness, computeReadinessSeriesSampled } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
 import { goalAchievedXp } from "@/lib/game/rules";
@@ -119,6 +119,10 @@ export async function computeCompletionSnapshot(
   // Zero-target goal → readiness null, no target rows (PRD §Edge Cases).
   let readiness: GoalCompletionSnapshot["readiness"] = null;
   let targetRows: BuildCompletionSnapshotInputs["targets"] = [];
+  // Zero-target goal → no series either (nothing to sample against);
+  // undefined here means buildCompletionSnapshot omits the field entirely
+  // (goal-completion-core.ts's spread-when-defined), same as a legacy row.
+  let readinessSeries: BuildCompletionSnapshotInputs["readinessSeries"];
 
   if (targets.length > 0) {
     const snap = await computeReadiness(targets, completedAt, goalId);
@@ -140,6 +144,12 @@ export async function computeCompletionSnapshot(
       target: b.target.target,
       progress: b.progress,
     }));
+
+    // Freeze the readiness-over-time arc at completion time (S2/REQ-002) —
+    // sampled + batched so a multi-year goal doesn't pay an unbounded query
+    // cost here. weekEnd (Date) → dateKey (USER_TZ string) for the snapshot.
+    const series = await computeReadinessSeriesSampled(goal.createdAt, targets, completedAt, goalId);
+    readinessSeries = series.map((p) => ({ dateKey: dateKey(p.weekEnd), score: p.score }));
   }
 
   const feasibility = await computeGoalFeasibility(
@@ -154,6 +164,7 @@ export async function computeCompletionSnapshot(
     completedDateKey: dateKey(completedAt),
     capturedAt: new Date(),
     readiness,
+    readinessSeries,
     targets: targetRows,
     feasibilityTierAtCompletion: feasibility.tier,
     coachFeasibilityTier: coachFeasibility?.tier ?? null,

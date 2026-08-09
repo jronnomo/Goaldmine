@@ -258,6 +258,78 @@ export async function computeReadinessSeries(
   return points;
 }
 
+/**
+ * Sampled/parallelized variant of computeReadinessSeries — used by the
+ * trophy-freeze capture path (goal-completion.ts, at complete_goal time) and
+ * the live story-so-far path (goal-story.ts) alike (S2, architecture
+ * blueprint v2). Two changes vs. the original, both aimed at not hammering
+ * the DB for goals that have been running for years:
+ *
+ *  1. The full weekly cursor (dateKey) list is built FIRST — same
+ *     Sunday-stepping + trailing-point rule as computeReadinessSeries — and,
+ *     only if it exceeds `maxPoints`, stride-sampled DOWN to ≤ maxPoints
+ *     BEFORE any computeReadiness call is made (never compute-then-slice —
+ *     that would still pay the full O(n) query cost). stride =
+ *     ceil(n / maxPoints); the first and last cursor are always kept so the
+ *     arc's start and its true endpoint never get stride'd away.
+ *  2. Points are computed in bounded-parallel batches (Promise.all over
+ *     chunks of `batchSize`) rather than one at a time — computeReadiness
+ *     itself is untouched. Batches run in cursor order and Promise.all
+ *     preserves per-batch input order, so the result is byte-identical to a
+ *     fully serial computation, just faster.
+ *
+ * computeReadinessSeries (above) and its sole consumer (the progress page)
+ * are untouched — this is an additive sibling, not a replacement.
+ */
+export async function computeReadinessSeriesSampled(
+  goalCreatedAt: Date,
+  targets: GoalTarget[],
+  until: Date,
+  goalId: string,
+  opts?: { maxPoints?: number; batchSize?: number },
+): Promise<ReadinessSeriesPoint[]> {
+  const maxPoints = opts?.maxPoints ?? 104;
+  const batchSize = opts?.batchSize ?? 8;
+
+  // ── Build the full weekly cursor list FIRST (mirrors computeReadinessSeries) ──
+  const cursors: Date[] = [];
+  const start = startOfWeek(goalCreatedAt);
+  let cursor = addDays(start, 6); // first week-end (Sunday)
+  while (cursor <= until) {
+    cursors.push(new Date(cursor));
+    cursor = addDays(cursor, 7);
+  }
+  // Always include "until" as the latest point.
+  if (cursors.length === 0 || cursors.at(-1)!.getTime() < until.getTime() - 24 * 3600 * 1000) {
+    cursors.push(new Date(until));
+  }
+
+  // ── Stride-sample BEFORE computing anything — never compute-then-slice ───
+  let sampledCursors = cursors;
+  if (cursors.length > maxPoints) {
+    const stride = Math.ceil(cursors.length / maxPoints);
+    sampledCursors = cursors.filter((_, i) => i % stride === 0);
+    const last = cursors.at(-1)!;
+    if (sampledCursors.at(-1)!.getTime() !== last.getTime()) {
+      sampledCursors.push(last);
+    }
+  }
+
+  // ── Compute in bounded-parallel batches; computeReadiness internals untouched ──
+  const points: ReadinessSeriesPoint[] = [];
+  for (let i = 0; i < sampledCursors.length; i += batchSize) {
+    const batch = sampledCursors.slice(i, i + batchSize);
+    const batchPoints = await Promise.all(
+      batch.map(async (c) => {
+        const snap = await computeReadiness(targets, c, goalId);
+        return { weekEnd: new Date(c), score: snap.score };
+      }),
+    );
+    points.push(...batchPoints);
+  }
+  return points;
+}
+
 function clamp01(n: number): number {
   if (Number.isNaN(n)) return 0;
   if (n < 0) return 0;

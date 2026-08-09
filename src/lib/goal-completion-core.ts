@@ -35,6 +35,16 @@ export type GoalCompletionSnapshot = {
     coverage: { tested: number; total: number };
     openGateCount: number;
   } | null;
+  /**
+   * Frozen readiness-over-time (weekEnd→dateKey, USER_TZ), captured ONCE at
+   * complete_goal time (goal-completion.ts's computeCompletionSnapshot, via
+   * computeReadinessSeriesSampled) — never live-recomputed for an achieved
+   * goal (R9). Optional so version stays 1: absent means either a zero-target
+   * goal (no targets to build a series from) or a legacy pre-freeze
+   * completion — the trophy page degrades to a "reopen and re-complete to
+   * capture the arc" hint in either case. Never assume absent === legacy.
+   */
+  readinessSeries?: Array<{ dateKey: string; score: number }>;
   targets: Array<{
     metric: string;
     label: string;
@@ -73,6 +83,12 @@ export type BuildCompletionSnapshotInputs = {
   capturedAt: Date;
   /** Live readiness result, or null for a zero-target goal. */
   readiness: GoalCompletionSnapshot["readiness"];
+  /**
+   * Live-computed frozen series (see GoalCompletionSnapshot.readinessSeries).
+   * Omit (undefined) for a zero-target goal — the caller never builds a
+   * series when there are no targets to sample against.
+   */
+  readinessSeries?: GoalCompletionSnapshot["readinessSeries"];
   /** Per-target rows — pre-resolved start/final/target/progress values. */
   targets: Array<{
     metric: string;
@@ -156,6 +172,7 @@ export function buildCompletionSnapshot(
     kind: inputs.goal.kind,
     daysElapsed,
     readiness: inputs.readiness,
+    ...(inputs.readinessSeries !== undefined ? { readinessSeries: inputs.readinessSeries } : {}),
     targets,
     targetsMet,
     targetsTotal,
@@ -229,6 +246,22 @@ function isXpBasis(v: unknown): v is GoalCompletionSnapshot["xpBasis"] {
   return typeof v.weeks === "number" && typeof v.targetsMet === "number";
 }
 
+function isReadinessSeriesPoint(v: unknown): v is { dateKey: string; score: number } {
+  if (!isPlainObject(v)) return false;
+  return typeof v.dateKey === "string" && typeof v.score === "number";
+}
+
+/**
+ * S8 (architecture-blueprint-v2.md): validated in ISOLATION from the rest of
+ * the snapshot. A malformed readinessSeries (non-array, or any element
+ * failing isReadinessSeriesPoint) must never fail the whole parse — it drops
+ * ONLY this optional field, degrading to the legacy "reopen and re-complete"
+ * hint while every other field on the trophy card still renders.
+ */
+function isReadinessSeries(v: unknown): v is Array<{ dateKey: string; score: number }> {
+  return Array.isArray(v) && v.every(isReadinessSeriesPoint);
+}
+
 /**
  * Defensive parse of a raw JSON value (e.g. Goal.completionSnapshot) into a
  * typed GoalCompletionSnapshot, or null. Any missing/mistyped field, a
@@ -256,7 +289,7 @@ export function parseCompletionSnapshot(json: unknown): GoalCompletionSnapshot |
   if (!isXpBasis(r.xpBasis)) return null;
   if (typeof r.xpAwardedAtCompletion !== "number") return null;
 
-  return {
+  const snapshot: GoalCompletionSnapshot = {
     version: 1,
     completedDateKey: r.completedDateKey,
     capturedAt: r.capturedAt,
@@ -274,6 +307,14 @@ export function parseCompletionSnapshot(json: unknown): GoalCompletionSnapshot |
     xpBasis: r.xpBasis as GoalCompletionSnapshot["xpBasis"],
     xpAwardedAtCompletion: r.xpAwardedAtCompletion,
   };
+
+  // Isolated optional-field validation (S8) — see isReadinessSeries. A
+  // malformed value just omits the field; it never nulls the whole parse.
+  if (r.readinessSeries !== undefined && isReadinessSeries(r.readinessSeries)) {
+    snapshot.readinessSeries = r.readinessSeries;
+  }
+
+  return snapshot;
 }
 
 // ─────────────────────────────────────────────────────────
