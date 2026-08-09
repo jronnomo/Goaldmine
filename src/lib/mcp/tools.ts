@@ -45,7 +45,13 @@ import { lastTrainedForGoals, relativeTrainedLabel } from "@/lib/goal-attributio
 import { computeReadiness } from "@/lib/readiness";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { LegendSchema } from "@/lib/legend";
-import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
+import {
+  getActiveProgram,
+  getPlanWindowCandidates,
+  pickProgramForDate,
+  type ActiveProgramSnapshot,
+} from "@/lib/program";
+import { getGoalStory } from "@/lib/goal-story";
 import {
   MAX_DAY_TEMPLATE_BYTES,
   assertDayTemplateWithinSize,
@@ -668,12 +674,13 @@ function registerReadTools(server: McpServer) {
         "Resolve all 7 days of the rotation week containing the given date. " +
         "Returns weekIndex, startDate/endDate of the rotation week, totalWeeks, and a days[] array. " +
         "Each day includes the full ResolvedDay (todayTask, activeWorkout, deferredWorkout, overrides, " +
-        "plannedHikeToday, longEffortConflict, baselinesDue, etc.). " +
+        "plannedHikeToday, longEffortConflict, baselinesDue, resolvedPlan, etc.). " +
         "Per-day cross-goal events live in days[].otherGoalEvents and days[].crossGoalConflicts " +
         "(there is no days[].events field). " +
         "Top-level otherGoalEvents (non-focus goals' events for the whole week) and crossGoalConflicts are also returned for coach convenience. " +
         "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
         "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
+        "REQ-007a (time-aware): past weeks resolve against whichever plan covered them, INCLUDING a completed goal's now-archived plan — each day resolves independently, so a week straddling a plan transition (e.g. the week a goal was completed) can show archived-plan days alongside active-plan/out-of-plan days in the same response. Read days[].resolvedPlan ({id,name,source:'active'|'archived'}, or null) per day to see which plan governed it. " +
         "Goal events assembled once for the week (~3 extra queries total) and passed to each resolveDay via ctx (zero extra queries per day).",
       inputSchema: {
         startDate: z
@@ -690,8 +697,27 @@ function registerReadTools(server: McpServer) {
     async ({ startDate }) =>
       safe(async () => {
         const baseDate = startDate ? parseDateInput(startDate) : new Date();
-        const program = await getActiveProgram();
-        if (!program) {
+        const now = new Date();
+        const todayKey = toDateKey(now);
+
+        // S1 (binding, architecture-blueprint-v2.md): fetch the active program
+        // + the full plan-window candidate list ONCE for the whole week — never
+        // reuse a single getProgramForDate/pickProgramForDate result across all
+        // 7 days. A week straddling a plan transition (e.g. the week of a
+        // complete_goal) must resolve each day against its OWN covering plan,
+        // via the same pure pickProgramForDate the month view and resolveDay's
+        // own internal lookup use — so this can never disagree with them.
+        const activeProgram = await getActiveProgram();
+        const candidates = await getPlanWindowCandidates();
+
+        // Anchor pick: identifies which plan's rotation the requested week
+        // snaps to (rotation weeks are plan-relative — anchored on that plan's
+        // startedOn, never calendar Mon–Sun). `null` only when there has never
+        // been any program in the system at all (not even a fallback active
+        // one) — the legacy "create a goal" empty state.
+        const baseDayKey = toDateKey(baseDate);
+        const anchorPick = pickProgramForDate(candidates, baseDayKey, todayKey, activeProgram);
+        if (!anchorPick) {
           return {
             weekIndex: null,
             startDate: null,
@@ -704,23 +730,19 @@ function registerReadTools(server: McpServer) {
           };
         }
 
-        const startMid = startOfDay(program.startedOn);
+        const anchorStartMid = startOfDay(anchorPick.startedOn);
         const baseDayStart = startOfDay(baseDate);
-        const daysDelta = Math.floor(
-          (baseDayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
+        const anchorDaysDelta = Math.floor(
+          (baseDayStart.getTime() - anchorStartMid.getTime()) / (24 * 3600 * 1000),
         );
-
-        if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) {
-          return { error: "Date is outside the active plan window" };
-        }
-
-        const wi = Math.floor(daysDelta / 7) + 1;
-        const weekStart = addDays(startMid, (wi - 1) * 7);
+        const anchorWi = Math.floor(anchorDaysDelta / 7) + 1;
+        const weekStart = addDays(anchorStartMid, (anchorWi - 1) * 7);
         const weekEnd = addDays(weekStart, 6);
 
         // Pre-assemble goal events + cross-goal conflicts for the whole week
-        // and pass as ctx to resolveDay — each of the 7 calls performs zero
-        // extra goal-event queries (DC-3 pattern from REQ-104 architecture).
+        // and pass as ctx (plus the per-day pick below) to resolveDay — each
+        // of the 7 calls performs zero extra goal-event queries and zero extra
+        // program lookups (DC-3 pattern from REQ-104 architecture).
         // MR-3 ACCEPTED: overrideDateKeys omitted — saves 1 extra DB round-trip.
         // Conflicts near overridden days may still appear (advisory, not structural).
         const eventsResult = await getGoalEventsResult({ start: weekStart, end: endOfDay(weekEnd) });
@@ -730,26 +752,60 @@ function registerReadTools(server: McpServer) {
         const weekCrossConflicts = computeCrossGoalConflicts({
           events: eventsResult.events,
           focusGoalId: eventsResult.focusGoalId,
-          focusProgram: program,
+          focusProgram: activeProgram,
           plannedHikeDateKeys: plannedHikeDks,
           overrideDateKeys: [],
           range: { start: weekStart, end: weekEnd },
         });
-        const ctx: ResolveDayCtx = {
+
+        // S1: per-day pick — NEVER reuse one pick across the week. Each day's
+        // own pickProgramForDate result (which may be the active program, an
+        // archived plan, or null) is handed to resolveDay via ctx.program.
+        const dayDates = [0, 1, 2, 3, 4, 5, 6].map((i) => addDays(weekStart, i));
+        const dayPicks = dayDates.map((d) =>
+          pickProgramForDate(candidates, toDateKey(d), todayKey, activeProgram),
+        );
+
+        const dayCtxs: ResolveDayCtx[] = dayPicks.map((pick) => ({
           goalEvents: eventsResult.events,
           crossGoalConflicts: weekCrossConflicts,
           focusGoalId: eventsResult.focusGoalId,
-        };
+          program: pick,
+        }));
 
         const days = await Promise.all(
-          [0, 1, 2, 3, 4, 5, 6].map((i) => resolveDay(addDays(weekStart, i), ctx)),
+          dayDates.map((d, i) => resolveDay(d, dayCtxs[i])),
         );
+
+        // Guard (S1): error only if NO day in the requested week is actually
+        // covered by any plan (isInPlan false for all 7) — replaces the old
+        // single-program-window check, which would incorrectly reject a
+        // transition week where only SOME days are covered by an archived plan.
+        if (!days.some((d) => d.isInPlan)) {
+          return { error: "Date is outside any plan window" };
+        }
+
+        // Label the week (weekIndex/totalWeeks) from the FIRST day's pick, not
+        // the anchor — in a transition week these usually agree (weekStart is
+        // itself derived from the anchor), but labeling from day[0] means a
+        // transition week reports the ENTERING plan's week label, which is the
+        // more coach-legible framing ("week 8 of the old plan, which ends this
+        // week") than an arbitrary extrapolation from whichever date the caller
+        // happened to pass in.
+        const day0Pick = dayPicks[0];
+        const wi = day0Pick
+          ? Math.floor(
+              (startOfDay(weekStart).getTime() - startOfDay(day0Pick.startedOn).getTime()) /
+                (24 * 3600 * 1000 * 7),
+            ) + 1
+          : null;
+        const totalWeeks = day0Pick ? day0Pick.template.totalWeeks : null;
 
         return {
           weekIndex: wi,
           startDate: toDateKey(weekStart),
           endDate: toDateKey(weekEnd),
-          totalWeeks: program.template.totalWeeks,
+          totalWeeks,
           days,
           // Top-level arrays for coach convenience (non-focus events + conflicts for the week).
           otherGoalEvents: eventsResult.events.filter((e) => !e.isFocusGoal),
@@ -992,6 +1048,32 @@ function registerReadTools(server: McpServer) {
           : null;
 
         return { ...goal, upcomingOverrides, feasibility: { computed, coach }, lastTrained };
+      }),
+  );
+
+  server.registerTool(
+    "get_goal_story",
+    {
+      title: "Full story bundle for a goal (frozen for achieved, story-so-far for active)",
+      description:
+        "The retrospective bundle for a single goal — everything needed to look back on it years later and visualize/compare/reflect. " +
+        "For an ACHIEVED goal: readiness arc, targets (start→final), baseline arcs, hike arc, and project metric arcs are FROZEN — captured at complete_goal time, never live-recomputed (this is R9: an achieved goal's story never changes after the fact). readinessSeries is null when the goal was completed before this capture existed, or has zero targets — that is NOT an error; if you want the arc for an already-achieved goal, use reopen_goal then complete_goal (with the original completion date) to recapture it, which recomputes XP/badges identically but now also freezes the series. " +
+        "For an ACTIVE goal: readinessSeries/targets are the live 'story so far' (same computeReadiness path as compute_readiness), sampled/capped to at most 104 points. " +
+        "window {startKey,endKey} is the goal's created→completed (or created→today) span every arc below is clipped to. " +
+        "baselineArcs (fitness only): per-test history clipped to window — NOTE Baseline rows have no goalId (they're user-global), so an arc reflects ALL of the user's logged tests for that test name within the goal's window, not just tests explicitly tied to this goal (same semantics readiness itself already uses for baseline:* targets). " +
+        "hikeArc (fitness only) and metricArcs (project only, one per log:* target) are goal-scoped and clipped to window. " +
+        "timeline is the goal's latest plan's phase breakdown + revision changelog (summary + reasoning, fetched regardless of the plan's active state — an achieved goal's plan is always deactivated) — null when the goal never had a plan. Revisions intentionally omit trigger-note contents (leaky-reads-safe); for full-fidelity note excerpts use the app's /goals page. " +
+        "snapshot is the raw frozen GoalCompletionSnapshot for an achieved goal (null while active) if you need fields not otherwise surfaced. " +
+        "Use for retrospective evidence-gathering — 'how did I actually get to the summit', comparing two goals' arcs, or answering a reflection question long after completion.",
+      inputSchema: {
+        goalId: z.string().describe("Goal to tell the story of"),
+      },
+    },
+    async ({ goalId }) =>
+      safe(async () => {
+        const story = await getGoalStory(goalId);
+        if (!story) throw new Error(`Goal not found: ${goalId}`);
+        return story;
       }),
   );
 
