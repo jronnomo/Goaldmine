@@ -19,6 +19,7 @@ import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
+import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { presentationForGoal } from "@/lib/goal-presentation";
 import { computeGoalFeasibility } from "@/lib/rarity";
@@ -50,6 +51,77 @@ export default async function HomePage() {
   ]);
   const presentation = presentationForGoal(focusGoal);
 
+  // Hoisted above the early-return branches below (both the between-goals
+  // state and the main path need "today"'s window) so it's computed exactly
+  // once, via the same @/lib/calendar helpers, never raw Date math.
+  // Server-side dateKey — computed here so the client island never calls dateKey()
+  // (process.env.USER_TZ is undefined in the browser).
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+  const todayDateKey = dateKey(now);
+
+  // FIX (Today "between goals" state): the goal-completion feature releases
+  // focus + deactivates the plan on complete_goal, so a veteran user who just
+  // completed their only focus goal — before picking a new one — lands here
+  // with program === null AND focusGoal === null, same as a brand-new user.
+  // Distinguish by history: any other active goal, or a past completion,
+  // means this is NOT a newbie — show the "between goals" state instead of
+  // the onboarding "Get started" card. Strictly gated on focusGoal === null
+  // (not the broader focusGoal?.kind !== "project" check below) so a fitness
+  // focus goal stuck without an active plan — a separate, pre-existing edge
+  // case — keeps falling through to its original (unchanged) behavior.
+  if (!program && focusGoal === null) {
+    const betweenGoalsDb = await getDb();
+    const [
+      activeGoals,
+      latestAchieved,
+      betweenGoalsGameState,
+      betweenGoalsNutrition,
+      betweenGoalsQuickPickFoods,
+      betweenGoalsCompletedWorkouts,
+    ] = await Promise.all([
+      betweenGoalsDb.goal.findMany({
+        where: { status: "active" },
+        orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
+        select: { id: true, objective: true, kind: true, targetDate: true, isFocus: true, active: true },
+      }),
+      betweenGoalsDb.goal.findFirst({
+        where: { status: "achieved" },
+        orderBy: { completedAt: "desc" },
+        select: { id: true, objective: true, completedAt: true, completionSnapshot: true },
+      }),
+      // Plan/goal-independent daily utility surfaces — completing a goal must
+      // not gut Today as the daily home. Mirrors the main path's fetches
+      // below verbatim (same helpers, same USER_TZ window, same includes).
+      computeGameState(),
+      betweenGoalsDb.nutritionLog.findMany({
+        where: { date: { gte: todayStart, lte: todayEnd } },
+        orderBy: { date: "asc" },
+      }),
+      getQuickPickFoods(),
+      betweenGoalsDb.workout.findMany({
+        where: { status: "completed", startedAt: { gte: todayStart, lte: todayEnd } },
+        orderBy: { startedAt: "asc" },
+        include: {
+          exercises: { orderBy: { orderIndex: "asc" }, include: { sets: { orderBy: { setIndex: "asc" } } } },
+        },
+      }),
+    ]);
+    if (activeGoals.length > 0 || latestAchieved) {
+      return (
+        <BetweenGoalsToday
+          activeGoals={activeGoals}
+          latestAchieved={latestAchieved}
+          gameState={betweenGoalsGameState}
+          todayNutrition={betweenGoalsNutrition}
+          quickPickFoods={betweenGoalsQuickPickFoods}
+          todayCompletedWorkouts={betweenGoalsCompletedWorkouts}
+        />
+      );
+    }
+  }
+
   // AC-C: null goal + null program (or fitness focus + no program) → get-started card.
   if (!program && focusGoal?.kind !== "project") {
     return (
@@ -80,12 +152,8 @@ export default async function HomePage() {
   // if it were null, one of the two guards above would have returned.
   // Truth table: (null + project) → early return; (null + fitness/null) → NoActiveProgram.
   const ctx = getTodayContext(program!);
-  const now = new Date();
-  const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
-  // Server-side dateKey — computed here so the client island never calls dateKey()
-  // (process.env.USER_TZ is undefined in the browser).
-  const todayDateKey = dateKey(now);
+  // now/todayStart/todayEnd/todayDateKey are computed above, before the
+  // between-goals branch — shared by both paths, computed exactly once.
 
   const db = await getDb();
   const [recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
