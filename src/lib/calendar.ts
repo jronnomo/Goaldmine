@@ -827,7 +827,7 @@ export type ResolvedDay = {
  *   - in-plan dates: rotation week window (same window as plannedHikesThisWeek)
  *   - out-of-plan dates: calendar-week ± raceProximityDays days so
  *     same-week and proximity conflict kinds can still fire (DC-2 fix).
- * Query budget delta when ctx absent: +3 (getGoalEventsResult internals) per call.
+ * Query budget delta when ctx absent: +5 (getGoalEventsResult internals) per call.
  */
 export type ResolveDayCtx = {
   /** Pre-fetched events for the range. resolveDay filters to this date's events. */
@@ -1031,7 +1031,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
           packWeightLb: number | null; durationMin: number; date: Date;
         }[]),
     // REQ-104 (7th item): goal events for cross-goal conflict detection.
-    // Query budget delta when ctx absent: +3 (getGoalEventsResult internals).
+    // Query budget delta when ctx absent: +5 (getGoalEventsResult internals).
     //   ctx present          → 0 extra queries (use pre-assembled events)
     //   in-plan (weekWindow) → getGoalEventsResult for the rotation week
     //   out-of-plan          → getGoalEventsResult for calendar-week ±raceProximityDays days (DC-2 fix)

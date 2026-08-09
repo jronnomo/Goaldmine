@@ -168,7 +168,7 @@ export function crossGoalConflicts(args: {
   range: { start: Date; end: Date };
 }): CrossGoalConflict[] {
   const {
-    events,
+    events: rawEvents,
     focusGoalId,
     focusProgram,
     plannedHikeDateKeys,
@@ -178,6 +178,13 @@ export function crossGoalConflicts(args: {
     // The detection logic itself works from the event dates already filtered
     // by the caller, so range is not read inside this function.
   } = args;
+
+  // Archived-goal decorations (goal-events.ts's achieved-goal pass — historical
+  // baseline-retest/hike/scheduled-item pins on a COMPLETED goal's calendar
+  // history) never participate in conflict math. They're not a live
+  // scheduling decision to warn about — the goal is done — so they're
+  // dropped before any of the three conflict kinds below ever see them.
+  const events = rawEvents.filter((e) => !e.archived);
 
   // Only non-focus goal events can generate cross-goal conflicts.
   const nonFocusEvents = events.filter((e) => e.goalId !== focusGoalId);
