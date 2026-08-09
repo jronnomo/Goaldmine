@@ -17,7 +17,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ── Hoisted mock state ────────────────────────────────────────────────────────
 // vi.mock factories are hoisted to the top of the file. Variables must be
 // hoisted with vi.hoisted() to be accessible inside those factories.
-const { mockFindMany, mockFindFirst, mockFindUniqueOrThrow, mockDb } = vi.hoisted(() => {
+const {
+  mockFindMany,
+  mockFindFirst,
+  mockFindUniqueOrThrow,
+  mockFindUnique,
+  mockGoalUpdate,
+  mockDb,
+  mockComputeGameStateFresh,
+  mockCompleteGoalCore,
+  mockReopenGoalCore,
+  mockRenderCompletionCard,
+} = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
   const mockFindUniqueOrThrow = vi.fn().mockResolvedValue({
@@ -38,6 +49,10 @@ const { mockFindMany, mockFindFirst, mockFindUniqueOrThrow, mockDb } = vi.hoiste
     updatedAt: new Date(),
     plans: [],
   });
+  // Site 5: generate_completion_card's db.goal.findUnique(...) — separate spy
+  // from findUniqueOrThrow (get_goal's site) since they're different Prisma calls.
+  const mockFindUnique = vi.fn().mockResolvedValue(null);
+  const mockGoalUpdate = vi.fn().mockResolvedValue({});
 
   const mockDb = {
     workout: { findMany: mockFindMany },
@@ -48,10 +63,28 @@ const { mockFindMany, mockFindFirst, mockFindUniqueOrThrow, mockDb } = vi.hoiste
     nutritionLog: { findMany: mockFindMany },
     bodyMetric: { findMany: mockFindMany },
     plan: { findFirst: mockFindFirst },
-    goal: { findUniqueOrThrow: mockFindUniqueOrThrow },
+    goal: { findUniqueOrThrow: mockFindUniqueOrThrow, findUnique: mockFindUnique, update: mockGoalUpdate },
   };
 
-  return { mockFindMany, mockFindFirst, mockFindUniqueOrThrow, mockDb };
+  // complete_goal's before/after game-state diff + goal-completion cores —
+  // mocked so the ceremony-payload test doesn't need a real DB round trip.
+  const mockComputeGameStateFresh = vi.fn();
+  const mockCompleteGoalCore = vi.fn();
+  const mockReopenGoalCore = vi.fn();
+  const mockRenderCompletionCard = vi.fn();
+
+  return {
+    mockFindMany,
+    mockFindFirst,
+    mockFindUniqueOrThrow,
+    mockFindUnique,
+    mockGoalUpdate,
+    mockDb,
+    mockComputeGameStateFresh,
+    mockCompleteGoalCore,
+    mockReopenGoalCore,
+    mockRenderCompletionCard,
+  };
 });
 
 // ── Module mocks (all hoisted before imports) ─────────────────────────────────
@@ -164,7 +197,14 @@ vi.mock("@/lib/baseline-ops", () => ({
   applyBaselineOps: vi.fn(),
   summarizeBaselineChanges: vi.fn().mockReturnValue([]),
 }));
-vi.mock("@/lib/game/engine", () => ({ computeGameState: vi.fn().mockResolvedValue({}) }));
+vi.mock("@/lib/game/engine", () => ({
+  computeGameState: vi.fn().mockResolvedValue({}),
+  computeGameStateFresh: mockComputeGameStateFresh,
+}));
+vi.mock("@/lib/goal-completion", () => ({
+  completeGoalCore: mockCompleteGoalCore,
+  reopenGoalCore: mockReopenGoalCore,
+}));
 vi.mock("@/lib/game/attributes-registry", () => ({ rulePackForGoal: vi.fn().mockReturnValue({}) }));
 vi.mock("@/lib/rarity", () => ({
   computeGoalFeasibility: vi.fn().mockResolvedValue({ score: 50, breakdown: [] }),
@@ -190,7 +230,10 @@ vi.mock("@/lib/recap", () => ({
   computeWeeklyRecap: vi.fn().mockResolvedValue({}),
   resolveHighlight: vi.fn().mockReturnValue(null),
 }));
-vi.mock("@/lib/recap-render", () => ({ renderRecapCard: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/recap-render", () => ({
+  renderRecapCard: vi.fn().mockResolvedValue(null),
+  renderCompletionCard: mockRenderCompletionCard,
+}));
 
 // ── Imports (after all vi.mock calls) ─────────────────────────────────────────
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -242,6 +285,14 @@ describe("leaky-read omit — query call args", () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       plans: [],
+    });
+    vi.mocked(mockFindUnique).mockResolvedValue(null);
+    vi.mocked(mockGoalUpdate).mockResolvedValue({});
+    vi.mocked(mockComputeGameStateFresh).mockResolvedValue({ level: 1, xp: 0, badges: [] });
+    vi.mocked(mockCompleteGoalCore).mockReset();
+    vi.mocked(mockReopenGoalCore).mockReset();
+    vi.mocked(mockRenderCompletionCard).mockReturnValue({
+      arrayBuffer: async () => new ArrayBuffer(0),
     });
   });
 
@@ -367,5 +418,194 @@ describe("leaky-read omit — query call args", () => {
       expect(noteCall).toBeDefined();
       expect((noteCall![0] as Record<string, unknown>).omit).toEqual({ userId: true });
     });
+  });
+
+  // ── Site 5: generate_completion_card (REQ-009/PRD §4.7) ─────────────────────
+
+  describe("generate_completion_card", () => {
+    it("goal.findUnique called with omit: { userId: true }", async () => {
+      const handler = fakeServer.getHandler("generate_completion_card");
+      // mockFindUnique defaults to null (goal not found) — this test only
+      // asserts on the QUERY CALL ARGS, matching this suite's documented
+      // strategy (see file header): the mock ignores `omit`, only the
+      // production Prisma engine honours it.
+      await handler({ goalId: "goal-1" });
+
+      expect(vi.mocked(mockFindUnique)).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "goal-1" }, omit: { userId: true } }),
+      );
+    });
+  });
+});
+
+// ── REQ-009/010/014a: goal-completion-ceremony tool-level tests ──────────────
+// Not "leaky-read omit" tests — grouped in this file per the shared FakeMcpServer
+// + registerAll(...) rig above (see task guidance: "extend leaky-reads' pattern
+// in a suitable file"). Each block resets the shared mocks itself since it runs
+// outside the omit-suite's beforeEach.
+
+describe("update_goal — status:'achieved' redirect (REQ-010)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects status:'achieved' with the complete_goal/reopen_goal redirect message, before touching the DB", async () => {
+    const handler = fakeServer.getHandler("update_goal");
+    const result = (await handler({ goalId: "goal-1", status: "achieved" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe(
+      "Error: Use complete_goal to mark a goal achieved (it captures the completion snapshot, awards XP, and archives the goal). To un-achieve, use reopen_goal.",
+    );
+    // The redirect fires before any DB read — goal.findUnique must never be reached.
+    expect(mockFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("still allows status:'abandoned' through to the DB update path", async () => {
+    vi.mocked(mockFindUnique).mockResolvedValueOnce({
+      id: "goal-1",
+      objective: "Old objective",
+      targetDate: null,
+      status: "active",
+      notes: null,
+    });
+    vi.mocked(mockGoalUpdate).mockResolvedValueOnce({
+      id: "goal-1",
+      objective: "Old objective",
+      targetDate: null,
+      status: "abandoned",
+    });
+
+    const handler = fakeServer.getHandler("update_goal");
+    const result = (await handler({ goalId: "goal-1", status: "abandoned" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as { goal: { status: string } };
+    expect(payload.goal.status).toBe("abandoned");
+  });
+});
+
+describe("complete_goal — ceremony payload (REQ-009)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the full ceremony payload shape with the pre/post game-state diff", async () => {
+    const snapshot = {
+      version: 1 as const,
+      completedDateKey: "2026-08-02",
+      capturedAt: new Date().toISOString(),
+      backdated: true,
+      objective: "Summit Mt. Elbert",
+      kind: "fitness",
+      daysElapsed: 84,
+      readiness: { score: 94, rawScore: 94, ceiling: 100, coverage: { tested: 4, total: 5 }, openGateCount: 0 },
+      targets: [],
+      targetsMet: 4,
+      targetsTotal: 5,
+      feasibilityTierAtCompletion: "rare",
+      coachFeasibilityTier: null,
+      plan: { planId: "plan-1", weeksTotal: 12, weeksElapsed: 12 },
+      xpBasis: { weeks: 12, targetsMet: 4 },
+      xpAwardedAtCompletion: 650,
+    };
+
+    vi.mocked(mockCompleteGoalCore).mockResolvedValue({
+      goal: {
+        id: "goal-1",
+        objective: "Summit Mt. Elbert",
+        kind: "fitness",
+        status: "achieved",
+        completedAt: new Date("2026-08-02"),
+        isFocus: false,
+        active: false,
+        createdAt: new Date("2026-05-01"),
+        targetDate: new Date("2026-08-02"),
+      },
+      snapshot,
+      focusReleased: true,
+      planDeactivatedIds: ["plan-1"],
+      remainingActiveGoals: [{ id: "goal-2", objective: "Shred", kind: "fitness" }],
+    });
+
+    // Pre-state (before completeGoalCore) vs post-state (after) — badge/level diff source.
+    vi.mocked(mockComputeGameStateFresh)
+      .mockResolvedValueOnce({
+        level: 3,
+        badges: [{ def: { id: "goal-first", name: "First Summit" }, dateKey: null }],
+      })
+      .mockResolvedValueOnce({
+        level: 4,
+        badges: [{ def: { id: "goal-first", name: "First Summit" }, dateKey: "2026-08-02" }],
+      });
+
+    const handler = fakeServer.getHandler("complete_goal");
+    const result = (await handler({ goalId: "goal-1", date: "2026-08-02" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+
+    // Ceremony payload keys per PRD §4.2 — the coach narrates from these.
+    for (const key of [
+      "goal",
+      "snapshot",
+      "xp",
+      "badgesUnlocked",
+      "levelBefore",
+      "levelAfter",
+      "focusReleased",
+      "planDeactivated",
+      "remainingActiveGoals",
+      "message",
+    ]) {
+      expect(payload).toHaveProperty(key);
+    }
+
+    expect(payload.levelBefore).toBe(3);
+    expect(payload.levelAfter).toBe(4);
+    expect(payload.badgesUnlocked).toEqual([{ id: "goal-first", name: "First Summit" }]);
+    expect((payload.xp as { awarded: number; ruleId: string }).ruleId).toBe("goal.achieved");
+    expect((payload.xp as { awarded: number }).awarded).toBe(650);
+    expect((payload.goal as { completedAtDateKey: string }).completedAtDateKey).toBe("2026-08-02");
+    expect(payload.focusReleased).toBe(true);
+    expect(payload.remainingActiveGoals).toEqual([{ id: "goal-2", objective: "Shred", kind: "fitness" }]);
+
+    // computeGameStateFresh, never the cached computeGameState — see the cache
+    // gotcha in architecture-blueprint-v2.md.
+    expect(mockComputeGameStateFresh).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("log_goal_retrospective — active-goal guard (REQ-014a)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("errors when the goal is not achieved yet", async () => {
+    vi.mocked(mockFindUnique).mockResolvedValueOnce({
+      id: "goal-1",
+      objective: "Summit Mt. Elbert",
+      status: "active",
+      retrospective: null,
+    });
+
+    const handler = fakeServer.getHandler("log_goal_retrospective");
+    const result = (await handler({ goalId: "goal-1", reflection: "It went great." })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("complete the goal first");
+    expect(mockGoalUpdate).not.toHaveBeenCalled();
   });
 });

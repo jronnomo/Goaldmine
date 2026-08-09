@@ -34,19 +34,22 @@ function fmtCoverageLine(
 // rasterises the SVG through resvg, which supports dash arrays (conic-gradient is
 // validated but NOT rendered by satori 0.25.0).
 
-type ProgressRingProps = {
+export type ProgressRingProps = {
   tok: TemplateTokens;
   diameter: number;
   progressPct: number | null;
-  goalState: WeeklyRecap["goalState"];
+  /** Self-owned shape (R4) — decoupled from WeeklyRecap so non-recap callers
+   *  (e.g. completion-card.tsx) don't need to import recap.ts types. Callers
+   *  pass `goalState === "has-data"` (recap) or their own has-data check. */
+  hasData: boolean;
   displayFont: string;
   displayWeight: number;
 };
 
-function ProgressRing({ tok, diameter, progressPct, goalState, displayFont, displayWeight }: ProgressRingProps) {
+export function ProgressRing({ tok, diameter, progressPct, hasData, displayFont, displayWeight }: ProgressRingProps) {
   const D = diameter;
-  const hasData = goalState === "has-data" && progressPct !== null;
-  const pct = hasData ? Math.max(0, Math.min(100, progressPct!)) : null;
+  const showsValue = hasData && progressPct !== null;
+  const pct = showsValue ? Math.max(0, Math.min(100, progressPct!)) : null;
 
   // Ring geometry: stroke is centred on radius r so outer edge = D/2 exactly.
   const sw = Math.round(D * 0.16);
@@ -422,7 +425,7 @@ export function RecapCard({
             tok={tok}
             diameter={tok.bullseyeHeroDiameter}
             progressPct={progressPct}
-            goalState={recap.goalState}
+            hasData={recap.goalState === "has-data"}
             displayFont={displayFont}
             displayWeight={displayWeight}
           />
@@ -863,7 +866,7 @@ function SlideOne({ tok, recap, displayFont, displayWeight, isParchment }: Slide
             tok={tok}
             diameter={tok.bullseyeStoryDiameter}
             progressPct={progressPct}
-            goalState={recap.goalState}
+            hasData={recap.goalState === "has-data"}
             displayFont={displayFont}
             displayWeight={displayWeight}
           />
@@ -1020,7 +1023,7 @@ function SlideThree({ tok, recap, displayFont, displayWeight }: SlideProps) {
           tok={tok}
           diameter={tok.bullseyeStoryDiameter}
           progressPct={progressPct}
-          goalState={recap.goalState}
+          hasData={recap.goalState === "has-data"}
           displayFont={displayFont}
           displayWeight={displayWeight}
         />

@@ -1,5 +1,6 @@
 // src/lib/game/badges.ts
-// 16 BadgeDef definitions + unlock predicates per blueprint §4.10.
+// 22 BadgeDef definitions + unlock predicates per blueprint §4.10 (16 original
+// + 6 goal-completion badges from the Goal Completion Ceremony feature).
 // All predicates are pure — they read EngineContext only, no DB calls.
 
 import { dateKey as toDateKey } from "@/lib/calendar";
@@ -298,9 +299,78 @@ const BADGE_SPECS: BadgeSpec[] = [
       return ctx.reviewNoteDateKeys[0] ?? null;
     },
   },
+
+  // ── #17 First Summit — first completed goal ───────────────────────────────
+  // ctx.completedGoals is always sorted dateKey asc (EngineContext contract).
+  {
+    id: "goal-first",
+    name: "First Summit",
+    hint: "Complete your first goal",
+    monogram: "1G",
+    glyphFamily: "mountain",
+    unlock(ctx) {
+      return ctx.completedGoals[0]?.dateKey ?? null;
+    },
+  },
+
+  // ── #18 Serial Finisher — 3 completed goals ────────────────────────────────
+  {
+    id: "goal-third",
+    name: "Serial Finisher",
+    hint: "Complete 3 goals",
+    monogram: "3G",
+    unlock(ctx) {
+      return ctx.completedGoals[2]?.dateKey ?? null; // dateKey of the 3rd completed goal
+    },
+  },
+
+  // ── #19 Five Peaks — 5 completed goals ─────────────────────────────────────
+  {
+    id: "goal-fifth",
+    name: "Five Peaks",
+    hint: "Complete 5 goals",
+    monogram: "5G",
+    glyphFamily: "mountain",
+    unlock(ctx) {
+      return ctx.completedGoals[4]?.dateKey ?? null; // dateKey of the 5th completed goal
+    },
+  },
+
+  // ── #20 Ten Banners — 10 completed goals ───────────────────────────────────
+  {
+    id: "goal-tenth",
+    name: "Ten Banners",
+    hint: "Complete 10 goals",
+    monogram: "10G",
+    unlock(ctx) {
+      return ctx.completedGoals[9]?.dateKey ?? null; // dateKey of the 10th completed goal
+    },
+  },
+
+  // ── #21 Body of Proof — first completed fitness goal ──────────────────────
+  {
+    id: "goal-fit-finisher",
+    name: "Body of Proof",
+    hint: "Complete a fitness goal",
+    monogram: "BP",
+    unlock(ctx) {
+      return ctx.completedGoals.find((g) => g.kind === "fitness")?.dateKey ?? null;
+    },
+  },
+
+  // ── #22 Shipped — first completed project goal ─────────────────────────────
+  {
+    id: "goal-ship-it",
+    name: "Shipped",
+    hint: "Complete a project goal",
+    monogram: "SH",
+    unlock(ctx) {
+      return ctx.completedGoals.find((g) => g.kind === "project")?.dateKey ?? null;
+    },
+  },
 ];
 
-/** The catalog of all 16 badge definitions (without predicates — safe to export). */
+/** The catalog of all 22 badge definitions (without predicates — safe to export). */
 export const BADGE_CATALOG: BadgeDef[] = BADGE_SPECS.map((spec) => ({
   id: spec.id,
   name: spec.name,
@@ -310,7 +380,7 @@ export const BADGE_CATALOG: BadgeDef[] = BADGE_SPECS.map((spec) => ({
 }));
 
 /**
- * Evaluate all 16 badges against the engine context.
+ * Evaluate all 22 badges against the engine context.
  * Returns UnlockedBadge[] sorted: unlocked (dateKey non-null) asc, then locked.
  */
 export function evaluateBadges(ctx: EngineContext): UnlockedBadge[] {

@@ -22,7 +22,8 @@ export type GoalEventType =
   | "target-date"
   | "baseline-retest"
   | "planned-hike"
-  | "scheduled-item";
+  | "scheduled-item"
+  | "goal-completed";
 
 export type GoalEvent = {
   goalId: string;
@@ -54,10 +55,17 @@ export type GoalEventsResult = {
 
 /**
  * Fetch all cross-goal events for a date range.
- * Exactly 3 DB queries:
+ * Exactly 4 DB queries:
  *   1. getActiveGoalsWithPlans() — goals + their single active plan
  *   2. prisma.hike.findMany — planned hikes in range with goalId
  *   3. prisma.scheduledItem.findMany — planned items in range
+ *   4. db.goal.findMany — achieved goals with completedAt in range (🏆 events)
+ *
+ * Query 4 is DISTINCT from query 1 on purpose (architecture-blueprint-v2.md
+ * R8): getActiveGoalsWithPlans() filters to status:"active", which excludes
+ * every achieved goal — so completion events would otherwise never surface
+ * once REQ-007's active-filter change lands. This query is the only place
+ * an achieved goal is read back onto the calendar.
  *
  * All date math via @/lib/calendar.
  */
@@ -71,9 +79,9 @@ export async function getGoalEventsResult(
   const startDk = dateKey(range.start);
   const endDk = dateKey(range.end);
 
-  // Queries 2 + 3 in parallel
+  // Queries 2 + 3 + 4 in parallel
   const db = await getDb();
-  const [hikes, scheduledItems] = await Promise.all([
+  const [hikes, scheduledItems, achievedGoals] = await Promise.all([
     db.hike.findMany({
       where: {
         status: "planned",
@@ -107,6 +115,16 @@ export async function getGoalEventsResult(
           title: string;
           detail: string | null;
         }[]),
+    // Query 4 (R8, DISTINCT from query 1): achieved goals whose completedAt
+    // falls in range — the only source of "goal-completed" 🏆 events.
+    db.goal.findMany({
+      where: {
+        status: "achieved",
+        completedAt: { gte: range.start, lte: range.end },
+      },
+      select: { id: true, objective: true, kind: true, completedAt: true },
+      orderBy: { completedAt: "asc" },
+    }),
   ]);
 
   const events: GoalEvent[] = [];
@@ -195,6 +213,25 @@ export async function getGoalEventsResult(
       icon: "◆",
       label: item.title,
       detail: item.detail ?? undefined,
+    });
+  }
+
+  // Event source 5: goal-completed (achieved goals, query 4 above).
+  // Hardcoded 🏆 icon — NO legend-kind enum change (R8). An achieved goal is
+  // never the focus goal by the time this fires (completeGoalCore clears
+  // isFocus unconditionally), so isFocusGoal is always false here.
+  for (const goal of achievedGoals) {
+    if (!goal.completedAt) continue; // defensive — query already filters non-null
+    events.push({
+      goalId: goal.id,
+      goalObjective: goal.objective,
+      goalKind: goal.kind,
+      isFocusGoal: false,
+      dateKey: dateKey(goal.completedAt),
+      type: "goal-completed",
+      icon: "🏆",
+      label: "Goal completed",
+      detail: goal.objective,
     });
   }
 

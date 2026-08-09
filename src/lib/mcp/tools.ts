@@ -82,7 +82,7 @@ import {
   applyBaselineOps,
   summarizeBaselineChanges,
 } from "@/lib/baseline-ops";
-import { computeGameState } from "@/lib/game/engine";
+import { computeGameState, computeGameStateFresh } from "@/lib/game/engine";
 import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
@@ -216,7 +216,9 @@ type DbClient = Parameters<Parameters<ScopedClient['$transaction']>[0]>[0];
 import { safe, parseDateInput, errorResult, imageAndJsonResult } from "@/lib/mcp/tool-helpers";
 import { computeWeeklyRecap, resolveHighlight } from "@/lib/recap";
 import type { RecapTemplate } from "@/lib/recap";
-import { renderRecapCard } from "@/lib/recap-render";
+import { renderRecapCard, renderCompletionCard } from "@/lib/recap-render";
+import { completeGoalCore, reopenGoalCore } from "@/lib/goal-completion";
+import { parseCompletionSnapshot, parseGoalRetrospective, type GoalRetrospective } from "@/lib/goal-completion-core";
 
 // ----------------------------------------------------------------------------
 // Core write helpers. Each takes a DbClient (either the global prisma or a
@@ -853,7 +855,8 @@ function registerReadTools(server: McpServer) {
         "coachFeasibilityTier is the coach's stored override tier (null when not set). " +
         "For the computed feasibility tier (and full stack math), call get_rarity. " +
         "attributionHints is the array of canonical exercise names that count as training this goal (null when none set). " +
-        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints — null when the goal has no hints.",
+        "lastTrained is a human label ('trained today', 'trained 3d ago', 'never trained') derived from attributionHints — null when the goal has no hints. " +
+        "completedAtDateKey (yyyy-mm-dd, or null while active/abandoned) is set by complete_goal — achieved goals are archived: they no longer drive Today or emit calendar target-date/baseline events (only a 🏆 goal-completed event on their completion date).",
     },
     async () =>
       safe(async () => {
@@ -877,6 +880,7 @@ function registerReadTools(server: McpServer) {
           kind: g.kind,
           targetCount: Array.isArray(g.targets) ? (g.targets as unknown[]).length : 0,
           activePlanId: g.plans[0]?.id ?? null,
+          completedAtDateKey: g.completedAt ? toDateKey(g.completedAt) : null,
           coachFeasibilityTier: parseCoachFeasibilityLocal(g.coachFeasibility)?.tier ?? null,
           attributionHints: Array.isArray(g.attributionHints) ? g.attributionHints : null,
           lastTrained: Array.isArray(g.attributionHints) && (g.attributionHints as unknown[]).length > 0
@@ -5009,7 +5013,8 @@ function registerWriteTools(server: McpServer) {
         "Setting a targetDate on a goal that has no plan auto-scaffolds a plan from now to that date. " +
         "To shift the plan length / endsOn / plan metadata, follow up with update_plan_metadata after this call. " +
         "Per operating rules: propose the change and get explicit approval before calling. " +
-        "status ∈ {active, achieved, abandoned} is lifecycle metadata; to change which goal drives Today/Calendar use the set_active_goal tool. " +
+        "status ∈ {active, abandoned} — 'achieved' is rejected here; use complete_goal to mark a goal achieved (it captures the completion snapshot, awards XP, and archives the goal) or reopen_goal to un-achieve one. " +
+        "To change which goal drives Today/Calendar use the set_active_goal tool. " +
         "attributionHints: pass an array to set/replace canonical exercise names; pass null to clear; omit to leave unchanged.",
       inputSchema: {
         goalId: z.string().describe("The goal id to update"),
@@ -5051,6 +5056,16 @@ function registerWriteTools(server: McpServer) {
     },
     async (input) =>
       safe(async () => {
+        // REQ-010: 'achieved' is redirected to complete_goal/reopen_goal — those
+        // cores capture the completion snapshot, award XP, and (un)archive the
+        // goal correctly. A bare status write here would leave completedAt/
+        // completionSnapshot out of sync with status (see R3's degraded-row guard).
+        if (input.status === "achieved") {
+          throw new Error(
+            "Use complete_goal to mark a goal achieved (it captures the completion snapshot, awards XP, and archives the goal). To un-achieve, use reopen_goal.",
+          );
+        }
+
         const db = await getDb();
         const goal = await db.goal.findUnique({
           where: { id: input.goalId },
@@ -5118,6 +5133,176 @@ function registerWriteTools(server: McpServer) {
             targetDate: updated.targetDate ? toDateKey(updated.targetDate) : null,
             status: updated.status,
           },
+        };
+      }),
+  );
+
+  // ── complete_goal ────────────────────────────────────────────────────────────
+  server.registerTool(
+    "complete_goal",
+    {
+      title: "Complete and archive a goal — the completion ceremony",
+      description:
+        "Marks a goal 'achieved': freezes a completion snapshot (readiness, per-target start→final, feasibility tier, days elapsed), " +
+        "awards goal.achieved XP (derived from weeks-elapsed + targets-met, capped), releases focus, pauses its plan, and archives it off the calendar/Today. " +
+        "Reversible via reopen_goal — no confirm flag needed. " +
+        "Backdatable: pass date (yyyy-mm-dd, USER_TZ) for the TRUE finish date if it wasn't today — the snapshot is computed as of end of that day and the XP event lands on that dateKey (fully retroactive). " +
+        "Per operating rules: propose this before calling — show the user what completing will do (focus release, plan pause, calendar removal) and get explicit approval. " +
+        "After a successful call: narrate the ceremony payload (xp.awarded, badgesUnlocked, level change, snapshot highlights); offer to run generate_completion_card for a shareable image; " +
+        "if focusReleased is true, remainingActiveGoals lists the candidates — run the set_active_goal propose-before-switching covenant (call list_goals, state what will change, get approval) before picking a new focus, don't assume one. " +
+        "Also offer a post-goal retrospective session (now or later) — see log_goal_retrospective.",
+      inputSchema: {
+        goalId: z.string().describe("Goal to complete"),
+        date: z
+          .string()
+          .optional()
+          .describe(
+            "Completion date yyyy-mm-dd (USER_TZ). Defaults to today. Backdatable — snapshot computed as of end of that day. " +
+              "Not in the future; not before the goal's creation.",
+          ),
+      },
+    },
+    async ({ goalId, date }) =>
+      safe(async () => {
+        // Cache gotcha (binding, architecture-blueprint-v2.md): computeGameState is
+        // React-cache()d — a before/after diff in ONE request would return the SAME
+        // memoized state twice. Must use the uncached computeGameStateFresh export.
+        const preState = await computeGameStateFresh();
+        const result = await completeGoalCore(goalId, date ? parseDateInput(date) : undefined);
+        const postState = await computeGameStateFresh();
+
+        const preUnlockedIds = new Set(
+          preState.badges.filter((b) => b.dateKey !== null).map((b) => b.def.id),
+        );
+        const badgesUnlocked = postState.badges
+          .filter((b) => b.dateKey !== null && !preUnlockedIds.has(b.def.id))
+          .map((b) => ({ id: b.def.id, name: b.def.name }));
+
+        const parts = [
+          `"${result.goal.objective}" completed — +${result.snapshot.xpAwardedAtCompletion} XP`,
+        ];
+        if (badgesUnlocked.length > 0) {
+          parts.push(`${badgesUnlocked.length} badge${badgesUnlocked.length === 1 ? "" : "s"} unlocked`);
+        }
+        if (postState.level > preState.level) {
+          parts.push(`leveled up to ${postState.level}`);
+        }
+        const message =
+          parts.join(", ") +
+          (result.focusReleased
+            ? ". Focus released — run the set_active_goal covenant before picking a new one."
+            : ".");
+
+        return {
+          goal: {
+            id: result.goal.id,
+            objective: result.goal.objective,
+            kind: result.goal.kind,
+            status: result.goal.status,
+            completedAtDateKey: result.snapshot.completedDateKey,
+          },
+          snapshot: result.snapshot,
+          xp: { awarded: result.snapshot.xpAwardedAtCompletion, ruleId: "goal.achieved" },
+          badgesUnlocked,
+          levelBefore: preState.level,
+          levelAfter: postState.level,
+          focusReleased: result.focusReleased,
+          planDeactivated: result.planDeactivatedIds,
+          remainingActiveGoals: result.remainingActiveGoals,
+          message,
+        };
+      }),
+  );
+
+  // ── reopen_goal ──────────────────────────────────────────────────────────────
+  server.registerTool(
+    "reopen_goal",
+    {
+      title: "Reopen a completed goal (reverses complete_goal)",
+      description:
+        "Un-achieves a goal: restores status='active', clears completedAt/the completion snapshot (returned here as discardedSnapshot before it's discarded), and re-tracks it (active=true). " +
+        "Does NOT restore focus or reactivate its plan — those are independent decisions; follow up with set_active_goal and/or set_plan_active if you want to resume them (hints.latestPlanId names the plan to resume). " +
+        "XP/badges from the goal.achieved event disappear automatically on next recompute (fully derived, no persisted counters to fix up). " +
+        "The retrospective (if one was logged) is untouched and survives — it's human-authored and independent of completion state.",
+      inputSchema: {
+        goalId: z.string().describe("Goal to reopen"),
+      },
+    },
+    async ({ goalId }) =>
+      safe(async () => {
+        const result = await reopenGoalCore(goalId);
+        return {
+          goal: {
+            id: result.goal.id,
+            objective: result.goal.objective,
+            kind: result.goal.kind,
+            status: result.goal.status,
+          },
+          discardedSnapshot: result.discardedSnapshot,
+          hints: result.hints,
+        };
+      }),
+  );
+
+  // ── log_goal_retrospective ───────────────────────────────────────────────────
+  server.registerTool(
+    "log_goal_retrospective",
+    {
+      title: "Write or replace a goal's post-completion reflection",
+      description:
+        "Co-authored post-goal reflection — full-replace (writes the whole reflection; there is no partial patch). Guard: the goal must be status='achieved' (complete it first). " +
+        "Flow: gather evidence BEFORE drafting — compare_dates(goal.createdAt → completedAt) for the arc, get_metric_trend/get_exercise_history for the numbers that moved, get_latest_review for standing context. " +
+        "Co-draft the reflection WITH the user in their own voice — this is not a coach monologue. Only call this tool after the user has explicitly approved the drafted text (propose-before-applying). " +
+        "Survives reopen_goal and re-completion — retrospective is never touched by either core. Returns the previous version (if any) so you can show a diff.",
+      inputSchema: {
+        goalId: z.string().describe("Goal to attach the reflection to"),
+        reflection: z.string().min(1).describe("The reflection narrative, in the user's voice"),
+        wins: z.array(z.string()).optional().describe("Concrete wins/highlights from the arc"),
+        challenges: z.array(z.string()).optional().describe("What was hard or nearly derailed it"),
+        lessons: z.array(z.string()).optional().describe("What the user learned — for next time"),
+        nextSteps: z.array(z.string()).optional().describe("Follow-on intentions (a new goal, a habit to keep, etc.)"),
+        authoredWith: z
+          .enum(["user", "user+coach"])
+          .optional()
+          .describe("Who wrote this. Defaults 'user+coach' (the usual co-drafted case)."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        const goal = await db.goal.findUnique({
+          where: { id: input.goalId },
+          select: { id: true, objective: true, status: true, retrospective: true },
+        });
+        if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
+        if (goal.status !== "achieved") {
+          throw new Error(
+            "This goal isn't completed yet — complete the goal first (complete_goal), then log the retrospective.",
+          );
+        }
+
+        const previousRetrospective = parseGoalRetrospective(goal.retrospective);
+
+        const retrospective: GoalRetrospective = {
+          version: 1,
+          updatedAt: new Date().toISOString(),
+          authoredWith: input.authoredWith ?? "user+coach",
+          reflection: input.reflection,
+          ...(input.wins !== undefined ? { wins: input.wins } : {}),
+          ...(input.challenges !== undefined ? { challenges: input.challenges } : {}),
+          ...(input.lessons !== undefined ? { lessons: input.lessons } : {}),
+          ...(input.nextSteps !== undefined ? { nextSteps: input.nextSteps } : {}),
+        };
+
+        await db.goal.update({
+          where: { id: input.goalId },
+          data: { retrospective: retrospective as unknown as Prisma.InputJsonValue },
+        });
+
+        return {
+          goal: { id: goal.id, objective: goal.objective },
+          retrospective,
+          previousRetrospective,
         };
       }),
   );
@@ -5536,6 +5721,62 @@ function registerWriteTools(server: McpServer) {
         const buf = Buffer.from(await res.arrayBuffer());
         // stats block includes recap.highlights so Claude can see and choose candidates
         return imageAndJsonResult(buf, recap);
+      } catch (e) {
+        return errorResult(e instanceof Error ? e.message : String(e));
+      }
+    },
+  );
+
+  // ── generate_completion_card ────────────────────────────────────────────────
+  server.registerTool(
+    "generate_completion_card",
+    {
+      title: "Generate the 'Goal Completed' shareable card (image + stats)",
+      description:
+        "Render an achieved goal's completion card as a share-ready image plus the frozen snapshot numbers. " +
+        "Requires the goal to be status='achieved' with a usable completion snapshot (call complete_goal first). " +
+        'Pass template for the visual style: "coal" (dark, default) or "parchment" (light, editorial serif); ' +
+        'format for the target surface: "story" 9:16, "post" 4:5 feed post, "square" 1:1 (default "story").',
+      inputSchema: {
+        goalId: z.string().describe("Achieved goal to render the card for"),
+        template: z
+          .enum(["coal", "parchment"])
+          .optional()
+          .describe('Visual style variant: "coal" (dark, bold, default) or "parchment" (light, editorial serif)'),
+        format: z
+          .enum(["story", "post", "square"])
+          .optional()
+          .describe(
+            'Output dimensions: "story" 1080×1920 (9:16 Stories, default), ' +
+              '"post" 1080×1350 (4:5 Instagram/Facebook feed post), "square" 1080×1080 (1:1 universal feed)',
+          ),
+      },
+    },
+    async ({ goalId, template, format }) => {
+      try {
+        const db = await getDb();
+        // Leaky-read guard (R "generate_completion_card goal query uses omit: {userId: true}"):
+        // this row goes straight into the response's JSON block, so userId must never load.
+        const goal = await db.goal.findUnique({
+          where: { id: goalId },
+          omit: { userId: true },
+        });
+        if (!goal) return errorResult(`Goal not found: ${goalId}`);
+        if (goal.status !== "achieved") {
+          return errorResult(
+            "This goal is not achieved yet — call complete_goal first, then generate the card.",
+          );
+        }
+        const snapshot = parseCompletionSnapshot(goal.completionSnapshot);
+        if (!snapshot) {
+          return errorResult(
+            "This goal has no usable completion snapshot on file — reopen_goal and re-complete it to capture one.",
+          );
+        }
+        const tpl: RecapTemplate = template ?? "coal";
+        const res = renderCompletionCard(snapshot, { objective: goal.objective, kind: goal.kind }, tpl, format ?? "story");
+        const buf = Buffer.from(await res.arrayBuffer());
+        return imageAndJsonResult(buf, snapshot);
       } catch (e) {
         return errorResult(e instanceof Error ? e.message : String(e));
       }

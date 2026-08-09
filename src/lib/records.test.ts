@@ -90,6 +90,10 @@ const EMPTY_DATA_BASE = {
   mobilityCheckins: [] as never[],
   overridesByKey: new Map() as Map<string, { workoutJson: unknown; baselineTestNames: string[] | null }>,
   bonusRows: [] as never[],
+  // R2 (completion-ceremony critique C-2): completedGoals is optional on
+  // EngineData but this fixture is a plain, structurally-checked object
+  // literal (no `as never` escape hatch) — tsc fails without this.
+  completedGoals: [] as never[],
 };
 
 // ── Group 1: metricKindFor ─────────────────────────────────────────────────────

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { GoalEditForm, type CopySource } from "@/components/GoalEditForm";
+import { GoalCompleteForm } from "@/components/GoalCompleteForm";
+import { GoalCompletedCelebration } from "@/components/GoalCompletedCelebration";
 import { GoalReferences } from "@/components/GoalReferences";
 import { PendingNotes, type PendingNote } from "@/components/PendingNotes";
 import { PlanChangelog, type ChangelogEntry } from "@/components/PlanChangelog";
@@ -11,15 +13,23 @@ import { ReachMeter } from "@/components/ReachMeter";
 import { getDb } from "@/lib/db";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import type { GoalReference } from "@/lib/goal-actions";
-import { setPlanActive } from "@/lib/goal-actions";
+import { reopenGoal, setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
-import { USER_TZ } from "@/lib/calendar";
+import { USER_TZ, dateKey, parseDateKey } from "@/lib/calendar";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
-import { parseCoachFeasibility } from "@/lib/rarity-core";
+import { parseCoachFeasibility, RARITY_TIERS, type RarityTier } from "@/lib/rarity-core";
 import { presentationForGoal } from "@/lib/goal-presentation";
+import { parseCompletionSnapshot, parseGoalRetrospective } from "@/lib/goal-completion-core";
+
+// R3 (binding): tier strings frozen inside a JSON snapshot are untyped —
+// validate against the closed RarityTier set before handing them to ReachMeter
+// rather than trusting the cast.
+function asRarityTier(t: string | null): RarityTier | null {
+  return t !== null && (RARITY_TIERS as readonly string[]).includes(t) ? (t as RarityTier) : null;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +71,7 @@ export default async function GoalDetail({
     },
   });
   if (!goal) notFound();
+  const isAchieved = goal.status === "achieved";
   const activePlan = goal.plans[0];
 
   // When no active plan, check if a paused plan exists — UXR-62B-04
@@ -73,7 +84,10 @@ export default async function GoalDetail({
         select: { id: true, active: true },
       });
   const isPaused = !!mostRecentPlan; // has plan(s) but none active
-  const hasPlan = !!activePlan || isPaused;
+  // completeGoalCore deactivates every plan on completion — the Plan card's
+  // Pause/Resume toggle (a live plan-management control) has no business
+  // showing on an archived goal, so it's suppressed once achieved.
+  const hasPlan = !isAchieved && (!!activePlan || isPaused);
 
   // Server actions — bound here so form actions need no client component
   const pausePlan = setPlanActive.bind(null, goal.id, false);
@@ -117,12 +131,17 @@ export default async function GoalDetail({
   const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
   const references = (goal.references as unknown as GoalReference[] | null) ?? [];
 
-  // Compute goal feasibility + coach override + lastTrained in parallel with readiness (UXR-63-10)
-  const [readiness, feasibility, trainedMapDetail] = await Promise.all([
-    targets.length > 0 ? computeReadiness(targets, new Date(), goal.id) : Promise.resolve(null),
-    computeGoalFeasibility({ id: goal.id, targetDate: goal.targetDate, targets: goal.targets, kind: goal.kind }),
-    lastTrainedForGoals([goal]),
-  ]);
+  // R9 (binding, architecture-blueprint-v2.md): an achieved goal renders ONLY
+  // the frozen completion snapshot — never live computeReadiness/
+  // computeGoalFeasibility. Running them here would be wasted work and would
+  // put a live Reach figure confusingly next to the frozen trophy numbers.
+  const [readiness, feasibility, trainedMapDetail] = isAchieved
+    ? [null, null, await lastTrainedForGoals([goal])]
+    : await Promise.all([
+        targets.length > 0 ? computeReadiness(targets, new Date(), goal.id) : Promise.resolve(null),
+        computeGoalFeasibility({ id: goal.id, targetDate: goal.targetDate, targets: goal.targets, kind: goal.kind }),
+        lastTrainedForGoals([goal]),
+      ]);
   // UXR-64-07/09: trained line near header for hinted goals (no training logged vs trained Nd ago).
   const hasHints = parseAttributionHints(goal.attributionHints).length > 0;
   const lastTrained = hasHints ? (trainedMapDetail.get(goal.id) ?? null) : null;
@@ -132,7 +151,15 @@ export default async function GoalDetail({
     : null;
 
   // Parse coachFeasibility from DB using the shared parser (rarity-core.ts).
-  const coachFeasibility = parseCoachFeasibility(goal.coachFeasibility);
+  // Skipped for achieved goals — the frozen coachFeasibilityTier lives in the
+  // completion snapshot instead (REQ-014/R9).
+  const coachFeasibility = isAchieved ? null : parseCoachFeasibility(goal.coachFeasibility);
+
+  // REQ-012/014c: completion snapshot + retrospective — parsed once, used by
+  // both the trophy header and the celebration mount below.
+  const completionSnapshot = isAchieved ? parseCompletionSnapshot(goal.completionSnapshot) : null;
+  const retrospective = parseGoalRetrospective(goal.retrospective);
+  const reopen = reopenGoal.bind(null, goal.id);
 
   const otherGoals = await db.goal.findMany({
     where: { id: { not: id } },
@@ -224,25 +251,190 @@ export default async function GoalDetail({
         </div>
       )}
 
-      <Card title="Edit">
-        <GoalEditForm
-          id={goal.id}
-          copySources={copySources}
-          defaultValues={{
-            objective: goal.objective,
-            targetDate: goal.targetDate ? new Date(goal.targetDate).toISOString().slice(0, 10) : "",
-            notes: goal.notes ?? "",
-            status: goal.status,
-            targets: JSON.stringify(targets, null, 2),
-          }}
-        />
-      </Card>
+      {isAchieved ? (
+        <>
+          {/* R3 (binding): degrade gracefully when the snapshot is missing/unparseable
+              (legacy/tampered achieved row) — no stats, no card link, Reopen still offered. */}
+          {completionSnapshot ? (
+            <Card title="Completed">
+              <div className="flex items-start gap-3 mb-3">
+                <span className="text-3xl leading-none" aria-hidden="true">🏆</span>
+                <div className="min-w-0">
+                  <p className="font-semibold text-lg leading-tight truncate">{completionSnapshot.objective}</p>
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
+                    Completed{" "}
+                    {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: USER_TZ }).format(
+                      parseDateKey(completionSnapshot.completedDateKey),
+                    )}
+                    {completionSnapshot.backdated ? " · backdated" : ""}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                {completionSnapshot.readiness && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Readiness</p>
+                    <p className="text-2xl font-semibold tracking-tight">
+                      {completionSnapshot.readiness.score}
+                      <span className="text-sm text-[var(--muted)]">/100</span>
+                    </p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Targets</p>
+                  <p className="text-2xl font-semibold tracking-tight">
+                    {completionSnapshot.targetsMet}/{completionSnapshot.targetsTotal}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">XP awarded</p>
+                  <p className="text-2xl font-semibold tracking-tight text-[var(--accent)]">
+                    +{completionSnapshot.xpAwardedAtCompletion}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Days elapsed</p>
+                  <p className="text-2xl font-semibold tracking-tight">{completionSnapshot.daysElapsed}</p>
+                </div>
+              </div>
+
+              {(asRarityTier(completionSnapshot.feasibilityTierAtCompletion) || asRarityTier(completionSnapshot.coachFeasibilityTier)) && (
+                <div className="flex gap-6 mb-3">
+                  {asRarityTier(completionSnapshot.feasibilityTierAtCompletion) && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-[var(--muted)] mb-1">Reach at completion</p>
+                      <ReachMeter tier={asRarityTier(completionSnapshot.feasibilityTierAtCompletion)} label size="md" />
+                    </div>
+                  )}
+                  {asRarityTier(completionSnapshot.coachFeasibilityTier) && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-[var(--accent)] mb-1">Coach</p>
+                      <ReachMeter tier={asRarityTier(completionSnapshot.coachFeasibilityTier)} label size="md" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Link href={`/recap/completion?goalId=${goal.id}`} className="text-sm text-[var(--accent)]">
+                Completion card →
+              </Link>
+
+              <div className="flex justify-center mt-3">
+                {/* QA M-1: completionToken must be fresh per completion (not the
+                    possibly-repeatable completedDateKey) — capturedAt is the
+                    write-time instant computeCompletionSnapshot stamps. */}
+                <GoalCompletedCelebration goalId={goal.id} completionToken={completionSnapshot.capturedAt} />
+              </div>
+            </Card>
+          ) : (
+            <Card title="Completed">
+              <p className="text-sm text-[var(--muted)]">
+                🏆 Completed
+                {goal.completedAt
+                  ? ` ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: USER_TZ }).format(goal.completedAt)}`
+                  : ""}
+                {" — no snapshot on file. Reopen and re-complete to capture one."}
+              </p>
+            </Card>
+          )}
+
+          <Card title="Reopen">
+            <p className="text-xs text-[var(--muted)] mb-3">
+              Restores active status. Does not restore focus or resume the plan — do that separately if you want to pick this back up.
+            </p>
+            <form action={reopen}>
+              <button
+                type="submit"
+                className="min-h-[44px] rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition"
+              >
+                Reopen
+              </button>
+            </form>
+          </Card>
+
+          <Card title="Reflection">
+            {retrospective ? (
+              <div className="space-y-3 text-sm">
+                <p className="whitespace-pre-wrap">{retrospective.reflection}</p>
+                {retrospective.wins && retrospective.wins.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)] mb-1">Wins</p>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {retrospective.wins.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {retrospective.challenges && retrospective.challenges.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)] mb-1">Challenges</p>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {retrospective.challenges.map((c, i) => (
+                        <li key={i}>{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {retrospective.lessons && retrospective.lessons.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)] mb-1">Lessons</p>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {retrospective.lessons.map((l, i) => (
+                        <li key={i}>{l}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {retrospective.nextSteps && retrospective.nextSteps.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--muted)] mb-1">Next steps</p>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {retrospective.nextSteps.map((n, i) => (
+                        <li key={i}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <p className="text-xs text-[var(--muted)] pt-2 border-t border-[var(--border)]">
+                  {retrospective.authoredWith === "user+coach" ? "Co-authored with your coach" : "Written by you"}
+                  {" · "}
+                  {new Date(retrospective.updatedAt).toLocaleDateString()}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-[var(--muted)]">No reflection yet — ask your coach to run a retrospective.</p>
+            )}
+          </Card>
+        </>
+      ) : (
+        <>
+          <Card title="Edit">
+            <GoalEditForm
+              id={goal.id}
+              copySources={copySources}
+              defaultValues={{
+                objective: goal.objective,
+                targetDate: goal.targetDate ? new Date(goal.targetDate).toISOString().slice(0, 10) : "",
+                notes: goal.notes ?? "",
+                status: goal.status,
+                targets: JSON.stringify(targets, null, 2),
+              }}
+            />
+          </Card>
+
+          <Card title="Complete">
+            <GoalCompleteForm id={goal.id} defaultDateKey={dateKey(new Date())} />
+          </Card>
+        </>
+      )}
 
       <Card title="References">
         <GoalReferences goalId={goal.id} references={references} />
       </Card>
 
-      {readiness && (
+      {!isAchieved && readiness && (
         <Card title={titleCase(presentationForGoal(goal).ringLabel)}>
           <div className="flex items-baseline justify-between mb-2">
             <p className="text-4xl font-semibold tracking-tight">{readiness.score}<span className="text-base text-[var(--muted)]">/100</span></p>
@@ -258,8 +450,9 @@ export default async function GoalDetail({
 
       {/* UXR-63-10: Reach card between Readiness and Plan — computed + coach side-by-side
           UXR-63-11: computed value NEVER hidden; coach override shown with rationale + assessedAt
-          data-testid="goal-reach-card" per UXR §7 */}
-      {feasibility.tier !== null || coachFeasibility !== null ? (
+          data-testid="goal-reach-card" per UXR §7. R9: entire block skipped when achieved —
+          feasibility is null (never computed live) and the frozen tiers render in the trophy card above. */}
+      {!isAchieved && feasibility && (feasibility.tier !== null || coachFeasibility !== null ? (
         <Card title="Reach" data-testid="goal-reach-card">
           {/* Side-by-side: Computed | Coach (UXR-63-10, UXR-63-11) */}
           <div className="flex gap-6 mb-3">
@@ -320,7 +513,7 @@ export default async function GoalDetail({
         </Card>
       ) : (
         <FeasibilityReadout feasibility={feasibility} targetDateLabel={targetDateLabel} coach={coachFeasibility} />
-      )}
+      ))}
 
       {/* Plan card — shows when there are any plans (active or paused). REQ-202 */}
       {hasPlan && (
