@@ -358,6 +358,92 @@ describe("readinessSeries — build + parse", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// ceremony (REQ-008 / V5) — optional field, version stays 1. Isolate-drop
+// parsed exactly like readinessSeries above: malformed → field omitted,
+// rest of the snapshot still parses.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("ceremony — build + parse", () => {
+  const CEREMONY = {
+    badgesUnlocked: [{ id: "goal-first", name: "First Summit" }],
+    levelBefore: 3,
+    levelAfter: 4,
+  };
+
+  it("buildCompletionSnapshot spreads ceremony through when the caller supplies one", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    expect(snap.ceremony).toEqual(CEREMONY);
+  });
+
+  it("buildCompletionSnapshot OMITS the key entirely when the caller supplies none", () => {
+    const snap = buildCompletionSnapshot(baseInputs());
+    expect(snap.ceremony).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(snap, "ceremony")).toBe(false);
+  });
+
+  it("round-trips a snapshot WITH ceremony through JSON", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    const json = JSON.parse(JSON.stringify(snap));
+    expect(parseCompletionSnapshot(json)).toEqual(snap);
+  });
+
+  it("round-trips a snapshot with NO ceremony through JSON (legacy-row shape, incl. current Elbert)", () => {
+    const snap = buildCompletionSnapshot(baseInputs());
+    const json = JSON.parse(JSON.stringify(snap));
+    const parsed = parseCompletionSnapshot(json);
+    expect(parsed).toEqual(snap);
+    expect(parsed!.ceremony).toBeUndefined();
+  });
+
+  it("a non-object ceremony omits ONLY that field — the rest of the snapshot still parses", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, ceremony: "not an object" };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.ceremony).toBeUndefined();
+    expect(parsed!.objective).toBe(snap.objective);
+    expect(parsed!.targetsMet).toBe(snap.targetsMet);
+  });
+
+  it("a non-array badgesUnlocked omits the field but keeps the rest of the snapshot", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, ceremony: { ...CEREMONY, badgesUnlocked: "not an array" } };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.ceremony).toBeUndefined();
+    expect(parsed!.daysElapsed).toBe(snap.daysElapsed);
+  });
+
+  it("a malformed badge row (missing name) omits the field", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, ceremony: { ...CEREMONY, badgesUnlocked: [{ id: "x" }] } };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.ceremony).toBeUndefined();
+  });
+
+  it("a non-number levelAfter omits the field", () => {
+    const snap = buildCompletionSnapshot(baseInputs({ ceremony: CEREMONY }));
+    const json = JSON.parse(JSON.stringify(snap));
+    const corrupted = { ...json, ceremony: { ...CEREMONY, levelAfter: "4" } };
+
+    const parsed = parseCompletionSnapshot(corrupted);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed!.ceremony).toBeUndefined();
+  });
+});
+
 describe("parseGoalRetrospective", () => {
   const valid = {
     version: 1 as const,

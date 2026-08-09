@@ -45,6 +45,25 @@ export type GoalCompletionSnapshot = {
    * capture the arc" hint in either case. Never assume absent === legacy.
    */
   readinessSeries?: Array<{ dateKey: string; score: number }>;
+  /**
+   * The goal.achieved badge/level diff (REQ-008/V5), captured by
+   * completeGoalCore via a computeGameStateFresh() pre/post-transaction diff
+   * — never recomputed live on read (R9). Optional so version stays 1:
+   * ABSENT means either a legacy pre-capture completion (including the
+   * founder's own Mt. Elbert row) or a completion whose best-effort
+   * second write (see goal-completion.ts) failed — both degrade the same
+   * way: the monument omits the badge-medals/level-crossing blocks rather
+   * than recomputing (that would violate R9 and double-pay the full
+   * lifetime-history cost engine.ts's computeGameStateFresh requires —
+   * see architecture-critique.md C5). Isolate-drop parsed exactly like
+   * readinessSeries (see isCeremony below) — a malformed value omits ONLY
+   * this field, never fails the whole snapshot parse.
+   */
+  ceremony?: {
+    badgesUnlocked: Array<{ id: string; name: string }>;
+    levelBefore: number;
+    levelAfter: number;
+  };
   targets: Array<{
     metric: string;
     label: string;
@@ -89,6 +108,17 @@ export type BuildCompletionSnapshotInputs = {
    * series when there are no targets to sample against.
    */
   readinessSeries?: GoalCompletionSnapshot["readinessSeries"];
+  /**
+   * Optional passthrough for the goal.achieved badge/level diff (REQ-008).
+   * `computeCompletionSnapshot` never supplies this — the diff can only be
+   * computed AFTER completeGoalCore's transaction commits (the badge
+   * predicates read the just-archived goal). completeGoalCore instead calls
+   * this same builder a second time, post-commit, with `ceremony` supplied,
+   * to produce the enriched snapshot it writes back. Omit (undefined) for
+   * every other caller — the field is spread-when-defined, same convention
+   * as readinessSeries above.
+   */
+  ceremony?: GoalCompletionSnapshot["ceremony"];
   /** Per-target rows — pre-resolved start/final/target/progress values. */
   targets: Array<{
     metric: string;
@@ -173,6 +203,7 @@ export function buildCompletionSnapshot(
     daysElapsed,
     readiness: inputs.readiness,
     ...(inputs.readinessSeries !== undefined ? { readinessSeries: inputs.readinessSeries } : {}),
+    ...(inputs.ceremony !== undefined ? { ceremony: inputs.ceremony } : {}),
     targets,
     targetsMet,
     targetsTotal,
@@ -262,6 +293,27 @@ function isReadinessSeries(v: unknown): v is Array<{ dateKey: string; score: num
   return Array.isArray(v) && v.every(isReadinessSeriesPoint);
 }
 
+function isBadgeRow(v: unknown): v is { id: string; name: string } {
+  if (!isPlainObject(v)) return false;
+  return typeof v.id === "string" && typeof v.name === "string";
+}
+
+/**
+ * REQ-008 (V5): validated in ISOLATION from the rest of the snapshot,
+ * mirroring isReadinessSeries exactly. A malformed `ceremony` (non-object,
+ * a non-array badgesUnlocked, a malformed badge row, or a non-number
+ * level) must never fail the whole parse — it drops ONLY this optional
+ * field, degrading to "omit the badge-medals/level-crossing blocks" while
+ * every other field on the trophy card still renders.
+ */
+function isCeremony(v: unknown): v is GoalCompletionSnapshot["ceremony"] {
+  if (!isPlainObject(v)) return false;
+  if (!Array.isArray(v.badgesUnlocked) || !v.badgesUnlocked.every(isBadgeRow)) return false;
+  if (typeof v.levelBefore !== "number") return false;
+  if (typeof v.levelAfter !== "number") return false;
+  return true;
+}
+
 /**
  * Defensive parse of a raw JSON value (e.g. Goal.completionSnapshot) into a
  * typed GoalCompletionSnapshot, or null. Any missing/mistyped field, a
@@ -312,6 +364,11 @@ export function parseCompletionSnapshot(json: unknown): GoalCompletionSnapshot |
   // malformed value just omits the field; it never nulls the whole parse.
   if (r.readinessSeries !== undefined && isReadinessSeries(r.readinessSeries)) {
     snapshot.readinessSeries = r.readinessSeries;
+  }
+
+  // Same isolate-drop treatment for `ceremony` (REQ-008/V5) — see isCeremony.
+  if (r.ceremony !== undefined && isCeremony(r.ceremony)) {
+    snapshot.ceremony = r.ceremony;
   }
 
   return snapshot;

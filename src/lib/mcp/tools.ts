@@ -88,7 +88,7 @@ import {
   applyBaselineOps,
   summarizeBaselineChanges,
 } from "@/lib/baseline-ops";
-import { computeGameState, computeGameStateFresh } from "@/lib/game/engine";
+import { computeGameState } from "@/lib/game/engine";
 import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
@@ -5248,19 +5248,15 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ goalId, date }) =>
       safe(async () => {
-        // Cache gotcha (binding, architecture-blueprint-v2.md): computeGameState is
-        // React-cache()d — a before/after diff in ONE request would return the SAME
-        // memoized state twice. Must use the uncached computeGameStateFresh export.
-        const preState = await computeGameStateFresh();
+        // REQ-008/V5 (architecture-v2-revisions.md): the pre/post
+        // computeGameStateFresh() diff that used to live here has moved INTO
+        // completeGoalCore (goal-completion.ts) — it's the same data the
+        // core now freezes onto the completion snapshot's `ceremony` field
+        // (best-effort second write; see that file's comments), so this
+        // handler just reads the diff off the result instead of computing
+        // its own second pair of calls.
         const result = await completeGoalCore(goalId, date ? parseDateInput(date) : undefined);
-        const postState = await computeGameStateFresh();
-
-        const preUnlockedIds = new Set(
-          preState.badges.filter((b) => b.dateKey !== null).map((b) => b.def.id),
-        );
-        const badgesUnlocked = postState.badges
-          .filter((b) => b.dateKey !== null && !preUnlockedIds.has(b.def.id))
-          .map((b) => ({ id: b.def.id, name: b.def.name }));
+        const { badgesUnlocked, levelBefore, levelAfter } = result.ceremony;
 
         const parts = [
           `"${result.goal.objective}" completed — +${result.snapshot.xpAwardedAtCompletion} XP`,
@@ -5268,8 +5264,8 @@ function registerWriteTools(server: McpServer) {
         if (badgesUnlocked.length > 0) {
           parts.push(`${badgesUnlocked.length} badge${badgesUnlocked.length === 1 ? "" : "s"} unlocked`);
         }
-        if (postState.level > preState.level) {
-          parts.push(`leveled up to ${postState.level}`);
+        if (levelAfter > levelBefore) {
+          parts.push(`leveled up to ${levelAfter}`);
         }
         const message =
           parts.join(", ") +
@@ -5288,8 +5284,8 @@ function registerWriteTools(server: McpServer) {
           snapshot: result.snapshot,
           xp: { awarded: result.snapshot.xpAwardedAtCompletion, ruleId: "goal.achieved" },
           badgesUnlocked,
-          levelBefore: preState.level,
-          levelAfter: postState.level,
+          levelBefore,
+          levelAfter,
           focusReleased: result.focusReleased,
           planDeactivated: result.planDeactivatedIds,
           remainingActiveGoals: result.remainingActiveGoals,
