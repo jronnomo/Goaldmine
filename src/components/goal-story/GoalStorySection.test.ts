@@ -184,9 +184,35 @@ describe("GoalStorySection", () => {
   it("empty story: only the readiness hint renders, every other card omits itself", () => {
     const html = renderToStaticMarkup(createElement(GoalStorySection, { story: EMPTY_STORY }));
 
-    expect(html).toContain("Readiness arc not captured for this completion");
+    // UXR-GCU-51: EMPTY_STORY has targets: [] (targetsTotal 0), so the
+    // zero-target-safe copy renders — NOT the "reopen and re-complete"
+    // hint, which would be misleading (there is nothing to record).
+    expect(html).toContain("No measurable targets were set on this goal.");
+    expect(html).not.toContain("Readiness arc not captured for this completion");
     expect(html).not.toContain("Targets: start → final");
     expect(html).not.toContain("Plan timeline");
     expect(html).not.toContain("Hikes");
+  });
+
+  it("legacy pre-freeze story: targets existed but no series was captured — keeps the reopen-and-re-complete hint", () => {
+    const LEGACY_STORY: GoalStory = {
+      ...EMPTY_STORY,
+      targets: [
+        {
+          metric: "baseline:pullups",
+          label: "Pull-ups",
+          units: "reps",
+          start: 5,
+          final: 15,
+          target: 15,
+          progress: 1,
+          met: true,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(createElement(GoalStorySection, { story: LEGACY_STORY }));
+
+    expect(html).toContain("Readiness arc not captured for this completion");
+    expect(html).not.toContain("No measurable targets were set on this goal.");
   });
 });

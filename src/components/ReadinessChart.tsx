@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 type Point = { date: string; score: number };
 
@@ -22,6 +23,12 @@ export function ReadinessChart({
   targetDate?: string;
   ariaLabel?: string;
 }) {
+  // UXR-GCU-49 (goal-celebration-upgrade.md §7.1/§8.3): Recharts' default
+  // 1500ms mount animation was live and unguarded on every consumer of this
+  // component (/progress, the Story card, and now the Assay's readiness
+  // delta) — a real a11y bug independent of the ceremony feature itself.
+  const reduce = usePrefersReducedMotion();
+
   const formatted = data.map((p) => ({
     ...p,
     label: new Date(p.date).toLocaleDateString(undefined, {
@@ -93,6 +100,7 @@ export function ReadinessChart({
               stroke="var(--accent)"
               strokeWidth={2}
               fill="url(#readinessFill)"
+              isAnimationActive={!reduce}
             />
           </AreaChart>
         </ResponsiveContainer>

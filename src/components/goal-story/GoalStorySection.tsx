@@ -22,7 +22,7 @@ export function GoalStorySection({ story }: { story: GoalStory | null }) {
 
   return (
     <>
-      <StoryReadinessCard series={story.readinessSeries} />
+      <StoryReadinessCard series={story.readinessSeries} targetsTotal={story.targets.length} />
       <StoryTargetsTable targets={story.targets} />
       <StoryBaselineArcs arcs={story.baselineArcs} />
       <StoryTimeline timeline={story.timeline} />
