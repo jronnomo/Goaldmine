@@ -321,7 +321,10 @@ export default async function GoalDetail({
               </Link>
 
               <div className="flex justify-center mt-3">
-                <GoalCompletedCelebration goalId={goal.id} completedDateKey={completionSnapshot.completedDateKey} />
+                {/* QA M-1: completionToken must be fresh per completion (not the
+                    possibly-repeatable completedDateKey) — capturedAt is the
+                    write-time instant computeCompletionSnapshot stamps. */}
+                <GoalCompletedCelebration goalId={goal.id} completionToken={completionSnapshot.capturedAt} />
               </div>
             </Card>
           ) : (
