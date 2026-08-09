@@ -204,16 +204,18 @@ function coversDayKey(
  *  2. Otherwise, ONLY when `dayKey < todayKey` (strictly past, USER_TZ dateKey
  *     string compare — never raw Date comparison): search `candidates` for
  *     ones whose window covers `dayKey` (S4-clamped per candidate). Among
- *     covering candidates, order active-covering first, then startedOn desc.
- *     The updatedAt desc tiebreak (S3) is achieved by *sort stability*, not a
- *     field on the comparator: getPlanWindowCandidates() returns candidates
- *     pre-ordered `updatedAt desc` at the DB level (as documented on that
- *     function), and Array.prototype.sort is a stable sort (guaranteed by
- *     spec since ES2019 / V8 7.0, well within this repo's Node runtime) — so
- *     when two candidates tie on `active` and `startedOn`, their relative
- *     order from the incoming (updatedAt-desc) list is preserved. Callers who
- *     don't go through getPlanWindowCandidates() must pre-sort by updatedAt
- *     desc themselves for the tiebreak to hold; ties left unresolved (no
+ *     covering candidates, order active-covering first, then achieved-goal
+ *     plans before non-achieved-goal plans (SMOKE-3 — see pickCoveringWinner's
+ *     doc comment below for why), then startedOn desc. The updatedAt desc
+ *     tiebreak (S3) is achieved by *sort stability*, not a field on the
+ *     comparator: getPlanWindowCandidates() returns candidates pre-ordered
+ *     `updatedAt desc` at the DB level (as documented on that function), and
+ *     Array.prototype.sort is a stable sort (guaranteed by spec since ES2019 /
+ *     V8 7.0, well within this repo's Node runtime) — so when two candidates
+ *     tie on `active`, achieved-status, and `startedOn`, their relative order
+ *     from the incoming (updatedAt-desc) list is preserved. Callers who don't
+ *     go through getPlanWindowCandidates() must pre-sort by updatedAt desc
+ *     themselves for the tiebreak to hold; ties left unresolved (no
  *     candidates, or a caller that didn't pre-sort) simply return the first
  *     covering candidate in input order.
  *  3. Fall through (today/future dayKey, or a past dayKey with no covering
@@ -252,15 +254,35 @@ export function pickProgramForDate(
     ? candidates.filter((c) => coversDayKey(c, dayKey, c.goalCompletedAt))
     : [];
 
-  // Picks the covering-candidate winner (S3 ordering) — returns the raw
-  // PlanWindowCandidate (not yet trimmed to ProgramForDate) so callers can
-  // both build the snapshot and inspect `winner.active` for labeling.
+  // Picks the covering-candidate winner (S3 ordering, extended by SMOKE-3) —
+  // returns the raw PlanWindowCandidate (not yet trimmed to ProgramForDate)
+  // so callers can both build the snapshot and inspect `winner.active` for
+  // labeling.
+  //
+  // SMOKE-3: a date can be double-covered by two archived candidates
+  // belonging to *different* goals (e.g. an earlier-started plan whose goal
+  // was later ACHIEVED, and a later-started plan whose goal is still active
+  // but was paused/dormant on that date). `active desc, startedOn desc` alone
+  // picks the later-started plan regardless of which goal actually ran that
+  // day — wrong when the later plan was just sitting dormant. So an
+  // achieved-goal's archived plan now outranks a non-achieved-goal's plan
+  // (both non-`active`, ordered before the startedOn tiebreak): a goal marked
+  // ACHIEVED means its plan was actually run to completion through that date,
+  // whereas a paused/inactive plan belonging to a still-active goal was most
+  // likely dormant on that date, not the one being followed. Final ordering:
+  //   1. `active` first (unchanged),
+  //   2. achieved-goal plans before non-achieved-goal plans (SMOKE-3, new),
+  //   3. `startedOn desc` (unchanged),
+  //   4. stable-sort tiebreak on the incoming updatedAt-desc order (unchanged).
+  // Stable sort: ties (equal on all three fields above) preserve the incoming
+  // order, which getPlanWindowCandidates() pre-sorts updatedAt desc — see the
+  // doc comment above for the full reasoning.
   const pickCoveringWinner = (): PlanWindowCandidate => {
-    // Stable sort: ties (both `active`, equal `startedOn`) preserve the
-    // incoming order, which getPlanWindowCandidates() pre-sorts updatedAt
-    // desc — see the doc comment above for the full reasoning.
     const ordered = [...covering].sort((a, b) => {
       if (a.active !== b.active) return a.active ? -1 : 1;
+      const aAchieved = a.goalStatus === "achieved";
+      const bAchieved = b.goalStatus === "achieved";
+      if (aAchieved !== bAchieved) return aAchieved ? -1 : 1;
       return b.startedOn.getTime() - a.startedOn.getTime();
     });
     return ordered[0]!;
