@@ -16,6 +16,7 @@ import { computeReadiness, computeReadinessSeriesSampled } from "@/lib/readiness
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
 import { goalAchievedXp } from "@/lib/game/rules";
+import { computeGameStateFresh } from "@/lib/game/engine";
 import type { GoalTarget } from "@/lib/goal-targets";
 import {
   buildCompletionSnapshot,
@@ -188,7 +189,22 @@ export async function computeCompletionSnapshot(
 
 export type CompleteGoalCoreResult = {
   goal: CompletionGoalRow;
+  /**
+   * The enriched snapshot (with `ceremony` attached) when the post-tx
+   * best-effort write below succeeds; otherwise the plain snapshot as
+   * written inside the transaction (ceremony absent — see `ceremony`'s
+   * doc comment on GoalCompletionSnapshot). Always matches what's actually
+   * persisted in the DB at the moment this function returns.
+   */
   snapshot: GoalCompletionSnapshot;
+  /**
+   * The goal.achieved badge/level diff (REQ-008/V5) — ALWAYS populated
+   * (independent of whether the second write above succeeded), since both
+   * halves of the diff are just in-memory computeGameStateFresh() reads.
+   * tools.ts's complete_goal reads badgesUnlocked/levelBefore/levelAfter
+   * from here instead of running its own pre/post pair.
+   */
+  ceremony: { badgesUnlocked: Array<{ id: string; name: string }>; levelBefore: number; levelAfter: number };
   /** Whether the goal held focus immediately before completion (isFocus is
    *  unconditionally cleared by this call). */
   focusReleased: boolean;
@@ -230,8 +246,20 @@ export async function completeGoalCore(
   // Snapshot computed BEFORE mutation — must read live (not-yet-archived) state.
   const snapshot = await computeCompletionSnapshot(goalId, completedAt);
 
+  // Pre-state for the badge/level diff (REQ-008/V5) — also BEFORE mutation,
+  // for the same reason: badge predicates and level must reflect the world
+  // as it was right before this goal became achieved. Cache gotcha (binding,
+  // architecture-blueprint-v2.md): computeGameState is React-cache()d — a
+  // before/after diff in one request would return the SAME memoized state
+  // twice. Must use the uncached computeGameStateFresh export (moved here
+  // from tools.ts's complete_goal handler — this is now the single call site).
+  const preState = await computeGameStateFresh();
+
   const { goal, planDeactivatedIds } = await db.$transaction(async (tx) => {
     // Sequential top-level calls — NEVER nested relation writes (gotcha §B.10).
+    // Writes the snapshot WITHOUT `ceremony` — the diff below can only be
+    // computed once this transaction has actually committed (the badge
+    // predicates read the just-archived goal + its goal.achieved XP event).
     const updatedGoal = await tx.goal.update({
       where: { id: goalId },
       data: {
@@ -263,9 +291,48 @@ export async function completeGoalCore(
     select: { id: true, objective: true, kind: true },
   });
 
+  // ── Ceremony capture (REQ-008/V5) — two-step write ──────────────────────
+  // Post-state can only be read AFTER the transaction above commits. The
+  // diff itself (badgesUnlocked/levelBefore/levelAfter) is a pure in-memory
+  // comparison of two already-fetched GameState objects — it cannot fail —
+  // so it's computed unconditionally and always returned via `ceremony`,
+  // regardless of whether the second write below succeeds.
+  const postState = await computeGameStateFresh();
+  const preUnlockedIds = new Set(
+    preState.badges.filter((b) => b.dateKey !== null).map((b) => b.def.id),
+  );
+  const badgesUnlocked = postState.badges
+    .filter((b) => b.dateKey !== null && !preUnlockedIds.has(b.def.id))
+    .map((b) => ({ id: b.def.id, name: b.def.name }));
+  const ceremony = { badgesUnlocked, levelBefore: preState.level, levelAfter: postState.level };
+
+  // Persisting the diff onto the snapshot is a SEPARATE, best-effort write —
+  // one extra db.goal.update outside the transaction (documented deviation:
+  // the alternative, holding the transaction open across the post-state
+  // read, would serialize this request behind computeGameStateFresh's ~10
+  // all-time queries for no benefit — the completion itself is already
+  // durable at this point). A failure here must NEVER fail an
+  // already-committed completion — it just means this goal's persisted
+  // snapshot has no `ceremony` field, identical to a legacy pre-capture row
+  // (isolate-drop parse, goal-completion-core.ts). The IN-MEMORY result
+  // returned to the caller mirrors whatever actually landed in the DB.
+  let persistedSnapshot: GoalCompletionSnapshot = snapshot;
+  try {
+    const enriched: GoalCompletionSnapshot = { ...snapshot, ceremony };
+    await db.goal.update({
+      where: { id: goalId },
+      data: { completionSnapshot: enriched as unknown as Prisma.InputJsonValue },
+    });
+    persistedSnapshot = enriched;
+  } catch {
+    // Swallow — see the comment above. The completion already succeeded;
+    // don't turn a ceremony-capture hiccup into a failed complete_goal call.
+  }
+
   return {
     goal,
-    snapshot,
+    snapshot: persistedSnapshot,
+    ceremony,
     focusReleased: existing.isFocus,
     planDeactivatedIds,
     remainingActiveGoals,

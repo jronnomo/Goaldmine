@@ -513,3 +513,478 @@ input::placeholder, textarea::placeholder {
     transition: none;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   THE ASSAY — goal-completion ceremony system (REQ-002)
+   docs/ux-research/goal-celebration-upgrade.md (§2/§5/§7/§8/§9) +
+   goal-celebration-upgrade-phase-a.md Direction 1 ("Summit Sheet") +
+   .feature-dev/2026-08-09-goal-assay/{phases/requirements.md,
+   agents/architecture-v2-revisions.md, agents/architecture-critique.md}
+   are the binding spec this file implements. CSS ONLY — no component
+   files are part of this change; Stage 2/3 devs (REQ-003/004/005) consume
+   the contract below by adding/removing these class names imperatively
+   (classList, via refs — never React state; see V4/C4 in
+   architecture-v2-revisions.md) and by setting the documented custom
+   properties inline per element. Nothing in this feature animates outside
+   this file.
+
+   ── RULE A: "static IS final" ──────────────────────────────────────────
+   Every ceremony class declares its OWN resting (non-animated) opacity/
+   transform equal to that class's keyframe 100% state. The keyframe
+   displaces the element away from that resting look at 0% and hands it
+   back at 100%, always with `animation-fill-mode: both`. Consequence:
+   `animation: none` — from reduced motion, from `.landed` (Skip), or from
+   a burnt one-shot token — needs no compensating rule; the element is
+   already sitting in its finished position. This is why every rule below
+   sets its base opacity/transform explicitly rather than leaning on
+   fill-forwards to define it.
+
+   ── THE CLASS CONTRACT (verbatim — this is what Stage 2/3 codes against) ──
+
+   Custom properties (set at :root below; override per-element/per-panel
+   via inline `style`):
+     --assay-gap                 14px  ⚠[10–18]   rust↔gold clear band.
+                                  Also applies to --warning-colored
+                                  elements (Epic/Legendary ReachMeter fill)
+                                  per architecture-critique.md's Concern
+                                  — same rust-neighbour rule, no separate
+                                  variable needed.
+     --assay-hero-size           224px ⚠[200–240]  Bullseye hero diameter.
+                                  All annulus/ring geometry below is
+                                  DERIVED from this — don't hand-edit the
+                                  derived values independently.
+     --assay-annulus-stroke      2px   ⚠[1.5–2]
+     --assay-visible-rust-diameter        (derived, do not override directly)
+     --assay-annulus-diameter             (derived, do not override directly)
+     --assay-rim-start-scale     0.6   ⚠[0.55–0.70]
+     --assay-rim-overshoot       1.05  ⚠[1.04–1.06]  NEVER 1.08 — clips (§7.4.1)
+     --assay-rise-distance       10px  ⚠[6–12]
+     --assay-ring-scale          2.3   ⚠[2.0–2.6]  monument default; the
+                                  Sheet's 3-ring beat (.assay-b3) overrides
+                                  this to 3.6 per phase-a Direction 1.
+     --assay-delay                0ms  generic per-element stagger hook —
+                                  set inline (`style={{ "--assay-delay":
+                                  "360ms" }}`) on ANY element carrying one
+                                  of the primitive classes below.
+
+   Primitive classes (compose freely; every one is `fill-mode: both`):
+     .assay-fade          opacity-only fade-in. Eyebrow/subline/fact-line/
+                           hairline-label/CTA entrances.
+     .assay-rise          translateY(--assay-rise-distance)→0 + opacity.
+                           Objective AND target rows (stagger rows via
+                           `--assay-delay`, ~40ms⚠[32–48] apart).
+     .assay-disc-rim      Bullseye's OUTER rim disc only — scale-only,
+                           opacity held at 1 always (the rim never fades,
+                           §5.1 F0). Apply with `transform-box: fill-box`
+                           already baked in — usable directly on an SVG
+                           <circle> per §5.1 F1 (Bullseye.tsx needs NO
+                           modification).
+     .assay-disc-inner    the three inner discs (cream/rust/centre-dot).
+                           Reuses the EXISTING `@keyframes bullseye-pop`
+                           RULE (UXR-GCU-39) — never the `.bullseye-pop`
+                           CLASS, so a future tweak to Today's pop can't
+                           silently retime this ceremony. Stagger 3
+                           instances via `--assay-delay` at 40ms⚠[32–48]
+                           steps.
+     .assay-annulus       the PERMANENT gold ring (not the flying one).
+                           Sized/positioned entirely off --assay-hero-size/
+                           --assay-gap/--assay-annulus-stroke — do not set
+                           width/height directly. Must be the child of a
+                           `position: relative` hero wrapper sized to
+                           --assay-hero-size.
+     .assay-ring          the FLYING/transient ring (monument — exactly
+                           one). `position:absolute; inset:0` inside the
+                           same relative hero wrapper as .assay-annulus.
+                           `will-change: transform, opacity` is added WITH
+                           this class; the consuming component MUST remove
+                           it on the element's `animationend` (CSS cannot
+                           do this itself) — a permanently pinned
+                           compositor layer on a page read for minutes is
+                           worse than no promotion (§7.3).
+     .assay-sheet-ring     Sheet-only: THREE flying rings (Direction 1's
+                           "3 gold rings break outward"). Combine with a
+                           size modifier `.assay-sheet-ring--1/2/3` and set
+                           `--assay-delay` to 0/120/240ms⚠ (120ms stagger,
+                           per phase-a). UNLIKE `.assay-ring`, this class
+                           carries NO `will-change` of its own (QA finding
+                           M1 — this class is present in SSR markup from
+                           first paint, inside an always-mounted-but-closed
+                           dialog, so a class-level promotion would be
+                           permanent). SummitSheet.tsx arms/clears
+                           `style.willChange` imperatively instead, keyed
+                           off the dialog's own open/close transition.
+     .assay-rosette-ring   Sheet-only, reduced-motion ONLY (never remove
+                           manually — the `@media` block below handles
+                           visibility): three static hairline circles at
+                           the flying rings' own launch radii, using the
+                           SAME `--1/2/3` size modifiers. This is the
+                           "engraved rosette" compensating composition —
+                           reduced motion is a different dignified
+                           artifact, not an absence (contrast with today's
+                           `.goal-completed-ring` under `display:none`,
+                           which leaves nothing).
+     .summit-sheet-panel   full-bleed sibling of `.bottom-sheet-panel` —
+                           mount INSIDE the existing `.bottom-sheet`
+                           `<dialog>` (reuse its reset + `::backdrop` scrim
+                           verbatim, per phase-a's own note — do not
+                           duplicate the backdrop rule). `bg:
+                           var(--background)` (NOT --card — the eyebrow
+                           needs plain background, §1.7), 100dvh, no
+                           radius.
+     .assay-b2 .. .assay-b7   Direction-1 beat-delay MODIFIERS — combine
+                           with a primitive class (e.g.
+                           `class="assay-disc-rim assay-b2"`). They set
+                           ONLY `--assay-delay` (and `.assay-b3` also sets
+                           `--assay-ring-scale: 3.6`) — the animation
+                           itself always lives on the primitive, so there
+                           is exactly one source of truth per motion.
+                           `.assay-b1` (scrim) intentionally has NO class:
+                           it reuses `.bottom-sheet::backdrop` unmodified.
+     .landed               Skip (tap 1) hard-override. Apply to
+                           `.summit-sheet-panel`. See the dedicated comment
+                           by that rule for the specificity mechanism.
+
+   Reserved/disjoint from every existing ceremony (§5.7): distinct
+   `assay-*` class prefix, distinct localStorage key namespace (owned by
+   the ceremony controller in REQ-004, NOT this file), distinct route.
+   `overflow-x: clip` (not `hidden`) belongs on the goal-detail PAGE ROOT
+   for the expanding rings — that's a Tailwind utility class on page.tsx
+   (REQ-005), not something this stylesheet can express.
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Geometry & timing tokens ── */
+  --assay-gap: 14px; /* ⚠ 10–18px — grow the GAP if it visually merges with gold, never the stroke (§1.7: gold/rust are luminance twins, 1.35:1 dark / 1.16:1 light) */
+  --assay-hero-size: 224px; /* ⚠ 200–240px — the annulus math below is derived FROM this value; re-derive if you change it */
+  --assay-annulus-stroke: 2px; /* ⚠ 1.5–2px — 1.5 is marginal in light (--accent #8A6212 on cream); 2px is the safer default */
+  /* Bullseye's outer disc is r=15 of a 16-half-width viewBox (Bullseye.tsx)
+     — i.e. 15/16 of the hero box, NOT the whole box. At the 224px default
+     this is 210px (r=105), matching §7.4's measured "105px, not 112." */
+  --assay-visible-rust-diameter: calc(var(--assay-hero-size) * 15 / 16);
+  /* = visible rust diameter + 2×gap + stroke, so the stroke's centerline
+     sits exactly `--assay-gap` past the rust edge. At defaults:
+     210 + 28 + 2 = 240px → r=120, inside the §7.4 target of r119–121. */
+  --assay-annulus-diameter: calc(
+    var(--assay-visible-rust-diameter) + (var(--assay-gap) * 2) + var(--assay-annulus-stroke)
+  );
+  --assay-rim-start-scale: 0.6; /* ⚠ 0.55–0.70 — above 0.80 the motion vanishes, below 0.50 it reads as a loading spinner */
+  --assay-rim-overshoot: 1.05; /* ⚠ 1.04–1.06 — 1.08 CLIPS: 15×1.08=16.2 exceeds the viewBox half-width of 16 (§7.4.1, verified geometrically). Do not raise without re-deriving against Bullseye's actual r15/11/7/3. */
+  --assay-rise-distance: 10px; /* ⚠ 6–12px — shared by the objective and every WHAT-MOVED row */
+  --assay-ring-scale: 2.3; /* ⚠ 2.0–2.6 — monument default (one ring); .assay-b3 overrides to 3.6 for the Sheet's three rings */
+  --assay-delay: 0ms; /* generic per-element stagger hook, see contract above */
+}
+
+/* ── 1. Monument flourish primitives ─────────────────────────────────── */
+
+@keyframes assay-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+.assay-fade {
+  opacity: 1;
+  animation: assay-fade-in 180ms ease-out var(--assay-delay, 0ms) both; /* ⚠ 160–200ms, opacity-only per the two-easings rule (§4.3) */
+}
+
+@keyframes assay-rise-in {
+  0% {
+    opacity: 0;
+    transform: translateY(var(--assay-rise-distance, 10px));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.assay-rise {
+  opacity: 1;
+  transform: translateY(0);
+  animation: assay-rise-in 220ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 0ms) both; /* ⚠ 200–300ms */
+}
+
+/* Rim + inner discs both scale an existing Bullseye <circle> around its own
+   center rather than the SVG viewport origin — required for `scale()` on
+   an SVG shape to overshoot outward instead of toward the corner. */
+.assay-disc-rim,
+.assay-disc-inner {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes assay-disc-rim-seat {
+  0% {
+    transform: scale(var(--assay-rim-start-scale, 0.6));
+  }
+  60% {
+    transform: scale(var(--assay-rim-overshoot, 1.05));
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.assay-disc-rim {
+  opacity: 1; /* held at 1 for the WHOLE flourish — the rim never fades (§5.1 F0): a cream disc arriving before the rust field would show nothing, since --target-fg on --background is illegible */
+  transform: scale(1);
+  animation: assay-disc-rim-seat 300ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 0ms) both; /* ⚠ 260–340ms */
+}
+
+.assay-disc-inner {
+  opacity: 1;
+  transform: scale(1);
+  /* UXR-GCU-39 — reuses the @keyframes bullseye-pop RULE (already caps its
+     overshoot at 1.08, inside the §9 item-7 range of 1.06–1.10) verbatim.
+     Never reference `.bullseye-pop` (the class) from here. */
+  animation: bullseye-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 0ms) both;
+}
+
+@keyframes assay-annulus-in {
+  0% {
+    transform: translate(-50%, -50%) scale(0.9);
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+}
+.assay-annulus {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--assay-annulus-diameter);
+  height: var(--assay-annulus-diameter);
+  box-sizing: border-box;
+  border-radius: 9999px;
+  border: var(--assay-annulus-stroke) solid var(--accent);
+  pointer-events: none;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  animation: assay-annulus-in 300ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 170ms) both; /* ⚠ 260–340ms; 170ms default delay pairs with the ring per §4.3 B4/B1 */
+}
+
+/* .assay-ring — the flying/transient ring. Monument: exactly one. Sized by
+   its parent hero wrapper via `inset: 0` (unlike .assay-sheet-ring below,
+   which is sized explicitly — the monument's single ring simply matches
+   the hero box it breaks away from). */
+@keyframes assay-ring-break {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  76% {
+    opacity: 0; /* ⚠ 70–82% zero-crossing — should be UNnoticeable; later muddies the objective (§9 item 10) */
+  }
+  100% {
+    transform: scale(var(--assay-ring-scale, 2.3));
+  }
+}
+.assay-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: var(--assay-annulus-stroke) solid var(--accent);
+  pointer-events: none;
+  /* The one designed exception to "author the resting state" reading as
+     "visible": this ring's FINAL state IS invisible (§5.4) — so its rest
+     CSS must already be that final, invisible state, matching the
+     keyframe's 100%. */
+  opacity: 0;
+  transform: scale(var(--assay-ring-scale, 2.3));
+  animation: assay-ring-break 520ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 170ms) both; /* pinned so the ring clears at delay+duration ≈ 690ms across every tier (§5.3) — the ring is the invariant signature, never a ranking signal */
+  will-change: transform, opacity; /* added with the class; REMOVE on `animationend` — see contract above */
+}
+
+/* Total monument flourish budget: ⚠ 620–780ms end-to-end (house ceiling is
+   920ms, today's goal-completed-ring). With the defaults above the last
+   meaningful beat (a 5th WHAT-MOVED row at --assay-delay: 360ms+4×40ms
+   through a 220ms .assay-rise) lands at ~740ms — inside budget. Retune via
+   --assay-delay, never by widening any duration above. */
+
+/* ── 2. Summit Sheet: full-bleed panel + Direction-1 beats (B1–B7) ──────
+   Mount this panel inside the EXISTING `.bottom-sheet` <dialog> (reuse its
+   reset + `::backdrop` scrim rules above verbatim — B1 is exactly that
+   scrim, no new class). This panel differs from `.bottom-sheet-panel` only
+   in being full-bleed/full-height and sitting on plain --background. */
+.summit-sheet-panel {
+  position: absolute;
+  inset: 0;
+  background: var(--background); /* NOT --card — eyebrow needs plain bg (§1.7/§7) */
+  border-radius: 0;
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Sheet's own hero uses the SAME .assay-disc-rim/.assay-disc-inner/
+   .assay-annulus primitives above — one Bullseye+annulus geometry, shared
+   between the monument and the Sheet. Only the ring differs: the Sheet
+   breaks THREE rings, sized explicitly (not parent-relative), because they
+   must be different diameters simultaneously. */
+@keyframes assay-sheet-ring-break {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.7;
+  }
+  76% {
+    opacity: 0;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(var(--assay-ring-scale, 3.6));
+  }
+}
+.assay-sheet-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 9999px;
+  border: var(--assay-annulus-stroke) solid var(--accent);
+  box-sizing: border-box;
+  pointer-events: none;
+  opacity: 0; /* same designed exception as .assay-ring — resting state matches the keyframe's final (invisible) frame */
+  transform: translate(-50%, -50%) scale(var(--assay-ring-scale, 3.6));
+  animation: assay-sheet-ring-break 420ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 0ms) both; /* ⚠ 380–460ms */
+  /* NO standing `will-change` here (QA finding M1) — unlike .assay-ring
+     (added dynamically by playFlourish only when the monument actually
+     animates), this class is baked into the Sheet's SSR markup from first
+     paint and the <dialog> stays mounted-but-closed for the lifetime of
+     every achieved-goal page view (V4's imperative idiom) — a CSS-level
+     will-change here would pin a compositor layer on every view, whether
+     or not the ceremony ever opens. SummitSheet.tsx instead arms
+     `style.willChange` imperatively, JS-side, the moment the dialog's
+     `open` attribute actually flips (mirroring .assay-ring's
+     add-with-the-animation/remove-on-animationend contract, just applied
+     via the dialog's open-transition instead of via classList). */
+}
+
+/* Three launch-radius size steps, shared by the animated ring and its
+   reduced-motion rosette replacement (below) so the two are geometrically
+   identical. ⚠ the +24/+48px steps are provisional, loosely modeled on
+   phase-a Direction 1's own +16/+22.5/+29.5 launch offsets (there drawn
+   against a 133px hero) rescaled to our 224px hero's annulus — retune
+   during playtest, but never let a ring's launch radius undercut
+   --assay-gap's clearance from the visible rust surface. */
+.assay-sheet-ring--1,
+.assay-rosette-ring--1 {
+  width: var(--assay-annulus-diameter);
+  height: var(--assay-annulus-diameter);
+}
+.assay-sheet-ring--2,
+.assay-rosette-ring--2 {
+  width: calc(var(--assay-annulus-diameter) + 24px);
+  height: calc(var(--assay-annulus-diameter) + 24px);
+}
+.assay-sheet-ring--3,
+.assay-rosette-ring--3 {
+  width: calc(var(--assay-annulus-diameter) + 48px);
+  height: calc(var(--assay-annulus-diameter) + 48px);
+}
+
+/* Reduced-motion-only static rosette — see the @media block below for the
+   visibility swap with .assay-sheet-ring. Never toggled via JS/classList;
+   the media query is the only thing that shows this. */
+.assay-rosette-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  border: 1.5px solid var(--accent); /* fixed per spec, not a tuning range */
+  opacity: 0.45; /* ⚠ 40–50%, midpoint 45 */
+  pointer-events: none;
+  display: none;
+}
+
+/* Direction-1 beat-delay modifiers (§ contract above). Compose with a
+   primitive class; these set ONLY the custom properties that primitive
+   reads. Rough default ladder below approximates phase-a's own "Beat map —
+   Direction 1" timeline (0/200/400/600/800/1000/1200/1400 tick marks) —
+   ⚠ every value here is provisional pending playtest, per that source
+   document's own gantt caveat. B1 (scrim) has no class: it reuses
+   `.bottom-sheet::backdrop` unmodified. */
+.assay-b2 {
+  --assay-delay: 200ms; /* discs seat — combine with .assay-disc-rim/.assay-disc-inner; stagger the 4 discs 90ms⚠[80–100] apart starting here */
+}
+.assay-b3 {
+  --assay-delay: 600ms; /* rings break — combine with .assay-sheet-ring; stagger the 3 rings 120ms⚠ apart starting here (0/120/240ms relative) */
+  --assay-ring-scale: 3.6; /* Direction-1's terminal scale, vs. the monument's 2.3 default */
+}
+.assay-b4 {
+  --assay-delay: 900ms; /* objective rises — combine with .assay-rise */
+}
+.assay-b5 {
+  --assay-delay: 1000ms; /* stat cells — combine with .assay-rise or .assay-fade; 60ms⚠ stagger per cell */
+}
+.assay-b6 {
+  --assay-delay: 1150ms; /* Reach row + badges + level line — combine with .assay-fade on the ROW WRAPPER only. ReachMeter itself gets NEITHER class — it must render at full opacity, no transform, ever (UXR-63-21, "never animates") */
+}
+.assay-b7 {
+  --assay-delay: 1350ms; /* footer CTAs — combine with .assay-fade */
+}
+
+/* .landed — Skip (tap 1) hard-override, applied to `.summit-sheet-panel`
+   by the ceremony controller (architecture-v2-revisions.md V2/V3 — this
+   file has no opinion on WHEN/HOW the class is applied, only what it
+   does). MUST be an explicit compound selector per beat-carrying
+   primitive, never a wildcard/attribute-selector trick
+   (architecture-critique.md Concern 3): a wildcard either silences
+   unrelated animated descendants sharing the same ancestor, or misses a
+   class added later. Three class selectors on the winning side
+   (`.summit-sheet-panel` + `.landed` + the descendant class = specificity
+   0,0,3,0) beats the descendant class alone (0,0,1,0) — no `!important`
+   needed. Only `animation-name` truly needs killing: a component-set
+   inline `style.animationDelay` (fine — an inline longhand always wins
+   its own slot over a class-provided shorthand) does nothing once there
+   is no animation left to delay. Because every primitive's own
+   non-animated CSS already equals its keyframe's 100% state (Rule A),
+   killing the animation is sufficient — no compensating opacity/transform
+   restatement needed here. */
+.summit-sheet-panel.landed .assay-fade,
+.summit-sheet-panel.landed .assay-rise,
+.summit-sheet-panel.landed .assay-disc-rim,
+.summit-sheet-panel.landed .assay-disc-inner,
+.summit-sheet-panel.landed .assay-annulus,
+.summit-sheet-panel.landed .assay-ring,
+.summit-sheet-panel.landed .assay-sheet-ring {
+  animation: none;
+}
+
+/* ── 3. Reduced motion ───────────────────────────────────────────────────
+   Monument: Rule A makes this trivial — disabling the animation reveals
+   each primitive's already-correct resting state. "Settled = final," byte-
+   identical to the fully-landed composition (UXR-GCU-16); this is the
+   direct fix for today's `.goal-completed-ring` bug, where `display: none`
+   leaves a bare 32px emoji with zero compensating composition.
+
+   Sheet: same animation:none treatment gives the "terminal frame" (every
+   beat renders at once, no stagger) — but the flying rings' resting state
+   is INVISIBLE (opacity: 0, by design, see .assay-ring/.assay-sheet-ring
+   above), which would otherwise leave the gold ring-break with nothing to
+   show. Swap in the three static hairline circles instead — an "engraved
+   rosette" — so reduced motion is a different, dignified composition, not
+   an absence. The monument's single .assay-ring needs no such swap: its
+   permanent gold is carried by .assay-annulus, which is always opaque
+   independent of the ring. */
+@media (prefers-reduced-motion: reduce) {
+  .assay-fade,
+  .assay-rise,
+  .assay-disc-rim,
+  .assay-disc-inner,
+  .assay-annulus,
+  .assay-ring,
+  .assay-sheet-ring {
+    animation: none;
+  }
+
+  .assay-sheet-ring {
+    display: none;
+  }
+  .assay-rosette-ring {
+    display: block;
+  }
+}
