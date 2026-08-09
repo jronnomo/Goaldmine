@@ -35,6 +35,11 @@ export default async function CalendarPage({
 
   const monthLabel = monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
+  // REQ-004: only show the "dimmed days" legend line when the visible month
+  // actually has an archived-plan cell — no point explaining a treatment
+  // that isn't on screen.
+  const hasArchivedCell = cells.some((c) => c.planSource === "archived");
+
   const completedCount = cells.filter(
     (c) => (c.workoutCount > 0 || c.hikeCount > 0) && c.isPast,
   ).length;
@@ -110,6 +115,13 @@ export default async function CalendarPage({
             </LegendRow>
           ))}
         </ul>
+
+        {/* REQ-004: explains the dimmed treatment on archived-plan days. */}
+        {hasArchivedCell && (
+          <p className="text-xs text-[var(--muted)] mt-3 pt-3 border-t border-[var(--border)]">
+            Dimmed days: from a completed plan
+          </p>
+        )}
 
         {/* REQ-106: "Other goals" section — teaches the claim-ring encoding.
             UXR-62-14: divider + uppercase header + claim-ringed icon per non-focus goal.

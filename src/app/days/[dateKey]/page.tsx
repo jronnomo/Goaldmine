@@ -253,6 +253,15 @@ export default async function DayDetail({
             : "Outside the active plan window"}
           {r.isOverride && <span className="text-[var(--warning)]"> · custom override</span>}
         </p>
+        {/* REQ-004: history is read-only once its plan is archived — this date
+            resolved against a completed goal's plan, not the live one. */}
+        {r.resolvedPlan?.source === "archived" && (
+          <p className="mt-1">
+            <span className="inline-flex items-center rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]">
+              Archived plan · {r.resolvedPlan.name}
+            </span>
+          </p>
+        )}
       </header>
 
       {showProminentBaseline && (
@@ -323,14 +332,19 @@ export default async function DayDetail({
             defaultTimeHHMM={defaultTimeHHMM}
             prefill={prefill}
           />
-          {/* SkipDayControl renders null when isRestDay || !isInPlan (DA H3). */}
-          <SkipDayControl
-            dateKey={dateKey}
-            templateTitle={shownTemplate?.title ?? null}
-            isRestDay={isRestDay}
-            isInPlan={r.isInPlan}
-            existingSkip={completedWorkouts.length > 0 ? null : existingSkip}
-          />
+          {/* SkipDayControl renders null when isRestDay || !isInPlan (DA H3).
+              REQ-004: also never rendered on an archived-plan day — history is
+              read-only (the server-side S7 guard in skipDay is the real
+              backstop; this hide is belt-and-suspenders UX). */}
+          {r.resolvedPlan?.source !== "archived" && (
+            <SkipDayControl
+              dateKey={dateKey}
+              templateTitle={shownTemplate?.title ?? null}
+              isRestDay={isRestDay}
+              isInPlan={r.isInPlan}
+              existingSkip={completedWorkouts.length > 0 ? null : existingSkip}
+            />
+          )}
           <HikeLogForm
             dateKey={dateKey}
             plannedHike={r.plannedHikeToday}

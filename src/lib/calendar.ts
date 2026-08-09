@@ -3,7 +3,15 @@
 
 import { prisma, getDb } from "@/lib/db";
 import { isMirrorOverride } from "@/lib/override-integrity";
-import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
+import {
+  getActiveProgram,
+  getProgramForDate,
+  pickProgramForDate,
+  getPlanWindowCandidates,
+  type ActiveProgramSnapshot,
+  type ProgramForDate,
+  type PlanWindowCandidate,
+} from "@/lib/program";
 import { checkpointWindows } from "@/lib/records";
 import type { BaselineDay, BaselineTest, DayTemplate } from "@/lib/program-template";
 import { type NutritionPlan, parseStoredNutritionPlan } from "@/lib/nutrition-plan";
@@ -97,6 +105,13 @@ export type CalendarDayCell = {
   /** Count of scheduled items on this date for the focus project goal.
    *  Always 0 for fitness / null focus goals — ScheduledItem query is gated. */
   scheduledItemCount: number;
+  /** REQ-003: which plan governs this cell, when isInPlan is true — the live
+   *  active plan, or an archived plan resurfaced because it covers this past
+   *  date (S1-era completed goal). undefined when isInPlan is false (no plan
+   *  covers this date at all). Drives the archived-day dimmed treatment
+   *  (REQ-004) — cells never disagree with resolveDay's resolvedPlan.source
+   *  for the same date since both go through pickProgramForDate. */
+  planSource?: "active" | "archived";
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -128,10 +143,28 @@ export type WeekConflict = {
   label?: string;
 };
 
+// REQ-003: loose (unclamped) overlap filter — a perf optimization so buildCell's
+// per-cell picker doesn't have to scan every plan the user has ever had. Uses the
+// RAW template window (no S4 completion clamp) so it's a superset of the true
+// covered window — pickProgramForDate's internal coverage check (which DOES apply
+// the completion clamp) remains the source of truth for whether a given cell is
+// actually covered. This filter can only over-include a candidate, never wrongly
+// exclude one.
+function filterCandidatesToGridOverlap(
+  candidates: PlanWindowCandidate[],
+  gridStart: Date,
+  gridEnd: Date,
+): PlanWindowCandidate[] {
+  return candidates.filter((c) => {
+    const startMid = startOfDay(c.startedOn);
+    const endMid = addDays(startMid, c.template.totalWeeks * 7 - 1);
+    return startMid.getTime() <= gridEnd.getTime() && endMid.getTime() >= gridStart.getTime();
+  });
+}
+
 export async function getCalendarMonth(opts: { year: number; month: number /* 0-11 */ }) {
   const { year, month } = opts;
   const db = await getDb();
-  const program = await getActiveProgram();
 
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month + 1, 0); // last day
@@ -139,19 +172,36 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  // Phase 1: fetch focus goal so we can gate the ScheduledItem query in Phase 2.
-  // [v2] MED-1: this adds one sequential step for all calendar paths. The goal fetch is
-  // a single indexed query and is fast. The alternative (single Promise.all) cannot gate
-  // the ScheduledItem query on goal.kind because goal.kind hasn't resolved yet. Accepted
-  // trade-off — #38's AC text does not forbid it; latency impact is sub-millisecond.
-  const goal = await db.goal.findFirst({
-    where: { isFocus: true },
-    // Deterministically picks the most-recently-updated if multiple are
-    // stuck isFocus=true (bad state).
-    orderBy: { updatedAt: "desc" },
-    // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
-    select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
-  });
+  // Phase 1: fetch focus goal (gates the ScheduledItem query in Phase 2) alongside
+  // the active program + the full plan-window candidate list (REQ-003) — neither
+  // of the latter two depends on `goal`, so they run in the same round-trip instead
+  // of forcing an extra sequential step.
+  // [v2] MED-1: the goal fetch alone would be a single indexed query; folding program
+  // + candidates in here keeps the "goal gates Phase 2" shape while avoiding a second
+  // await before Phase 2 can start. Accepted trade-off — #38's AC text does not forbid
+  // it; latency impact is sub-millisecond.
+  const [goal, program, allCandidates] = await Promise.all([
+    db.goal.findFirst({
+      where: { isFocus: true },
+      // Deterministically picks the most-recently-updated if multiple are
+      // stuck isFocus=true (bad state).
+      orderBy: { updatedAt: "desc" },
+      // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
+      select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
+    }),
+    getActiveProgram(),
+    getPlanWindowCandidates(),
+  ]);
+
+  // REQ-003: candidates overlapping the visible grid, for buildCell's per-cell
+  // pickProgramForDate call. The active plan's overrides must always be
+  // fetchable even if it happens to fall outside the loose overlap filter
+  // (shouldn't happen in practice, but keeps Today-page-adjacent behavior
+  // byte-identical to the pre-REQ-003 override query).
+  const candidates = filterCandidatesToGridOverlap(allCandidates, gridStart, gridEnd);
+  const candidateIds = Array.from(
+    new Set([...candidates.map((c) => c.id), ...(program?.id ? [program.id] : [])]),
+  );
 
   // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
   const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines] =
@@ -166,9 +216,12 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       select: { id: true, date: true, status: true },
       orderBy: { date: "asc" },
     }),
-    program?.id
+    // REQ-003: keyed by planId|dateKey (below) instead of dateKey alone — both
+    // the active plan's overrides AND any covering archived plan's overrides
+    // (the core time-aware-history fix) are fetched in one round-trip.
+    candidateIds.length > 0
       ? prisma.planDayOverride.findMany({
-          where: { planId: program.id, date: { gte: gridStart, lte: gridEnd } },
+          where: { planId: { in: candidateIds }, date: { gte: gridStart, lte: gridEnd } },
         })
       : Promise.resolve([] as never[]),
     // REQ-104: cross-goal events for the full grid (3 queries — unchanged).
@@ -221,8 +274,13 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     target.set(k, arr);
   }
 
+  // REQ-003: keyed `${planId}|${dateKey}` — an archived plan and the active
+  // plan can each carry their own override row on the same calendar date
+  // (distinct PlanDayOverride rows, one per plan), so dateKey alone is no
+  // longer a unique key once overrides are fetched for multiple plans.
+  // buildCell looks this up with its per-cell PICKED plan's id.
   const overridesByKey = new Map<string, (typeof overrides)[number]>();
-  for (const o of overrides) overridesByKey.set(dateKey(o.date), o);
+  for (const o of overrides) overridesByKey.set(`${o.planId}|${dateKey(o.date)}`, o);
 
   // REQ-004: bucket ScheduledItem counts by dateKey for O(1) cell lookup.
   const scheduledsByKey = new Map<string, number>();
@@ -259,9 +317,14 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     .map((h) => dateKey(h.date));
 
   // Override dateKeys (dates with workoutJson overrides) — suppresses event-on-hard-day.
-  const overrideDateKeys = [...overridesByKey.entries()]
-    .filter(([, o]) => o.workoutJson != null)
-    .map(([k]) => k);
+  // REQ-003: scoped to the ACTIVE program's own overrides only (via the raw
+  // `overrides` list, filtered by planId) — this suppression feeds
+  // computeCrossGoalConflicts({ focusProgram: program }) below, which reasons
+  // about the active program's rotation; an archived plan's override on the
+  // same calendar date is a different plan's data and must not suppress it.
+  const overrideDateKeys = overrides
+    .filter((o) => o.planId === program?.id && o.workoutJson != null)
+    .map((o) => dateKey(o.date));
 
   // Compute cross-goal conflicts once for the whole grid; deduplicated per dateKey.
   const crossGoalConflictList = computeCrossGoalConflicts({
@@ -290,7 +353,8 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       date: cursor,
       todayKey,
       goalKey,
-      program,
+      activeProgram: program,
+      candidates, // REQ-003: per-cell pick via pickProgramForDate
       workoutsByKey,
       hikesByKey,
       plannedHikesByKey,
@@ -347,11 +411,16 @@ function buildCell(args: {
   date: Date;
   todayKey: string;
   goalKey: string | null;
-  program: ActiveProgramSnapshot | null;
+  /** The live active plan (unchanged meaning). */
+  activeProgram: ActiveProgramSnapshot | null;
+  /** REQ-003: plan-window candidates overlapping the grid, for the per-cell
+   *  pickProgramForDate call (shared, pure — cannot disagree with resolveDay). */
+  candidates: PlanWindowCandidate[];
   workoutsByKey: Map<string, { id: string; startedAt: Date; status: string; title: string | null }[]>;
   hikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
   plannedHikesByKey: Map<string, { id: string; date: Date; status: string }[]>;
-  overridesByKey: Map<string, { workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
+  /** REQ-003: keyed `${planId}|${dateKey}` — see the override query comment above. */
+  overridesByKey: Map<string, { planId: string; workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
   plannedHikesByWeek: Map<number, { id: string; date: Date; status: string }[]>;
   /** REQ-104: non-focus events for this specific date (pre-filtered by caller). */
   otherGoalEventsForDate: GoalEvent[];
@@ -368,36 +437,49 @@ function buildCell(args: {
   const isFuture = !isToday && !isPast;
   const isGoalDate = !!args.goalKey && k === args.goalKey;
 
+  // REQ-003: per-cell pick — the SAME pure helper resolveDay uses, so the
+  // month view and a `get_day`/day-page call for the same date can never
+  // disagree about which plan governs it.
+  const picked: ProgramForDate | null = pickProgramForDate(
+    args.candidates,
+    k,
+    args.todayKey,
+    args.activeProgram,
+  );
+
   let isInPlan = false;
   let rotationDay: number | null = null;
   let weekIndex: number | null = null;
   let dayTitle: string | null = null;
 
-  if (args.program) {
-    const startKey = dateKey(args.program.startedOn);
-    const startMid = startOfDay(args.program.startedOn);
+  if (picked) {
+    const startKey = dateKey(picked.startedOn);
+    const startMid = startOfDay(picked.startedOn);
     const dMid = startOfDay(args.date);
     const daysDelta = Math.floor((dMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-    if (k >= startKey && daysDelta < args.program.template.totalWeeks * 7) {
+    if (k >= startKey && daysDelta < picked.template.totalWeeks * 7) {
       isInPlan = true;
       rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
       weekIndex = Math.floor(daysDelta / 7) + 1;
-      const override = args.overridesByKey.get(k);
+      const override = args.overridesByKey.get(`${picked.id}|${k}`);
       if (override?.workoutJson) {
         dayTitle = (override.workoutJson as { title?: string }).title ?? "Custom day";
       } else {
-        const tmpl = args.program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
+        const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
         dayTitle = tmpl?.title ?? null;
       }
     }
   }
+
+  // REQ-003: which plan governs this cell (only meaningful when isInPlan).
+  const planSource: CalendarDayCell["planSource"] = isInPlan ? picked?.source : undefined;
 
   const dayWorkouts = args.workoutsByKey.get(k) ?? [];
   const workoutCount = dayWorkouts.filter((w) => w.status === "completed").length;
   const skippedCount = dayWorkouts.filter((w) => w.status === "skipped").length;
   const hikeCount = args.hikesByKey.get(k)?.length ?? 0;
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
-  const cellOverride = args.overridesByKey.get(k);
+  const cellOverride = picked ? args.overridesByKey.get(`${picked.id}|${k}`) : undefined;
   const hasOverride = cellOverride !== undefined;
   // Override-aware, UNLOGGED-only baseline count. An override's baselineTestNames
   // replaces the rotation default for that day — an empty array means "explicitly
@@ -407,7 +489,7 @@ function buildCell(args: {
   const baselinesDue = !isInPlan
     ? 0
     : scheduledBaselineTests(
-        args.program!,
+        picked!,
         weekIndex!,
         rotationDay!,
         Array.isArray(cellOverride?.baselineTestNames)
@@ -419,7 +501,7 @@ function buildCell(args: {
             t,
             weekIndex!,
             args.date,
-            args.program!.startedOn,
+            picked!.startedOn,
             args.loggedBaselinesByTest.get(t.testName),
           ),
       ).length;
@@ -427,16 +509,27 @@ function buildCell(args: {
   // Conflict computation (C-2: only when workoutJson-based override is absent).
   // Override-aware: a day is only "resolved" if workoutJson is set — consistent
   // with resolveDay's isOverride definition and weekConflicts.
+  //
+  // REQ-003: both same-goal (retest-on-hike / long-effort) AND cross-goal
+  // conflicts are forward-looking advisories — they exist to help the coach
+  // sequence UPCOMING training against upcoming hikes/events. They are
+  // meaningless on frozen history, and the same-goal inputs here
+  // (plannedHikesByWeek) are keyed to the ACTIVE program's rotation-week
+  // numbering — reusing them against an archived cell's own weekIndex would
+  // silently compare two different plans' week numbers. Skip both entirely
+  // once the picked plan is archived (S-revision rationale, architecture
+  // critique D5/suggestion #3).
   let conflict: CalendarDayCell["conflict"] = null;
+  const skipConflicts = picked?.source === "archived";
 
-  if (isInPlan && rotationDay !== null && weekIndex !== null && args.program) {
-    const hasWorkoutOverride = args.overridesByKey.get(k)?.workoutJson != null;
+  if (!skipConflicts && isInPlan && rotationDay !== null && weekIndex !== null && picked) {
+    const hasWorkoutOverride = args.overridesByKey.get(`${picked.id}|${k}`)?.workoutJson != null;
 
     if (!hasWorkoutOverride) {
       const weekHikes = args.plannedHikesByWeek.get(weekIndex) ?? [];
 
       // Priority 1: retest-on-hike (more immediately actionable)
-      const baselineDay = args.program.template.baselineWeek?.find(
+      const baselineDay = picked.template.baselineWeek?.find(
         (d) => d.dayOfWeek === rotationDay,
       );
       if (baselineDay) {
@@ -459,7 +552,7 @@ function buildCell(args: {
       }
 
       // Priority 2: long-effort conflict (only on the long-endurance rotation day)
-      const tmpl = args.program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
+      const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
       if (!conflict && tmpl?.category === "long-endurance") {
         const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
         const hikesElsewhere = weekHikes.filter((h) => dateKey(h.date) !== k);
@@ -473,7 +566,7 @@ function buildCell(args: {
     }
   }
 
-  const confidence = deriveConfidence(args.date, isInPlan, isPast, args.program);
+  const confidence = deriveConfidence(args.date, isInPlan, isPast, args.activeProgram);
 
   // Single source of truth for the cell's workout label: a completed workout
   // wins over the prescription (deriveDayDisplay), so a swap/audible day shows
@@ -495,9 +588,12 @@ function buildCell(args: {
 
   // Same-goal conflicts take precedence (legacy rule).
   // Cross-goal conflict fills cell.conflict ONLY when no same-goal conflict exists.
+  // REQ-003: cross-goal conflicts are also skipped on archived cells (see the
+  // skipConflicts comment above) — forward-looking advisories don't apply to
+  // frozen history.
   const resolvedConflict: CalendarDayCell["conflict"] =
     conflict ??
-    (args.crossGoalConflictForDate
+    (!skipConflicts && args.crossGoalConflictForDate
       ? {
           kind: args.crossGoalConflictForDate.kind,
           withDates: args.crossGoalConflictForDate.withDates,
@@ -528,6 +624,7 @@ function buildCell(args: {
     confidence,
     otherGoalEvents: args.otherGoalEventsForDate,
     scheduledItemCount: args.scheduledsByKey.get(k) ?? 0, // REQ-004: new — always 0 for fitness
+    planSource, // REQ-003: new
   };
 }
 
@@ -711,6 +808,12 @@ export type ResolvedDay = {
   otherGoalEvents: GoalEvent[];
   /** REQ-104: Cross-goal conflicts touching this date. Default []. */
   crossGoalConflicts: CrossGoalConflict[];
+  /** REQ-003: which plan this date resolved against, if any — the live active
+   *  plan ("active"), or an archived plan resurfaced because it covers this
+   *  past date ("archived"). null when no plan covers this date at all
+   *  (out_of_plan). Drives the "Archived plan · {name}" badge + write-form
+   *  suppression on /days/[dateKey] (REQ-004). */
+  resolvedPlan: { id: string; name: string; source: "active" | "archived" } | null;
 };
 
 /**
@@ -737,6 +840,19 @@ export type ResolveDayCtx = {
   crossGoalConflicts?: CrossGoalConflict[];
   /** The focus goal's id (from GoalEventsResult.focusGoalId). */
   focusGoalId: string | null;
+  /**
+   * REQ-003: the already-resolved program for this date (S1's per-day pick —
+   * e.g. get_week fetches the candidate list once and hands resolveDay each
+   * day's own pickProgramForDate result). Semantics are keyed on whether the
+   * KEY is present with a defined value, not on truthiness:
+   *   - `program` key absent, or present as `undefined` → resolveDay looks up
+   *     getProgramForDate(date) itself (existing behavior, zero change for
+   *     every caller that doesn't know about this field yet).
+   *   - `program` explicitly provided (including `null`) → used as-is, no
+   *     lookup. `null` means "caller already determined no plan covers this
+   *     date" — resolveDay must not override that with its own guess.
+   */
+  program?: ProgramForDate | null;
 };
 
 /**
@@ -827,7 +943,15 @@ export function deriveDayDisplay(input: {
 }
 
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
-  const program = await getActiveProgram();
+  // REQ-003: `ctx.program` explicitly provided (including `null`) short-circuits
+  // the lookup — the caller (get_week's per-day pick, the month view) already
+  // resolved it via the shared pure pickProgramForDate. Otherwise, fall back to
+  // the time-aware lookup (Today-page-identical when the active program covers
+  // `date`; resurfaces the covering archived plan for a strictly-past date;
+  // getActiveProgram()-identical fallback otherwise) — see program.ts's
+  // getProgramForDate for the full contract.
+  const program: ProgramForDate | null =
+    ctx?.program !== undefined ? ctx.program : await getProgramForDate(date);
   const db = await getDb();
   const dayStart = startOfDay(date);
   const dayEnd = endOfDay(date);
@@ -1103,6 +1227,11 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   const orphanedOverride =
     isOverride && plannedHikeToday === null && isMirrorOverride(workoutTemplate);
 
+  // REQ-003: additive — which plan this date resolved against, if any.
+  const resolvedPlan: ResolvedDay["resolvedPlan"] = program
+    ? { id: program.id, name: program.name, source: program.source }
+    : null;
+
   return {
     date: dayStart,
     dateKey: dateKey(date),
@@ -1177,6 +1306,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     // REQ-104: cross-goal fields.
     otherGoalEvents: otherEventsForDate,
     crossGoalConflicts: cgConflicts,
+    resolvedPlan, // REQ-003: new
   };
 }
 
@@ -1211,6 +1341,31 @@ export function templateForRotationDay(
   if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return null;
   const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
   return program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
+}
+
+/**
+ * S7 (Goal Story & Time-Aware History, write-guard): pure coverage check —
+ * is `date` within `program`'s calendar window (same daysDelta math as
+ * resolveDay / templateForRotationDay above)?
+ *
+ * History-write guards (day-actions.ts's upsertDayOverrideFromForm /
+ * clearDayOverride, day-log-actions.ts's skipDay) call this with the ACTIVE
+ * program to independently verify a write target server-side — the client's
+ * isInPlan/isRestDay props (driven by resolveDay/getCalendarMonth, which can
+ * now report isInPlan:true for a date covered only by an ARCHIVED plan) must
+ * never be the only line of defense for "history can't be edited" (architecture
+ * critique D5: SkipDayControl's guard was client-trusted, not independently
+ * derived). No completion clamp here (unlike program.ts's coversDayKey) — an
+ * ACTIVE plan's goal is by definition not yet completed.
+ */
+export function isDateWithinActivePlanWindow(
+  program: { startedOn: Date; template: { totalWeeks: number } },
+  date: Date,
+): boolean {
+  const startMid = startOfDay(program.startedOn);
+  const dayStart = startOfDay(date);
+  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
+  return daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7;
 }
 
 export function rotationBaselineNamesForDate(

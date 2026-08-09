@@ -442,6 +442,48 @@ describe("clearDayOverride", () => {
   });
 });
 
+// S7 (Goal Story & Time-Aware History) — the write guards must independently
+// verify server-side that the target date is covered by the ACTIVE plan's
+// window, instead of trusting only "an active plan exists." PROGRAM's window
+// is 2026-01-05 .. 2026-03-29 (startedOn + totalWeeks(12)*7 - 1 days).
+describe("S7 write guard — target date must be covered by the ACTIVE plan's window", () => {
+  const BEFORE_START_KEY = "2026-01-01"; // before PROGRAM.startedOn
+  const AFTER_WINDOW_KEY = "2026-04-01"; // past totalWeeks*7 days from startedOn
+
+  it("upsertDayOverrideFromForm: a date covered by the active plan's window passes (regression, unaffected by the new guard)", async () => {
+    await expect(
+      upsertDayOverrideFromForm(NO_BASELINE_DAY_KEY, fd({ notes: "covered date" })),
+    ).resolves.not.toThrow();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("upsertDayOverrideFromForm: a date before the active plan's startedOn is rejected", async () => {
+    await expect(
+      upsertDayOverrideFromForm(BEFORE_START_KEY, fd({ notes: "too early" })),
+    ).rejects.toThrowError(/outside the active plan/);
+    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("upsertDayOverrideFromForm: a date past the active plan's totalWeeks window is rejected", async () => {
+    await expect(
+      upsertDayOverrideFromForm(AFTER_WINDOW_KEY, fd({ notes: "too late" })),
+    ).rejects.toThrowError(/outside the active plan/);
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it("clearDayOverride: a covered date passes", async () => {
+    await expect(clearDayOverride(BASELINE_DAY_KEY)).resolves.not.toThrow();
+    expect(mockDeleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("clearDayOverride: an out-of-window date is rejected and never reaches deleteMany", async () => {
+    await expect(clearDayOverride(AFTER_WINDOW_KEY)).rejects.toThrowError(/outside the active plan/);
+    expect(mockDeleteMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("USER_TZ-correct date parsing (regression for the naive-parseDateKey bug)", () => {
   it("the date bucket written by upsertDayOverrideFromForm matches @/lib/calendar's parseDateKey, not a local-runtime-TZ Date", async () => {
     await upsertDayOverrideFromForm(NO_BASELINE_DAY_KEY, fd({ notes: "tz check" }));

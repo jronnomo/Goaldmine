@@ -85,6 +85,7 @@ const MOCK_DAY: ResolvedDay = {
     },
   ],
   crossGoalConflicts: [],
+  resolvedPlan: { id: "plan-1", name: "Elbert Prep", source: "active" },
 };
 
 /** A project-kind active goal. */
@@ -172,6 +173,10 @@ describe("shapeProjectTodayPayload — fitness fields suppressed", () => {
 
   it("weekIndex is null", () => {
     expect(result.weekIndex).toBeNull();
+  });
+
+  it("resolvedPlan is null (REQ-003: Plan/program is a fitness-only concept)", () => {
+    expect(result.resolvedPlan).toBeNull();
   });
 
   it("isOverride is false", () => {
