@@ -6,9 +6,17 @@ import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
+import { completeGoalCore, reopenGoalCore } from "@/lib/goal-completion";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
 import { computeStackRarity } from "@/lib/rarity";
+
+// R3 (architecture-blueprint-v2.md, binding): updateGoal's `status` field comes
+// from raw FormData — a tampered or bugged form submission could otherwise write
+// an arbitrary string, or "achieved" (which must only ever be set by
+// completeGoalCore, in lockstep with completedAt/completionSnapshot). Reject
+// anything outside this closed set.
+const EDITABLE_STATUSES = new Set(["active", "abandoned"]);
 
 export type GoalReference = {
   id: string;
@@ -115,7 +123,7 @@ export async function updateGoal(id: string, form: FormData) {
   const objective = String(form.get("objective") ?? "").trim();
   const targetDateStr = String(form.get("targetDate") ?? "").trim();
   const notes = (form.get("notes") as string | null)?.trim() || null;
-  const status = String(form.get("status") ?? "active").trim();
+  const rawStatus = String(form.get("status") ?? "active").trim();
   const targets = parseTargetsField(form.get("targets"));
 
   if (!objective) throw new Error("Objective is required");
@@ -128,9 +136,20 @@ export async function updateGoal(id: string, form: FormData) {
   const targetDate = targetDateStr ? parseDateKey(targetDateStr) : null;
   if (targetDate !== null && Number.isNaN(targetDate.getTime())) throw new Error("Invalid target date");
 
-  // status (active/achieved/abandoned) is lifecycle metadata. Goal.active is
-  // the tracking flag; Goal.isFocus is which goal drives Today/Calendar.
-  // They are independent — use setFocusGoal to change focus.
+  // R3 (binding): status is lifecycle metadata but this form path must NOT be
+  // able to write "achieved" (or anything else) — only complete_goal/
+  // completeGoalCore may set that, in lockstep with completedAt/
+  // completionSnapshot. Goal.active is the tracking flag; Goal.isFocus is
+  // which goal drives Today/Calendar — both independent of this field.
+  if (!EDITABLE_STATUSES.has(rawStatus)) {
+    throw new Error(
+      rawStatus === "achieved"
+        ? "Use the Complete form to mark a goal achieved — it captures the completion snapshot and awards XP."
+        : `Invalid status: ${rawStatus}`,
+    );
+  }
+  const status = rawStatus;
+
   const db = await getDb();
   await db.goal.update({
     where: { id },
@@ -271,4 +290,45 @@ export async function setPlanActive(goalId: string, active: boolean) {
   revalidatePath("/goals");
   revalidatePath(`/goals/${goalId}`);
   // No redirect — stays on current page
+}
+
+/**
+ * Mark a goal achieved — the completion ceremony (REQ-011 / PRD §4.3).
+ * `date` is optional (yyyy-mm-dd, USER_TZ) for backdating the true finish
+ * date; blank/absent defaults to today inside completeGoalCore. Revalidates
+ * every surface that reads goal status/XP/badges so the page re-renders into
+ * the achieved state on return (no redirect — the one-shot celebration fires
+ * on the SAME detail page once it re-renders as achieved).
+ */
+export async function completeGoal(id: string, form: FormData) {
+  const dateStr = String(form.get("date") ?? "").trim();
+  const date = dateStr ? parseDateKey(dateStr) : undefined;
+  if (date !== undefined && Number.isNaN(date.getTime())) throw new Error("Invalid completion date");
+
+  await completeGoalCore(id, date);
+
+  revalidatePath("/");
+  revalidatePath("/goals");
+  revalidatePath(`/goals/${id}`);
+  revalidatePath("/calendar");
+  revalidatePath("/progress");
+  revalidatePath("/character");
+  revalidatePath("/recap");
+}
+
+/**
+ * Reverse a completion (REQ-011). Does not restore focus or reactivate the
+ * plan — those are separate, explicit decisions (setFocusGoal / setPlanActive)
+ * left to the user, mirroring reopenGoalCore's hints-only contract.
+ */
+export async function reopenGoal(id: string) {
+  await reopenGoalCore(id);
+
+  revalidatePath("/");
+  revalidatePath("/goals");
+  revalidatePath(`/goals/${id}`);
+  revalidatePath("/calendar");
+  revalidatePath("/progress");
+  revalidatePath("/character");
+  revalidatePath("/recap");
 }

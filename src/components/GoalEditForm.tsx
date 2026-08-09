@@ -103,7 +103,6 @@ export function GoalEditForm({
           className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"
         >
           <option value="active">Active</option>
-          <option value="achieved">Achieved</option>
           <option value="abandoned">Abandoned</option>
         </select>
       </label>

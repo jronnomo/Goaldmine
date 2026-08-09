@@ -5,9 +5,11 @@ import { GoalCreateForm, type CopySource } from "@/components/GoalCreateForm";
 import { ReachMeter } from "@/components/ReachMeter";
 import { StackReachCard } from "@/components/StackReachCard";
 import { getDb } from "@/lib/db";
+import { USER_TZ, parseDateKey } from "@/lib/calendar";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 import { computeStackRarity } from "@/lib/rarity";
+import { parseCompletionSnapshot } from "@/lib/goal-completion-core";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +63,12 @@ export default async function GoalsPage({
   const trainedMap = await lastTrainedForGoals(goals);
   const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
 
+  // R5 (binding, architecture-blueprint-v2.md): bucket ONLY on status==="achieved" —
+  // never on !active. A manually-untracked active-status goal stays in "All goals"
+  // (dimmed, as today); only a completed goal moves to the Completed section.
+  const activeGoals = goals.filter((g) => g.status !== "achieved");
+  const achievedGoals = goals.filter((g) => g.status === "achieved");
+
   // Build per-goal map keyed by goalId for O(1) row lookup (UXR-63-07: no recompute)
   const stackByGoalId = new Map(stack.perGoal.map((pg) => [pg.goalId, pg]));
 
@@ -97,7 +105,7 @@ export default async function GoalsPage({
       <StackReachCard stack={stack} />
 
       <Card title="All goals">
-        {goals.length === 0 ? (
+        {activeGoals.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">
             <strong className="font-semibold text-[var(--foreground)]">Nothing to aim at yet.</strong>{" "}
             Add a goal — a date, a metric, or both.
@@ -105,7 +113,7 @@ export default async function GoalsPage({
         ) : (
           <>
             <ul className="divide-y divide-[var(--border)]">
-              {goals.map((g) => {
+              {activeGoals.map((g) => {
                 const days = g.targetDate
                   ? Math.ceil((new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24))
                   : null;
@@ -372,6 +380,68 @@ export default async function GoalsPage({
           </>
         )}
       </Card>
+
+      {/* R5/REQ-011: Completed section — bucketed ONLY on status==="achieved" (see above).
+          Collapsed <details> below "All goals", reusing the glossary's native-details idiom.
+          Absent entirely when there are no achieved goals (PRD §5.1 empty state). */}
+      {achievedGoals.length > 0 && (
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm">
+          <details>
+            <summary className="min-h-[44px] flex items-center justify-between cursor-pointer text-base font-semibold tracking-tight">
+              <span>
+                Completed{" "}
+                <span className="text-[var(--muted)] font-normal text-sm">({achievedGoals.length})</span>
+              </span>
+            </summary>
+            <ul className="mt-3 divide-y divide-[var(--border)]">
+              {achievedGoals.map((g) => {
+                const snapshot = parseCompletionSnapshot(g.completionSnapshot);
+                return (
+                  <li key={g.id}>
+                    <Link
+                      href={`/goals/${g.id}`}
+                      className="flex items-start gap-3 py-3 hover:opacity-80"
+                    >
+                      <span className="text-xl leading-none shrink-0" aria-hidden="true">🏆</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{snapshot?.objective ?? g.objective}</p>
+                        {snapshot ? (
+                          <p className="text-xs text-[var(--muted)] mt-0.5">
+                            {new Intl.DateTimeFormat("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                              timeZone: USER_TZ,
+                            }).format(parseDateKey(snapshot.completedDateKey))}
+                            {snapshot.readiness && ` · readiness ${snapshot.readiness.score}%`}
+                            {` · targets ${snapshot.targetsMet}/${snapshot.targetsTotal}`}
+                            {` · +${snapshot.xpAwardedAtCompletion} XP`}
+                          </p>
+                        ) : (
+                          // R3 (binding): degraded row for a legacy/tampered achieved goal
+                          // with no usable snapshot — date if we have it, no stats.
+                          <p className="text-xs text-[var(--muted)] mt-0.5">
+                            {g.completedAt
+                              ? `${new Intl.DateTimeFormat("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                  timeZone: USER_TZ,
+                                }).format(g.completedAt)} · `
+                              : ""}
+                            no snapshot on file
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-[var(--muted)] shrink-0 self-center" aria-hidden="true">→</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        </section>
+      )}
     </div>
   );
 }

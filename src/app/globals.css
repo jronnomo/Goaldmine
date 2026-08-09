@@ -166,6 +166,33 @@ input::placeholder, textarea::placeholder {
   }
 }
 
+/* Goal-completed ring burst (REQ-012) — reuses level-up-burst's keyframe/
+   easing family so the two celebrations feel like the same visual language;
+   three staggered rings (vs level-up's two) for the bigger ceremony moment.
+   Applied imperatively via GoalCompletedCelebration's refs (classList.add). */
+.goal-completed-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid var(--accent);
+  animation: level-up-burst 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: none;
+}
+
+.goal-completed-ring.delayed {
+  animation-delay: 140ms;
+}
+
+.goal-completed-ring.more-delayed {
+  animation-delay: 280ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-completed-ring {
+    display: none;
+  }
+}
+
 /* Week-confirm pop — reuses the same keyframe + timing as TodayCelebration.
    Applied imperatively via ref to the WeekRail cap wrapper (REQ-007).
    A second class name avoids collisions in case cap + today refs overlap. */
