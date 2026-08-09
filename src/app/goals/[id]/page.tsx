@@ -3,7 +3,6 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { GoalEditForm, type CopySource } from "@/components/GoalEditForm";
 import { GoalCompleteForm } from "@/components/GoalCompleteForm";
-import { GoalCompletedCelebration } from "@/components/GoalCompletedCelebration";
 import { GoalReferences } from "@/components/GoalReferences";
 import { PendingNotes, type PendingNote } from "@/components/PendingNotes";
 import { PlanChangelog, type ChangelogEntry } from "@/components/PlanChangelog";
@@ -17,7 +16,7 @@ import { reopenGoal, setPlanActive } from "@/lib/goal-actions";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
-import { USER_TZ, dateKey, parseDateKey } from "@/lib/calendar";
+import { USER_TZ, dateKey } from "@/lib/calendar";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility, RARITY_TIERS, type RarityTier } from "@/lib/rarity-core";
@@ -25,6 +24,10 @@ import { presentationForGoal } from "@/lib/goal-presentation";
 import { parseCompletionSnapshot, parseGoalRetrospective } from "@/lib/goal-completion-core";
 import { getGoalStory } from "@/lib/goal-story";
 import { GoalStorySection } from "@/components/goal-story/GoalStorySection";
+import { AssayMonument, formatCompletedDateKey } from "@/components/goal-assay/AssayMonument";
+import { AssayCeremonyController } from "@/components/goal-assay/AssayCeremonyController";
+import type { SummitSheetBadge, SummitSheetReach, SummitSheetStatCell } from "@/components/goal-assay/SummitSheet";
+import { ceremonyTier, heroStatPrecedence } from "@/lib/goal-assay-core";
 
 // R3 (binding): tier strings frozen inside a JSON snapshot are untyped —
 // validate against the closed RarityTier set before handing them to ReachMeter
@@ -174,7 +177,7 @@ export default async function GoalDetail({
   const coachFeasibility = isAchieved ? null : parseCoachFeasibility(goal.coachFeasibility);
 
   // REQ-012/014c: completion snapshot + retrospective — parsed once, used by
-  // both the trophy header and the celebration mount below.
+  // both The Assay monument (REQ-005, below) and the Reflection card.
   const completionSnapshot = isAchieved ? parseCompletionSnapshot(goal.completionSnapshot) : null;
   const retrospective = parseGoalRetrospective(goal.retrospective);
   // REQ-006b: the Story section is achieved-only (frozen retrospective view) —
@@ -183,6 +186,95 @@ export default async function GoalDetail({
   // far" for an active goal).
   const story = isAchieved ? await getGoalStory(goal.id) : null;
   const reopen = reopenGoal.bind(null, goal.id);
+
+  // ── REQ-005 — The Assay ceremony scalars ──────────────────────────────────
+  // No new query: `story` is already awaited above (report §7.6: "do not add
+  // to its ~23 sequential queries"). evidenceDensity (report §4.1 S4 —
+  // "hikes, baselines, checkpoints") counts this goal's corroborating history
+  // straight off the same bundle: hikes logged, baseline-test checkpoints
+  // clipped to the goal's window, and (project-kind) `log:*` metric
+  // checkpoints. goal-assay-core.ts stays Prisma-free by design, so this
+  // count has to happen here, the one place that already has `story` in
+  // hand.
+  const evidenceDensity = story
+    ? story.hikeArc.length +
+      story.baselineArcs.reduce((sum, arc) => sum + arc.points.length, 0) +
+      story.metricArcs.reduce((sum, arc) => sum + arc.points.length, 0)
+    : 0;
+
+  // The ceremony's plain-scalar props for AssayCeremonyController/SummitSheet
+  // — derived from `completionSnapshot` only (V5/REQ-005: no computeGameState
+  // call; `snapshot.ceremony` is either present, from REQ-008's capture at
+  // completion time, or absent on a legacy row, in which case badges/level
+  // are simply omitted below, never recomputed live). `null` exactly when
+  // `completionSnapshot` is null — PRD §6: "no monument/ceremony without a
+  // snapshot," so the JSX below gates on both together, always in lockstep.
+  const ceremony = completionSnapshot
+    ? (() => {
+        const snapshot = completionSnapshot;
+        const tier = ceremonyTier({
+          feasibilityTierAtCompletion: snapshot.feasibilityTierAtCompletion,
+          xpBasisWeeks: snapshot.xpBasis.weeks,
+          targetsMet: snapshot.targetsMet,
+          evidenceDensity,
+        });
+        const heroStat = heroStatPrecedence(snapshot);
+        const readinessStart =
+          snapshot.readinessSeries && snapshot.readinessSeries.length > 0
+            ? snapshot.readinessSeries[0]!.score
+            : null;
+        const reachTier = asRarityTier(snapshot.feasibilityTierAtCompletion);
+        const reach: SummitSheetReach | null = reachTier
+          ? { tier: reachTier, label: reachTier.charAt(0).toUpperCase() + reachTier.slice(1) }
+          : null;
+        const badges: SummitSheetBadge[] = snapshot.ceremony?.badgesUnlocked ?? [];
+
+        // Row count is emergent from what's actually true (Rule C), never
+        // tier-branched: the targets/progress cells simply don't exist when
+        // there's nothing honest to put in them (Marker floor: 2 cells).
+        const statCells: SummitSheetStatCell[] = [
+          { value: String(snapshot.daysElapsed), label: "Days elapsed" },
+          ...(snapshot.targetsTotal > 0
+            ? [{ value: `${snapshot.targetsMet} of ${snapshot.targetsTotal}`, label: "Targets met" }]
+            : []),
+          { value: `+${snapshot.xpAwardedAtCompletion}`, label: "XP awarded" },
+          // heroStatPrecedence's own ceiling guard decides this, not a local
+          // re-check: a capped, non-measuring score never gets a cell here
+          // either (§8.5).
+          ...(heroStat.kind === "readiness"
+            ? [
+                {
+                  value:
+                    readinessStart !== null
+                      ? `${readinessStart} → ${heroStat.score}`
+                      : String(heroStat.score),
+                  label: "Weighted progress",
+                  caption: heroStat.showDenominator
+                    ? `Across ${heroStat.coverage.tested} of ${heroStat.coverage.total} tested`
+                    : "Across your targets",
+                },
+              ]
+            : []),
+        ];
+
+        return {
+          tier,
+          objective: snapshot.objective,
+          // Report phase-a 1a: "SEP 12, 2025" — uppercase of the same pure
+          // string-split formatter the monument itself uses (never `new
+          // Date(dateKey)`).
+          dateLabel: formatCompletedDateKey(snapshot.completedDateKey).toUpperCase(),
+          backdatedSuffix: snapshot.backdated ? "(backdated)" : undefined,
+          statCells,
+          emptyTargetsHint:
+            snapshot.targetsTotal === 0 ? "No targets were set on this goal." : undefined,
+          reach,
+          badges,
+          levelBefore: snapshot.ceremony?.levelBefore ?? null,
+          levelAfter: snapshot.ceremony?.levelAfter ?? null,
+        };
+      })()
+    : null;
 
   const otherGoals = await db.goal.findMany({
     where: { id: { not: id } },
@@ -204,7 +296,11 @@ export default async function GoalDetail({
     : null;
 
   return (
-    <div className="max-w-md mx-auto p-4 space-y-4">
+    // overflow-x-clip (report §7.3/§9 — NOT `hidden`): the monument
+    // flourish's flying ring scales to ~2.3x via an absolutely-positioned
+    // div; `clip` stops the resulting overflow without creating a scroll
+    // container or breaking sticky ancestors (AppHeader).
+    <div className="max-w-md mx-auto p-4 space-y-4 overflow-x-clip">
       {/* UXR-63-16: one-time post-creation banner at the decision moment — ?stackWarning=epic|legendary
           UXR-63-13: caps at --warning, NEVER --danger; UXR-63-15: exact copy strings from §0
           data-testid="stack-warning-banner" per UXR §7 */}
@@ -276,80 +372,31 @@ export default async function GoalDetail({
 
       {isAchieved ? (
         <>
-          {/* R3 (binding): degrade gracefully when the snapshot is missing/unparseable
-              (legacy/tampered achieved row) — no stats, no card link, Reopen still offered. */}
-          {completionSnapshot ? (
-            <Card title="Completed">
-              <div className="flex items-start gap-3 mb-3">
-                <span className="text-3xl leading-none" aria-hidden="true">🏆</span>
-                <div className="min-w-0">
-                  <p className="font-semibold text-lg leading-tight truncate">{completionSnapshot.objective}</p>
-                  <p className="text-xs text-[var(--muted)] mt-0.5">
-                    Completed{" "}
-                    {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: USER_TZ }).format(
-                      parseDateKey(completionSnapshot.completedDateKey),
-                    )}
-                    {completionSnapshot.backdated ? " · backdated" : ""}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                {completionSnapshot.readiness && (
-                  <div>
-                    <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Readiness</p>
-                    <p className="text-2xl font-semibold tracking-tight">
-                      {completionSnapshot.readiness.score}
-                      <span className="text-sm text-[var(--muted)]">/100</span>
-                    </p>
-                  </div>
-                )}
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Targets</p>
-                  <p className="text-2xl font-semibold tracking-tight">
-                    {completionSnapshot.targetsMet}/{completionSnapshot.targetsTotal}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">XP awarded</p>
-                  <p className="text-2xl font-semibold tracking-tight text-[var(--accent)]">
-                    +{completionSnapshot.xpAwardedAtCompletion}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-[var(--muted)]">Days elapsed</p>
-                  <p className="text-2xl font-semibold tracking-tight">{completionSnapshot.daysElapsed}</p>
-                </div>
-              </div>
-
-              {(asRarityTier(completionSnapshot.feasibilityTierAtCompletion) || asRarityTier(completionSnapshot.coachFeasibilityTier)) && (
-                <div className="flex gap-6 mb-3">
-                  {asRarityTier(completionSnapshot.feasibilityTierAtCompletion) && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-[var(--muted)] mb-1">Reach at completion</p>
-                      <ReachMeter tier={asRarityTier(completionSnapshot.feasibilityTierAtCompletion)} label size="md" />
-                    </div>
-                  )}
-                  {asRarityTier(completionSnapshot.coachFeasibilityTier) && (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-[var(--accent)] mb-1">Coach</p>
-                      <ReachMeter tier={asRarityTier(completionSnapshot.coachFeasibilityTier)} label size="md" />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <Link href={`/recap/completion?goalId=${goal.id}`} className="text-sm text-[var(--accent)]">
-                Completion card →
-              </Link>
-
-              <div className="flex justify-center mt-3">
-                {/* QA M-1: completionToken must be fresh per completion (not the
-                    possibly-repeatable completedDateKey) — capturedAt is the
-                    write-time instant computeCompletionSnapshot stamps. */}
-                <GoalCompletedCelebration goalId={goal.id} completionToken={completionSnapshot.capturedAt} />
-              </div>
-            </Card>
+          {/* The Assay (REQ-005): a parseable snapshot gets the permanent
+              monument + first-view ceremony controller, hoisted above
+              everything else in this branch (report §2.1 — "renders proud
+              permanently from the top of the viewport"). PRD §6 edge case:
+              no monument/ceremony without a parseable snapshot — a legacy or
+              tampered achieved row instead keeps the pre-existing degraded
+              card (no stats, no share link, Reopen still offered below). */}
+          {completionSnapshot && ceremony ? (
+            <>
+              <AssayMonument snapshot={completionSnapshot} goalId={goal.id} evidenceDensity={evidenceDensity} />
+              <AssayCeremonyController
+                goalId={goal.id}
+                capturedAt={completionSnapshot.capturedAt}
+                tier={ceremony.tier}
+                objective={ceremony.objective}
+                dateLabel={ceremony.dateLabel}
+                backdatedSuffix={ceremony.backdatedSuffix}
+                statCells={ceremony.statCells}
+                emptyTargetsHint={ceremony.emptyTargetsHint}
+                reach={ceremony.reach}
+                badges={ceremony.badges}
+                levelBefore={ceremony.levelBefore}
+                levelAfter={ceremony.levelAfter}
+              />
+            </>
           ) : (
             <Card title="Completed">
               <p className="text-sm text-[var(--muted)]">
@@ -361,20 +408,6 @@ export default async function GoalDetail({
               </p>
             </Card>
           )}
-
-          <Card title="Reopen">
-            <p className="text-xs text-[var(--muted)] mb-3">
-              Restores active status. Does not restore focus or resume the plan — do that separately if you want to pick this back up.
-            </p>
-            <form action={reopen}>
-              <button
-                type="submit"
-                className="min-h-[44px] rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition"
-              >
-                Reopen
-              </button>
-            </form>
-          </Card>
 
           <Card title="Reflection">
             {retrospective ? (
@@ -444,6 +477,25 @@ export default async function GoalDetail({
               arcs, phase timeline (triggerNote-free, S5), hike arc, metric
               arcs. Omits itself entirely when story is null. */}
           <GoalStorySection story={story} />
+
+          {/* Report §7.1 spine / phase-a 1c: Reopen demoted below Story
+              (peak-end — the last thing on the page should not be an exit
+              hatch). Unconditional: this reorder is independent of whether
+              the snapshot parsed, so the degraded-card branch above gets it
+              too. */}
+          <Card title="Reopen">
+            <p className="text-xs text-[var(--muted)] mb-3">
+              Restores active status. Does not restore focus or resume the plan — do that separately if you want to pick this back up.
+            </p>
+            <form action={reopen}>
+              <button
+                type="submit"
+                className="min-h-[44px] rounded-lg border border-[var(--border)] px-4 py-2 text-sm font-medium hover:bg-[var(--accent)] hover:text-[var(--accent-fg)] hover:border-[var(--accent)] transition"
+              >
+                Reopen
+              </button>
+            </form>
+          </Card>
         </>
       ) : (
         <>

@@ -41,30 +41,40 @@
 // never before. Storage read/write failures (private browsing, quota) degrade
 // to "ceremony may repeat" rather than throwing (PRD §6 edge case: accepted).
 //
-// ── The controller<->flourish interface (provisional — Stage 2C/AssayFlourish
-//    is being authored in parallel in a sibling worktree and does not exist in
-//    this one; Stage 3 reconciles) ──────────────────────────────────────────
-// On the catch path this controller looks for a single DOM anchor:
-//   document.querySelector('[data-assay-flourish-root]')
-// and, if found, dispatches a bubbling CustomEvent named "assay:play-flourish"
-// on it (see `playFlourishFallback` below). This is a decoupled, DOM-native
-// contract chosen specifically so this controller does NOT import a component
-// that doesn't exist yet in this worktree (Stage 2C's AssayFlourish) and does
-// not need to guess its exact class-toggling API. AssayFlourish is expected to
-// mount inertly, tag its own root element with `data-assay-flourish-root`, and
-// add an event listener for "assay:play-flourish" that performs the
-// imperative classList mutations documented in globals.css's
-// ".assay-disc-rim / .assay-disc-inner / .assay-annulus / .assay-ring"
-// contract (mirroring the ORIGINAL GoalCompletedCelebration.tsx
-// imperative-ref pattern this feature retires). If no such element is
-// mounted (e.g. this controller is exercised standalone, or Stage 3 hasn't
-// wired the flourish into the page yet), this is a silent no-op — the token
-// is still burned (this view IS the shown ceremony per V2/V3), and the page
+// ── The controller<->flourish interface (RESOLVED — Stage 3 reconciliation)
+// ────────────────────────────────────────────────────────────────────────
+// AssayFlourish.tsx (now present in this worktree) ships as a dumb,
+// effect-free leaf: it exports exactly one imperative function,
+// `playFlourish(rootEl)`, and touches no storage/state/listeners of its own
+// (see that file's header comment — "owns no storage, no useEffect, no
+// useState"). Reconciling that with the speculative CustomEvent contract this
+// comment used to describe had two options: (a) give AssayFlourish its own
+// `useEffect` + an `"assay:play-flourish"` listener on a self-tagged root, or
+// (b) have this controller import `playFlourish` and call it directly. (a)
+// would force AssayFlourish to grow exactly the effect/state machinery its
+// header explicitly forbids, purely to re-invent a call this controller can
+// already make now that both files live in the same tree — so (b) wins as
+// the smaller, contract-preserving change. The dead half — dispatching a
+// CustomEvent nothing was ever wired to listen for — is retired below.
+//
+// `playFlourishFallback` still needs a `document.querySelector` (not a React
+// ref) because the controller and the monument (AssayMonument.tsx, which
+// composes GoalAssayHero) are SIBLINGS in the page tree — there is no ref
+// path between them. It targets AssayMonument's own outer wrapper, which
+// carries `data-assay-flourish-root`, rather than GoalAssayHero's narrower
+// `goal-assay-hero` testid div: playFlourish's header sanctions passing any
+// ancestor of every `[data-assay]` node ("passing the whole page is safe but
+// wasteful"), and the objective/rows/badges/CTA markers all live OUTSIDE
+// GoalAssayHero's small hero wrapper — only AssayMonument's root is an
+// ancestor of all of them. If no such element is mounted (e.g. this
+// controller is exercised standalone), this is a silent no-op — the token is
+// still burned (this view IS the shown ceremony per V2/V3), and the page
 // simply shows its already-settled monument. AssayFlourish itself does NOT
 // read or write the token (V2/V3: "it does not touch storage").
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { shouldBurnToken } from "@/lib/goal-assay-core";
+import { playFlourish } from "./AssayFlourish";
 import { SummitSheet, type SummitSheetContentProps } from "./SummitSheet";
 
 // Stable identity for useSyncExternalStore — same idiom as BottomSheet /
@@ -189,15 +199,16 @@ export function attemptAssayCeremony(params: {
 }
 
 /**
- * The DOM half of the controller<->flourish interface (see header comment).
- * Isolated into its own function so tests can assert on the dispatched event
- * without needing a real flourish component mounted.
+ * The DOM half of the controller<->flourish interface (see header comment
+ * above). Isolated into its own function so the decision logic above
+ * (`decideAssayCeremony`) can inject it as a plain no-arg callback — tests
+ * exercise that logic with a `vi.fn()` stand-in instead of a real DOM.
  */
 function playFlourishFallback(): void {
   if (typeof document === "undefined") return;
   const root = document.querySelector("[data-assay-flourish-root]");
-  if (!root) return; // no flourish mounted (standalone use, or Stage 3 hasn't wired it in) — silent no-op
-  root.dispatchEvent(new CustomEvent("assay:play-flourish", { bubbles: true }));
+  if (!root) return; // no monument mounted (standalone use) — silent no-op
+  playFlourish(root as HTMLElement);
 }
 
 // ─────────────────────────────────────────────────────────

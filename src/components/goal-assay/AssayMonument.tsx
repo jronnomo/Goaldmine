@@ -63,13 +63,16 @@ export type AssayMonumentProps = {
 
 // yyyy-mm-dd -> "Aug 9, 2026". Pure string-split — NEVER `new Date(dateKey)`
 // (report §8.3, BadgeWall.tsx:19-33's idiom; USER_TZ-safe by construction
-// since it never touches Date/TZ math at all).
+// since it never touches Date/TZ math at all). Exported (Stage 3, REQ-005):
+// the page assembles SummitSheet's `dateLabel` from the same snapshot field
+// and uppercases this same formatting rather than hand-rolling a third
+// string-split date formatter alongside this one and BadgeWall's.
 const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ] as const;
 
-function formatCompletedDateKey(key: string): string {
+export function formatCompletedDateKey(key: string): string {
   const parts = key.split("-");
   if (parts.length !== 3) return key;
   const [y, m, d] = parts as [string, string, string];
@@ -103,7 +106,15 @@ export function AssayMonument({ snapshot, goalId, evidenceDensity }: AssayMonume
   const shareHref = `/recap/completion?goalId=${encodeURIComponent(goalId)}`;
 
   return (
-    <div className="flex flex-col gap-6" data-assay-tier={tier}>
+    // `data-assay-flourish-root` (Stage 3/REQ-005, AssayCeremonyController's
+    // "controller<->flourish interface" header comment): the ONLY node in
+    // this tree that is an ancestor of every `[data-assay]` marker rendered
+    // below (GoalAssayHero's ring/annulus AND this component's own
+    // objective/rows/reach/badges/CTA lines) — playFlourish's own contract
+    // sanctions passing a broader root than GoalAssayHero's narrower
+    // `goal-assay-hero` wrapper ("passing the whole page is safe but
+    // wasteful"); this is the smallest root that still covers everything.
+    <div className="flex flex-col gap-6" data-assay-tier={tier} data-assay-flourish-root>
       <GoalAssayHero />
 
       <div className="flex flex-col items-center gap-1.5 text-center">
