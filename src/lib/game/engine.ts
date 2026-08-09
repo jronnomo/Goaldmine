@@ -9,16 +9,17 @@
 // - addDays from @/lib/calendar (start-of-day). NOT the private records.ts addDays
 //   (which returns end-of-day — see research S-4).
 // - Workout query: pure nested select, NO select+include mix (CRIT-2).
-// - getActiveProgram() runs standalone BEFORE the 9-query Promise.all (CRIT-1).
+// - getActiveProgram() runs standalone BEFORE the 10-query Promise.all (CRIT-1).
 // - All history queries (workouts, hikes, baselines, nutrition, reviews,
 //   mobility, bonuses) are UNBOUNDED — all-time (CRIT-3 / Tech Lead ruling).
 //   Only overrides are bounded to the plan window.
 
 import { cache } from "react";
 import { prisma, getDb } from "@/lib/db";
-import { getActiveProgram, type ActiveProgramSnapshot } from "@/lib/program";
-import { dateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
+import { getActiveProgram, getMostRecentProgram, type ActiveProgramSnapshot } from "@/lib/program";
+import { dateKey, parseDateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
 import { canonicalExerciseName, bestSetSummary, isBetter, type MetricKind, type MetricDirection } from "@/lib/records";
+import { parseCompletionSnapshot } from "@/lib/goal-completion-core";
 import {
   OVERALL_LEVEL_BASE,
   ATTR_LEVEL_BASE,
@@ -30,6 +31,7 @@ import {
   baselineAttributeForTest,
   hikeXp,
   levelFromXp,
+  goalAchievedXp,
 } from "@/lib/game/rules";
 import {
   classifyWorkoutContent,
@@ -104,6 +106,18 @@ type EngineData = {
     reason: string;
     attribute: string | null;
     source: string;
+  }>;
+  // R2 (fixes C-2 in the completion-ceremony critique): OPTIONAL, defaulted to
+  // [] inside computeGameStateFromData. engine.scenario.test.ts's baseData()
+  // casts `as never` (tsc-blind), and a required field here would crash every
+  // existing scenario test at runtime the moment computeGameStateFromData
+  // reads it. Making it optional means every current AND future fixture that
+  // doesn't know about this field degrades safely to "no completed goals".
+  completedGoals?: Array<{
+    completedAt: Date;
+    kind: string;
+    objective: string;
+    completionSnapshot: unknown; // Goal.completionSnapshot (raw JSON) — parsed below via parseCompletionSnapshot
   }>;
 };
 
@@ -373,18 +387,40 @@ function buildStreakAndMilestones(
   const todayEntry = ledger.find((e) => e.dateKey === todayDk);
   const todayCounted = todayEntry?.streakSuccess ?? false;
 
-  let current = 0;
-  if (todayCounted) current = 1;
+  // R1 (fixes C-1, critical): the program-fallback (engine.ts's
+  // getActiveProgram() ?? getMostRecentProgram()) can hand buildDayLedger a
+  // plan whose own calendar window already ended before today — e.g. right
+  // after completeGoalCore deactivates the goal's plan and the engine falls
+  // back to that same, now-historical program. buildDayLedger only breaks
+  // when a day is AFTER today, so a ledger that simply never reaches today
+  // ends mid-history: its last entry is neither "today" nor "yesterday". The
+  // backward walk below has no gap awareness — left alone, it would treat the
+  // stale plan's last successful day as if it were yesterday and compute a
+  // nonzero "current streak" out of training that may be weeks old, with the
+  // dead gap silently spliced away. Detect the gap here and force current:0;
+  // longest/milestones (Pass 1, chronological) are historical facts about the
+  // stale plan's own run and stay untouched.
+  const lastEntry = ledger.length > 0 ? ledger[ledger.length - 1]! : null;
+  const lastEntryIsYesterday =
+    lastEntry !== null &&
+    dateKey(addDays(parseDateKey(lastEntry.dateKey), 1)) === todayDk;
+  const hasGapBeforeToday =
+    lastEntry !== null && lastEntry.dateKey !== todayDk && !lastEntryIsYesterday;
 
-  // Walk backward from yesterday (or last in-plan day before today)
-  const reversedLedger = [...ledger].reverse();
-  for (const entry of reversedLedger) {
-    if (entry.dateKey >= todayDk) continue; // skip today (already counted)
-    if (!entry.isInPlan) break;             // stop at plan boundary
-    if (entry.streakSuccess) {
-      current++;
-    } else {
-      break;
+  let current = 0;
+  if (!hasGapBeforeToday) {
+    if (todayCounted) current = 1;
+
+    // Walk backward from yesterday (or last in-plan day before today)
+    const reversedLedger = [...ledger].reverse();
+    for (const entry of reversedLedger) {
+      if (entry.dateKey >= todayDk) continue; // skip today (already counted)
+      if (!entry.isInPlan) break;             // stop at plan boundary
+      if (entry.streakSuccess) {
+        current++;
+      } else {
+        break;
+      }
     }
   }
 
@@ -401,6 +437,8 @@ function buildStreakAndMilestones(
 export function computeGameStateFromData(data: EngineData, now: Date): GameState {
   const { program, goal, workouts, hikes, baselines, nutritionLogs, reviewNotes,
           mobilityCheckins, overridesByKey, bonusRows } = data;
+  // R2: default to [] — see the EngineData.completedGoals comment above.
+  const completedGoalsRaw = data.completedGoals ?? [];
 
   const todayDk = dateKey(now);
   const pack = rulePackForGoal(goal?.kind ?? "fitness");
@@ -691,6 +729,35 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
     });
   }
 
+  // ── goal.achieved (ALL TIME, per achieved Goal row) ───────────────────────
+  // Also builds the completedGoals list carried on EngineContext — one pass
+  // covers both the XP event and the badge-predicate context so the two can
+  // never disagree on xpBasis. Unparseable/legacy snapshots (parseCompletionSnapshot
+  // → null) fall back to xpBasis {weeks:0, targetsMet:0} — base-XP only
+  // (goalAchievedXp(0,0) === GOAL_XP.GOAL_ACHIEVED_BASE).
+  const completedGoalsForCtx: EngineContext["completedGoals"] = completedGoalsRaw
+    .map((g) => {
+      const parsed = parseCompletionSnapshot(g.completionSnapshot);
+      return {
+        dateKey: dateKey(g.completedAt),
+        kind: g.kind,
+        objective: g.objective,
+        xpBasisWeeks: parsed?.xpBasis.weeks ?? 0,
+        xpBasisTargetsMet: parsed?.xpBasis.targetsMet ?? 0,
+      };
+    })
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+
+  for (const g of completedGoalsForCtx) {
+    allEvents.push({
+      dateKey: g.dateKey,
+      ruleId: "goal.achieved",
+      label: `Goal achieved · ${g.objective}`,
+      xp: goalAchievedXp(g.xpBasisWeeks, g.xpBasisTargetsMet),
+      attribute: null,
+    });
+  }
+
   // ── Streak + milestones ────────────────────────────────────────────────────
   const { streak, milestoneEvents } = buildStreakAndMilestones(ledger, now);
   allEvents.push(...milestoneEvents);
@@ -867,6 +934,7 @@ export function computeGameStateFromData(data: EngineData, now: Date): GameState
     nutritionQualDays,
     setCountByWorkoutId,
     tonnageByWorkoutId,
+    completedGoals: completedGoalsForCtx,
   };
 
   // ── Badge evaluation ───────────────────────────────────────────────────────
@@ -933,7 +1001,15 @@ async function _computeGameState(): Promise<GameState> {
   // ── Step 1: program first (planStart/planEnd depend on it) ────────────────
   // CRIT-1: getActiveProgram() runs BEFORE Promise.all — planStart/planEnd needed
   // to bound the overrides query.
-  const program = await getActiveProgram();
+  // REQ-004c: fall back to the most-recently-updated plan/program when there is
+  // no active one — e.g. right after completeGoalCore deactivates the goal's
+  // plan(s). Without this, completing the founder's only goal would wipe
+  // /character to emptyState() (Level 1 / 0 XP) instead of preserving history.
+  // emptyState() is reserved for genuinely new users who have never had a plan.
+  // (R1's streak gap-guard in buildStreakAndMilestones handles the phantom-streak
+  // bug this fallback would otherwise create when the fallback plan's own
+  // calendar window already ended before today.)
+  const program = (await getActiveProgram()) ?? (await getMostRecentProgram());
   if (!program) return emptyState();
 
   const planStart = startOfDay(program.startedOn);
@@ -941,7 +1017,7 @@ async function _computeGameState(): Promise<GameState> {
     addDays(program.startedOn, program.template.totalWeeks * 7 - 1),
   );
 
-  // ── Step 2: fan out the remaining 9 queries ───────────────────────────────
+  // ── Step 2: fan out the remaining 10 queries ──────────────────────────────
   const db = await getDb();
   const [
     goal,
@@ -953,6 +1029,7 @@ async function _computeGameState(): Promise<GameState> {
     mobilityRaw,
     overridesRaw,
     bonusRaw,
+    completedGoalsRaw,
   ] = await Promise.all([
     // 1. Focus goal (isFocus=true drives the daily prescription + XP attribute pack)
     db.goal.findFirst({
@@ -1041,6 +1118,16 @@ async function _computeGameState(): Promise<GameState> {
         source: true,
       },
     }),
+
+    // 10. Completed goals: ALL TIME — feeds goal.achieved XP + the
+    // completedGoals badge context (R6: joins this SAME Promise.all using the
+    // already-resolved scoped `db` above — Goal is a SCOPED_MODEL; a fresh raw
+    // `prisma.goal.findMany` here would leak every tenant's completed goals
+    // into one user's XP/badge computation).
+    db.goal.findMany({
+      where: { status: "achieved", completedAt: { not: null } },
+      select: { completedAt: true, kind: true, objective: true, completionSnapshot: true },
+    }),
   ]);
 
   // Pre-bucket overrides by dateKey for O(1) lookup during ledger build
@@ -1067,6 +1154,14 @@ async function _computeGameState(): Promise<GameState> {
     mobilityCheckins: mobilityRaw,
     overridesByKey,
     bonusRows: bonusRaw,
+    // where: {completedAt: {not: null}} guarantees non-null at the DB level;
+    // Prisma's select type doesn't narrow on the filter, hence the cast.
+    completedGoals: completedGoalsRaw.map((g) => ({
+      completedAt: g.completedAt as Date,
+      kind: g.kind,
+      objective: g.objective,
+      completionSnapshot: g.completionSnapshot,
+    })),
   };
 
   return computeGameStateFromData(engineData, now);
@@ -1077,6 +1172,16 @@ async function _computeGameState(): Promise<GameState> {
 // call computeGameState() with no args. The no-args pattern guarantees all
 // same-request callers share one cache bucket (MED-6 fix / D-2).
 export const computeGameState = cache(_computeGameState);
+
+// ── Uncached escape hatch — for write-tool before/after diffs ────────────────
+// React's cache() memoizes _computeGameState for the lifetime of the current
+// request/render. A write tool (e.g. complete_goal) that reads game state
+// BEFORE mutating and again AFTER, in the same request, must NOT go through
+// the cached computeGameState for the "after" read — it would return the
+// memoized "before" result even though the DB just changed underneath it.
+// computeGameStateFresh is the same uncached _computeGameState, exported
+// directly for exactly that before/after diff use case.
+export const computeGameStateFresh = _computeGameState;
 
 // Re-export parseDateKey for toDateKey usage in tools.ts
 export { dateKey as toDateKey } from "@/lib/calendar";

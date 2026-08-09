@@ -36,7 +36,7 @@ export type GameState = {
     longest: number;
     todayCounted: boolean; // true if today has already been scored as a success
   };
-  badges: UnlockedBadge[];   // all 16 sorted: unlocked first (by dateKey asc), then locked
+  badges: UnlockedBadge[];   // all 22 sorted: unlocked first (by dateKey asc), then locked
   recentEvents: XpEvent[];   // last 30 across all attributes + unattributed, sorted desc
   events: XpEvent[];         // full, unsorted event history — for as-of XP sums (e.g. compare.ts)
   questToday: QuestProjection | null; // null when no program or off-plan day
@@ -142,6 +142,21 @@ export type EngineContext = {
   // can compute running totals in O(n) without re-scanning all exercises.
   setCountByWorkoutId: Map<string, number>;
   tonnageByWorkoutId: Map<string, number>;
+  // Goals with status "achieved" — one row per completed goal, sorted dateKey asc.
+  // Drives the 6 goal-completion badge predicates (goal-first/third/fifth/tenth,
+  // goal-fit-finisher, goal-ship-it). xpBasis* mirrors GoalCompletionSnapshot.xpBasis
+  // (0/0 fallback for a legacy/unparseable snapshot — same fallback the engine
+  // uses for the goal.achieved XP event, so badge context and awarded XP never
+  // disagree). Always populated (defaulted to [] from the optional EngineData
+  // field — see R2 in the completion-ceremony architecture blueprint) — never
+  // undefined, so predicates don't need a null check.
+  completedGoals: Array<{
+    dateKey: string;
+    kind: string;
+    objective: string;
+    xpBasisWeeks: number;
+    xpBasisTargetsMet: number;
+  }>;
 };
 
 // Attribute definition inside a rule pack

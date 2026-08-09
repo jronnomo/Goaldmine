@@ -56,6 +56,51 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
   };
 }
 
+/**
+ * Fallback for the game engine (engine.ts's program-fallback, REQ-004c):
+ * the most-recently-updated plan/program regardless of `active`. Used ONLY
+ * when getActiveProgram() returns null (e.g. right after completeGoalCore
+ * deactivates the goal's plan(s) — the character page must keep showing the
+ * founder's historical XP/level instead of wiping to emptyState()).
+ *
+ * Mirrors getActiveProgram's precedence (Plan first, then Program) and
+ * snapshot shape exactly — the only difference is dropping the `active: true`
+ * filter and ordering purely by `updatedAt desc` ("most recently updated",
+ * full stop; no isFocus tiebreak — that tiebreak in getActiveProgram exists
+ * for the multi-active-plan transition case, which doesn't apply here).
+ *
+ * getActiveProgram() itself is untouched — this is a separate, explicit
+ * fallback the caller opts into, never an implicit change to "the" active
+ * program lookup.
+ */
+export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | null> {
+  const db = await getDb();
+  const plan = await db.plan.findFirst({
+    orderBy: { updatedAt: "desc" },
+  });
+  if (plan) {
+    return {
+      id: plan.id,
+      name: plan.name,
+      startedOn: plan.startedOn,
+      template: plan.planJson as unknown as ProgramTemplate,
+      confirmedThroughDate: plan.confirmedThroughDate ?? null,
+    };
+  }
+  const program = await db.program.findFirst({
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!program) return null;
+  return {
+    id: program.id,
+    name: program.name,
+    startedOn: program.startedOn,
+    template: program.planJson as unknown as ProgramTemplate,
+    // Program table has no confirmedThroughDate column — always null.
+    confirmedThroughDate: null,
+  };
+}
+
 export function getTodayContext(
   program: ActiveProgramSnapshot,
   now: Date = new Date(),
