@@ -424,9 +424,17 @@ export async function setFocusGoalCore(id: string): Promise<SetFocusGoalCoreResu
   const goal = await db.$transaction(async (tx) => {
     const target = await tx.goal.findUnique({
       where: { id },
-      select: { id: true, kind: true, objective: true },
+      select: { id: true, kind: true, objective: true, status: true },
     });
     if (!target) throw new Error(`Goal not found: ${id}`);
+    // Guard: a completed goal is archived (isFocus=false, active=false,
+    // plans deactivated) — focusing it would resurrect a goal that
+    // completeGoalCore just retired. Reopen it first.
+    if (target.status === "achieved") {
+      throw new Error(
+        "This goal is completed — reopen it first (reopen_goal).",
+      );
+    }
 
     // 1. Clear isFocus on all goals.
     await tx.goal.updateMany({ data: { isFocus: false } });
