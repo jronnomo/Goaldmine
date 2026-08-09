@@ -225,9 +225,35 @@ export type EvidenceRowsResult = {
   hiddenCount: number;
 };
 
+/**
+ * The one shared number formatter behind every evidence row (card AND
+ * monument) — founder complaint: naive `maximumFractionDigits: 0` rounding
+ * (fmtComma) silently swallows a non-integral change or a target-beat
+ * ("5.9 → 6.3 mi" was rendering as "6 → 6 mi", erasing the fact that
+ * anything moved at all).
+ *
+ * Rule: round to 1 decimal first (half-away-from-zero, via a `+ 0.5` epsilon
+ * trick since `toFixed`'s banker's-adjacent rounding is inconsistent across
+ * engines for exact .05 boundaries — but multiplying by 10 first sidesteps
+ * that entirely). Then: if the rounded value is integral (155.0, 405.0),
+ * display as a plain locale-comma'd integer ("155", "36,102") — do NOT
+ * force a trailing ".0" onto values that rounded clean. If it is NOT
+ * integral, keep exactly one decimal ("5.9", "6.3", "154.8").
+ */
+function fmtAssayValue(v: number): string {
+  const rounded = Math.round(v * 10) / 10;
+  if (Number.isInteger(rounded)) {
+    return fmtComma(rounded);
+  }
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(rounded);
+}
+
 function fmtTargetValue(v: number | null, units: string): string {
   if (v === null) return "—";
-  const n = fmtComma(v);
+  const n = fmtAssayValue(v);
   return units ? `${n} ${units}` : n;
 }
 

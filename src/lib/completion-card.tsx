@@ -155,9 +155,12 @@ function TargetRow({
             />
           </svg>
         ) : (
-          // Unmet-target marker — filled dot, muted color.
+          // Unmet/untested-target marker — hollow (open) circle, muted color.
+          // Deliberately NOT a filled dot: "hollow = not-done" is the
+          // Bullseye's own vocabulary, and a filled marker reads as
+          // "recorded/complete" at a glance, which a miss is not.
           <svg width={layout.iconSize} height={layout.iconSize} viewBox="0 0 24 24">
-            <circle cx={12} cy={12} r={4} fill={tok.mutedText} />
+            <circle cx={12} cy={12} r={7} fill="none" stroke={tok.mutedText} strokeWidth={2} />
           </svg>
         )}
       </div>

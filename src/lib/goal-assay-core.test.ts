@@ -279,6 +279,46 @@ describe("buildEvidenceRows", () => {
     expect(rows[0]!.formattedRange).toBe("— → —");
   });
 
+  // Number formatting fixture — founder complaint: naive integer rounding
+  // silently swallowed non-integral change/beats ("5.9 → 6.3 mi" rendered as
+  // "6 → 6 mi"). Rule: round to 1 decimal first; integral result -> plain
+  // comma'd integer, non-integral result -> exactly 1 decimal, at any
+  // magnitude.
+  describe("fmtTargetValue (via formattedRange) — one-decimal-or-integer rule", () => {
+    function rangeOf(start: number, final: number, units = "mi"): string {
+      const { rows } = buildEvidenceRows([target({ metric: "m", met: true, start, final, units })], 6);
+      return rows[0]!.formattedRange;
+    }
+
+    it("5.9 -> 6.3 mi: non-integral values keep exactly one decimal", () => {
+      expect(rangeOf(5.9, 6.3)).toBe("5.9 → 6.3 mi");
+    });
+
+    it("159.2 -> 154.8 lb: one decimal preserved at 3-digit magnitude", () => {
+      expect(rangeOf(159.2, 154.8, "lb")).toBe("159.2 → 154.8 lb");
+    });
+
+    it("155 (clean integer) never grows a trailing .0", () => {
+      expect(rangeOf(159, 155, "lb")).toBe("159 → 155 lb");
+    });
+
+    it("405 stays a plain integer, no decimal", () => {
+      expect(rangeOf(0, 405, "reps")).toBe("0 → 405 reps");
+    });
+
+    it("36102 gets a locale comma separator, still no decimal", () => {
+      expect(rangeOf(12000, 36102, "lb")).toBe("12,000 → 36,102 lb");
+    });
+
+    it("0 renders as a plain integer", () => {
+      expect(rangeOf(0, 0, "reps")).toBe("0 → 0 reps");
+    });
+
+    it("5.95 rounds to 1 decimal first (6.0), which is integral -> renders as the integer 6", () => {
+      expect(rangeOf(0, 5.95, "mi")).toBe("0 → 6 mi");
+    });
+  });
+
   it("7/9-met fixture (Elbert): naive met-first cap-6 would hide BOTH misses — reserve rule shows the first one", () => {
     const met = Array.from({ length: 7 }, (_, i) => target({ metric: `met-${i}`, met: true }));
     const missed = [target({ metric: "missed-A", met: false }), target({ metric: "missed-B", met: false })];
