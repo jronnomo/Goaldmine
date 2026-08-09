@@ -380,6 +380,16 @@ export const SummitSheet = forwardRef<HTMLDialogElement, SummitSheetContentProps
   // "notify me when this externally-driven native property changes."
   // Gated on `mounted`: the real <dialog> node (and thus a target to
   // observe) only exists once the portal above has actually mounted.
+  //
+  // M1 fix (QA): this is also where the three `.assay-sheet-ring` elements'
+  // `will-change` gets armed — imperatively, JS-side, at the exact moment
+  // the dialog is about to actually open — rather than baking a permanent
+  // `will-change` into `.assay-sheet-ring`'s CSS rule (which would pin a
+  // compositor layer on every achieved-goal page view, since this dialog
+  // stays mounted-but-closed for the page's whole lifetime per V4's
+  // imperative idiom). Cleared on each ring's own `animationend`, mirroring
+  // AssayFlourish.tsx's add-with-the-animation/remove-on-animationend
+  // contract for the monument's single ring.
   useEffect(() => {
     if (!mounted) return;
     const dialog = localDialogRef.current;
@@ -393,11 +403,28 @@ export const SummitSheet = forwardRef<HTMLDialogElement, SummitSheetContentProps
         // Reduced motion has no animation chain to end, so the normal
         // "focus Continue after the last beat's animationend" path (below,
         // on the footer) never fires — the composition is already terminal
-        // per Rule A, so focus Continue right away instead.
+        // per Rule A, so focus Continue right away instead. It also means
+        // the rings never animate (globals.css hides `.assay-sheet-ring`
+        // under the reduced-motion media query), so there is nothing to
+        // arm.
         const reduceMotion =
           typeof window.matchMedia === "function" &&
           window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        if (reduceMotion) continueBtnRef.current?.focus();
+        if (reduceMotion) {
+          continueBtnRef.current?.focus();
+        } else {
+          const rings = panelRef.current?.querySelectorAll<HTMLElement>(".assay-sheet-ring") ?? [];
+          rings.forEach((ring) => {
+            ring.style.willChange = "transform, opacity";
+            ring.addEventListener(
+              "animationend",
+              () => {
+                ring.style.willChange = "auto";
+              },
+              { once: true },
+            );
+          });
+        }
       } else {
         document.body.style.overflow = prevBodyOverflowRef.current;
         window.scrollTo(0, scrollYRef.current);
@@ -459,7 +486,7 @@ export const SummitSheet = forwardRef<HTMLDialogElement, SummitSheetContentProps
             data-testid="summit-sheet-skip"
             onClick={handleSkipClick}
             aria-label="Skip"
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm font-medium"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg border text-sm font-medium transition-colors active:bg-[var(--accent)]/20"
             style={{ borderColor: "var(--border)", background: "var(--card)", color: "var(--muted)" }}
           >
             Skip
@@ -478,7 +505,7 @@ export const SummitSheet = forwardRef<HTMLDialogElement, SummitSheetContentProps
           <a
             href={`/recap/completion?goalId=${encodeURIComponent(goalId)}`}
             data-testid="summit-sheet-share"
-            className="flex min-h-11 flex-1 items-center justify-center rounded-lg text-sm font-medium"
+            className="flex min-h-11 flex-1 items-center justify-center rounded-lg text-sm font-medium transition-opacity active:opacity-80"
             style={{ background: "var(--accent)", color: "var(--accent-fg)" }}
           >
             Get the card
@@ -488,7 +515,7 @@ export const SummitSheet = forwardRef<HTMLDialogElement, SummitSheetContentProps
             type="button"
             data-testid="summit-sheet-continue"
             onClick={() => localDialogRef.current?.close()}
-            className="flex min-h-11 flex-1 items-center justify-center rounded-lg border text-sm font-medium"
+            className="flex min-h-11 flex-1 items-center justify-center rounded-lg border text-sm font-medium transition-colors active:bg-[var(--accent)]/20"
             style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
           >
             Continue
