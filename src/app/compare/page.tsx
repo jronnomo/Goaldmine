@@ -105,20 +105,35 @@ function improvedSummary(entries: CompareEntry[]): React.ReactNode {
   );
 }
 
+/** Muted "· completed <date>" suffix for an achieved goal's card title —
+ *  the only UI change for archived-goal-in-comparison (see compare.ts's
+ *  window-relevance filter). Undefined for active goals. */
+function completedSuffix(section: GoalCompareSection): React.ReactNode {
+  if (section.status !== "achieved" || section.completedDateKey === null) return undefined;
+  return (
+    <span className="ml-1 text-xs font-normal text-[var(--muted)]">
+      · completed {formatHeroDate(section.completedDateKey)}
+    </span>
+  );
+}
+
 function GoalCard({ section, dateA }: { section: GoalCompareSection; dateA: string }) {
   // v3 Fix 2: zero-target goals render as a compact one-line row, not a full
   // empty Card (6 active goals exist — scroll length matters).
   if (section.targets.length === 0) {
     return (
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 text-sm text-[var(--muted)]">
-        {section.objective} — no measurable targets
+        {section.objective} — no measurable targets{completedSuffix(section)}
       </div>
     );
   }
 
   const r = section.readiness;
   return (
-    <Card title={section.objective} action={r ? <ReadinessMiniPair readiness={r} /> : undefined}>
+    <Card
+      title={<>{section.objective}{completedSuffix(section)}</>}
+      action={r ? <ReadinessMiniPair readiness={r} /> : undefined}
+    >
       <div
         aria-label={`Readiness for ${section.objective}, ${r?.formattedA ?? "—"} to ${r?.formattedB ?? "—"}`}
       >

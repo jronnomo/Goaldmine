@@ -43,10 +43,31 @@ export async function computeComparison(aKeyRaw: string, bKeyRaw: string): Promi
   // fallback, and body-metric weight direction (avoids 3 separate queries).
   // DECISION (deviates slightly from "goal readiness chains + family queries
   // under Promise.all" phrasing, but is strictly more efficient and simpler).
+  //
+  // Also pull achieved (archived) goals — completion sets active:false, so
+  // the plain `active: true` filter used to make a completed goal vanish
+  // from every retrospective comparison, even one squarely inside its own
+  // life. The window-relevance filter below decides which achieved rows are
+  // actually relevant to [dateA, dateB].
   const db = await getDb();
-  const goals = await db.goal.findMany({
-    where: { active: true },
-    orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
+  const rawGoals = await db.goal.findMany({
+    where: { OR: [{ active: true }, { status: "achieved" }] },
+    // status: "desc" is a trivial tie-break addition — "active" > "achieved"
+    // lexicographically, so this keeps active goals ahead of achieved ones
+    // within the same isFocus tier (achieved-after-active, per the fix spec).
+    orderBy: [{ isFocus: "desc" }, { status: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
+  });
+
+  // Window-relevance filter: an achieved goal is included only if its life
+  // [createdAt, completedAt] overlaps [dateA, dateB] — completed before A or
+  // created after B adds noise, since comparing readiness "as of" a date
+  // outside the goal's life is meaningless. Active goals are unaffected.
+  const goals = rawGoals.filter((g) => {
+    if (g.status !== "achieved") return true;
+    if (!g.completedAt) return true; // defensive; achieved goals always carry completedAt
+    const completedKey = toDateKey(g.completedAt);
+    const createdKey = toDateKey(g.createdAt);
+    return completedKey >= dateA && createdKey <= dateB;
   });
   const goalTargetsList: GoalTarget[][] = goals.map(
     (g) => (g.targets as unknown as GoalTarget[] | null) ?? [],
@@ -84,7 +105,15 @@ export async function computeComparison(aKeyRaw: string, bKeyRaw: string): Promi
 // ─────────────────────────────────────────────────────────────────────────
 
 async function buildGoalSections(
-  goals: Array<{ id: string; objective: string; kind: string; createdAt: Date; targets: unknown }>,
+  goals: Array<{
+    id: string;
+    objective: string;
+    kind: string;
+    createdAt: Date;
+    targets: unknown;
+    status: string;
+    completedAt: Date | null;
+  }>,
   cutA: Date,
   cutB: Date,
 ): Promise<GoalCompareSection[]> {
@@ -92,9 +121,18 @@ async function buildGoalSections(
     goals.map(async (g) => {
       const targets = (g.targets as unknown as GoalTarget[] | null) ?? [];
       const createdAfterA = g.createdAt > cutA;
+      // Achieved goals: computeReadiness is status-agnostic (untested=0, gate
+      // caps at 80 — see readiness.ts) — comparing an as-of date within the
+      // goal's own life is legitimate live math, same as for an active goal.
+      // This is NOT the trophy page; R9 (freeze the snapshot post-completion)
+      // does not apply here.
+      const completedDateKey = g.completedAt ? toDateKey(g.completedAt) : null;
 
       if (targets.length === 0) {
-        return { goalId: g.id, objective: g.objective, kind: g.kind, createdAfterA, readiness: null, targets: [] };
+        return {
+          goalId: g.id, objective: g.objective, kind: g.kind, createdAfterA,
+          status: g.status, completedDateKey, readiness: null, targets: [],
+        };
       }
 
       // v3 Fix 2: parallelize A/B readiness per goal — createdAfterA ⇒ skip
@@ -130,7 +168,10 @@ async function buildGoalSections(
         });
       });
 
-      return { goalId: g.id, objective: g.objective, kind: g.kind, createdAfterA, readiness, targets: targetEntries };
+      return {
+        goalId: g.id, objective: g.objective, kind: g.kind, createdAfterA,
+        status: g.status, completedDateKey, readiness, targets: targetEntries,
+      };
     }),
   );
 }

@@ -254,6 +254,14 @@ export type GoalCompareSection = {
    *  yet on date A. A-side readiness is skipped entirely when true (perf +
    *  honesty; computeReadiness is called exactly once for this goal). */
   createdAfterA: boolean;
+  /** Goal.status verbatim ("active" | "achieved" | "abandoned" — abandoned
+   *  goals are never fetched by computeComparison today). An "achieved" row
+   *  only appears here when its [createdAt, completedAt] life overlaps
+   *  [dateA, dateB] — see computeComparison's window-relevance filter. */
+  status: string;
+  /** dateKey(Goal.completedAt), or null for active goals. Drives the
+   *  "· completed <date>" suffix on /compare. */
+  completedDateKey: string | null;
   /** Null when the goal has zero targets. Otherwise a CompareEntry with
    *  units "%": valueA is null when createdAfterA (never computed),
    *  valueB is always computed when targets.length > 0. */

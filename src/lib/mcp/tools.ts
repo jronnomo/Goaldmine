@@ -1234,7 +1234,9 @@ function registerReadTools(server: McpServer) {
         "Covers per-goal targets + readiness, strength PRs, baseline tests, body/wearable metrics, consistency counters between the dates " +
         "(workouts, hikes, XP/level), and trailing-7-day nutrition averages. Use for 'how far have I come since X', " +
         "'compare today vs program start', 'progress since goal creation'. Dates auto-normalize (swapped if b < a, clamped to today). " +
-        "b defaults to today.",
+        "b defaults to today. Goals include both active goals and achieved (completed) goals whose lifetime " +
+        "[createdAt, completedAt] overlaps the compared window — marked by status:'achieved' and a completedDateKey. " +
+        "Useful for retrospectives: compare_dates(createdAt of the goal → its completedAt) to see the full journey.",
       inputSchema: {
         a: DateKeyShape.describe("Earlier date, yyyy-mm-dd"),
         b: DateKeyShape.optional().describe("Later date, yyyy-mm-dd; defaults to today"),
