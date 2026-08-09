@@ -17,16 +17,36 @@ import type { RecapTemplate, RecapCardFormat } from "@/lib/recap";
 import { getTemplate } from "@/lib/recap-templates";
 import { ProgressRing } from "@/lib/recap-card";
 import { fmtComma } from "@/lib/goal-presentation";
+import { buildEvidenceRows, type EvidenceRow } from "@/lib/goal-assay-core";
 
-/** Rows beyond this cap collapse into a single "+N more" line so the card
- *  never overflows its canvas on goals with many targets. */
-const MAX_TARGET_ROWS = 6;
+/**
+ * Per-format target-row geometry. This is a static keepsake image, not an
+ * interactive list — there is no "tap to see more," so every row that fits
+ * must be shown, and rows that don't fit are dropped silently (the footer's
+ * "x/y TARGETS" stat is the accounting, never a "+N more" teaser).
+ *
+ * `cap` is chosen empirically per format by rendering the founder's actual
+ * 9-target shape (one 2-line label, mixed met/unmet) and looking at the PNG:
+ * story and post have enough canvas height to show all 9 once rows are
+ * tightened a notch; square's 1:1 canvas cannot, so it keeps a real cap —
+ * `buildEvidenceRows`'s reserve-last-slot-for-the-first-miss rule (mirrored
+ * from goal-assay-core.ts, itself ported from this file) guarantees a capped
+ * card can never structurally hide every miss behind a wall of checkmarks.
+ */
+type TargetRowLayout = {
+  cap: number;
+  rowGap: number;
+  labelFontSize: number;
+  valueFontSize: number;
+  iconSize: number;
+  zonePadY: number;
+};
 
-function fmtTargetValue(v: number | null, units: string): string {
-  if (v === null) return "—";
-  const n = fmtComma(v);
-  return units ? `${n} ${units}` : n;
-}
+const TARGET_ROW_LAYOUT: Record<RecapCardFormat, TargetRowLayout> = {
+  story: { cap: 12, rowGap: 16, labelFontSize: 30, valueFontSize: 28, iconSize: 26, zonePadY: 28 },
+  post: { cap: 9, rowGap: 10, labelFontSize: 26, valueFontSize: 24, iconSize: 22, zonePadY: 16 },
+  square: { cap: 6, rowGap: 8, labelFontSize: 22, valueFontSize: 20, iconSize: 18, zonePadY: 10 },
+};
 
 function capitalize(s: string): string {
   return s.length > 0 ? s[0]!.toUpperCase() + s.slice(1) : s;
@@ -99,19 +119,23 @@ function FooterStat({
 // ─── TargetRow — one per-target start→final line ──────────────────────────────
 
 function TargetRow({
-  target,
+  row,
   tok,
+  layout,
 }: {
-  target: GoalCompletionSnapshot["targets"][number];
+  row: EvidenceRow;
   tok: ReturnType<typeof getTemplate>;
+  layout: TargetRowLayout;
 }) {
+  const { target, formattedRange } = row;
+  const iconBoxSize = layout.iconSize + 8;
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 18 }}>
       <div
         style={{
           display: "flex",
-          width: 34,
-          height: 30,
+          width: iconBoxSize,
+          height: iconBoxSize,
           alignItems: "center",
           justifyContent: "center",
         }}
@@ -120,7 +144,7 @@ function TargetRow({
           // Check mark — stroked path, no glyph. Satori/resvg render SVG
           // natively; the loaded fonts (Geist/DMSerifDisplay) lack U+2713,
           // which rendered as a tofu box (▯) in the shipped card.
-          <svg width={26} height={26} viewBox="0 0 24 24">
+          <svg width={layout.iconSize} height={layout.iconSize} viewBox="0 0 24 24">
             <path
               d="M4.5 12.5L9.5 17.5L19.5 6.5"
               fill="none"
@@ -132,21 +156,27 @@ function TargetRow({
           </svg>
         ) : (
           // Unmet-target marker — filled dot, muted color.
-          <svg width={26} height={26} viewBox="0 0 24 24">
+          <svg width={layout.iconSize} height={layout.iconSize} viewBox="0 0 24 24">
             <circle cx={12} cy={12} r={4} fill={tok.mutedText} />
           </svg>
         )}
       </div>
+      {/* display:"block" (not "flex") is required for satori's lineClamp to
+       *  take effect — its layout engine only honors lineClamp on block
+       *  boxes, so a flex label here would wrap unclamped (verified via
+       *  rendered PNG: a long label overflowed to 2 full lines despite an
+       *  earlier lineClamp:1 attempt on a flex box — silently ignored). */}
       <div
         style={{
-          display: "flex",
+          display: "block",
           flex: 1,
-          fontSize: 30,
+          fontSize: layout.labelFontSize,
+          lineHeight: 1.2,
           fontFamily: tok.fontSans,
           fontWeight: tok.fontWeight.regular,
           color: tok.primaryText,
           overflow: "hidden",
-          lineClamp: 1,
+          lineClamp: 2,
         }}
       >
         {target.label}
@@ -154,14 +184,14 @@ function TargetRow({
       <div
         style={{
           display: "flex",
-          fontSize: 28,
+          fontSize: layout.valueFontSize,
           fontFamily: tok.fontSans,
           fontWeight: tok.fontWeight.semibold,
           color: tok.mutedText,
           flexShrink: 0,
         }}
       >
-        {`${fmtTargetValue(target.start, "")} → ${fmtTargetValue(target.final, target.units)}`}
+        {formattedRange}
       </div>
     </div>
   );
@@ -200,10 +230,13 @@ export function CompletionCard({
   const readinessScore = snapshot.readiness?.score ?? null;
 
   const hasTargets = snapshot.targetsTotal > 0;
-  // Met-first ordering, capped to MAX_TARGET_ROWS + a "+N more" summary line.
-  const orderedTargets = [...snapshot.targets].sort((a, b) => Number(b.met) - Number(a.met));
-  const visibleTargets = orderedTargets.slice(0, MAX_TARGET_ROWS);
-  const hiddenCount = orderedTargets.length - visibleTargets.length;
+  const targetLayout = TARGET_ROW_LAYOUT[format];
+  // Met-first, capped per-format, with the last visible slot reserved for
+  // the first unmet target whenever the naive met-first cap would otherwise
+  // hide every miss (buildEvidenceRows — see TARGET_ROW_LAYOUT comment
+  // above). No "+N more": this is a static keepsake image, not a list with
+  // a next page — the footer's targetsMet/targetsTotal is the accounting.
+  const { rows: visibleRows } = buildEvidenceRows(snapshot.targets, targetLayout.cap);
 
   // Objective can run long (tested at 120 chars) — clamp to 3 lines and shrink
   // the font a step so it still fits the header band on every format.
@@ -348,27 +381,14 @@ export function CompletionCard({
             flexDirection: "column",
             paddingLeft: tok.safeInset,
             paddingRight: tok.safeInset,
-            paddingTop: 28,
-            paddingBottom: 28,
-            gap: 16,
+            paddingTop: targetLayout.zonePadY,
+            paddingBottom: targetLayout.zonePadY,
+            gap: targetLayout.rowGap,
           }}
         >
-          {visibleTargets.map((t) => (
-            <TargetRow key={t.metric} target={t} tok={tok} />
+          {visibleRows.map((row) => (
+            <TargetRow key={row.target.metric} row={row} tok={tok} layout={targetLayout} />
           ))}
-          {hiddenCount > 0 && (
-            <div
-              style={{
-                display: "flex",
-                fontSize: 26,
-                fontFamily: tok.fontSans,
-                fontWeight: tok.fontWeight.regular,
-                color: tok.mutedText,
-              }}
-            >
-              {`+${hiddenCount} more`}
-            </div>
-          )}
         </div>
       ) : (
         <div style={{ flex: 1, display: "flex" }} />
