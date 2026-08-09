@@ -182,6 +182,17 @@ const ZERO_TARGET_ARC_HINT =
 const LEGACY_ARC_HINT = "Reopen and re-complete this goal to capture its arc.";
 
 /**
+ * §2.2 Rule C — the Marker-tier floor case: "WHAT MOVED collapses to one
+ * honest sentence" when `targetsTotal === 0`. Lives here (not hand-typed in
+ * AssayTargetRows.tsx) so the copy has exactly one source, mirroring
+ * ZERO_TARGET_ARC_HINT's placement. Deliberately echoes the "WHAT MOVED"
+ * header's own verb ("nothing to move") rather than a generic "no data"
+ * message — informational, not apologetic (§6 SDT: no praise, no apology).
+ */
+export const ZERO_TARGET_EVIDENCE_SENTENCE =
+  "This goal had no numeric targets — there was nothing to measure moving.";
+
+/**
  * `readinessSeries === null` is ambiguous (§8.5): it means EITHER a
  * zero-target goal OR a legacy pre-freeze completion. The existing
  * "reopen and re-complete to record it" copy is misleading for the
