@@ -23,7 +23,7 @@ vi.mock("@/lib/db", () => ({
 // canonicalExerciseName is only invoked when attributionHints are present; passthrough.
 vi.mock("@/lib/records", () => ({ canonicalExerciseName: (s: string) => s }));
 
-import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
+import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore } from "@/lib/goal-core";
 import { getDb } from "@/lib/db";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,5 +136,47 @@ describe("ensurePlanForGoalCore — kind gate (dated-upgrade path)", () => {
   it("missing goal throws", async () => {
     fakeDb.goal.findUnique.mockResolvedValue(null);
     await expect(ensurePlanForGoalCore("missing", new Date("2027-06-01"))).rejects.toThrow();
+  });
+});
+
+// REQ-006 (goal completion ceremony): a completed goal is archived by
+// completeGoalCore (isFocus=false, active=false, plans deactivated) —
+// setFocusGoalCore must refuse to re-focus it until reopen_goal restores it.
+describe("setFocusGoalCore — refuses achieved goals", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fakeDb: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let txMock: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    txMock = {
+      goal: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "g1",
+          kind: "fitness",
+          objective: "Summit Mt. Elbert",
+          status: "achieved",
+        }),
+        updateMany: vi.fn(),
+        update: vi.fn(),
+      },
+      plan: {
+        findFirst: vi.fn(),
+        updateMany: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    fakeDb = {
+      goal: { findFirst: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn().mockImplementation(async (cb) => cb(txMock)),
+    };
+    mockGetDb.mockResolvedValue(fakeDb);
+  });
+
+  it("throws a reopen-first error and never touches isFocus/active", async () => {
+    await expect(setFocusGoalCore("g1")).rejects.toThrow(/reopen it first|reopen_goal/i);
+    expect(txMock.goal.updateMany).not.toHaveBeenCalled();
+    expect(txMock.goal.update).not.toHaveBeenCalled();
   });
 });

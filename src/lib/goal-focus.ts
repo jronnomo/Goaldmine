@@ -62,7 +62,11 @@ export async function getFocusGoal(): Promise<FocusGoalRow | null> {
 export async function getActiveGoalsWithPlans(): Promise<ActiveGoalWithPlan[]> {
   const db = await getDb();
   return db.goal.findMany({
-    where: { active: true },
+    // status:"active" belt-and-braces alongside active:true — completeGoalCore
+    // sets active:false on completion, but this also fixes the live
+    // overdue-chip bug for any legacy achieved row that predates that write
+    // (REQ-007 / architecture-blueprint-v2.md R-series calendar cleanup).
+    where: { active: true, status: "active" },
     orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
     select: {
       id: true,
