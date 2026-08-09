@@ -19,6 +19,7 @@ import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
+import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { presentationForGoal } from "@/lib/goal-presentation";
 import { computeGoalFeasibility } from "@/lib/rarity";
@@ -49,6 +50,35 @@ export default async function HomePage() {
     getFocusGoal(),
   ]);
   const presentation = presentationForGoal(focusGoal);
+
+  // FIX (Today "between goals" state): the goal-completion feature releases
+  // focus + deactivates the plan on complete_goal, so a veteran user who just
+  // completed their only focus goal — before picking a new one — lands here
+  // with program === null AND focusGoal === null, same as a brand-new user.
+  // Distinguish by history: any other active goal, or a past completion,
+  // means this is NOT a newbie — show the "between goals" state instead of
+  // the onboarding "Get started" card. Strictly gated on focusGoal === null
+  // (not the broader focusGoal?.kind !== "project" check below) so a fitness
+  // focus goal stuck without an active plan — a separate, pre-existing edge
+  // case — keeps falling through to its original (unchanged) behavior.
+  if (!program && focusGoal === null) {
+    const betweenGoalsDb = await getDb();
+    const [activeGoals, latestAchieved] = await Promise.all([
+      betweenGoalsDb.goal.findMany({
+        where: { status: "active" },
+        orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
+        select: { id: true, objective: true, kind: true, targetDate: true, isFocus: true, active: true },
+      }),
+      betweenGoalsDb.goal.findFirst({
+        where: { status: "achieved" },
+        orderBy: { completedAt: "desc" },
+        select: { id: true, objective: true, completedAt: true, completionSnapshot: true },
+      }),
+    ]);
+    if (activeGoals.length > 0 || latestAchieved) {
+      return <BetweenGoalsToday activeGoals={activeGoals} latestAchieved={latestAchieved} />;
+    }
+  }
 
   // AC-C: null goal + null program (or fitness focus + no program) → get-started card.
   if (!program && focusGoal?.kind !== "project") {
