@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma, getDb } from "@/lib/db";
-import { parseDateKey, rotationBaselineNamesForDate, startOfDay } from "@/lib/calendar";
+import {
+  parseDateKey,
+  rotationBaselineNamesForDate,
+  startOfDay,
+  isDateWithinActivePlanWindow,
+} from "@/lib/calendar";
 import { getActiveProgram } from "@/lib/program";
 import { assertBaselineDecisionMade, assertDayTemplateWithinSize, assertValidDayTemplate } from "@/lib/day-template-validation";
 
@@ -27,6 +32,15 @@ export async function upsertDayOverrideFromForm(dateKey: string, form: FormData)
   if (!program) throw new Error("No active plan");
 
   const date = startOfDay(parseDateKey(dateKey));
+
+  // S7: independent server-side check — the date must actually be covered by
+  // the ACTIVE plan's window. The dashboard form only renders this control for
+  // isToday/isFuture dates (already correctly gated per the architecture
+  // critique), but a page render check must not be the ONLY guard against a
+  // stale form, a direct action call, or a future refactor that forgets it.
+  if (!isDateWithinActivePlanWindow(program, date)) {
+    throw new Error("This date is outside the active plan — history can't be edited.");
+  }
 
   let workoutJson: unknown = null;
   if (workoutRaw) {
@@ -103,6 +117,10 @@ export async function clearDayOverride(dateKey: string) {
   const program = await getActiveProgram();
   if (!program) throw new Error("No active plan");
   const date = startOfDay(parseDateKey(dateKey));
+  // S7: same independent server-side coverage check as upsertDayOverrideFromForm.
+  if (!isDateWithinActivePlanWindow(program, date)) {
+    throw new Error("This date is outside the active plan — history can't be edited.");
+  }
   await prisma.planDayOverride.deleteMany({ where: { planId: program.id, date } }); // non-scoped: plan override table
   revalidatePath("/calendar");
   revalidatePath(`/days/${dateKey}`);

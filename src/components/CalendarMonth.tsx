@@ -424,6 +424,12 @@ function DayCell({
       ? "opacity-[0.62] border-t border-dashed border-t-[var(--muted)]"
       : "";
 
+  // REQ-004: archived-plan days are dimmed — the day resolved against a
+  // completed goal's plan (frozen history), not the live one. Applied to the
+  // day-number + marker area specifically (not the whole cell border/ring),
+  // matching the existing muted-opacity idiom above.
+  const archivedClass = inMonth && cell.planSource === "archived" ? "opacity-70" : "";
+
   // REQ-65-4: skipped-day cue — muted ✕ when the day has an acknowledged-skipped
   // workout but no completed training. Placed in the marker row so it occupies the
   // same visual band as legend icons without disturbing the glow/quiet/provisional logic
@@ -457,13 +463,14 @@ function DayCell({
       data-testid={`day-cell-${cell.dateKey}`}
       data-confidence={cell.confidence ?? "out-of-plan"}
       data-conflict={cell.conflict?.kind ?? undefined}
+      data-plan-source={cell.planSource ?? undefined}
       className={`relative min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass} ${confidenceClass}`}
     >
-      <span className={numClass}>{cell.date.getDate()}</span>
+      <span className={`${numClass} ${archivedClass}`}>{cell.date.getDate()}</span>
       {/* Focus markers first, then foreign goal markers, capped at MARKER_CAP total.
           UXR-62-01/02: foreign markers get claim-ring via ForeignGoalMarker.
           UXR-62-03: overflow collapsed to +N chip. */}
-      <span className="flex flex-wrap items-center justify-center gap-0.5">
+      <span className={`flex flex-wrap items-center justify-center gap-0.5 ${archivedClass}`}>
         {shownFocus.map((m) => (
           <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
         ))}

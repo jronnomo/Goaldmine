@@ -23,6 +23,8 @@ import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility, RARITY_TIERS, type RarityTier } from "@/lib/rarity-core";
 import { presentationForGoal } from "@/lib/goal-presentation";
 import { parseCompletionSnapshot, parseGoalRetrospective } from "@/lib/goal-completion-core";
+import { getGoalStory } from "@/lib/goal-story";
+import { GoalStorySection } from "@/components/goal-story/GoalStorySection";
 
 // R3 (binding): tier strings frozen inside a JSON snapshot are untyped —
 // validate against the closed RarityTier set before handing them to ReachMeter
@@ -75,13 +77,23 @@ export default async function GoalDetail({
   const activePlan = goal.plans[0];
 
   // When no active plan, check if a paused plan exists — UXR-62B-04
-  // (active=false IS the paused state; no schema change needed)
+  // (active=false IS the paused state; no schema change needed).
+  // S5 (architecture-blueprint-v2.md, binding): same include shape as the
+  // active-plan query above (revisions + triggerNote) — this is what lets the
+  // Changelog card render with full fidelity for achieved goals too (REQ-006a):
+  // completeGoalCore deactivates every plan on completion, so an achieved
+  // goal's plan is always found here, never in `activePlan`.
   const mostRecentPlan = activePlan
     ? null
     : await db.plan.findFirst({
         where: { goalId: id },
         orderBy: { createdAt: "desc" },
-        select: { id: true, active: true },
+        include: {
+          revisions: {
+            orderBy: { createdAt: "desc" },
+            include: { triggerNote: true },
+          },
+        },
       });
   const isPaused = !!mostRecentPlan; // has plan(s) but none active
   // completeGoalCore deactivates every plan on completion — the Plan card's
@@ -110,8 +122,14 @@ export default async function GoalDetail({
     }));
   }
 
-  const changelog: ChangelogEntry[] = activePlan
-    ? activePlan.revisions.map((r) => ({
+  // S5: the plan whose revisions back the Changelog card — the active plan
+  // when there is one, else the most-recent (paused/deactivated) plan. Same
+  // shape either way (both queries include revisions + triggerNote above), so
+  // achieved goals — which never have an active plan — get the fallback and
+  // the changelog renders with full fidelity instead of going empty.
+  const planForChangelog = activePlan ?? mostRecentPlan;
+  const changelog: ChangelogEntry[] = planForChangelog
+    ? planForChangelog.revisions.map((r) => ({
         id: r.id,
         createdAt: r.createdAt,
         triggerSource: r.triggerSource,
@@ -159,6 +177,11 @@ export default async function GoalDetail({
   // both the trophy header and the celebration mount below.
   const completionSnapshot = isAchieved ? parseCompletionSnapshot(goal.completionSnapshot) : null;
   const retrospective = parseGoalRetrospective(goal.retrospective);
+  // REQ-006b: the Story section is achieved-only (frozen retrospective view) —
+  // getGoalStory is not called for an active goal on this page (it would be
+  // wasted work; the live Readiness/Reach cards below already cover "story so
+  // far" for an active goal).
+  const story = isAchieved ? await getGoalStory(goal.id) : null;
   const reopen = reopenGoal.bind(null, goal.id);
 
   const otherGoals = await db.goal.findMany({
@@ -407,6 +430,20 @@ export default async function GoalDetail({
               <p className="text-sm text-[var(--muted)]">No reflection yet — ask your coach to run a retrospective.</p>
             )}
           </Card>
+
+          {/* S5: full-fidelity changelog restored for achieved goals — reads
+              off planForChangelog (mostRecentPlan fallback), same-tenant page
+              so triggerNote excerpts render (unlike the MCP tool's timeline). */}
+          {planForChangelog && (
+            <Card title={`Changelog${changelog.length > 0 ? ` (${changelog.length})` : ""}`}>
+              <PlanChangelog entries={changelog} goalId={goal.id} />
+            </Card>
+          )}
+
+          {/* REQ-006b: Story section — readiness arc, targets table, baseline
+              arcs, phase timeline (triggerNote-free, S5), hike arc, metric
+              arcs. Omits itself entirely when story is null. */}
+          <GoalStorySection story={story} />
         </>
       ) : (
         <>

@@ -17,10 +17,12 @@ import {
   startOfDay,
   endOfDay,
   userTzWallClockToUTC,
+  isDateWithinActivePlanWindow,
 } from "@/lib/calendar";
 import { createWorkoutCore, type ExerciseInput } from "@/lib/workout-core";
 import { logHikeCore, type LogHikeCoreInput } from "@/lib/hike-core";
 import { getDb } from "@/lib/db";
+import { getActiveProgram } from "@/lib/program";
 import type { RecordSet } from "@/lib/records";
 
 // ---------------------------------------------------------------------------
@@ -155,6 +157,17 @@ export async function skipDay(input: SkipDayInput): Promise<{ id: string }> {
   }
   if (!input.isInPlan) {
     throw new Error("Cannot skip a day with no planned workout.");
+  }
+
+  // S7 (architecture critique D5): the guard above trusts input.isInPlan, a
+  // CLIENT-supplied boolean — SkipDayControl's one caller hardcodes it to
+  // `true` unconditionally, so it was never actually an independent check.
+  // Re-derive server-side against the ACTIVE plan's real window instead of
+  // trusting the client. This is the fix the critique calls for: prefer
+  // server-side re-derivation over merely trusting a tightened prop value.
+  const activeProgram = await getActiveProgram();
+  if (!activeProgram || !isDateWithinActivePlanWindow(activeProgram, parseDateKey(input.dateKey))) {
+    throw new Error("This date is outside the active plan — history can't be edited.");
   }
 
   // DA H2: title includes the template name.

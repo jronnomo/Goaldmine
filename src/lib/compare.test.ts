@@ -154,6 +154,118 @@ describe("computeComparison", () => {
     expect(result.goals[0]!.readiness!.valueB).toBe(50);
   });
 
+  it("achieved goal whose life overlaps [A,B]: included with status/completedDateKey + readiness", async () => {
+    mockGetDb.mockResolvedValue(mkScopedDb({
+      goal: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "goal-achieved",
+            objective: "Summit Mt. Elbert",
+            kind: "fitness",
+            createdAt: new Date("2026-01-01"), // <= cutB
+            status: "achieved",
+            // Noon UTC avoids the midnight-UTC → prior-Denver-day rollover
+            // (see the nutrition TZ test below) — dateKey lands on 2026-05-01.
+            completedAt: new Date("2026-05-01T12:00:00.000Z"), // >= dateA (2026-03-01), <= dateB (2026-06-20)
+            targets: [{ metric: "weightLb", label: "Body weight", units: "lb", direction: "decrease", target: 155, weight: 1 }],
+          },
+        ]),
+      },
+    }));
+    mockComputeReadiness.mockReset();
+    mockComputeReadiness.mockResolvedValue(READINESS_FIXTURE);
+    mockComputeGameState.mockResolvedValue(EMPTY_GAME_STATE_FIXTURE);
+    mockFindManyWorkoutExercise.mockResolvedValue([]);
+
+    const result = await computeComparison("2026-03-01", "2026-06-20");
+
+    expect(result.goals).toHaveLength(1);
+    expect(result.goals[0]!.status).toBe("achieved");
+    expect(result.goals[0]!.completedDateKey).toBe("2026-05-01");
+    expect(result.goals[0]!.readiness).not.toBeNull();
+    expect(result.goals[0]!.readiness!.valueB).toBe(74);
+  });
+
+  it("achieved goal completed BEFORE dateA: excluded (noise outside its life)", async () => {
+    mockGetDb.mockResolvedValue(mkScopedDb({
+      goal: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "goal-old",
+            objective: "Old finished goal",
+            kind: "fitness",
+            createdAt: new Date("2025-01-01"),
+            status: "achieved",
+            completedAt: new Date("2026-02-01"), // before dateA (2026-03-01)
+            targets: [{ metric: "weightLb", label: "Body weight", units: "lb", direction: "decrease", target: 155, weight: 1 }],
+          },
+        ]),
+      },
+    }));
+    mockComputeReadiness.mockReset();
+    mockComputeReadiness.mockResolvedValue(READINESS_FIXTURE);
+    mockComputeGameState.mockResolvedValue(EMPTY_GAME_STATE_FIXTURE);
+    mockFindManyWorkoutExercise.mockResolvedValue([]);
+
+    const result = await computeComparison("2026-03-01", "2026-06-20");
+
+    expect(result.goals).toHaveLength(0);
+    expect(mockComputeReadiness).not.toHaveBeenCalled();
+  });
+
+  it("achieved goal created AFTER dateB: excluded (noise outside its life)", async () => {
+    mockGetDb.mockResolvedValue(mkScopedDb({
+      goal: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "goal-future",
+            objective: "Future-window goal",
+            kind: "fitness",
+            createdAt: new Date("2026-07-01"), // after dateB (2026-06-20)
+            status: "achieved",
+            completedAt: new Date("2026-07-15"),
+            targets: [{ metric: "weightLb", label: "Body weight", units: "lb", direction: "decrease", target: 155, weight: 1 }],
+          },
+        ]),
+      },
+    }));
+    mockComputeReadiness.mockReset();
+    mockComputeReadiness.mockResolvedValue(READINESS_FIXTURE);
+    mockComputeGameState.mockResolvedValue(EMPTY_GAME_STATE_FIXTURE);
+    mockFindManyWorkoutExercise.mockResolvedValue([]);
+
+    const result = await computeComparison("2026-03-01", "2026-06-20");
+
+    expect(result.goals).toHaveLength(0);
+    expect(mockComputeReadiness).not.toHaveBeenCalled();
+  });
+
+  it("active goals unchanged: no status field needed, always included regardless of window", async () => {
+    mockGetDb.mockResolvedValue(mkScopedDb({
+      goal: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "goal-active",
+            objective: "Still going",
+            kind: "fitness",
+            createdAt: new Date("2026-07-01"), // after dateB — would be excluded if this were "achieved"
+            targets: [{ metric: "weightLb", label: "Body weight", units: "lb", direction: "decrease", target: 155, weight: 1 }],
+          },
+        ]),
+      },
+    }));
+    mockComputeReadiness.mockReset();
+    mockComputeReadiness.mockResolvedValue(READINESS_FIXTURE);
+    mockComputeGameState.mockResolvedValue(EMPTY_GAME_STATE_FIXTURE);
+    mockFindManyWorkoutExercise.mockResolvedValue([]);
+
+    const result = await computeComparison("2026-03-01", "2026-06-20");
+
+    expect(result.goals).toHaveLength(1);
+    expect(result.goals[0]!.status).toBeUndefined();
+    expect(result.goals[0]!.completedDateKey).toBeNull();
+  });
+
   it("time-kind exercise: best-as-of is the MINIMUM duration <= cutoff", async () => {
     mockGetDb.mockResolvedValue(mkScopedDb());
     mockComputeReadiness.mockReset();
