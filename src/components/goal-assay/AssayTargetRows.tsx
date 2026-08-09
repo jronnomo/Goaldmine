@@ -15,10 +15,12 @@
 // playFlourish adds the real `.assay-rise` class post-hydration. See
 // AssayFlourish.tsx's header for the full contract.
 //
-// a11y: the ✓/· glyph carries its meaning via `aria-label` (met/not met),
-// mirroring the existing StoryTargetsTable.tsx idiom, rather than being
-// aria-hidden — unlike the hero's purely decorative glyphs, this symbol IS
-// the information (color alone must never be the only channel).
+// a11y: the ✓/open-circle marker carries its meaning via `aria-label` (met/
+// not met) on the wrapping span, mirroring the existing StoryTargetsTable.tsx
+// idiom, rather than being aria-hidden — unlike the hero's purely decorative
+// glyphs, this symbol IS the information (color alone must never be the only
+// channel). The open circle's own `aria-hidden` is fine since the span above
+// it already speaks for it.
 //
 // testIDs: goal-assay-what-moved (block) · goal-assay-row-{n} (each row).
 
@@ -88,11 +90,21 @@ export function AssayTargetRows({ targets }: { targets: GoalCompletionSnapshot["
               className="flex items-center gap-3 text-sm"
             >
               <span
-                className="w-4 shrink-0 text-center"
+                className="inline-flex w-4 shrink-0 items-center justify-center"
                 aria-label={row.target.met ? "target met" : "target not met"}
                 style={{ color: row.target.met ? "var(--success)" : "var(--muted)" }}
               >
-                {row.target.met ? "✓" : "·"}
+                {row.target.met ? (
+                  "✓"
+                ) : (
+                  // Hollow (open) circle — "not done" in the Bullseye's own
+                  // vocabulary, mirrored from completion-card.tsx's TargetRow
+                  // unmet marker (was a bare "·" glyph, easy to miss at
+                  // this size and inconsistent with the shareable card).
+                  <svg width={10} height={10} viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx={12} cy={12} r={9} fill="none" stroke="currentColor" strokeWidth={2.5} />
+                  </svg>
+                )}
               </span>
               <span className="min-w-0 flex-1 truncate">{row.target.label}</span>
               <span
