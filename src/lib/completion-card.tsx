@@ -111,14 +111,31 @@ function TargetRow({
         style={{
           display: "flex",
           width: 34,
-          fontSize: 30,
-          fontFamily: tok.fontSans,
-          fontWeight: tok.fontWeight.semibold,
-          color: target.met ? tok.success : tok.mutedText,
-          lineHeight: 1,
+          height: 30,
+          alignItems: "center",
+          justifyContent: "center",
         }}
       >
-        {target.met ? "✓" : "·"}
+        {target.met ? (
+          // Check mark — stroked path, no glyph. Satori/resvg render SVG
+          // natively; the loaded fonts (Geist/DMSerifDisplay) lack U+2713,
+          // which rendered as a tofu box (▯) in the shipped card.
+          <svg width={26} height={26} viewBox="0 0 24 24">
+            <path
+              d="M4.5 12.5L9.5 17.5L19.5 6.5"
+              fill="none"
+              stroke={tok.success}
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          // Unmet-target marker — filled dot, muted color.
+          <svg width={26} height={26} viewBox="0 0 24 24">
+            <circle cx={12} cy={12} r={4} fill={tok.mutedText} />
+          </svg>
+        )}
       </div>
       <div
         style={{
