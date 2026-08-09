@@ -285,6 +285,9 @@ model Goal {
   kind                String    @default("fitness") // fitness | project — determines which MCP tool pack Claude uses
   githubRepo          String? // "owner/repo" for project goals; null otherwise
   githubProjectNumber Int? // GitHub Projects v2 number for project goals; null otherwise
+  completedAt         DateTime? // set by completeGoalCore; null while active
+  completionSnapshot  Json?     // GoalCompletionSnapshot v1 — see src/lib/goal-completion-core.ts
+  retrospective       Json?     // GoalRetrospective v1 — post-goal reflection, survives reopen
   userId              String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -302,6 +305,7 @@ model Goal {
   @@index([kind])
   @@index([userId, isFocus])
   @@index([userId, active])
+  @@index([userId, status])
 }
 
 model ScheduledItem {
