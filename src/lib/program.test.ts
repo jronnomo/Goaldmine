@@ -194,6 +194,56 @@ describe("pickProgramForDate (pure)", () => {
     expect(result?.id).toBe("plan-active-flag");
   });
 
+  // ─── SMOKE-3: achieved-goal plans outrank paused active-goal plans ────────
+  //
+  // Live repro: a date can be double-covered by two archived candidates
+  // belonging to different goals — an earlier-started plan whose goal was
+  // later ACHIEVED (the program actually followed through that date), and a
+  // later-started plan whose goal is still active but was paused/dormant
+  // since creation. Pre-fix ordering (active desc, then startedOn desc alone)
+  // picked the later-started paused plan — wrong. These pin the new tier
+  // between `active` and `startedOn desc`.
+
+  it("SMOKE-3: achieved-goal plan (earlier start) outranks a later-started plan whose goal is still active/paused", () => {
+    const achievedPlan = candidate({
+      id: "plan-achieved",
+      startedOn: parseDateKey("2026-01-01"),
+      goalStatus: "achieved",
+    });
+    const pausedActiveGoalPlan = candidate({
+      id: "plan-paused",
+      startedOn: parseDateKey("2026-01-10"),
+      goalStatus: "active",
+    });
+    const result = pickProgramForDate(
+      [achievedPlan, pausedActiveGoalPlan],
+      "2026-01-15",
+      "2026-02-01",
+      null,
+    );
+    expect(result?.id).toBe("plan-achieved");
+  });
+
+  it("SMOKE-3: two achieved-goal plans both covering → startedOn desc still decides", () => {
+    const olderAchieved = candidate({
+      id: "plan-achieved-older",
+      startedOn: parseDateKey("2026-01-01"),
+      goalStatus: "achieved",
+    });
+    const newerAchieved = candidate({
+      id: "plan-achieved-newer",
+      startedOn: parseDateKey("2026-01-10"),
+      goalStatus: "achieved",
+    });
+    const result = pickProgramForDate(
+      [olderAchieved, newerAchieved],
+      "2026-01-15",
+      "2026-02-01",
+      null,
+    );
+    expect(result?.id).toBe("plan-achieved-newer");
+  });
+
   it("window boundary: the startedOn day itself is covered", () => {
     const p = candidate({ startedOn: parseDateKey("2026-01-01"), template: template(4) });
     const result = pickProgramForDate([p], "2026-01-01", "2026-06-01", null);
