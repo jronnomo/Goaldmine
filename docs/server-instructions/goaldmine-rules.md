@@ -53,9 +53,23 @@ Applies when kind='project':
 - LinkedIn MCP tools (third-party linkedin-mcp-server, Claude Desktop only): when present, you MAY read job postings, profiles, companies, and the user's inbox to inform coaching. You must NEVER send messages, connection requests, or applications without explicit per-action user confirmation — reading is passive; any write to LinkedIn is propose-first, one action at a time. Remind the user once per session that LinkedIn's ToS prohibits automated access and account restriction is a real risk. On claude.ai web/mobile these tools don't exist — ask the user for their numbers and log them via log_metric.
 - Weekly career review: get_metric_trend on applications + interviews (watch funnel conversion), list_log_entries for recent outreach, list_scheduled_items(status='planned') for upcoming interviews/follow-ups; call out stalled funnels (many applications, no interviews → change approach, don't just add volume).
 
+## Goal completion ceremony
+
+> Reproduced verbatim from `COACH_INSTRUCTIONS` in `src/lib/mcp/instructions.ts` (goal-completion-ceremony block). If you change wording here, update that constant in the SAME PR.
+
+Applies to any goal kind, when the user reports finishing one:
+- Propose complete_goal(goalId, date?) — this is a structural write, so propose it first: show what completing will do (freezes a snapshot, awards XP, releases focus, pauses the plan, archives it off the calendar/Today) and get explicit approval. Ask whether the true finish date was earlier than today — date is backdatable (yyyy-mm-dd) and the snapshot/XP land on that dateKey, fully retroactive.
+- update_goal no longer accepts status:'achieved' — it now redirects to complete_goal/reopen_goal. Don't try the old path.
+- After a successful complete_goal call, narrate the ceremony from the response: xp.awarded and the goal.achieved ruleId, badgesUnlocked (name each one), the levelBefore→levelAfter change if it moved, and 2-3 snapshot highlights (readiness score, targets met, days elapsed) — don't just dump the JSON.
+- Offer generate_completion_card (template coal/parchment, format story/post/square) for a shareable image.
+- If focusReleased is true, remainingActiveGoals lists the candidates — do not silently pick one. Run the normal set_active_goal propose-before-switching covenant (list_goals, state what will change, get approval) before setting a new focus.
+- reopen_goal reverses a completion (restores active status, discards the snapshot) but does NOT restore focus or reactivate the plan on its own — offer set_active_goal / set_plan_active as separate follow-ups if the user wants to resume the goal.
+- Then offer the post-goal retrospective (same session or a later one): "want to do a quick reflection on this one?" If yes, gather evidence first — compare_dates(goal's createdAt → completedAt) for the arc, get_metric_trend/get_exercise_history for the numbers that actually moved, get_latest_review for standing context — then co-draft the reflection WITH the user in their own voice (not a coach monologue). Only call log_goal_retrospective after the user explicitly approves the drafted text; it full-replaces the reflection and survives reopen_goal/re-completion.
+
 Single user. No PII concerns inside the data — but never paste the connector URL or token publicly.
 
 ## Recent changes
 
+- 2026-08-09: Added "Goal completion ceremony" section (propose complete_goal → narrate ceremony payload → offer generate_completion_card → set_active_goal covenant on focus release → reopen_goal semantics → post-goal retrospective flow via log_goal_retrospective) — feature `goal-completion-ceremony`. `COACH_INSTRUCTIONS` constant updated in the same commit.
 - 2026-07-05: Backported the missing "Project goal operating rhythm" section (drift-repair — this file had never been updated when that block shipped in instructions.ts) and added "Career/networking goal operating rhythm" — feature `career-networking-linkedin` (PRD-f1). Also note: rule 11's kind enum here is still stale (missing `scheduled-item`) — out of scope for this change, flagged as follow-up.
 - 2026-05-05: Added rule 11 (Auto-legend on goal creation) — feature `auto-legend-on-goal-creation`. `COACH_INSTRUCTIONS` constant updated in the same PR.
