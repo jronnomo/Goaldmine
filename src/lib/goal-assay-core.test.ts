@@ -12,6 +12,7 @@ import {
   shouldBurnToken,
   readinessSeriesHint,
   READINESS_FRAMING,
+  ZERO_TARGET_EVIDENCE_SENTENCE,
   type CeremonyTierInputs,
   type HeroStatSnapshotInputs,
 } from "@/lib/goal-assay-core";
@@ -362,5 +363,13 @@ describe("readinessSeriesHint — resolves the readinessSeries===null ambiguity 
 describe("READINESS_FRAMING", () => {
   it("is the exact §8.5 framing noun — never implies raw fitness", () => {
     expect(READINESS_FRAMING).toBe("weighted progress across your targets");
+  });
+});
+
+describe("ZERO_TARGET_EVIDENCE_SENTENCE — REQ-003 Marker-floor WHAT MOVED copy", () => {
+  it("is a non-empty, non-apologetic honest sentence", () => {
+    expect(ZERO_TARGET_EVIDENCE_SENTENCE.length).toBeGreaterThan(0);
+    expect(ZERO_TARGET_EVIDENCE_SENTENCE).toMatch(/no numeric targets/i);
+    expect(ZERO_TARGET_EVIDENCE_SENTENCE).not.toMatch(/sorry|amazing|great job/i);
   });
 });
