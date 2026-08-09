@@ -17,10 +17,17 @@ vi.mock("@/lib/readiness", () => ({
   computeReadinessSeriesSampled: vi.fn(),
 }));
 vi.mock("@/lib/rarity", () => ({ computeGoalFeasibility: vi.fn() }));
+// REQ-008/V5: completeGoalCore now calls computeGameStateFresh itself (moved
+// here from tools.ts's complete_goal handler) for the pre/post badge/level
+// diff it freezes onto the snapshot's `ceremony` field. Mocked here the same
+// way leaky-reads.test.ts mocks it — this file is testing goal-completion.ts's
+// OWN transaction/ordering/guard logic, not engine.ts's real DB fan-out.
+vi.mock("@/lib/game/engine", () => ({ computeGameStateFresh: vi.fn() }));
 
 import { getDb } from "@/lib/db";
 import { computeReadiness, computeReadinessSeriesSampled } from "@/lib/readiness";
 import { computeGoalFeasibility } from "@/lib/rarity";
+import { computeGameStateFresh } from "@/lib/game/engine";
 import { Prisma } from "@/generated/prisma/client";
 import { dateKey } from "@/lib/calendar";
 import {
@@ -38,6 +45,8 @@ const mockComputeReadiness = computeReadiness as any;
 const mockComputeReadinessSeriesSampled = computeReadinessSeriesSampled as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockComputeGoalFeasibility = computeGoalFeasibility as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockComputeGameStateFresh = computeGameStateFresh as any;
 
 const FEASIBILITY_FIXTURE = {
   goalId: "g1",
@@ -76,6 +85,11 @@ function makeFakeDb(overrides: Record<string, any> = {}) {
     goal: {
       findUnique: vi.fn().mockResolvedValue(baseGoalRow()),
       findMany: vi.fn().mockResolvedValue([]),
+      // The post-tx best-effort ceremony write (REQ-008/V5) — a SEPARATE
+      // top-level db.goal.update call, outside $transaction. Defaults to a
+      // resolved value so tests that don't care about it (most of them)
+      // don't have to stub it.
+      update: vi.fn().mockResolvedValue({}),
     },
     plan: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -92,6 +106,10 @@ beforeEach(() => {
   // don't have to stub it — computeCompletionSnapshot only calls it inside
   // the targets.length>0 branch.
   mockComputeReadinessSeriesSampled.mockResolvedValue([]);
+  // Sane default badge/level state (REQ-008/V5) — completeGoalCore calls
+  // this twice (pre-tx, post-tx); default to "nothing changed" so tests
+  // that don't care about the ceremony diff don't have to stub it.
+  mockComputeGameStateFresh.mockResolvedValue({ level: 1, badges: [] });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -335,6 +353,9 @@ describe("completeGoalCore — transaction + snapshot ordering", () => {
         // isFocus:true so we can assert focusReleased reflects the PRE-mutation value.
         findUnique: vi.fn().mockResolvedValue(baseGoalRow({ isFocus: true })),
         findMany: vi.fn().mockResolvedValue([{ id: "g2", objective: "Other goal", kind: "fitness" }]),
+        // The post-tx best-effort ceremony write (REQ-008/V5) — see makeFakeDb's default; re-declared
+        // per-suite since this describe's `goal` override replaces the default object wholesale.
+        update: vi.fn().mockResolvedValue({}),
       },
       $transaction: vi.fn().mockImplementation(async (cb) => cb(txMock)),
     });
@@ -379,6 +400,159 @@ describe("completeGoalCore — transaction + snapshot ordering", () => {
     const feasibilityCallOrder = mockComputeGoalFeasibility.mock.invocationCallOrder[0];
     const updateCallOrder = txMock.goal.update.mock.invocationCallOrder[0];
     expect(feasibilityCallOrder).toBeLessThan(updateCallOrder);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// completeGoalCore — ceremony capture (REQ-008/V5): the badge/level diff and
+// its two-step write (tx writes snapshot sans ceremony; a second, best-effort
+// db.goal.update merges `ceremony` in). See goal-completion.ts's comments on
+// completeGoalCore for the full design rationale.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("completeGoalCore — ceremony capture (REQ-008/V5)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fakeDb: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let txMock: any;
+
+  function committedGoal() {
+    return {
+      id: "g1",
+      objective: "Summit Mt. Elbert",
+      kind: "fitness",
+      status: "achieved",
+      completedAt: COMPLETED_AT,
+      isFocus: false,
+      active: false,
+      createdAt: CREATED_AT,
+      targetDate: null,
+    };
+  }
+
+  beforeEach(() => {
+    txMock = {
+      goal: { update: vi.fn().mockResolvedValue(committedGoal()) },
+      plan: {
+        findMany: vi.fn().mockResolvedValue([]),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    fakeDb = makeFakeDb({
+      goal: {
+        findUnique: vi.fn().mockResolvedValue(baseGoalRow()),
+        findMany: vi.fn().mockResolvedValue([]),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      $transaction: vi.fn().mockImplementation(async (cb) => cb(txMock)),
+    });
+    mockGetDb.mockResolvedValue(fakeDb);
+  });
+
+  it("calls computeGameStateFresh exactly twice: once before the transaction, once after it commits", async () => {
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({ level: 3, badges: [] }) // pre-state
+      .mockResolvedValueOnce({ level: 3, badges: [] }); // post-state
+
+    await completeGoalCore("g1", COMPLETED_AT);
+
+    expect(mockComputeGameStateFresh).toHaveBeenCalledTimes(2);
+    const preCallOrder = mockComputeGameStateFresh.mock.invocationCallOrder[0];
+    const postCallOrder = mockComputeGameStateFresh.mock.invocationCallOrder[1];
+    const txUpdateCallOrder = txMock.goal.update.mock.invocationCallOrder[0];
+    // Pre-state precedes the transaction's write; post-state follows it —
+    // the badge predicates for "post" need the just-committed achieved row.
+    expect(preCallOrder).toBeLessThan(txUpdateCallOrder);
+    expect(postCallOrder).toBeGreaterThan(txUpdateCallOrder);
+  });
+
+  it("diffs badges by id (newly-unlocked only) and reports levelBefore/levelAfter on result.ceremony", async () => {
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({
+        level: 3,
+        badges: [
+          { def: { id: "already-unlocked", name: "Old Badge" }, dateKey: "2020-01-01" },
+          { def: { id: "goal-first", name: "First Summit" }, dateKey: null },
+        ],
+      })
+      .mockResolvedValueOnce({
+        level: 4,
+        badges: [
+          { def: { id: "already-unlocked", name: "Old Badge" }, dateKey: "2020-01-01" },
+          { def: { id: "goal-first", name: "First Summit" }, dateKey: "2020-02-15" },
+        ],
+      });
+
+    const result = await completeGoalCore("g1", COMPLETED_AT);
+
+    expect(result.ceremony).toEqual({
+      badgesUnlocked: [{ id: "goal-first", name: "First Summit" }],
+      levelBefore: 3,
+      levelAfter: 4,
+    });
+  });
+
+  it("tx.goal.update (inside the transaction) writes the snapshot WITHOUT ceremony", async () => {
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({ level: 3, badges: [] })
+      .mockResolvedValueOnce({ level: 4, badges: [] });
+
+    await completeGoalCore("g1", COMPLETED_AT);
+
+    const txWrittenSnapshot = txMock.goal.update.mock.calls[0][0].data.completionSnapshot;
+    expect(Object.prototype.hasOwnProperty.call(txWrittenSnapshot, "ceremony")).toBe(false);
+  });
+
+  it("a SECOND db.goal.update (outside the transaction) merges ceremony into the persisted snapshot", async () => {
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({ level: 3, badges: [] })
+      .mockResolvedValueOnce({ level: 4, badges: [] });
+
+    await completeGoalCore("g1", COMPLETED_AT);
+
+    expect(fakeDb.goal.update).toHaveBeenCalledTimes(1);
+    const call = fakeDb.goal.update.mock.calls[0][0];
+    expect(call.where).toEqual({ id: "g1" });
+    expect(call.data.completionSnapshot.ceremony).toEqual({
+      badgesUnlocked: [],
+      levelBefore: 3,
+      levelAfter: 4,
+    });
+    // The second write happens strictly after the transaction's own write.
+    const txCallOrder = txMock.goal.update.mock.invocationCallOrder[0];
+    const secondCallOrder = fakeDb.goal.update.mock.invocationCallOrder[0];
+    expect(secondCallOrder).toBeGreaterThan(txCallOrder);
+  });
+
+  it("result.snapshot mirrors the persisted (enriched) snapshot on the happy path", async () => {
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({ level: 3, badges: [] })
+      .mockResolvedValueOnce({ level: 4, badges: [] });
+
+    const result = await completeGoalCore("g1", COMPLETED_AT);
+
+    expect(result.snapshot.ceremony).toEqual({
+      badgesUnlocked: [],
+      levelBefore: 3,
+      levelAfter: 4,
+    });
+  });
+
+  it("failure isolation: a throwing second write does NOT fail completeGoalCore — completion still succeeds, ceremony diff still returned, persisted snapshot just omits it", async () => {
+    fakeDb.goal.update.mockRejectedValue(new Error("boom — DB hiccup on the best-effort write"));
+    mockComputeGameStateFresh
+      .mockResolvedValueOnce({ level: 3, badges: [] })
+      .mockResolvedValueOnce({ level: 4, badges: [] });
+
+    const result = await completeGoalCore("g1", COMPLETED_AT);
+
+    // The completion itself succeeded (goal row, plan deactivation, etc.)...
+    expect(result.goal.status).toBe("achieved");
+    // ...the diff is still returned for the immediate MCP response...
+    expect(result.ceremony).toEqual({ badgesUnlocked: [], levelBefore: 3, levelAfter: 4 });
+    // ...but the returned (== persisted) snapshot has NO ceremony field —
+    // it mirrors exactly what's in the DB (only the tx's plain write landed).
+    expect(Object.prototype.hasOwnProperty.call(result.snapshot, "ceremony")).toBe(false);
   });
 });
 

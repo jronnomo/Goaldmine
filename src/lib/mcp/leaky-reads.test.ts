@@ -507,12 +507,20 @@ describe("update_goal — status:'achieved' redirect (REQ-010)", () => {
   });
 });
 
-describe("complete_goal — ceremony payload (REQ-009)", () => {
+describe("complete_goal — ceremony payload (REQ-009, updated for REQ-008/V5)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns the full ceremony payload shape with the pre/post game-state diff", async () => {
+  // REQ-008/V5 moved the pre/post computeGameStateFresh() diff OUT of this
+  // handler and INTO completeGoalCore (goal-completion.ts) — the mocked
+  // module boundary shifts with it: completeGoalCore's mock resolution now
+  // supplies `ceremony` directly (as the real implementation would compute
+  // it internally), and mockComputeGameStateFresh is no longer exercised by
+  // this handler at all (the handler never imports/calls it anymore — see
+  // goal-completion.test.ts for real-implementation coverage of the diff
+  // itself, including its two-step persisted-snapshot write).
+  it("returns the full ceremony payload shape, reading the badge/level diff off completeGoalCore's result", async () => {
     const snapshot = {
       version: 1 as const,
       completedDateKey: "2026-08-02",
@@ -530,6 +538,11 @@ describe("complete_goal — ceremony payload (REQ-009)", () => {
       plan: { planId: "plan-1", weeksTotal: 12, weeksElapsed: 12 },
       xpBasis: { weeks: 12, targetsMet: 4 },
       xpAwardedAtCompletion: 650,
+      ceremony: {
+        badgesUnlocked: [{ id: "goal-first", name: "First Summit" }],
+        levelBefore: 3,
+        levelAfter: 4,
+      },
     };
 
     vi.mocked(mockCompleteGoalCore).mockResolvedValue({
@@ -545,21 +558,15 @@ describe("complete_goal — ceremony payload (REQ-009)", () => {
         targetDate: new Date("2026-08-02"),
       },
       snapshot,
+      ceremony: {
+        badgesUnlocked: [{ id: "goal-first", name: "First Summit" }],
+        levelBefore: 3,
+        levelAfter: 4,
+      },
       focusReleased: true,
       planDeactivatedIds: ["plan-1"],
       remainingActiveGoals: [{ id: "goal-2", objective: "Shred", kind: "fitness" }],
     });
-
-    // Pre-state (before completeGoalCore) vs post-state (after) — badge/level diff source.
-    vi.mocked(mockComputeGameStateFresh)
-      .mockResolvedValueOnce({
-        level: 3,
-        badges: [{ def: { id: "goal-first", name: "First Summit" }, dateKey: null }],
-      })
-      .mockResolvedValueOnce({
-        level: 4,
-        badges: [{ def: { id: "goal-first", name: "First Summit" }, dateKey: "2026-08-02" }],
-      });
 
     const handler = fakeServer.getHandler("complete_goal");
     const result = (await handler({ goalId: "goal-1", date: "2026-08-02" })) as {
@@ -571,6 +578,8 @@ describe("complete_goal — ceremony payload (REQ-009)", () => {
     const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
 
     // Ceremony payload keys per PRD §4.2 — the coach narrates from these.
+    // Unchanged from before REQ-008/V5 — this is the "byte-identical
+    // response shape" this migration is required to preserve.
     for (const key of [
       "goal",
       "snapshot",
@@ -594,10 +603,12 @@ describe("complete_goal — ceremony payload (REQ-009)", () => {
     expect((payload.goal as { completedAtDateKey: string }).completedAtDateKey).toBe("2026-08-02");
     expect(payload.focusReleased).toBe(true);
     expect(payload.remainingActiveGoals).toEqual([{ id: "goal-2", objective: "Shred", kind: "fitness" }]);
+    // message still narrates the level-up the same way it always did.
+    expect(payload.message).toContain("leveled up to 4");
 
-    // computeGameStateFresh, never the cached computeGameState — see the cache
-    // gotcha in architecture-blueprint-v2.md.
-    expect(mockComputeGameStateFresh).toHaveBeenCalledTimes(2);
+    // The handler no longer calls computeGameStateFresh itself — that call
+    // site moved into completeGoalCore (now fully mocked above).
+    expect(mockComputeGameStateFresh).not.toHaveBeenCalled();
   });
 });
 
