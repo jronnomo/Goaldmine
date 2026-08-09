@@ -350,8 +350,8 @@ describe("shouldBurnToken", () => {
 // ─────────────────────────────────────────────────────────
 
 describe("readinessSeriesHint — resolves the readinessSeries===null ambiguity (§8.5)", () => {
-  it("zero-target goal gets the honest 'nothing to plot' copy, not the misleading reopen hint", () => {
-    expect(readinessSeriesHint(0)).toMatch(/no numeric targets/i);
+  it("zero-target goal gets the honest 'no measurable targets' copy, not the misleading reopen hint", () => {
+    expect(readinessSeriesHint(0)).toMatch(/no measurable targets/i);
     expect(readinessSeriesHint(0)).not.toMatch(/reopen/i);
   });
 

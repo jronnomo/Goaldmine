@@ -141,6 +141,20 @@ describe("AssayMonument — Summit fixture (full stack incl. ceremony)", () => {
     expect(html).toContain("+3 more");
   });
 
+  it("caps the ANIMATED rows at 4 independently of the 6-row display cap (QA M3 / UXR-GCU-27 fold rule)", () => {
+    // Rows 0-3 (the first 4) are armed for playFlourish via the data-assay
+    // marker; rows 4-5 still DISPLAY (testid present) but render settled
+    // from the start (no marker) — never a delayed/invisible row past the
+    // fold.
+    for (const i of [0, 1, 2, 3]) {
+      expect(html).toContain(`data-assay="row-${i}"`);
+    }
+    for (const i of [4, 5]) {
+      expect(html).toContain(`data-testid="goal-assay-row-${i}"`);
+      expect(html).not.toContain(`data-assay="row-${i}"`);
+    }
+  });
+
   it("renders the readiness traversal with the honest framing caption", () => {
     expect(html).toContain("8 →");
     expect(html).toContain("89");

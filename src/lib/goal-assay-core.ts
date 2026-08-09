@@ -177,9 +177,14 @@ export function heroStatPrecedence(snapshot: HeroStatSnapshotInputs): HeroStat {
  *  targets count as 0 at full weight — never write copy implying fitness. */
 export const READINESS_FRAMING = "weighted progress across your targets";
 
-const ZERO_TARGET_ARC_HINT =
-  "This goal had no numeric targets to track — there's nothing to plot.";
-const LEGACY_ARC_HINT = "Reopen and re-complete this goal to capture its arc.";
+// These two strings are byte-identical to the copy StoryReadinessCard.tsx
+// has always rendered (GoalStorySection.test.ts asserts the exact text) —
+// this module's constants were kept in sync with the LIVE UI copy, not the
+// other way around, per QA finding L3 (readinessSeriesHint was dead code;
+// StoryReadinessCard hand-duplicated an equivalent-but-different string).
+const ZERO_TARGET_ARC_HINT = "No measurable targets were set on this goal.";
+const LEGACY_ARC_HINT =
+  "Readiness arc not captured for this completion — reopen and re-complete the goal to record it.";
 
 /**
  * §2.2 Rule C — the Marker-tier floor case: "WHAT MOVED collapses to one

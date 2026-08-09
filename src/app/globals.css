@@ -605,8 +605,14 @@ input::placeholder, textarea::placeholder {
                            "3 gold rings break outward"). Combine with a
                            size modifier `.assay-sheet-ring--1/2/3` and set
                            `--assay-delay` to 0/120/240ms⚠ (120ms stagger,
-                           per phase-a). Same will-change/animationend
-                           contract as `.assay-ring`.
+                           per phase-a). UNLIKE `.assay-ring`, this class
+                           carries NO `will-change` of its own (QA finding
+                           M1 — this class is present in SSR markup from
+                           first paint, inside an always-mounted-but-closed
+                           dialog, so a class-level promotion would be
+                           permanent). SummitSheet.tsx arms/clears
+                           `style.willChange` imperatively instead, keyed
+                           off the dialog's own open/close transition.
      .assay-rosette-ring   Sheet-only, reduced-motion ONLY (never remove
                            manually — the `@media` block below handles
                            visibility): three static hairline circles at
@@ -843,7 +849,17 @@ input::placeholder, textarea::placeholder {
   opacity: 0; /* same designed exception as .assay-ring — resting state matches the keyframe's final (invisible) frame */
   transform: translate(-50%, -50%) scale(var(--assay-ring-scale, 3.6));
   animation: assay-sheet-ring-break 420ms cubic-bezier(0.16, 1, 0.3, 1) var(--assay-delay, 0ms) both; /* ⚠ 380–460ms */
-  will-change: transform, opacity; /* same animationend-removal contract as .assay-ring */
+  /* NO standing `will-change` here (QA finding M1) — unlike .assay-ring
+     (added dynamically by playFlourish only when the monument actually
+     animates), this class is baked into the Sheet's SSR markup from first
+     paint and the <dialog> stays mounted-but-closed for the lifetime of
+     every achieved-goal page view (V4's imperative idiom) — a CSS-level
+     will-change here would pin a compositor layer on every view, whether
+     or not the ceremony ever opens. SummitSheet.tsx instead arms
+     `style.willChange` imperatively, JS-side, the moment the dialog's
+     `open` attribute actually flips (mirroring .assay-ring's
+     add-with-the-animation/remove-on-animationend contract, just applied
+     via the dialog's open-transition instead of via classList). */
 }
 
 /* Three launch-radius size steps, shared by the animated ring and its

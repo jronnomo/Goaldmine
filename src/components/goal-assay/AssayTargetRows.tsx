@@ -29,6 +29,17 @@ import type { CSSProperties } from "react";
 /** Report §2.1 item 6 / §5.1: capped at 6, "+N more" beyond that. */
 const ROW_CAP = 6;
 
+/** UXR-GCU-27 fold rule (binding, not a tuning knob, per report §5.2) —
+ *  cap the ANIMATED rows independently of the 6-row display cap above.
+ *  `fill-mode: both` leaves an un-armed row invisible/displaced until its
+ *  `--assay-delay` elapses; a user who lands and immediately scrolls past
+ *  the fold would otherwise land on blank rows for whichever ones are
+ *  still mid-delay. Rows at/after this index render fully settled from
+ *  the first paint (no `data-assay` marker, so playFlourish never touches
+ *  them) — only the display cap (ROW_CAP) governs whether they show up at
+ *  all. ⚠[3–5], using the range's midpoint (4). */
+const ANIMATED_ROW_CAP = 4;
+
 /** §4.3 B2.1 starts at 360ms; ⚠32-48ms per-row stagger, using the range's
  *  midpoint (40ms) to match globals.css's own disc-stagger comment style. */
 const ROW_DELAY_BASE_MS = 360;
@@ -66,30 +77,33 @@ export function AssayTargetRows({ targets }: { targets: GoalCompletionSnapshot["
     <div data-testid="goal-assay-what-moved" className="flex flex-col gap-2">
       {header}
       <ul className="flex flex-col gap-1.5">
-        {rows.map((row, i) => (
-          <li
-            key={row.target.metric}
-            data-testid={`goal-assay-row-${i}`}
-            data-assay={`row-${i}`}
-            style={rowDelayStyle(i)}
-            className="flex items-center gap-3 text-sm"
-          >
-            <span
-              className="w-4 shrink-0 text-center"
-              aria-label={row.target.met ? "target met" : "target not met"}
-              style={{ color: row.target.met ? "var(--success)" : "var(--muted)" }}
+        {rows.map((row, i) => {
+          const animated = i < ANIMATED_ROW_CAP;
+          return (
+            <li
+              key={row.target.metric}
+              data-testid={`goal-assay-row-${i}`}
+              data-assay={animated ? `row-${i}` : undefined}
+              style={animated ? rowDelayStyle(i) : undefined}
+              className="flex items-center gap-3 text-sm"
             >
-              {row.target.met ? "✓" : "·"}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{row.target.label}</span>
-            <span
-              className="shrink-0 text-right"
-              style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}
-            >
-              {row.formattedRange}
-            </span>
-          </li>
-        ))}
+              <span
+                className="w-4 shrink-0 text-center"
+                aria-label={row.target.met ? "target met" : "target not met"}
+                style={{ color: row.target.met ? "var(--success)" : "var(--muted)" }}
+              >
+                {row.target.met ? "✓" : "·"}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{row.target.label}</span>
+              <span
+                className="shrink-0 text-right"
+                style={{ color: "var(--muted)", fontVariantNumeric: "tabular-nums" }}
+              >
+                {row.formattedRange}
+              </span>
+            </li>
+          );
+        })}
       </ul>
       {hiddenCount > 0 && (
         <p className="text-xs" style={{ color: "var(--muted)" }}>
