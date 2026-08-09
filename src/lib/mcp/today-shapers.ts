@@ -67,7 +67,7 @@ export type ProjectTodayPayload = Omit<ResolvedDay, "todayTask"> & {
  * Pure function — no DB calls, no side effects. Every ResolvedDay field is
  * explicitly handled so the return has the same keys as the fitness payload.
  *
- * Field handling (28 ResolvedDay fields):
+ * Field handling (29 ResolvedDay fields):
  *   CARRY      date, dateKey, isInPlan, isGoalDate, confidence,
  *              otherGoalEvents, crossGoalConflicts
  *   FILTERED   notesAboutDate (type:'review' excluded — weekly-review note is
@@ -75,7 +75,8 @@ export type ProjectTodayPayload = Omit<ResolvedDay, "todayTask"> & {
  *   OVERRIDE   goalObjective ← activeGoal.objective
  *   NULL       todayTask, activeWorkout, deferredWorkout, plannedHikeToday,
  *              longEffortConflict, nutritionText, nutritionPlan, mobilityText,
- *              notes, override, rotationDay, weekIndex
+ *              notes, override, rotationDay, weekIndex, resolvedPlan (REQ-003:
+ *              Plan/program is a fitness-only rotation concept)
  *   FALSE      isOverride, workoutDeferredForBaseline, workoutDeferredForHike,
  *              orphanedOverride
  *   EMPTY []   workouts, loggedNutrition, baselinesDue
@@ -121,6 +122,9 @@ export function shapeProjectTodayPayload(
     override: null,
     rotationDay: null,
     weekIndex: null,
+    // resolvedPlan (REQ-003): Plan/program is a fitness-only rotation concept —
+    // nulled here same as rotationDay/weekIndex/activeWorkout above.
+    resolvedPlan: null,
 
     // ── FALSE booleans ─────────────────────────────────────────────────────
     isOverride: false,
