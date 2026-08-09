@@ -119,6 +119,37 @@ export function hikeXp(elevationFt: number, packWeightLb: number | null): number
 }
 
 // ─────────────────────────────────────────────────────────
+// Goal-completion XP
+// ─────────────────────────────────────────────────────────
+
+// goal.achieved XP — scaled by goal size, kind-agnostic (attribute null).
+// Formula: base + min(weeks, WEEK_CAP)*PER_WEEK + min(targetsMet, TARGET_CAP)*PER_TARGET_MET.
+// Max: 150 + 12*25 + 5*50 = 700.
+export const GOAL_XP = {
+  GOAL_ACHIEVED_BASE: 150,
+  GOAL_ACHIEVED_PER_WEEK: 25,
+  GOAL_ACHIEVED_WEEK_CAP: 12,
+  GOAL_ACHIEVED_PER_TARGET_MET: 50,
+  GOAL_ACHIEVED_TARGET_CAP: 5,
+} as const;
+
+/**
+ * Compute XP for a completed (achieved) goal.
+ * Formula: GOAL_ACHIEVED_BASE + min(weeks, WEEK_CAP) * PER_WEEK
+ *          + min(targetsMet, TARGET_CAP) * PER_TARGET_MET.
+ * Negative inputs clamp to 0 (never negative XP).
+ */
+export function goalAchievedXp(weeks: number, targetsMet: number): number {
+  const clampedWeeks = Math.max(0, weeks);
+  const clampedTargetsMet = Math.max(0, targetsMet);
+  return (
+    GOAL_XP.GOAL_ACHIEVED_BASE +
+    Math.min(clampedWeeks, GOAL_XP.GOAL_ACHIEVED_WEEK_CAP) * GOAL_XP.GOAL_ACHIEVED_PER_WEEK +
+    Math.min(clampedTargetsMet, GOAL_XP.GOAL_ACHIEVED_TARGET_CAP) * GOAL_XP.GOAL_ACHIEVED_PER_TARGET_MET
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // Streak milestone table
 // ─────────────────────────────────────────────────────────
 
