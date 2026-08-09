@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goal completion ceremony &mdash; &ldquo;The Assay&rdquo; (pixel mockup)</title>
+<style>
+  /* ===================== REAL TOKENS — verified against src/app/globals.css ===================== */
+  .light {
+    --background:#FAF3E3; --foreground:#1F1408; --muted:#7A5E3A; --card:#FFFBF0; --border:#D9C8A2;
+    --accent:#8A6212; --accent-fg:#FFFBF0; --accent-soft:rgba(138,98,18,0.14);
+    --target:#9A480F; --target-fg:#FFFBF0;
+    --success:#4E6B36; --warning:#A8511A; --danger:#A82A1F;
+  }
+  .dark {
+    --background:#0F0B07; --foreground:#F4E9D4; --muted:#9C8866; --card:#1A130C; --border:#3A2E1F;
+    --accent:#D4A437; --accent-fg:#0F0B07; --accent-soft:rgba(212,164,55,0.12);
+    --target:#D97A3D; --target-fg:#FFFFFF;
+    --success:#7FA45C; --warning:#E0915C; --danger:#C0392B;
+  }
+
+  /* ===================== STAGE (preview chrome only — not part of the design) ===================== */
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #141210;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased; color: #E8E0D0;
+  }
+  .wrap { max-width: 1780px; margin: 0 auto; padding: 44px 28px 140px; }
+  .kicker { font-size: 11px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #D4A437; }
+  .page-title { font-family: Georgia, "Times New Roman", serif; font-size: 38px; line-height: 1.08; color: #F4E9D4; margin-top: 10px; }
+  .page-sub { font-size: 15px; line-height: 1.6; color: #A8977A; max-width: 900px; margin-top: 12px; }
+  .page-sub b { color: #D4A437; font-weight: 600; }
+  .page-sub i { color: #CFC1A6; }
+
+  .key { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+  .key-card { flex: 1 1 380px; background: #1C1814; border: 1px solid #2E2721; border-radius: 14px; padding: 16px 18px; }
+  .key-card.wide { flex: 1 1 720px; }
+  .key-h { font-size: 10.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: #D4A437; margin-bottom: 10px; }
+  .key-b { font-size: 12.5px; line-height: 1.65; color: #B6A78B; }
+  .key-b b { color: #E8E0D0; }
+  .key-b + .key-b { margin-top: 9px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .key-b code { font-size: 11.5px; color: #D4A437; }
+  .flag { color: #E0915C; font-weight: 700; }
+
+  table.ct { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.ct th { text-align: left; font-size: 9.5px; letter-spacing: .11em; text-transform: uppercase; color: #8A7B62; font-weight: 700; padding: 0 8px 7px 0; border-bottom: 1px solid #2E2721; }
+  table.ct td { padding: 7px 8px 7px 0; border-bottom: 1px solid #241F1A; color: #B6A78B; vertical-align: top; line-height: 1.45; }
+  table.ct td.num { font-family: ui-monospace, Menlo, monospace; color: #E8E0D0; white-space: nowrap; }
+  table.ct td.pair { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #D4A437; white-space: nowrap; }
+  .pass { color: #7FA45C; font-weight: 700; }
+  .fail { color: #C0392B; font-weight: 700; }
+  .info { color: #9C8866; font-weight: 700; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; border: 1px solid rgba(255,255,255,.16); }
+
+  .band { margin-top: 62px; padding-top: 24px; border-top: 1px solid #2E2721; }
+  .band-n { font-size: 10.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #8A7B62; }
+  .band-t { font-family: Georgia, "Times New Roman", serif; font-size: 27px; line-height: 1.15; color: #F4E9D4; margin-top: 6px; }
+  .band-d { font-size: 13.5px; line-height: 1.6; color: #A8977A; max-width: 880px; margin-top: 9px; }
+  .band-d b { color: #D4A437; font-weight: 600; }
+  .cols { display: flex; flex-wrap: wrap; gap: 30px; margin-top: 22px; align-items: flex-start; }
+  .col-wrap { display: flex; flex-direction: column; gap: 9px; flex: 0 0 auto; }
+  .col-label { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #8A7B62; padding-left: 3px; }
+
+  /* ===================== PHONE COLUMN ===================== */
+  .phone {
+    width: 390px; flex: 0 0 auto;
+    background: var(--background); color: var(--foreground);
+    border-radius: 22px; overflow: hidden;
+    box-shadow: 0 16px 46px rgba(0,0,0,.55);
+  }
+  .chrome {
+    height: 48px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--background);
+  }
+  .wordmark { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .13em; color: var(--foreground); }
+  .chrome-right { font-size: 12px; color: var(--muted); }
+  .body { padding: 18px 16px 22px; display: flex; flex-direction: column; gap: 10px; }
+
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .09em; color: var(--accent); text-align: center; background: var(--background); }
+
+  /* ---- HERO: rust glyph, background gap, closed gold annulus ---- */
+  .hero { position: relative; height: 268px; display: flex; align-items: center; justify-content: center; margin: 4px 0 0; }
+  .annulus {
+    position: relative; width: 242px; height: 242px; border-radius: 50%;
+    border: 2px solid var(--accent); background: var(--background);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .burst {
+    position: absolute; top: 50%; left: 50%; width: 242px; height: 242px; margin: -121px 0 0 -121px;
+    border-radius: 50%; border: 2px solid var(--accent); opacity: 0; pointer-events: none;
+  }
+  .gapmark { position: absolute; top: 50%; left: calc(50% + 105px); width: 14px; height: 0; border-top: 1px dashed var(--muted); }
+  .gapmark::before, .gapmark::after { content: ""; position: absolute; top: -5px; width: 1px; height: 11px; background: var(--muted); }
+  .gapmark::before { left: 0; } .gapmark::after { right: 0; }
+  .gaplabel { position: absolute; top: calc(50% - 26px); left: calc(50% + 124px); font-size: 9.5px; line-height: 1.35; color: var(--muted); white-space: nowrap; }
+
+  .objective {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 36px; line-height: 1.05; letter-spacing: -0.01em; text-align: center;
+    color: var(--foreground); margin-top: 6px;
+  }
+  .objective.sm { font-size: 24px; margin-top: 2px; }
+  .subline { font-size: 13px; color: var(--muted); text-align: center; }
+  .factline {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; font-size: 12px; letter-spacing: .05em;
+    color: var(--foreground); text-align: center; margin-top: 2px;
+  }
+  .rule { height: 1px; background: var(--border); margin: 12px 0 4px; }
+  .seclabel { font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; color: var(--muted); }
+
+  .trow { display: flex; align-items: baseline; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .trow:last-of-type { border-bottom: none; }
+  .tick { flex: 0 0 12px; font-size: 13px; line-height: 1; text-align: center; }
+  .tick.met { color: var(--success); font-weight: 700; }
+  .tick.miss { color: var(--muted); font-weight: 700; }
+  .tlabel { font-size: 15px; color: var(--foreground); flex: 1 1 auto; min-width: 0; }
+  .tval { font-size: 13px; color: var(--muted); margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .more { min-height: 44px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--accent); font-weight: 600; }
+  .more-sub { color: var(--muted); font-weight: 400; }
+
+  .rd { margin-top: 4px; }
+  .rd-num { font-family: Georgia, "Times New Roman", serif; font-size: 30px; line-height: 1.1; color: var(--foreground); font-variant-numeric: tabular-nums; }
+  .rd-arrow { color: var(--muted); font-size: 22px; }
+  .rd-cap { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .meter { display: inline-flex; align-items: flex-end; gap: 2px; vertical-align: middle; }
+  .seg { width: 4px; height: 12px; border-radius: 1px; background: var(--border); }
+  .seg.f-warning { background: var(--warning); }
+  .reach-line { display: flex; align-items: center; gap: 9px; margin-top: 2px; }
+  .reach-word { font-size: 15px; font-weight: 800; color: var(--foreground); }
+  .reach-frac { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+  .medals { display: flex; align-items: flex-start; gap: 16px; margin-top: 8px; }
+  .medal-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 78px; }
+  .medal {
+    width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: var(--accent-fg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: Georgia, "Times New Roman", serif; font-size: 19px; letter-spacing: .02em;
+  }
+  .medal-cap { font-size: 10.5px; color: var(--muted); text-align: center; line-height: 1.3; }
+  .levelline { font-size: 14px; color: var(--foreground); margin-left: auto; align-self: center; font-variant-numeric: tabular-nums; }
+
+  .permanence { font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .ctas { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+  .btn {
+    height: 44px; border-radius: 10px; font-size: 15px; font-weight: 600; width: 100%;
+    font-family: inherit; cursor: pointer; border: 1px solid transparent;
+  }
+  .btn-fill { background: var(--accent); color: var(--accent-fg); }
+  .btn-outline { background: transparent; color: var(--foreground); border-color: var(--border); }
+
+  .no-targets { font-size: 15px; line-height: 1.5; color: var(--foreground); margin: 2px 0 6px; }
+
+  /* ---- annotations ---- */
+  .ann {
+    font-size: 10px; line-height: 1.5; color: var(--muted);
+    border-left: 1px dotted var(--border); padding-left: 8px; margin: 2px 0 4px;
+  }
+  .ann b { color: var(--foreground); font-weight: 700; }
+  .ann i { font-style: italic; }
+  .ann code { font-size: 9.5px; color: var(--accent); }
+  .ann .w { color: var(--warning); font-weight: 700; }
+
+  .rm-tag {
+    align-self: flex-start; font-family: ui-monospace, Menlo, monospace; font-size: 10px;
+    color: var(--warning); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px;
+  }
+  .shipped-box { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+  .shipped-cell { flex: 0 0 64px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .shipped-emoji { width: 64px; height: 64px; display: flex; align-items: center; justify-content: center; font-size: 32px; line-height: 1; }
+  .shipped-cap { font-size: 9px; color: var(--muted); text-align: center; line-height: 1.3; }
+  .shipped-txt { font-size: 11.5px; line-height: 1.5; color: var(--foreground); }
+  .shipped-txt code { font-size: 10.5px; color: var(--accent); }
+  .shipped-txt b { font-weight: 700; }
+
+  /* ---- BEFORE column ---- */
+  .pagetitle-sm { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+  .chip-row { display: flex; gap: 6px; }
+  .chip { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
+  .fakecard { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .fakecard-t { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .fakebar { height: 9px; border-radius: 4px; background: var(--border); opacity: .75; }
+  .fakebar.short { width: 62%; }
+  .fold { position: relative; height: 22px; display: flex; align-items: center; justify-content: center; border-top: 1px dashed var(--danger); margin-top: 6px; }
+  .fold span { position: relative; top: -1px; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--danger); background: var(--background); padding: 0 8px; }
+  .realcard { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 13px; }
+  .realcard-t { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .rc-head { display: flex; gap: 11px; align-items: flex-start; margin-bottom: 12px; }
+  .rc-emoji { font-size: 28px; line-height: 1; }
+  .rc-obj { font-size: 17px; font-weight: 600; line-height: 1.2; }
+  .rc-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .rc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 12px; }
+  .rc-lab { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .rc-val { font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+  .rc-val.gold { color: var(--accent); }
+  .rc-den { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .rc-reach { margin-bottom: 12px; display: flex; flex-direction: column; gap: 5px; }
+  .rc-link { font-size: 13px; line-height: 20px; height: 20px; color: var(--accent); }
+  .rc-cele { position: relative; width: 64px; height: 64px; margin: 12px auto 0; display: flex; align-items: center; justify-content: center; }
+  .rc-ring { position: absolute; inset: 0; border-radius: 9999px; border: 2px solid var(--accent); opacity: .5; }
+  .rc-ring.r2 { transform: scale(1.35); opacity: .28; }
+  .rc-ring.r3 { transform: scale(1.7); opacity: .12; }
+  .rc-trophy { font-size: 32px; line-height: 1; }
+
+  /* ---- filmstrip ---- */
+  .strip-block { display: flex; flex-direction: column; gap: 9px; width: 100%; }
+  .strip { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+  .still-wrap { display: flex; flex-direction: column; gap: 8px; width: 390px; flex: 0 0 auto; }
+  .stillcap { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: #8A7B62; display: flex; gap: 9px; align-items: baseline; }
+  .stillcap b { color: #D4A437; font-weight: 700; }
+  .stillcap .sub { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; text-transform: none; letter-spacing: 0; color: #6F6250; }
+  .still {
+    width: 390px; height: 448px; overflow: hidden; position: relative;
+    background: var(--background); color: var(--foreground);
+    border-radius: 16px; box-shadow: 0 12px 34px rgba(0,0,0,.5);
+  }
+  .still-inner { padding: 16px 16px 0; display: flex; flex-direction: column; gap: 8px; }
+  .stillnote { font-size: 10.5px; line-height: 1.55; color: #9A8B72; }
+  .stillnote b { color: #CFC1A6; }
+  .stillnote code { font-size: 10px; color: #D4A437; }
+  .stillnote .w { color: #E0915C; font-weight: 700; }
+  .replay {
+    font-family: inherit; font-size: 11px; font-weight: 600; color: #0F0B07; background: #D4A437;
+    border: none; border-radius: 8px; padding: 8px 12px; min-height: 34px; cursor: pointer; margin-bottom: 7px;
+  }
+
+  /* ===================== FLOURISH (live replay) ===================== */
+  @keyframes assay-burst {
+    0%   { transform: scale(1);   opacity: .70; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+  @keyframes assay-row-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .playing .burst { animation: assay-burst 640ms cubic-bezier(.16,1,.3,1) both; }
+  .playing .burst.d1 { animation-delay: 90ms; }
+  .playing .burst.d2 { animation-delay: 180ms; }
+  .playing .stagger > * { animation: assay-row-in 260ms cubic-bezier(.16,1,.3,1) both; }
+  .playing .stagger > *:nth-child(1) { animation-delay: 90ms; }
+  .playing .stagger > *:nth-child(2) { animation-delay: 145ms; }
+  .playing .stagger > *:nth-child(3) { animation-delay: 200ms; }
+  .playing .stagger > *:nth-child(4) { animation-delay: 255ms; }
+  .playing .stagger > *:nth-child(5) { animation-delay: 310ms; }
+  .playing .stagger > *:nth-child(6) { animation-delay: 365ms; }
+  .playing .stagger > *:nth-child(7) { animation-delay: 420ms; }
+
+  /* Reduced motion: keyframes are the ONLY thing removed. Every element is
+     authored in its settled state, so the composition is already complete. */
+  @media (prefers-reduced-motion: reduce) {
+    .playing .burst,
+    .playing .stagger > * { animation: none; }
+  }
+
+  @media print { .wrap { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="kicker">UX research &middot; /goals/[id] &middot; achieved state</div>
+  <h1 class="page-title">The Assay &mdash; a goal completion that is an artifact, not an event</h1>
+  <p class="page-sub">
+    No modal. No dismiss. The achieved page renders <b>proud from the top of the viewport, permanently</b>. A one-shot
+    flourish plays on first view; if it is missed, <i>nothing is lost</i> &mdash; the settled state is the design, and the
+    animation only re-times elements that are already in place. Every frame below is drawn at a <b>390px phone column</b>,
+    in both palettes, <b>coal first</b> (the founder's daily palette), then cream.
+  </p>
+
+  <div class="key">
+    <div class="key-card">
+      <div class="key-h">How to read this file</div>
+      <div class="key-b">
+        Tokens are the <b>real</b> ones, lifted from <code>src/app/globals.css</code> and applied as CSS custom properties
+        on <code>.dark</code> / <code>.light</code>. The Bullseye is the <b>real geometry</b> from
+        <code>src/components/Bullseye.tsx</code>: <code>viewBox="0 0 32 32"</code>, four filled circles at
+        <code>cx=cy=16</code> with <code>r=15/11/7/3</code>, alternating <code>var(--target)</code> and
+        <code>var(--target-fg)</code>. It is scale-pure, so it is rendered here at 224px with no other changes.
+      </div>
+      <div class="key-b">
+        Small <code>var(--muted)</code> callouts run alongside each element carrying spacing, type size, touch-target
+        height and token name. Nothing in this file touches source &mdash; it is a drawing.
+      </div>
+    </div>
+
+    <div class="key-card">
+      <div class="key-h"><span class="flag">&#9888;</span> Substitutions &amp; provisional values</div>
+      <div class="key-b">
+        <b>Type is substituted.</b> Geist and DM Serif Display are not available offline, so this file uses
+        <code>system-ui</code> for body/UI and <code>Georgia, "Times New Roman", serif</code> everywhere the production
+        design would use <b>DM Serif Display</b> (the objective, readiness numerals, medal monograms, section headings on
+        this page). Georgia is wider and lower-contrast than DM Serif Display &mdash; <b>do not judge final type from this
+        file</b>; the objective in particular will set tighter and more vertical in production.
+      </div>
+      <div class="key-b">
+        <b>Every numeric value here is provisional pending playtest.</b> Sizes, durations, stagger offsets and stroke
+        widths carry a <span class="flag">&#9888;</span> with a range. They are starting points for a device check, not
+        specifications. The content values (98 days, 8&rarr;89, 7/9, +700 XP) are the Mt. Elbert reference case.
+      </div>
+    </div>
+
+    <div class="key-card wide">
+      <div class="key-h">Measured contrast &mdash; why this composition is shaped the way it is</div>
+      <table class="ct">
+        <thead>
+          <tr><th>Pair</th><th>Coal (dark)</th><th>Cream (light)</th><th>Consequence for this design</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#D4A437"></span>--accent on <span class="swatch" style="background:#D97A3D"></span>--target</td>
+            <td class="num fail">1.35:1</td>
+            <td class="num fail">1.16:1</td>
+            <td>Gold and rust are <b>luminance twins</b>. They cannot touch. The gold annulus is separated from the rust glyph by a
+              <b>14px band of plain <code>--background</code></b> <span class="flag">&#9888;</span>(10&ndash;18px). Cream is the failing case &mdash; verify there first.</td>
+          </tr>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#FFFFFF"></span>--target-fg inside <span class="swatch" style="background:#D97A3D"></span>--target</td>
+            <td class="num info">3.09:1</td>
+            <td class="num info">&mdash;</td>
+            <td><b>Graphic only.</b> The rings read fine as shape at 224px, but 3.09:1 is below text minimums &mdash;
+              <b>never place text inside the rust rings in coal.</b></td>
+          </tr>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#8A6212"></span>--accent on <span class="swatch" style="background:#e9dcc0"></span>--accent-soft</td>
+            <td class="num info">&mdash;</td>
+            <td class="num fail">4.14:1</td>
+            <td><b>Fails AA</b> in cream. So the <code>GOAL COMPLETE</code> eyebrow sits on <b>plain <code>--background</code></b>
+              &mdash; no soft-gold pill, chip or wash anywhere in the ceremony.</td>
+          </tr>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#D4A437"></span>--accent on --background</td>
+            <td class="num pass">8.56:1</td>
+            <td class="num pass">4.95:1</td>
+            <td class="pass">Passes &mdash; eyebrow, annulus, medal fill, primary CTA.</td>
+          </tr>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#7FA45C"></span>--success on --background</td>
+            <td class="num pass">6.88:1</td>
+            <td class="num pass">5.46:1</td>
+            <td class="pass">Passes &mdash; the <code>&#10003;</code> on met targets.</td>
+          </tr>
+          <tr>
+            <td class="pair"><span class="swatch" style="background:#9C8866"></span>--muted on --background</td>
+            <td class="num pass">5.72:1</td>
+            <td class="num pass">5.44:1</td>
+            <td class="pass">Passes &mdash; sublines, values, captions, permanence line.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== FRAME 1 ==================== -->
+  <section class="band">
+    <div class="band-n">Frame 1</div>
+    <div class="band-t">SUMMIT tier &mdash; the settled state (the permanent monument)</div>
+    <div class="band-d">
+      The reference case: <b>Mt. Elbert</b>, 98 days, readiness 8&rarr;89, 7/9 targets, +700 XP, 2 badges, 18 hikes.
+      This is what the page looks like on view 2, view 40, and a year later &mdash; the flourish is the only thing that
+      ever differs. Read top-to-bottom: chrome &rarr; eyebrow &rarr; hero &rarr; objective &rarr; evidence &rarr; awards &rarr; permanence &rarr; exits.
+    </div>
+    <div class="cols">
+      
+  <div class="col-wrap">
+    <div class="col-label">COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="phone dark">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        <div class="ann">48px sticky app header, <code>border-bottom:1px var(--border)</code>. Present only to prove the ceremony starts <b>at the top of the viewport</b>, not below a fold.</div>
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        <div class="ann">12px / 700 / <code>letter-spacing:.09em</code> / <code>var(--accent)</code>, sitting on plain <code>var(--background)</code>. <b>Never on <code>var(--accent-soft)</code></b> &mdash; that pair measures <b>4.14:1 in cream and fails AA</b>.</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          <div class="gapmark"></div><div class="gaplabel">14px gap<br><span class="w">&#9888;</span> 10&ndash;18</div>
+        </div>
+        <div class="ann"><code>&lt;svg viewBox="0 0 32 32"&gt;</code> &middot; four filled circles r=15/11/7/3 at cx=cy=16 &mdash; fills alternate <code>var(--target)</code> / <code>var(--target-fg)</code> only. <b>Gold never enters the Bullseye.</b><br><span class="w">&#9888;</span> hero box <b>224px</b> (playtest 200&ndash;240) &middot; <span class="w">&#9888;</span> annulus stroke <b>2px <code>var(--accent)</code></b> (playtest 1.5&ndash;2) &middot; <span class="w">&#9888;</span> gap <b>14px</b> of plain <code>var(--background)</code> (playtest 10&ndash;18).<br>Geometry note: the SVG's outer disc is r=15/16 of the box, so the <i>visible</i> rust radius is <b>105px</b>, not 112. Ring inner radius <b>119px</b> &rarr; outer <b>121px</b> (242px ring box). That is <b>1.13&times;</b> the visible rust radius / <b>1.06&times;</b> the 224px box. The brief's &ldquo;r &asymp; 1.18&times; the glyph&rdquo; would put the ring at r=132 and open a <b>27px</b> gap &mdash; outside the stated 10&ndash;18px range. <b>Resolved in favour of the gap</b>, which is the load-bearing constraint.</div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="ann">Serif display (DM Serif Display in production) &middot; 36px <span class="w">&#9888;</span>(playtest 32&ndash;40) &middot; <code>line-height:1.05</code> &middot; <code>letter-spacing:-0.01em</code> &middot; centered.</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        <div class="ann">13px <code>var(--muted)</code> subline; fact line is mono, 12px, <code>font-variant-numeric:tabular-nums</code>, <code>letter-spacing:.05em</code>.</div>
+        
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        <div class="ann">Met-first ordering, capped at <b>6 rows</b> <span class="w">&#9888;</span>(playtest 5&ndash;8) &mdash; but the cap <b>reserves its last slot for the first unmet target</b>, so 5 met + 1 unmet render here rather than 6 met. Rendering the misses is a hard anti-saccharine requirement; the unmet label keeps full <code>var(--foreground)</code> weight and is <i>not</i> visually demoted &mdash; only its glyph is muted.<br>Row: 15px label / 13px <code>var(--muted)</code> value, right-aligned, tabular numerals. <code>&#10003;</code> = <code>var(--success)</code>, <code>&middot;</code> = <code>var(--muted)</code>. <code>+3 more</code> is a disclosure control at the full <b>44px</b> tap height.</div>
+        
+        <div class="rd">
+          <div class="rd-num">8 <span class="rd-arrow">&rarr;</span> 89</div>
+          <div class="rd-cap">Weighted progress across your targets</div>
+        </div>
+        <div class="ann">Readiness numerals in the serif face at 30px <span class="w">&#9888;</span>(playtest 26&ndash;34); the arrow is <code>var(--muted)</code> so the two integers carry the jump. Caption 12px <code>var(--muted)</code>.</div>
+        
+        <div class="seclabel">REACH AT COMPLETION</div>
+        <div class="reach-line"><span class="meter"><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span></span><span class="reach-word">Legendary</span><span class="reach-frac">5/5</span></div>
+        <div class="ann">Static, frozen. Segments <b>4&times;12px</b>, gap <b>2px</b>, radius <b>1px</b> <span class="w">&#9888;</span>(playtest). Filled = <code>var(--warning)</code> &mdash; <b>deliberately not gold</b>, so the Reach ramp never competes with the ceremony's accent. Empty = <code>var(--border)</code>.</div>
+        
+        <div class="medals">
+          <div class="medal-wrap"><div class="medal">1G</div><div class="medal-cap">First Summit</div></div>
+          <div class="medal-wrap"><div class="medal">BP</div><div class="medal-cap">Body of Proof</div></div>
+          <div class="levelline">Level 6 &rarr; 7</div>
+        </div>
+        <div class="ann">52px <span class="w">&#9888;</span>(playtest 48&ndash;56) solid <code>var(--accent)</code> discs, monogram in <code>var(--accent-fg)</code>, serif face. Gold lives here and in the annulus &mdash; the two poles of the composition, with rust held alone in the middle.</div>
+        
+        <div class="permanence">Frozen at completion. This never recomputes.</div>
+        
+        <div class="ctas">
+          <button class="btn btn-fill" type="button">Make a share card</button>
+          <button class="btn btn-outline" type="button">Back to goals</button>
+        </div>
+        <div class="ann">Both buttons <b>44px</b> tall (marked). Filled = <code>var(--accent)</code> bg / <code>var(--accent-fg)</code> text. Outline = <code>1px var(--border)</code>, <code>var(--foreground)</code> text. No modal, no dismiss affordance &mdash; <b>there is nothing here to close.</b></div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="col-wrap">
+    <div class="col-label">CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="phone light">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        <div class="ann">48px sticky app header, <code>border-bottom:1px var(--border)</code>. Present only to prove the ceremony starts <b>at the top of the viewport</b>, not below a fold.</div>
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        <div class="ann">12px / 700 / <code>letter-spacing:.09em</code> / <code>var(--accent)</code>, sitting on plain <code>var(--background)</code>. <b>Never on <code>var(--accent-soft)</code></b> &mdash; that pair measures <b>4.14:1 in cream and fails AA</b>.</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          <div class="gapmark"></div><div class="gaplabel">14px gap<br><span class="w">&#9888;</span> 10&ndash;18</div>
+        </div>
+        <div class="ann"><code>&lt;svg viewBox="0 0 32 32"&gt;</code> &middot; four filled circles r=15/11/7/3 at cx=cy=16 &mdash; fills alternate <code>var(--target)</code> / <code>var(--target-fg)</code> only. <b>Gold never enters the Bullseye.</b><br><span class="w">&#9888;</span> hero box <b>224px</b> (playtest 200&ndash;240) &middot; <span class="w">&#9888;</span> annulus stroke <b>2px <code>var(--accent)</code></b> (playtest 1.5&ndash;2) &middot; <span class="w">&#9888;</span> gap <b>14px</b> of plain <code>var(--background)</code> (playtest 10&ndash;18).<br>Geometry note: the SVG's outer disc is r=15/16 of the box, so the <i>visible</i> rust radius is <b>105px</b>, not 112. Ring inner radius <b>119px</b> &rarr; outer <b>121px</b> (242px ring box). That is <b>1.13&times;</b> the visible rust radius / <b>1.06&times;</b> the 224px box. The brief's &ldquo;r &asymp; 1.18&times; the glyph&rdquo; would put the ring at r=132 and open a <b>27px</b> gap &mdash; outside the stated 10&ndash;18px range. <b>Resolved in favour of the gap</b>, which is the load-bearing constraint.</div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="ann">Serif display (DM Serif Display in production) &middot; 36px <span class="w">&#9888;</span>(playtest 32&ndash;40) &middot; <code>line-height:1.05</code> &middot; <code>letter-spacing:-0.01em</code> &middot; centered.</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        <div class="ann">13px <code>var(--muted)</code> subline; fact line is mono, 12px, <code>font-variant-numeric:tabular-nums</code>, <code>letter-spacing:.05em</code>.</div>
+        
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        <div class="ann">Met-first ordering, capped at <b>6 rows</b> <span class="w">&#9888;</span>(playtest 5&ndash;8) &mdash; but the cap <b>reserves its last slot for the first unmet target</b>, so 5 met + 1 unmet render here rather than 6 met. Rendering the misses is a hard anti-saccharine requirement; the unmet label keeps full <code>var(--foreground)</code> weight and is <i>not</i> visually demoted &mdash; only its glyph is muted.<br>Row: 15px label / 13px <code>var(--muted)</code> value, right-aligned, tabular numerals. <code>&#10003;</code> = <code>var(--success)</code>, <code>&middot;</code> = <code>var(--muted)</code>. <code>+3 more</code> is a disclosure control at the full <b>44px</b> tap height.</div>
+        
+        <div class="rd">
+          <div class="rd-num">8 <span class="rd-arrow">&rarr;</span> 89</div>
+          <div class="rd-cap">Weighted progress across your targets</div>
+        </div>
+        <div class="ann">Readiness numerals in the serif face at 30px <span class="w">&#9888;</span>(playtest 26&ndash;34); the arrow is <code>var(--muted)</code> so the two integers carry the jump. Caption 12px <code>var(--muted)</code>.</div>
+        
+        <div class="seclabel">REACH AT COMPLETION</div>
+        <div class="reach-line"><span class="meter"><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span></span><span class="reach-word">Legendary</span><span class="reach-frac">5/5</span></div>
+        <div class="ann">Static, frozen. Segments <b>4&times;12px</b>, gap <b>2px</b>, radius <b>1px</b> <span class="w">&#9888;</span>(playtest). Filled = <code>var(--warning)</code> &mdash; <b>deliberately not gold</b>, so the Reach ramp never competes with the ceremony's accent. Empty = <code>var(--border)</code>.</div>
+        
+        <div class="medals">
+          <div class="medal-wrap"><div class="medal">1G</div><div class="medal-cap">First Summit</div></div>
+          <div class="medal-wrap"><div class="medal">BP</div><div class="medal-cap">Body of Proof</div></div>
+          <div class="levelline">Level 6 &rarr; 7</div>
+        </div>
+        <div class="ann">52px <span class="w">&#9888;</span>(playtest 48&ndash;56) solid <code>var(--accent)</code> discs, monogram in <code>var(--accent-fg)</code>, serif face. Gold lives here and in the annulus &mdash; the two poles of the composition, with rust held alone in the middle.</div>
+        
+        <div class="permanence">Frozen at completion. This never recomputes.</div>
+        
+        <div class="ctas">
+          <button class="btn btn-fill" type="button">Make a share card</button>
+          <button class="btn btn-outline" type="button">Back to goals</button>
+        </div>
+        <div class="ann">Both buttons <b>44px</b> tall (marked). Filled = <code>var(--accent)</code> bg / <code>var(--accent-fg)</code> text. Outline = <code>1px var(--border)</code>, <code>var(--foreground)</code> text. No modal, no dismiss affordance &mdash; <b>there is nothing here to close.</b></div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <!-- ==================== FRAME 2 ==================== -->
+  <section class="band">
+    <div class="band-n">Frame 2</div>
+    <div class="band-t">MARKER tier &mdash; the floor case</div>
+    <div class="band-d">
+      A two-week goal with <b>zero targets</b>: no readiness, no series, no Reach, no arcs. Everything that has no data is
+      <b>absent, not zeroed</b>. The hero does <b>not</b> shrink. This frame is the whole test &mdash;
+      <b>it must look proud, not broken.</b>
+    </div>
+    <div class="cols">
+      
+  <div class="col-wrap">
+    <div class="col-label">COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="phone dark">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          <div class="gapmark"></div><div class="gaplabel">14px gap<br><span class="w">&#9888;</span> 10&ndash;18</div>
+        </div>
+        <div class="ann"><b>The hero does not shrink.</b> Same 224px Bullseye, same 242px annulus, same 14px gap as the SUMMIT frame. Tier scales the <i>evidence</i>, never the ceremony &mdash; a Marker goal that rendered a smaller glyph would read as a consolation prize.</div>
+        <div class="objective">Reset my sleep schedule</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 14 days</div>
+        
+        <div class="factline">14 DAYS &middot; +150 XP</div>
+        <div class="ann">Fact line drops the targets segment rather than printing <code>0/0 TARGETS</code>. Absent &ne; zero.</div>
+        <div class="rule"></div>
+        <div class="no-targets">No targets were set on this goal &mdash; finishing still counts.</div>
+        <div class="ann">The entire <b>WHAT MOVED</b> block collapses to one sentence at 15px <code>var(--foreground)</code>. No empty table, no &ldquo;&mdash;&rdquo; placeholders, no section label with nothing under it. Readiness, series, Reach and every arc are <b>absent, not zeroed</b>: nothing renders a hollow shell.</div>
+        
+        <div class="medals">
+          <div class="medal-wrap"><div class="medal">1G</div><div class="medal-cap">First Summit</div></div>
+          <div class="medal-wrap"><div class="medal">SH</div><div class="medal-cap">Shipped</div></div>
+          <div class="levelline">Level 1 &rarr; 2</div>
+        </div>
+        
+        <div class="permanence">Frozen at completion. This never recomputes.</div>
+        
+        <div class="ctas">
+          <button class="btn btn-fill" type="button">Make a share card</button>
+          <button class="btn btn-outline" type="button">Back to goals</button>
+        </div>
+        <div class="ann"><b>The test for this frame:</b> cover the text and compare the two silhouettes. If the Marker page reads as a shorter version of the same monument &mdash; rather than a broken one &mdash; the floor case passes.</div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="col-wrap">
+    <div class="col-label">CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="phone light">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          <div class="gapmark"></div><div class="gaplabel">14px gap<br><span class="w">&#9888;</span> 10&ndash;18</div>
+        </div>
+        <div class="ann"><b>The hero does not shrink.</b> Same 224px Bullseye, same 242px annulus, same 14px gap as the SUMMIT frame. Tier scales the <i>evidence</i>, never the ceremony &mdash; a Marker goal that rendered a smaller glyph would read as a consolation prize.</div>
+        <div class="objective">Reset my sleep schedule</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 14 days</div>
+        
+        <div class="factline">14 DAYS &middot; +150 XP</div>
+        <div class="ann">Fact line drops the targets segment rather than printing <code>0/0 TARGETS</code>. Absent &ne; zero.</div>
+        <div class="rule"></div>
+        <div class="no-targets">No targets were set on this goal &mdash; finishing still counts.</div>
+        <div class="ann">The entire <b>WHAT MOVED</b> block collapses to one sentence at 15px <code>var(--foreground)</code>. No empty table, no &ldquo;&mdash;&rdquo; placeholders, no section label with nothing under it. Readiness, series, Reach and every arc are <b>absent, not zeroed</b>: nothing renders a hollow shell.</div>
+        
+        <div class="medals">
+          <div class="medal-wrap"><div class="medal">1G</div><div class="medal-cap">First Summit</div></div>
+          <div class="medal-wrap"><div class="medal">SH</div><div class="medal-cap">Shipped</div></div>
+          <div class="levelline">Level 1 &rarr; 2</div>
+        </div>
+        
+        <div class="permanence">Frozen at completion. This never recomputes.</div>
+        
+        <div class="ctas">
+          <button class="btn btn-fill" type="button">Make a share card</button>
+          <button class="btn btn-outline" type="button">Back to goals</button>
+        </div>
+        <div class="ann"><b>The test for this frame:</b> cover the text and compare the two silhouettes. If the Marker page reads as a shorter version of the same monument &mdash; rather than a broken one &mdash; the floor case passes.</div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <!-- ==================== FRAME 3 ==================== -->
+  <section class="band">
+    <div class="band-n">Frame 3</div>
+    <div class="band-t">The first-view flourish &mdash; filmstrip</div>
+    <div class="band-d">
+      A gold ring breaks outward from the annulus and past the column edge while the target rows stagger in beneath it.
+      The stills below are frozen frames, each labelled with its timestamp and easing; the last column in each strip is
+      <b>live</b> &mdash; press <b>Replay flourish</b>. Note what the burst is: a <b>duplicate</b> of the annulus that leaves,
+      not the annulus itself. The annulus never moves, so there is no state to restore.
+    </div>
+    <div class="cols" style="flex-direction:column;gap:40px">
+      
+  <div class="strip-block">
+    <div class="col-label">COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="strip">
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 0 ms</b><span class="sub">start</span></div>
+      <div class="still dark">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(1);opacity:0.7"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:0">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Burst ring is <b>co-located with the annulus</b> at scale(1), opacity .70. Glyph, ring, eyebrow and objective are <b>already final</b> &mdash; they never animate.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 150 ms</b><span class="sub">cubic-bezier(.16,1,.3,1)</span></div>
+      <div class="still dark">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(2.17);opacity:0.19"></div><div class="burst" style="transform:scale(1.64);opacity:0.42"></div><div class="burst" style="transform:scale(1);opacity:0.7"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:0.4">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:0.4;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:0.05;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">All three rings on screen at once: ring&nbsp;1 at <b>2.17&times;</b> (525px &mdash; <b>past both column edges</b>), ring&nbsp;2 at 1.64&times;,
+          ring&nbsp;3 still sitting on the annulus waiting for its 180&nbsp;ms offset. The first target row has begun to rise.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 320 ms</b><span class="sub">cubic-bezier(.16,1,.3,1)</span></div>
+      <div class="still dark">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(2.51);opacity:0.05"></div><div class="burst" style="transform:scale(2.41);opacity:0.09"></div><div class="burst" style="transform:scale(2.14);opacity:0.2"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:1">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0.85;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0.6;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0.05;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Half the duration in, the easing has already spent <b>~94%</b> of its distance &mdash; ring&nbsp;1 is down to opacity .05 and
+          reads only as two faint arcs left and right. The rows are now carrying the moment. Rows 1&ndash;2 landed, 3&ndash;4 mid-flight.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 640 ms</b><span class="sub">settled</span></div>
+      <div class="still dark">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:1">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:1;transform:translateY(0px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Burst gone (<code>animation-fill-mode:both</code> leaves it at opacity 0). What remains is <b>exactly Frame 1</b>. Nothing is mid-state, nothing needs cleanup.</div>
+    </div>
+      <div class="still-wrap">
+        <div class="stillcap"><b>LIVE</b><span class="sub">press replay</span></div>
+        <div class="still dark" id="player-dark">
+          <div class="still-inner">
+            <div class="eyebrow">GOAL COMPLETE</div>
+            
+        <div class="hero">
+          <div class="burst"></div><div class="burst d1"></div><div class="burst d2"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+            <div class="objective sm">Summit Mt. Elbert</div>
+            <div class="seclabel">WHAT MOVED</div>
+            <div class="stagger">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+          </div>
+        </div>
+        <div class="stillnote">
+          <button class="replay" type="button" data-target="player-dark">&#9654; Replay flourish</button><br>
+          Three rings, <b>0 / 90 / 180 ms</b> offsets <span class="w">&#9888;</span>, <b>640 ms</b> <span class="w">&#9888;</span>(playtest 520&ndash;760), <code>cubic-bezier(.16,1,.3,1)</code> &mdash;
+          the house easing already in <code>globals.css</code> (<code>level-up-burst</code> uses the same one, so the two celebrations
+          feel like one family). Rows stagger from <b>90 ms</b> at <b>55 ms</b> intervals <span class="w">&#9888;</span>, 260 ms each.
+          Honors <code>prefers-reduced-motion</code> &mdash; toggle it in your OS and press replay: the page does not change.
+        </div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="strip-block">
+    <div class="col-label">CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="strip">
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 0 ms</b><span class="sub">start</span></div>
+      <div class="still light">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(1);opacity:0.7"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:0">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Burst ring is <b>co-located with the annulus</b> at scale(1), opacity .70. Glyph, ring, eyebrow and objective are <b>already final</b> &mdash; they never animate.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 150 ms</b><span class="sub">cubic-bezier(.16,1,.3,1)</span></div>
+      <div class="still light">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(2.17);opacity:0.19"></div><div class="burst" style="transform:scale(1.64);opacity:0.42"></div><div class="burst" style="transform:scale(1);opacity:0.7"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:0.4">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:0.4;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:0.05;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">All three rings on screen at once: ring&nbsp;1 at <b>2.17&times;</b> (525px &mdash; <b>past both column edges</b>), ring&nbsp;2 at 1.64&times;,
+          ring&nbsp;3 still sitting on the annulus waiting for its 180&nbsp;ms offset. The first target row has begun to rise.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 320 ms</b><span class="sub">cubic-bezier(.16,1,.3,1)</span></div>
+      <div class="still light">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          <div class="burst" style="transform:scale(2.51);opacity:0.05"></div><div class="burst" style="transform:scale(2.41);opacity:0.09"></div><div class="burst" style="transform:scale(2.14);opacity:0.2"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:1">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:0.85;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:0.6;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:0.05;transform:translateY(6px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:0;transform:translateY(6px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:0;transform:translateY(6px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Half the duration in, the easing has already spent <b>~94%</b> of its distance &mdash; ring&nbsp;1 is down to opacity .05 and
+          reads only as two faint arcs left and right. The rows are now carrying the moment. Rows 1&ndash;2 landed, 3&ndash;4 mid-flight.</div>
+    </div>
+      
+    <div class="still-wrap">
+      <div class="stillcap"><b>t = 640 ms</b><span class="sub">settled</span></div>
+      <div class="still light">
+        <div class="still-inner">
+          <div class="eyebrow" style="opacity:1">GOAL COMPLETE</div>
+          
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+          <div class="objective sm" style="opacity:1">Summit Mt. Elbert</div>
+          <div class="seclabel" style="opacity:1">WHAT MOVED</div>
+          <div class="">
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow" style="opacity:1;transform:translateY(0px)"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more" style="opacity:1;transform:translateY(0px)">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        </div>
+      </div>
+      <div class="stillnote">Burst gone (<code>animation-fill-mode:both</code> leaves it at opacity 0). What remains is <b>exactly Frame 1</b>. Nothing is mid-state, nothing needs cleanup.</div>
+    </div>
+      <div class="still-wrap">
+        <div class="stillcap"><b>LIVE</b><span class="sub">press replay</span></div>
+        <div class="still light" id="player-light">
+          <div class="still-inner">
+            <div class="eyebrow">GOAL COMPLETE</div>
+            
+        <div class="hero">
+          <div class="burst"></div><div class="burst d1"></div><div class="burst d2"></div>
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+            <div class="objective sm">Summit Mt. Elbert</div>
+            <div class="seclabel">WHAT MOVED</div>
+            <div class="stagger">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+          </div>
+        </div>
+        <div class="stillnote">
+          <button class="replay" type="button" data-target="player-light">&#9654; Replay flourish</button><br>
+          Three rings, <b>0 / 90 / 180 ms</b> offsets <span class="w">&#9888;</span>, <b>640 ms</b> <span class="w">&#9888;</span>(playtest 520&ndash;760), <code>cubic-bezier(.16,1,.3,1)</code> &mdash;
+          the house easing already in <code>globals.css</code> (<code>level-up-burst</code> uses the same one, so the two celebrations
+          feel like one family). Rows stagger from <b>90 ms</b> at <b>55 ms</b> intervals <span class="w">&#9888;</span>, 260 ms each.
+          Honors <code>prefers-reduced-motion</code> &mdash; toggle it in your OS and press replay: the page does not change.
+        </div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <!-- ==================== FRAME 4 ==================== -->
+  <section class="band">
+    <div class="band-n">Frame 4</div>
+    <div class="band-t">Reduced motion &mdash; the user loses nothing</div>
+    <div class="band-d">
+      Visually identical to Frame 1. That is the point: because every element is authored in its finished state and the
+      keyframes only displace it, <code style="color:#D4A437">animation:none</code> lands the <b>complete composition</b>.
+      Compare with what ships today, where <code style="color:#D4A437">display:none</code> on the rings leaves a bare emoji.
+    </div>
+    <div class="cols">
+      
+  <div class="col-wrap">
+    <div class="col-label">COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="phone dark">
+      <div class="body">
+        <div class="rm-tag">prefers-reduced-motion: reduce</div>
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        
+        <div class="rd">
+          <div class="rd-num">8 <span class="rd-arrow">&rarr;</span> 89</div>
+          <div class="rd-cap">Weighted progress across your targets</div>
+        </div>
+        <div class="ann"><b>Identical to Frame 1.</b> Every element is authored in its finished state; the keyframes only <i>displace</i> it (the burst ring rests at <code>opacity:0</code>, rows rest at <code>opacity:1;transform:none</code>). So <code>animation:none</code> lands the <b>complete composition</b> &mdash; the reduced-motion user loses nothing but the motion.</div>
+        <div class="rule"></div>
+        <div class="seclabel">CONTRAST: WHAT SHIPS TODAY</div>
+        <div class="shipped-box">
+          <div class="shipped-cell">
+            <div class="shipped-emoji">&#127942;</div>
+            <div class="shipped-cap">current, reduced-motion</div>
+          </div>
+          <div class="shipped-txt">
+            <code>globals.css</code> puts <code>.goal-completed-ring&nbsp;{display:none}</code> under the reduced-motion query.
+            The rings <i>are</i> the celebration, so the reduced-motion user is left with <b>a bare 32px emoji in a 64px box</b> &mdash;
+            the ceremony doesn't degrade, it <b>disappears</b>.
+          </div>
+        </div>
+        <div class="ann">Rule this establishes: <b>never put the meaning in the motion.</b> Motion may only re-time what is already there.</div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="col-wrap">
+    <div class="col-label">CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="phone light">
+      <div class="body">
+        <div class="rm-tag">prefers-reduced-motion: reduce</div>
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        
+        <div class="rd">
+          <div class="rd-num">8 <span class="rd-arrow">&rarr;</span> 89</div>
+          <div class="rd-cap">Weighted progress across your targets</div>
+        </div>
+        <div class="ann"><b>Identical to Frame 1.</b> Every element is authored in its finished state; the keyframes only <i>displace</i> it (the burst ring rests at <code>opacity:0</code>, rows rest at <code>opacity:1;transform:none</code>). So <code>animation:none</code> lands the <b>complete composition</b> &mdash; the reduced-motion user loses nothing but the motion.</div>
+        <div class="rule"></div>
+        <div class="seclabel">CONTRAST: WHAT SHIPS TODAY</div>
+        <div class="shipped-box">
+          <div class="shipped-cell">
+            <div class="shipped-emoji">&#127942;</div>
+            <div class="shipped-cap">current, reduced-motion</div>
+          </div>
+          <div class="shipped-txt">
+            <code>globals.css</code> puts <code>.goal-completed-ring&nbsp;{display:none}</code> under the reduced-motion query.
+            The rings <i>are</i> the celebration, so the reduced-motion user is left with <b>a bare 32px emoji in a 64px box</b> &mdash;
+            the ceremony doesn't degrade, it <b>disappears</b>.
+          </div>
+        </div>
+        <div class="ann">Rule this establishes: <b>never put the meaning in the motion.</b> Motion may only re-time what is already there.</div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <!-- ==================== FRAME 5 ==================== -->
+  <section class="band">
+    <div class="band-n">Frame 5</div>
+    <div class="band-t">Before / after &mdash; the angular-size argument</div>
+    <div class="band-d">
+      Angular diameter scales linearly with size, so the 224px hero subtends <b>exactly 7&times;</b> the visual angle of the
+      shipped 32px emoji at any viewing distance &mdash; and covers <b>~49&times;</b> the retinal area. In absolute terms on a
+      390-CSS-px-wide phone (1 CSS px &asymp; 0.18mm): the emoji is ~5.8mm &rarr; <b>~0.6&deg;</b> at arm's length; the hero is
+      ~41mm &rarr; <b>~2.5&deg;</b> at 90cm and <b>~4&deg;</b> at 55cm <span class="flag">&#9888;</span>(approximate; depends on device and posture).
+      Below ~1&deg; a mark is read as a <i>label</i>; at 2.5&ndash;4&deg; it is read as an <i>object</i>. That is the entire difference
+      between a trophy icon and a monument.
+    </div>
+    <div class="cols">
+      
+  <div class="col-wrap">
+    <div class="col-label">BEFORE &mdash; COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="phone dark">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        <div class="pagetitle-sm">Summit Mt. Elbert</div>
+        <div class="chip-row"><span class="chip">achieved</span><span class="chip">fitness</span></div>
+        <div class="fakecard"><div class="fakecard-t">Story</div><div class="fakebar"></div><div class="fakebar short"></div></div>
+        <div class="fakecard"><div class="fakecard-t">Changelog</div><div class="fakebar"></div><div class="fakebar short"></div><div class="fakebar"></div></div>
+        <div class="fold"><span>viewport fold &mdash; everything below needs a scroll</span></div>
+        <div class="realcard">
+          <div class="realcard-t">Completed</div>
+          <div class="rc-head"><span class="rc-emoji">&#127942;</span>
+            <div><div class="rc-obj">Summit Mt. Elbert</div><div class="rc-sub">Completed Aug 9, 2026</div></div>
+          </div>
+          <div class="rc-grid">
+            <div><div class="rc-lab">Readiness</div><div class="rc-val">89<span class="rc-den">/100</span></div></div>
+            <div><div class="rc-lab">Targets</div><div class="rc-val">7/9</div></div>
+            <div><div class="rc-lab">XP awarded</div><div class="rc-val gold">+700</div></div>
+            <div><div class="rc-lab">Days elapsed</div><div class="rc-val">98</div></div>
+          </div>
+          <div class="rc-reach"><div class="rc-lab">Reach at completion</div><span class="meter"><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span></span></div>
+          <div class="rc-link">Completion card &rarr;</div>
+          <div class="rc-cele">
+            <div class="rc-ring"></div><div class="rc-ring r2"></div><div class="rc-ring r3"></div>
+            <span class="rc-trophy">&#127942;</span>
+          </div>
+        </div>
+        <div class="ann">As shipped (<code>src/app/goals/[id]/page.tsx</code> &rarr; <code>GoalCompletedCelebration.tsx</code>): a <b>32px</b> emoji in a 64px box with three 2px gold rings, rendered as the <b>last child</b> of the &ldquo;Completed&rdquo; card, <b>below</b> a <code>Completion card &rarr;</code> text link that is only <b>~20px</b> tall (well under the 44px minimum). The card itself sits below the Story and Changelog cards &mdash; <b>below the fold on a 390&times;844 phone</b>. The ceremony is a footnote to a footnote.</div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="col-wrap">
+    <div class="col-label">AFTER &mdash; COAL &middot; DARK &mdash; #0F0B07 (founder's daily palette)</div>
+    <div class="phone dark">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        <div class="ann">Same page, same data, same first screenful. The difference is entirely <b>where the eye lands first</b>.</div>
+      </div>
+    </div>
+  </div>
+    </div>
+    <div class="cols">
+      
+  <div class="col-wrap">
+    <div class="col-label">BEFORE &mdash; CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="phone light">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        <div class="pagetitle-sm">Summit Mt. Elbert</div>
+        <div class="chip-row"><span class="chip">achieved</span><span class="chip">fitness</span></div>
+        <div class="fakecard"><div class="fakecard-t">Story</div><div class="fakebar"></div><div class="fakebar short"></div></div>
+        <div class="fakecard"><div class="fakecard-t">Changelog</div><div class="fakebar"></div><div class="fakebar short"></div><div class="fakebar"></div></div>
+        <div class="fold"><span>viewport fold &mdash; everything below needs a scroll</span></div>
+        <div class="realcard">
+          <div class="realcard-t">Completed</div>
+          <div class="rc-head"><span class="rc-emoji">&#127942;</span>
+            <div><div class="rc-obj">Summit Mt. Elbert</div><div class="rc-sub">Completed Aug 9, 2026</div></div>
+          </div>
+          <div class="rc-grid">
+            <div><div class="rc-lab">Readiness</div><div class="rc-val">89<span class="rc-den">/100</span></div></div>
+            <div><div class="rc-lab">Targets</div><div class="rc-val">7/9</div></div>
+            <div><div class="rc-lab">XP awarded</div><div class="rc-val gold">+700</div></div>
+            <div><div class="rc-lab">Days elapsed</div><div class="rc-val">98</div></div>
+          </div>
+          <div class="rc-reach"><div class="rc-lab">Reach at completion</div><span class="meter"><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span><span class="seg f-warning"></span></span></div>
+          <div class="rc-link">Completion card &rarr;</div>
+          <div class="rc-cele">
+            <div class="rc-ring"></div><div class="rc-ring r2"></div><div class="rc-ring r3"></div>
+            <span class="rc-trophy">&#127942;</span>
+          </div>
+        </div>
+        <div class="ann">As shipped (<code>src/app/goals/[id]/page.tsx</code> &rarr; <code>GoalCompletedCelebration.tsx</code>): a <b>32px</b> emoji in a 64px box with three 2px gold rings, rendered as the <b>last child</b> of the &ldquo;Completed&rdquo; card, <b>below</b> a <code>Completion card &rarr;</code> text link that is only <b>~20px</b> tall (well under the 44px minimum). The card itself sits below the Story and Changelog cards &mdash; <b>below the fold on a 390&times;844 phone</b>. The ceremony is a footnote to a footnote.</div>
+      </div>
+    </div>
+  </div>
+      
+  <div class="col-wrap">
+    <div class="col-label">AFTER &mdash; CREAM &middot; LIGHT &mdash; #FAF3E3</div>
+    <div class="phone light">
+      
+      <div class="chrome">
+        <div class="wordmark"><svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg><span>GOALDMINE</span></div>
+        <div class="chrome-right">Goals</div>
+      </div>
+      <div class="body">
+        
+        <div class="eyebrow">GOAL COMPLETE</div>
+        
+        <div class="hero">
+          
+          <div class="annulus"><svg viewBox="0 0 32 32" width="224" height="224" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg></div>
+          
+        </div>
+        <div class="objective">Summit Mt. Elbert</div>
+        <div class="subline">Completed Aug 9, 2026 &middot; 98 days</div>
+        
+        <div class="factline">98 DAYS &middot; 7/9 TARGETS &middot; +700 XP</div>
+        <div class="rule"></div>
+        <div class="seclabel">WHAT MOVED</div>
+        <div class="">
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Longest hike</span><span class="tval">3.2 &rarr; 12.4 mi</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Weekly vert gain</span><span class="tval">1,100 &rarr; 4,300 ft</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Loaded carry</span><span class="tval">0 &rarr; 35 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Back squat 1RM</span><span class="tval">185 &rarr; 245 lb</span></div>
+          <div class="trow"><span class="tick met">&#10003;</span><span class="tlabel">Resting HR</span><span class="tval">62 &rarr; 54 bpm</span></div>
+          <div class="trow"><span class="tick miss">&middot;</span><span class="tlabel">Bodyweight</span><span class="tval">178 &rarr; 172 lb</span></div>
+          <div class="more">+3 more <span class="more-sub">(2 met &middot; 1 unmet)</span></div>
+        </div>
+        <div class="ann">Same page, same data, same first screenful. The difference is entirely <b>where the eye lands first</b>.</div>
+      </div>
+    </div>
+  </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="band-n">Open questions for the call</div>
+    <div class="band-t">What this mockup cannot answer</div>
+    <div class="band-d">
+      1. <b>The gap in cream.</b> 14px is drawn here; on a real display at real brightness the gold ring and rust glyph may
+      still bleed into each other. Check cream outdoors before anything else.<br>
+      2. <b>Hero size on a small phone.</b> 224px + 268px of hero row pushes the objective toward the fold on a 667px-tall
+      viewport. If it crowds, the tuning move is the hero row's height, <b>not</b> the glyph.<br>
+      3. <b>Georgia is lying to you about the objective.</b> DM Serif Display at 36px sets narrower; long objectives that
+      wrap to three lines here may set to two in production.<br>
+      4. <b>Flourish duration.</b> 640ms reads generous on desktop and may read slow on a phone that has already loaded the
+      page once. 520ms is the likely landing spot.
+    </div>
+  </section>
+
+</div>
+
+<script>
+  // Replay button: re-trigger the CSS animation by removing the class,
+  // forcing reflow, and re-adding it. No framework, no state.
+  document.querySelectorAll(".replay").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var el = document.getElementById(btn.getAttribute("data-target"));
+      if (!el) return;
+      el.classList.remove("playing");
+      void el.offsetWidth; // force reflow
+      el.classList.add("playing");
+    });
+  });
+</script>
+</body>
+</html>
