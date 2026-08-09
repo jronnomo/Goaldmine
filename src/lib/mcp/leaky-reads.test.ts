@@ -12,7 +12,7 @@
 // So we assert on what was PASSED TO PRISMA, not what came back.
 // See architecture-critique.md §Issue 6 for why the payload approach is invalid.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Hoisted mock state ────────────────────────────────────────────────────────
 // vi.mock factories are hoisted to the top of the file. Variables must be
@@ -149,8 +149,20 @@ vi.mock("@/lib/legend", async () => {
   const { z } = await import("zod");
   return { LegendSchema: z.any() };
 });
-vi.mock("@/lib/program", () => ({
-  getActiveProgram: vi.fn().mockResolvedValue(null),
+vi.mock("@/lib/program", async () => {
+  // pickProgramForDate is pure and REQ-007a (get_week) tests below need its
+  // real ordering/clamping behavior to exercise the S1 per-day-pick contract
+  // faithfully — only the DB-backed lookups (getActiveProgram,
+  // getPlanWindowCandidates) are mocked.
+  const actual = await vi.importActual<typeof import("@/lib/program")>("@/lib/program");
+  return {
+    getActiveProgram: vi.fn().mockResolvedValue(null),
+    getPlanWindowCandidates: vi.fn().mockResolvedValue([]),
+    pickProgramForDate: actual.pickProgramForDate,
+  };
+});
+vi.mock("@/lib/goal-story", () => ({
+  getGoalStory: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/day-template-validation", () => ({
   MAX_DAY_TEMPLATE_BYTES: 65536,
@@ -238,6 +250,10 @@ vi.mock("@/lib/recap-render", () => ({
 // ── Imports (after all vi.mock calls) ─────────────────────────────────────────
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAll } from "@/lib/mcp/tools";
+import { resolveDay } from "@/lib/calendar";
+import { getActiveProgram, getPlanWindowCandidates } from "@/lib/program";
+import { getGoalStory } from "@/lib/goal-story";
+import { getGoalEventsResult } from "@/lib/goal-events";
 
 // ── Minimal fake McpServer that captures handlers by tool name ────────────────
 type ToolCallback = (args: Record<string, unknown>) => Promise<unknown>;
@@ -607,5 +623,266 @@ describe("log_goal_retrospective — active-goal guard (REQ-014a)", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("complete the goal first");
     expect(mockGoalUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ── REQ-007b: get_goal_story — leaky-reads coverage ──────────────────────────
+// get_goal_story delegates entirely to the (mocked) getGoalStory assembly —
+// there's no direct db query in the tools.ts handler to assert query args on
+// (that's goal-story.test.ts's job, Stage B2). What this file's leaky-reads
+// convention requires for a new read tool is a case proving the response the
+// coach receives carries none of the forbidden content: private note types
+// (standing_rule/review/open_item), triggerNote (PlanRevision.triggerNoteId
+// can point at one — S5), or userId. Mocking getGoalStory per the rig's
+// established "mock the dependency, assert the handler's payload" pattern
+// used by the goal-completion-ceremony blocks above.
+describe("get_goal_story — leaky-reads coverage (REQ-007b)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("forwards the story bundle with no standing_rule/review/open_item content, no triggerNote, no userId", async () => {
+    vi.mocked(getGoalStory).mockResolvedValueOnce({
+      goal: {
+        id: "goal-1",
+        objective: "Summit Mt. Elbert",
+        kind: "fitness",
+        status: "achieved",
+        createdAtKey: "2026-05-01",
+        completedDateKey: "2026-08-02",
+      },
+      window: { startKey: "2026-05-01", endKey: "2026-08-02" },
+      snapshot: null,
+      readinessSeries: [{ dateKey: "2026-05-04", score: 20 }],
+      targets: [],
+      baselineArcs: [
+        { testName: "1RM Back Squat", units: "lb", points: [{ dateKey: "2026-05-10", value: 200 }] },
+      ],
+      hikeArc: [
+        {
+          dateKey: "2026-08-02",
+          route: "Elbert",
+          distanceMi: 11,
+          elevationFt: 4700,
+          summitFt: 14440,
+          packWeightLb: 20,
+          durationMin: 480,
+          status: "completed",
+        },
+      ],
+      metricArcs: [],
+      timeline: {
+        planName: "Elbert Plan",
+        startedOnKey: "2026-05-01",
+        weeksTotal: 12,
+        phases: [{ name: "Base", weekStart: 1, weekEnd: 4, startKey: "2026-05-01", endKey: "2026-05-28" }],
+        // Intentionally triggerNote-FREE (S5) — the shape under test.
+        revisions: [
+          {
+            id: "rev-1",
+            createdAtKey: "2026-05-15",
+            triggerSource: "coach",
+            summary: "Deloaded week 3 after a rough session",
+            reasoning: "Fatigue was accumulating faster than planned",
+          },
+        ],
+      },
+    });
+
+    const handler = fakeServer.getHandler("get_goal_story");
+    const result = (await handler({ goalId: "goal-1" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(vi.mocked(getGoalStory)).toHaveBeenCalledWith("goal-1");
+
+    const text = result.content[0].text;
+    for (const forbidden of ["standing_rule", "\"review\"", "open_item", "triggerNote", "userId"]) {
+      expect(text).not.toContain(forbidden);
+    }
+
+    const payload = JSON.parse(text) as { timeline: { revisions: Array<Record<string, unknown>> } };
+    // Every revision key is on the leaky-reads-safe allow-list (S5) — no
+    // triggerNoteId, no raw note content of any kind.
+    for (const revision of payload.timeline.revisions) {
+      expect(Object.keys(revision).sort()).toEqual(
+        ["createdAtKey", "id", "reasoning", "summary", "triggerSource"].sort(),
+      );
+    }
+  });
+
+  it("errors 'Goal not found' when getGoalStory returns null, without leaking anything else", async () => {
+    vi.mocked(getGoalStory).mockResolvedValueOnce(null);
+
+    const handler = fakeServer.getHandler("get_goal_story");
+    const result = (await handler({ goalId: "goal-missing" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error: Goal not found: goal-missing");
+  });
+});
+
+// ── REQ-007a: get_week — time-aware per-day resolution (S1, BINDING) ─────────
+// get_week now fetches getActiveProgram + getPlanWindowCandidates ONCE for
+// the whole week and picks per-day via the real (unmocked — see the
+// "@/lib/program" mock factory above) pickProgramForDate, so a week
+// straddling a plan transition resolves each day against its own covering
+// plan instead of one program reused across all 7 days. resolveDay itself
+// stays mocked (as everywhere else in this file) but with an isInPlan-aware
+// implementation for this block only, so the guard's `days.some(isInPlan)`
+// check and the per-day resolvedPlan fields are exercised faithfully without
+// needing a live DB.
+describe("get_week — time-aware per-day resolution (REQ-007a/S1)", () => {
+  type FakeProgram = {
+    id: string;
+    name: string;
+    source: "active" | "archived";
+    startedOn: Date;
+    template: { totalWeeks: number };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getActiveProgram).mockResolvedValue(null);
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([]);
+    vi.mocked(getGoalEventsResult).mockResolvedValue({ events: [], focusGoalId: null } as never);
+    vi.mocked(resolveDay).mockImplementation(((date: Date, ctx?: { program?: unknown }) => {
+      const program = (ctx?.program ?? null) as FakeProgram | null;
+      let isInPlan = false;
+      if (program) {
+        const daysDelta = Math.floor(
+          (date.getTime() - new Date(program.startedOn).getTime()) / (24 * 3600 * 1000),
+        );
+        isInPlan = daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7;
+      }
+      return Promise.resolve({
+        date,
+        dateKey: date.toISOString().slice(0, 10),
+        isInPlan,
+        todayTask: isInPlan ? "workout" : "out_of_plan",
+        resolvedPlan: program ? { id: program.id, name: program.name, source: program.source } : null,
+      });
+    }) as unknown as typeof resolveDay);
+  });
+
+  afterEach(() => {
+    // Restore the file-wide static default so later describe blocks (if any
+    // were ever appended after this one) don't inherit this block's
+    // isInPlan-aware implementation.
+    vi.mocked(resolveDay).mockResolvedValue({ todayTask: "rest" } as never);
+  });
+
+  it("resolves a week under an ARCHIVED plan — no 'active plan window' error", async () => {
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([
+      {
+        id: "plan-old",
+        name: "Old Plan",
+        startedOn: new Date("2020-01-05"),
+        template: { totalWeeks: 8, phases: [], weeklySplit: [] },
+        confirmedThroughDate: null,
+        active: false,
+        goalStatus: "achieved",
+        goalCompletedAt: new Date("2020-02-01"),
+      },
+    ] as never);
+
+    const handler = fakeServer.getHandler("get_week");
+    const result = (await handler({ startDate: "2020-01-08" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as {
+      error?: string;
+      days: Array<{ resolvedPlan: { id: string; source: string } | null }>;
+    };
+    expect(payload.error).toBeUndefined();
+    expect(payload.days).toHaveLength(7);
+    for (const day of payload.days) {
+      expect(day.resolvedPlan).toEqual({ id: "plan-old", name: "Old Plan", source: "archived" });
+    }
+  });
+
+  it("errors 'Date is outside any plan window' for a week never covered by any plan", async () => {
+    vi.mocked(getActiveProgram).mockResolvedValue({
+      id: "active-1",
+      name: "Current Plan",
+      startedOn: new Date("2020-06-01"),
+      template: { totalWeeks: 4, phases: [], weeklySplit: [] },
+      confirmedThroughDate: null,
+    } as never);
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([]);
+
+    const handler = fakeServer.getHandler("get_week");
+    const result = (await handler({ startDate: "2021-01-01" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as { error?: string };
+    expect(payload.error).toBe("Date is outside any plan window");
+  });
+
+  it("S1 acceptance: a transition week resolves day-by-day (days at/before completion archived, days after covered by nothing)", async () => {
+    vi.mocked(getActiveProgram).mockResolvedValue(null);
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([
+      {
+        id: "plan-old",
+        name: "Elbert Plan",
+        startedOn: new Date("2020-01-01"),
+        template: { totalWeeks: 1, phases: [], weeklySplit: [] },
+        confirmedThroughDate: null,
+        active: false,
+        goalStatus: "achieved",
+        // S4 clamp: the plan's window (totalWeeks*7 = 7 days, 01-01..01-07)
+        // gets cut short at the completion day — 01-04 is covered, 01-05
+        // onward is NOT, even though it's still inside the raw template window.
+        goalCompletedAt: new Date("2020-01-04"),
+      },
+    ] as never);
+
+    const handler = fakeServer.getHandler("get_week");
+    const result = (await handler({ startDate: "2020-01-04" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as {
+      error?: string;
+      startDate: string;
+      days: Array<{
+        isInPlan: boolean;
+        resolvedPlan: { id: string; name: string; source: string } | null;
+      }>;
+    };
+
+    expect(payload.error).toBeUndefined();
+    expect(payload.startDate).toBe("2020-01-01");
+    expect(payload.days).toHaveLength(7);
+
+    // Days 0-3 (01-01..01-04): archived plan, covered up to and including
+    // the completion day itself (S4: inclusive).
+    for (let i = 0; i <= 3; i++) {
+      expect(payload.days[i].isInPlan).toBe(true);
+      expect(payload.days[i].resolvedPlan).toEqual({
+        id: "plan-old",
+        name: "Elbert Plan",
+        source: "archived",
+      });
+    }
+    // Days 4-6 (01-05..01-07): past the S4 completion clamp, and there is no
+    // active program to fall back to — nothing covers them.
+    for (let i = 4; i <= 6; i++) {
+      expect(payload.days[i].isInPlan).toBe(false);
+      expect(payload.days[i].resolvedPlan).toBeNull();
+    }
   });
 });
