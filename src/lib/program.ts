@@ -219,6 +219,27 @@ function coversDayKey(
  *  3. Fall through (today/future dayKey, or a past dayKey with no covering
  *     candidate): return `activeProgram` as {source:"active"} when present,
  *     else null. Bit-identical to today's out-of-plan/active behavior.
+ *
+ * SMOKE-1 (binding, additive precedence — checked BEFORE step 1 above):
+ * `getActiveProgram()` falls back to the legacy `Program` table only when the
+ * user has ZERO active `Plan` rows (see that function). When it does, the
+ * resulting `activeProgram.id` is a Program-table id and can never appear in
+ * `candidates`, because `getPlanWindowCandidates()` queries the Plan table
+ * exclusively (every Plan row, active or not — see that function). A real
+ * active Plan, by contrast, always appears there. So "activeProgram.id is
+ * absent from candidates" is a reliable legacy-fallback signal, requiring no
+ * extra flag on ActiveProgramSnapshot.
+ *
+ * When dayKey is strictly past AND activeProgram is that legacy-fallback AND
+ * a candidate covers dayKey, the covering candidate wins over the legacy row
+ * — the legacy row's `active` label was only ever a "nothing else to show"
+ * placeholder, and letting it short-circuit step 1 for a date a real Plan
+ * covers (a) mislabels the source (no archived badge) and (b) is actively
+ * wrong: resolveDay's override lookup keys `planId` off whichever program won
+ * here, so the real Plan's PlanDayOverride rows would otherwise be invisible.
+ * Today/future dates, and past dates with no covering real-Plan candidate
+ * (legacy-only users with zero Plan rows), are unaffected — this branch only
+ * fires when a covering candidate is actually found.
  */
 export function pickProgramForDate(
   candidates: PlanWindowCandidate[],
@@ -226,6 +247,49 @@ export function pickProgramForDate(
   todayKey: string,
   activeProgram: ActiveProgramSnapshot | null,
 ): ProgramForDate | null {
+  const isPast = dayKey < todayKey;
+  const covering = isPast
+    ? candidates.filter((c) => coversDayKey(c, dayKey, c.goalCompletedAt))
+    : [];
+
+  // Picks the covering-candidate winner (S3 ordering) — returns the raw
+  // PlanWindowCandidate (not yet trimmed to ProgramForDate) so callers can
+  // both build the snapshot and inspect `winner.active` for labeling.
+  const pickCoveringWinner = (): PlanWindowCandidate => {
+    // Stable sort: ties (both `active`, equal `startedOn`) preserve the
+    // incoming order, which getPlanWindowCandidates() pre-sorts updatedAt
+    // desc — see the doc comment above for the full reasoning.
+    const ordered = [...covering].sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return b.startedOn.getTime() - a.startedOn.getTime();
+    });
+    return ordered[0]!;
+  };
+  const toProgramForDate = (
+    winner: PlanWindowCandidate,
+    source: "active" | "archived",
+  ): ProgramForDate => ({
+    id: winner.id,
+    name: winner.name,
+    startedOn: winner.startedOn,
+    template: winner.template,
+    confirmedThroughDate: winner.confirmedThroughDate,
+    source,
+  });
+
+  // SMOKE-1: legacy-fallback active row loses to a covering real Plan on a
+  // past date — see the doc comment above. The winner's `active` flag is
+  // expected to always be false here (if a real Plan were active,
+  // getActiveProgram() would have returned it instead of falling back to
+  // Program), but we still label off the flag rather than hardcoding
+  // "archived", for defensive correctness.
+  const isLegacyFallback =
+    isPast && activeProgram !== null && !candidates.some((c) => c.id === activeProgram.id);
+  if (isLegacyFallback && covering.length > 0) {
+    const winner = pickCoveringWinner();
+    return toProgramForDate(winner, winner.active ? "active" : "archived");
+  }
+
   if (activeProgram && coversDayKey(activeProgram, dayKey)) {
     return {
       id: activeProgram.id,
@@ -237,26 +301,8 @@ export function pickProgramForDate(
     };
   }
 
-  if (dayKey < todayKey) {
-    const covering = candidates.filter((c) => coversDayKey(c, dayKey, c.goalCompletedAt));
-    if (covering.length > 0) {
-      // Stable sort: ties (both `active`, equal `startedOn`) preserve the
-      // incoming order, which getPlanWindowCandidates() pre-sorts updatedAt
-      // desc — see the doc comment above for the full reasoning.
-      const ordered = [...covering].sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        return b.startedOn.getTime() - a.startedOn.getTime();
-      });
-      const winner = ordered[0]!;
-      return {
-        id: winner.id,
-        name: winner.name,
-        startedOn: winner.startedOn,
-        template: winner.template,
-        confirmedThroughDate: winner.confirmedThroughDate,
-        source: "archived",
-      };
-    }
+  if (covering.length > 0) {
+    return toProgramForDate(pickCoveringWinner(), "archived");
   }
 
   if (activeProgram) {
@@ -321,9 +367,19 @@ export async function getPlanWindowCandidates(): Promise<PlanWindowCandidate[]> 
  * - Else: fall through to the active program (or null if none exists) —
  *   today's out-of-plan/active behavior, unchanged.
  *
- * The archived-plan query is skipped entirely unless it could actually
- * matter (dayKey is strictly past AND the active program doesn't already
- * cover it) — avoids an extra round-trip on the hot (today/future) path.
+ * The candidate query is skipped entirely for today/future dates (the hot
+ * path) — pickProgramForDate's SMOKE-1 legacy-fallback branch is itself
+ * gated on `isPast`, so it's a no-op there regardless.
+ *
+ * SMOKE-1: for a strictly-past `date`, the query can no longer be skipped
+ * just because `activeProgram` already covers it — that's exactly the buggy
+ * case (a legacy Program-table fallback "covers" its recorded window too).
+ * pickProgramForDate needs the full candidate list to tell a legacy fallback
+ * apart from a real active Plan (id membership — see its doc comment), so
+ * every past-date lookup now fetches it. Accepted trade-off: one extra query
+ * per past-date, single-day lookup (e.g. get_day) — batch callers (get_week,
+ * the month view) already fetch `candidates` once per range and are
+ * unaffected.
  */
 export async function getProgramForDate(
   date: Date,
@@ -333,8 +389,7 @@ export async function getProgramForDate(
   const dayKey = dateKey(date);
   const todayKey = dateKey(now);
 
-  const mightNeedArchived =
-    dayKey < todayKey && !(activeProgram && coversDayKey(activeProgram, dayKey));
+  const mightNeedArchived = dayKey < todayKey;
   const candidates = mightNeedArchived ? await getPlanWindowCandidates() : [];
 
   return pickProgramForDate(candidates, dayKey, todayKey, activeProgram);
