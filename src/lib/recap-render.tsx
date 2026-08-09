@@ -12,6 +12,8 @@ import React from "react";
 import { ImageResponse } from "next/og";
 import type { WeeklyRecap, RecapTemplate, RecapCardFormat, RecapSlide, RecapHighlight } from "@/lib/recap";
 import { RecapCard, RecapStorySlide } from "@/lib/recap-card";
+import type { GoalCompletionSnapshot } from "@/lib/goal-completion-core";
+import { CompletionCard } from "@/lib/completion-card";
 
 // ─── Font loading (DC-1 safe slice) ──────────────────────────────────────────
 // Module scope — loaded once per cold start, reused across requests.
@@ -127,5 +129,25 @@ export function renderRecapStorySlide(
   return new ImageResponse(
     React.createElement(RecapStorySlide, { recap, template, slide }),
     IMAGE_OPTIONS,
+  );
+}
+
+/**
+ * Renders the "Goal Completed" shareable card (REQ-008) as an ImageResponse
+ * (PNG stream). Reuses the exact same font-loading + imageOptionsFor(format)
+ * path as renderRecapCard — no new fonts, no new dimensions.
+ *
+ * @param goal  `{objective, kind}` — a defensive fallback; the frozen
+ *              `snapshot.objective` is preferred inside CompletionCard.
+ */
+export function renderCompletionCard(
+  snapshot: GoalCompletionSnapshot,
+  goal: { objective: string; kind: string },
+  template: RecapTemplate,
+  format: RecapCardFormat = "story",
+): ImageResponse {
+  return new ImageResponse(
+    React.createElement(CompletionCard, { snapshot, goal, template, format }),
+    imageOptionsFor(format),
   );
 }
