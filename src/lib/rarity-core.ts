@@ -146,6 +146,7 @@ export type MetricFamily =
   | "hike-distance"
   | "workout-count"
   | "log"
+  | "rolling"
   | "unknown";
 
 /**
@@ -178,6 +179,11 @@ export function metricFamilyFor(
   if (metric === "hike:total_distance_mi") return "hike-distance";
   if (metric === "workout:count") return "workout-count";
   if (metric.startsWith("log:")) return "log";
+  // rolling:* — engine-computed session-consistency window; conservative
+  // no-rate treatment (no norm, and observedSeriesFor has no rolling branch,
+  // so no series either — same class as the bodyFatPct gap). Verdict stays
+  // 'unknown'; gating rolling targets floor the tier via aggregateGoalTier.
+  if (metric.startsWith("rolling:")) return "rolling";
 
   return "unknown";
 }
@@ -334,6 +340,11 @@ function normForFamily(
       return n.workoutsPerWeek;
     case "log":
       // log:* — no norm; observed-only
+      return null;
+    case "rolling":
+      // rolling:* — no norm AND no observed series: there is no defensible
+      // population rate for "hit-sessions gained per week", so feasibility
+      // never estimates one. requiredRate stays uncomparable → 'unknown'.
       return null;
     default:
       return null;

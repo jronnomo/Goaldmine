@@ -15,15 +15,20 @@ import { getExerciseHistory } from "@/lib/records";
 
 // Re-export all pure data / types so existing imports of goal-targets.ts
 // continue to work unchanged.
-export type { Direction, GoalTarget, MetricSpec } from "@/lib/metrics-registry";
+export type { Direction, GoalTarget, MetricSpec, RollingParams } from "@/lib/metrics-registry";
 export {
   LOG_METRIC_PREFIX,
+  ROLLING_METRIC_PREFIX,
   METRICS,
   METRIC_BY_ID,
   HIKE_DEFAULT_TARGETS,
 } from "@/lib/metrics-registry";
 
-import { LOG_METRIC_PREFIX } from "@/lib/metrics-registry";
+import { LOG_METRIC_PREFIX, ROLLING_METRIC_PREFIX } from "@/lib/metrics-registry";
+import {
+  computeRollingValueFromWorkouts,
+  rollingParamsFromTargets,
+} from "@/lib/rolling-metrics";
 
 /** Resolve the current value for a metric as of `asOf` (default: now).
  *  When `cumulative` is true (only meaningful for `log:*`), returns the SUM
@@ -148,6 +153,48 @@ export async function resolveMetricValue(
     return entry?.value ?? null;
   }
 
+  // rolling:<opaque slug> — engine-computed session-consistency tracker.
+  // The key carries identity only; ALL semantics live in the target's
+  // `rolling` params, read from the goal's own stored targets (the signature
+  // has no target object — readiness.ts stays untouched). Sessions =
+  // completed workouts (≤ cutoff) with ≥1 timed set of params.exercise
+  // (canonicalExerciseName both sides, inside rolling-metrics.ts); value =
+  // hit-sessions in the trailing `window` — a snapshot that can REGRESS as
+  // old hits roll out. Zero sessions ever → null (untested).
+  // Historisation: pure function of workouts ≤ cutoff under the goal's
+  // CURRENT params (a param edit re-shapes history, same as editing a
+  // target re-shapes progress). Same computation at every asOf keeps
+  // /progress, /compare, and the readiness series byte-identical.
+  if (metric.startsWith(ROLLING_METRIC_PREFIX)) {
+    // Two independent queries — batched, no N+1. Workout is a scoped model:
+    // getDb() injects userId into both. WorkoutExercise/Set are non-scoped
+    // children riding along on the scoped parent via select (the
+    // scoped-parent + include pattern getExerciseHistory's callers rely on).
+    const [goal, workouts] = await Promise.all([
+      db.goal.findUnique({ where: { id: goalId }, select: { targets: true } }),
+      db.workout.findMany({
+        where: { status: "completed", startedAt: { lte: cutoff } },
+        // id DESC tiebreak keeps window membership deterministic when two
+        // sessions share a startedAt instant.
+        orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+        select: {
+          exercises: {
+            orderBy: { orderIndex: "asc" },
+            select: {
+              name: true,
+              sets: { orderBy: { setIndex: "asc" }, select: { durationSec: true } },
+            },
+          },
+        },
+      }),
+    ]);
+    const params = rollingParamsFromTargets(goal?.targets, metric);
+    // No params (goal missing, legacy/hand-written JSON) → honest untested;
+    // validated writes make this unrepresentable (GoalTargetSchema refinement).
+    if (params === null) return null;
+    return computeRollingValueFromWorkouts(workouts, params);
+  }
+
   // exercise:<canonical name> — latest best (est 1RM, max reps, or max duration)
   // from workout history as of asOf. getExerciseHistory uses the raw prisma singleton
   // internally (WorkoutExercise is non-scoped).
@@ -201,6 +248,21 @@ export async function resolveMetricStart(
 
   // Cumulative / count / max metrics start at 0.
   if (metric.startsWith("hike:") || metric === "workout:count") return 0;
+
+  // rolling:* — auto-captured start is ALWAYS 0, never the current value and
+  // never an earliest-row lookup. Why this differs from snapshot metrics'
+  // earliest-value capture: a snapshot metric (weightLb, baseline:*) measures
+  // a pre-existing quantity, so "where you started" is the earliest recorded
+  // reading. A rolling tracker measures repeatability inside a trailing
+  // window — its natural floor is zero hit-sessions, and that floor IS the
+  // honest start: the goal asks the user to BUILD consistency from unproven.
+  // Capturing the current window value instead would zero out whatever
+  // consistency already exists (progress = (current-start)/(target-start)
+  // would hide it), and an "earliest" value is meaningless (the value after
+  // the first-ever session is an artifact of when logging began, not a
+  // baseline). Explicit target.start still wins — computeReadiness only
+  // calls this when start is absent.
+  if (metric.startsWith(ROLLING_METRIC_PREFIX)) return 0;
 
   // Cumulative log:* also starts at 0 (build-from-zero accumulation).
   if (cumulative && metric.startsWith(LOG_METRIC_PREFIX)) return 0;
