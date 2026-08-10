@@ -23,6 +23,7 @@ import {
 } from "@/lib/saved-meal";
 import { dateKey } from "@/lib/calendar-core";
 import type { ExistingMealStub } from "@/lib/nutrition-merge";
+import type { LibraryFood } from "@/lib/food-types";
 
 const EDIT_DEFAULTS: MealDefaults = {
   mealType: "lunch",
@@ -379,5 +380,73 @@ describe("MealComposer — 'Save as meal' affordance (bundle capture)", () => {
       createElement(MealComposer, { mode: "edit", id: "meal-1", defaults: EDIT_DEFAULTS }),
     );
     expect(html).not.toContain('data-testid="save-as-meal-toggle"');
+  });
+});
+
+// ── "Browse library" — libraryFoods threading fix ────────────────────────────
+// Root cause: the gate in useFoodComposer.tsx ({libraryFoods && libraryFoods.length
+// > 0 && <button data-testid="composer-browse-library">}) was always correct, but
+// none of the three edit-mode host chains (MealEditButton, NutritionList,
+// EditNutritionForm) threaded a `libraryFoods` prop down to MealComposer, so the
+// button could never render when editing an existing meal. MealComposer itself
+// (this file's subject) already accepted/forwarded the prop correctly for both
+// modes — these tests pin that shared mechanism so it can't silently regress
+// while the host-side prop-threading fix lives in the other components' tests.
+
+const LIB_FOOD: LibraryFood[] = [
+  {
+    id: "food-1",
+    barcode: null,
+    name: "Chicken breast",
+    brand: null,
+    servingSize: "100 g",
+    basis: "100g",
+    perServing: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, fiberG: 0, sodiumMg: 74 },
+  },
+];
+
+describe("MealComposer — Browse library (libraryFoods gate)", () => {
+  it("edit mode + libraryFoods supplied: renders the Browse library button", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, {
+        mode: "edit",
+        id: "meal-1",
+        defaults: EDIT_DEFAULTS,
+        libraryFoods: LIB_FOOD,
+      }),
+    );
+    expect(html).toContain('data-testid="composer-browse-library"');
+    expect(html).toContain("Browse library");
+  });
+
+  it("edit mode + libraryFoods omitted: does NOT render Browse library (regression guard for the other/untouched call sites)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, {
+        mode: "edit",
+        id: "meal-1",
+        defaults: EDIT_DEFAULTS,
+      }),
+    );
+    expect(html).not.toContain("composer-browse-library");
+    expect(html).not.toContain("Browse library");
+  });
+
+  it("edit mode + empty libraryFoods array: does NOT render (matches the length>0 gate, not just definedness)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, {
+        mode: "edit",
+        id: "meal-1",
+        defaults: EDIT_DEFAULTS,
+        libraryFoods: [],
+      }),
+    );
+    expect(html).not.toContain("composer-browse-library");
+  });
+
+  it("create mode + libraryFoods supplied: also renders (shared gate — already worked pre-fix; unaffected regression check)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "create", libraryFoods: LIB_FOOD }),
+    );
+    expect(html).toContain('data-testid="composer-browse-library"');
   });
 });

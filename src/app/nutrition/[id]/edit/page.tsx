@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Card } from "@/components/Card";
 import { EditNutritionForm } from "@/components/EditNutritionForm";
 import { getDb } from "@/lib/db";
-import { getQuickPickFoods } from "@/lib/food-actions";
+import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { toDatetimeLocalValue } from "@/lib/calendar";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 
@@ -16,9 +16,10 @@ export default async function EditNutritionPage({
 }) {
   const { id } = await params;
   const db = await getDb();
-  const [row, quickPickFoods] = await Promise.all([
+  const [row, quickPickFoods, libraryFoods] = await Promise.all([
     db.nutritionLog.findUnique({ where: { id } }),
     getQuickPickFoods(),
+    listLibraryFoods(),
   ]);
   if (!row) notFound();
 
@@ -38,6 +39,7 @@ export default async function EditNutritionPage({
         <EditNutritionForm
           id={row.id}
           quickPickFoods={quickPickFoods}
+          libraryFoods={libraryFoods}
           defaults={{
             mealType: row.mealType,
             items: parseStoredItems(row.items),

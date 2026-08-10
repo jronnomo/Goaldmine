@@ -25,6 +25,7 @@ import { FootageList, type SerializedMarker } from "@/components/days/FootageLis
 import { RenderJobPanel, type SerializedRenderJob } from "@/components/days/RenderJobPanel";
 import { canonicalExerciseName } from "@/lib/records";
 import { getDb } from "@/lib/db";
+import { listLibraryFoods } from "@/lib/food-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,10 @@ export default async function DayDetail({
   const date = parseDateKey(dateKey);
   const db = await getDb();
   const r = await resolveDay(date);
+  // Pre-loaded library foods for the Nutrition card's Browse-library picker
+  // (both the per-meal edit composer and the inline log-form composer) —
+  // same fetch nutrition/page.tsx uses.
+  const libraryFoods = await listLibraryFoods();
 
   const today = startOfDay(new Date());
   const isPast = r.date < today;
@@ -379,6 +384,7 @@ export default async function DayDetail({
           plan={r.nutritionPlan}
           showLogForm
           defaultDate={dateKey}
+          libraryFoods={libraryFoods}
         />
       </Card>
 
