@@ -1,9 +1,10 @@
 // src/lib/mcp/tools/program-tools.ts
 // Program-layer MCP tools (#310/#311, Sprint 17 seam flip) — the multi-domain
-// Program container: lifecycle CRUD + status. The Program is the umbrella for
-// a season of coordinated goals (fitness AND project) sharing one time window
-// and one weekly rotation. Cores live in src/lib/program-core.ts (dual-caller
-// contract: same functions will back the /program dashboard later).
+// Program container: lifecycle CRUD + status (#310) and membership + overview
+// (#311). The Program is the umbrella for a season of coordinated goals
+// (fitness AND project) sharing one time window and one weekly rotation.
+// Cores live in src/lib/program-core.ts (dual-caller contract: the same
+// functions will back the /program dashboard and founder backfill later).
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -17,6 +18,10 @@ import {
   createProgramCore,
   updateProgramCore,
   setProgramStatusCore,
+  attachGoalToProgramCore,
+  detachGoalFromProgramCore,
+  attachPlanToProgramCore,
+  getProgramOverviewCore,
   type ProgramRow,
   type UpdateProgramCorePatch,
 } from "@/lib/program-core";
@@ -196,6 +201,150 @@ export function registerProgramTools(server: McpServer): void {
               : `Program "${r.name}" is already ${r.status} — no change.`,
           };
         });
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // attach_goal_to_program
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "attach_goal_to_program",
+    {
+      title: "Add a goal to a Program (membership only — never touches tracking/focus)",
+      description:
+        "Record that a Goal belongs to a Program (sets Goal.programId). Works for goals of ANY kind — fitness and " +
+        "project goals share one Program. THE tool for 'add the hiking goal to the program', 'move this goal into the " +
+        "fall block'. MEMBERSHIP ≠ TRACKING: this does NOT change Goal.active, focus, or the goal's plan — a member " +
+        "goal can be paused; use set_goal_tracked / set_active_goal for tracking and focus. " +
+        "An ACHIEVED goal cannot be attached: completed goals are retired (R9) and Program membership would resurrect " +
+        "them in Program views — reopen it first (reopen_goal) if it genuinely returns to play. " +
+        "A goal already in a DIFFERENT Program is MOVED (a goal has at most one Program); the response reports " +
+        "previousProgramId so the move is visible. Attaching to the same Program again is a friendly no-op (changed:false).",
+      inputSchema: {
+        goalId: z.string().min(1).describe("ID of the goal to attach. Use list_goals to discover ids."),
+        programId: z.string().min(1).describe("ID of the Program to attach it to."),
+        requestId: RequestIdShape,
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("attach_goal_to_program", input.requestId, db, async () => {
+          const r = await attachGoalToProgramCore(input.goalId, input.programId);
+          return {
+            ...r,
+            message: r.changed
+              ? `Goal "${r.goalObjective}" attached to Program "${r.programName}". Tracking/focus unchanged.`
+              : `Goal "${r.goalObjective}" is already a member of Program "${r.programName}" — no change.`,
+          };
+        });
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // detach_goal_from_program
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "detach_goal_from_program",
+    {
+      title: "Remove a goal from its Program (idempotent — no-op when not a member)",
+      description:
+        "Clear Goal.programId — the goal leaves its Program but keeps its plans, logs, tracking state, and focus " +
+        "untouched. Use for 'take this goal out of the program', 'this goal is standalone now'. " +
+        "IDEMPOTENT: detaching a goal that is in no Program returns a no-op success (changed:false), NOT an error — " +
+        "safe to call defensively. Takes only goalId (a goal has at most one Program, so no programId is needed). " +
+        "Do NOT use this to retire a goal — complete_goal and set_goal_tracked are different operations; detaching " +
+        "only removes Program membership.",
+      inputSchema: {
+        goalId: z.string().min(1).describe("ID of the goal to detach from its Program."),
+        requestId: RequestIdShape,
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("detach_goal_from_program", input.requestId, db, async () => {
+          const r = await detachGoalFromProgramCore(input.goalId);
+          return {
+            ...r,
+            message: r.changed
+              ? `Goal "${r.goalObjective}" detached from its Program.`
+              : `Goal "${r.goalObjective}" is not in any Program — nothing to detach.`,
+          };
+        });
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // attach_plan_to_program
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "attach_plan_to_program",
+    {
+      title: "Attach a goal's plan to a Program (its rotation plan) — goal must be a member first",
+      description:
+        "Set Plan.programId — marks a plan as belonging to a Program (the shared weekly rotation the Program layer " +
+        "reads). REQUIREMENT: the plan's goal must ALREADY be a member of that Program — call attach_goal_to_program " +
+        "first; a plan whose goal is outside the Program is rejected with a clear error (membership before content, " +
+        "so the Program's plan list can never disagree with its goal list). " +
+        "Typical wiring order after create_program: attach_goal_to_program for each goal, then attach_plan_to_program " +
+        "for the rotation plan — 'wire the Elbert plan into the program'. " +
+        "Re-attaching the same plan to the same Program is a friendly no-op; attaching to a different Program moves it " +
+        "and reports previousProgramId. Do NOT use this to activate/pause a plan — that is set_plan_active.",
+      inputSchema: {
+        planId: z.string().min(1).describe("ID of the plan to attach (see get_goal for a goal's plans)."),
+        programId: z.string().min(1).describe("ID of the Program to attach it to."),
+        requestId: RequestIdShape,
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("attach_plan_to_program", input.requestId, db, async () => {
+          const r = await attachPlanToProgramCore(input.planId, input.programId);
+          return {
+            ...r,
+            message: r.changed
+              ? `Plan "${r.planName}" attached to Program "${r.programName}" as a rotation plan.`
+              : `Plan "${r.planName}" is already attached to Program "${r.programName}" — no change.`,
+          };
+        });
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // get_program_overview
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "get_program_overview",
+    {
+      title: "Program overview: the container + member goals + rotation plan + attribution rules",
+      description:
+        "THE orientation read for the Program layer: returns program {id, name, status, startedOn, endsOn, notes}, " +
+        "memberGoals [{id, objective, kind, status, hasActivePlan}], rotationPlan {id, name, active} | null (the plan " +
+        "attached to the Program — active preferred, else newest), and attributionRules (the program's auto-link rules). " +
+        "Omit programId to resolve the user's ACTIVE Program — 'what's in the current program', 'show me the program', " +
+        "'which goals are in this block'; pass programId to inspect a draft/completed/archived one. " +
+        "Do NOT infer membership from list_goals or planJson — Goal.programId read here is the membership truth. " +
+        "If no Program is active and no programId is given, returns a friendly error (create_program + " +
+        "set_program_status to start one). Dates are yyyy-mm-dd in the user's local time zone.",
+      inputSchema: {
+        programId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Program to inspect. Omit to resolve the currently ACTIVE Program."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const r = await getProgramOverviewCore(input.programId);
+        return {
+          program: serializeProgram(r.program),
+          memberGoals: r.memberGoals,
+          rotationPlan: r.rotationPlan,
+          attributionRules: r.attributionRules,
+        };
       }),
   );
 }
