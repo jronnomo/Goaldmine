@@ -11,6 +11,10 @@
 //     match the spec
 //   • overrides land inside the plan window and honor the Mirror Lake
 //     sacred-time language (never a deload)
+//   • spec v2 delta (2026-08-10 04:23): Oct 2–5 TBD trip is NOTE-ONLY (no
+//     workoutJson → never a calendar band), the Sep 15 cluster-decision item
+//     + disruption-cluster standing rule exist, and NO scheduled item or
+//     baseline retest week touches the Oct 2–8 exclusion
 //
 // lintTemplate is imported from plan-lint (pure entry — no DB access in the
 // template rules); vitest.config supplies a placeholder DATABASE_URL so the
@@ -21,11 +25,16 @@ import { GoalTargetSchema } from "@/lib/metrics-registry";
 import { LegendSchema } from "@/lib/legend";
 import { AttributionRuleAuthoringSchema } from "@/lib/attribution-rules";
 import { lintTemplate } from "@/lib/plan-lint";
-import { addDays, parseDateKey } from "@/lib/calendar-core";
+import { addDays, dateKey, parseDateKey } from "@/lib/calendar-core";
+import {
+  classifyOverrideWindowKind,
+  deriveCalendarWindows,
+} from "@/lib/calendar-windows";
 import {
   buildG4AttributionRule,
   buildPhase2aOverrides,
   buildPhase2aRotationTemplate,
+  PHASE2A_CLUSTER_RULE,
   PHASE2A_GOAL1,
   PHASE2A_GOAL2,
   PHASE2A_GOAL3,
@@ -37,6 +46,12 @@ import {
   PHASE2A_WEIGHIN_RULE,
   standingRuleKey,
 } from "@/lib/phase2a-spec";
+
+/** Spec v2 exclusion window: the Oct 2–5 trip + the 3 days after it. No
+ *  baseline retest, DEXA, or practice exam may land inside it. dateKey
+ *  strings compare lexicographically == chronologically. */
+const EXCLUSION_START = "2026-10-02";
+const EXCLUSION_END = "2026-10-08";
 
 const GOALS = [
   { name: "Goal 1 (Handstand)", targets: PHASE2A_GOAL1.targets },
@@ -243,9 +258,9 @@ describe("phase2a-spec · overrides", () => {
   const overrides = buildPhase2aOverrides();
   const startedOn = parseDateKey(PHASE2A_PLAN.startedOnKey);
 
-  it("covers Mirror Lake (2) + Virginia soft break (4) + deload #1 (3) + deload #2 (4) = 13 dates, all unique", () => {
-    expect(overrides).toHaveLength(13);
-    expect(new Set(overrides.map((o) => o.dateKey)).size).toBe(13);
+  it("covers Mirror Lake (2) + Virginia soft break (4) + deload #1 (3) + Oct TBD trip (4) + deload #2 (4) = 17 dates, all unique", () => {
+    expect(overrides).toHaveLength(17); // v2 delta: 13 → 17
+    expect(new Set(overrides.map((o) => o.dateKey)).size).toBe(17);
   });
 
   it("every override date lands inside the 20-week plan window", () => {
@@ -308,12 +323,62 @@ describe("phase2a-spec · overrides", () => {
       expect(ov.label).toContain("Deload #1");
     }
   });
+
+  it("v2: Oct 2–5 TBD trip is NOTE-ONLY (the Sep 4–7 mechanism) with maintenance nutrition + the no-retest/DEXA/practice-exam ±3d constraint", () => {
+    const oct = overrides.filter((o) => o.dateKey.startsWith("2026-10-0"));
+    expect(oct.map((o) => o.dateKey)).toEqual(["2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]);
+    for (const ov of oct) {
+      expect(ov.workoutJson, `${ov.dateKey} must not carry a day-swap`).toBeUndefined();
+      // Nutrition through the cluster: maintenance on travel days, deficit between.
+      expect(ov.nutritionText).toContain("MAINTENANCE");
+      expect(ov.nutritionText).toContain("BOTH windows");
+      expect(ov.nutritionText).toContain("deficit on the normal days between");
+      // Uncertain-window language + the scheduling exclusion, verbatim intent.
+      expect(ov.notes).toContain("UNCERTAIN TRAINING WINDOW");
+      expect(ov.notes).toContain("Nothing scored");
+      expect(ov.notes).toContain("no makeup");
+      expect(ov.notes).toContain("no readiness penalty");
+      expect(ov.notes).toContain("baseline retest, DEXA, or practice exam");
+      expect(ov.notes).toContain("3 days after");
+      expect(ov.mobilityText).toContain("Skill only if space/wall allows");
+    }
+  });
+
+  it("v2: Oct 2–5 renders as plain note-only days, never calendar bands (calendar-windows classifier contract)", () => {
+    const oct = overrides.filter((o) => o.dateKey >= "2026-10-02" && o.dateKey <= "2026-10-05");
+    expect(oct).toHaveLength(4);
+    for (const ov of oct) {
+      // Title/notes prefix must not collide with the window classifier.
+      for (const text of [ov.label, ov.notes]) {
+        expect(text.startsWith("Deload"), text).toBe(false);
+        expect(text.startsWith("Mirror Lake"), text).toBe(false);
+        expect(classifyOverrideWindowKind(text)).toBeNull();
+      }
+    }
+    // Feed the derivation exactly the way calendar.ts does: day-swap
+    // overrides only (workoutJson != null), title = workoutJson.title.
+    // Note-only overrides never reach the classifier — they cannot band.
+    const windows = deriveCalendarWindows(
+      overrides
+        .filter((o) => o.workoutJson != null)
+        .map((o) => ({ dateKey: o.dateKey, title: o.workoutJson!.title })),
+    );
+    expect(windows.map((w) => `${w.kind}:${w.startKey}..${w.endKey}`)).toEqual([
+      "observance:2026-08-14..2026-08-15",
+      "deload:2026-09-25..2026-09-27",
+      "deload:2026-11-26..2026-11-29",
+    ]);
+    // No band anywhere near the exclusion window.
+    for (const w of windows) {
+      expect(w.endKey < EXCLUSION_START || w.startKey > EXCLUSION_END, w.id).toBe(true);
+    }
+  });
 });
 
 describe("phase2a-spec · scheduled items, meals, standing rules", () => {
   it("scheduled items carry unique phase2a:* externalRefs and the spec's checkpoint dates", () => {
-    expect(PHASE2A_SCHEDULED_ITEMS).toHaveLength(9); // 3 DEXA + 2 practice exams + 4 photo months
-    expect(new Set(PHASE2A_SCHEDULED_ITEMS.map((i) => i.externalRef)).size).toBe(9);
+    expect(PHASE2A_SCHEDULED_ITEMS).toHaveLength(10); // v2 delta 9 → 10: 3 DEXA + 2 practice exams + 1 cluster decision + 4 photo months
+    expect(new Set(PHASE2A_SCHEDULED_ITEMS.map((i) => i.externalRef)).size).toBe(10);
     for (const i of PHASE2A_SCHEDULED_ITEMS) {
       expect(i.externalRef.startsWith("phase2a:")).toBe(true);
       expect(i.dateKey).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -327,6 +392,19 @@ describe("phase2a-spec · scheduled items, meals, standing rules", () => {
     // Monthly photos: 1st of Sep–Dec.
     const photoDates = PHASE2A_SCHEDULED_ITEMS.filter((i) => i.externalRef.startsWith("phase2a:photos-")).map((i) => i.dateKey);
     expect(photoDates).toEqual(["2026-09-01", "2026-10-01", "2026-11-01", "2026-12-01"]);
+  });
+
+  it("v2: the cluster-decision task sits on Goal 1 (rotation owner) at mid-September and summarizes options a/b/c", () => {
+    const item = PHASE2A_SCHEDULED_ITEMS.find((i) => i.externalRef === "phase2a:cluster-decision")!;
+    expect(item).toMatchObject({
+      goalKey: "handstand",
+      dateKey: "2026-09-15",
+      type: "task",
+      title: "Decide Sep 24–Oct 5 cluster strategy",
+    });
+    expect(item.detail).toContain("(a) Absorb");
+    expect(item.detail).toContain("(b) Shift Deload #1 to Oct 2–5");
+    expect(item.detail).toContain("(c) Front-load Block 1");
   });
 
   it("saved meals match the spec macros exactly", () => {
@@ -351,6 +429,26 @@ describe("phase2a-spec · scheduled items, meals, standing rules", () => {
     expect(PHASE2A_NUTRITION_RULE.type).toBe("standing_rule");
   });
 
+  it("v2: the disruption-cluster rule carries the framing, options a/b/c + decide-by, the nutrition default, and the rolling-window caveat", () => {
+    expect(PHASE2A_CLUSTER_RULE.type).toBe("standing_rule");
+    const body = PHASE2A_CLUSTER_RULE.body;
+    expect(standingRuleKey(PHASE2A_CLUSTER_RULE)).toContain("Sep 24 – Oct 5 disruption cluster");
+    expect(body).toContain("ONE cluster, not two independent breaks");
+    expect(body).toContain("Decide by mid-September");
+    expect(body).toContain("(a) Absorb");
+    expect(body).toContain("(b) Shift Deload #1 to Oct 2–5");
+    expect(body).toContain("(c) Front-load Block 1");
+    expect(body).toContain("MAINTENANCE on all travel days in BOTH windows");
+    expect(body).toContain("deficit on the normal days between");
+    expect(body).toContain("provisional until 6 fresh sessions have accumulated post-Oct 5");
+  });
+
+  it("v2: standing-rule idempotency keys (body first lines) are pairwise distinct — rule-block entries went 1 → 2", () => {
+    const keys = [PHASE2A_WEIGHIN_RULE, PHASE2A_NUTRITION_RULE, PHASE2A_CLUSTER_RULE].map(standingRuleKey);
+    expect(new Set(keys).size).toBe(3);
+    for (const key of keys) expect(key.length).toBeGreaterThan(0);
+  });
+
   it("program window matches the spec", () => {
     expect(PHASE2A_PROGRAM.startedOnKey).toBe("2026-08-10");
     expect(PHASE2A_PROGRAM.endsOnKey).toBe("2026-12-31");
@@ -358,5 +456,32 @@ describe("phase2a-spec · scheduled items, meals, standing rules", () => {
     // Blocks 0–3 summary lines from the spec.
     expect(PHASE2A_PROGRAM.notes).toContain("0 · Aug 10–23 · recovery + baselines + DEXA prep");
     expect(PHASE2A_PROGRAM.notes).toContain("3 · Dec 7–31 · final lean-out + rung-2 test");
+  });
+});
+
+describe("phase2a-spec · v2 Oct 2–8 scheduling exclusion (trip + 3 days after)", () => {
+  it("NO scheduled item lands inside Oct 2–8 (DEXA / practice exams / photos / cluster decision all clear)", () => {
+    for (const i of PHASE2A_SCHEDULED_ITEMS) {
+      const inWindow = i.dateKey >= EXCLUSION_START && i.dateKey <= EXCLUSION_END;
+      expect(inWindow, `${i.externalRef} (${i.dateKey}) falls inside the Oct 2–8 exclusion`).toBe(false);
+    }
+  });
+
+  it("NO baseline retest week intersects Oct 2–8 — the week-10 retest lands Oct 12–18 and must stay there", () => {
+    const template = buildPhase2aRotationTemplate();
+    const startedOn = parseDateKey(PHASE2A_PLAN.startedOnKey);
+    const retestWeeks = [
+      ...new Set(template.baselineWeek.flatMap((d) => d.tests.flatMap((t) => t.retestWeeks ?? []))),
+    ].sort((a, b) => a - b);
+    expect(retestWeeks).toEqual([10, 19]);
+    for (const w of retestWeeks) {
+      const weekStart = dateKey(addDays(startedOn, (w - 1) * 7));
+      const weekEnd = dateKey(addDays(startedOn, (w - 1) * 7 + 6));
+      const disjoint = weekEnd < EXCLUSION_START || weekStart > EXCLUSION_END;
+      expect(disjoint, `retest week ${w} (${weekStart}..${weekEnd}) intersects the Oct 2–8 exclusion`).toBe(true);
+    }
+    // Pin the spec's own arithmetic: week 10 = Oct 12–18, safely after Oct 8.
+    expect(dateKey(addDays(startedOn, 63))).toBe("2026-10-12");
+    expect(dateKey(addDays(startedOn, 69))).toBe("2026-10-18");
   });
 });
