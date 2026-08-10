@@ -47,7 +47,7 @@ const SCOPED_MODELS = new Set<string>([
   "NutritionLog",
   "MobilityCheckin",
   "Goal",
-  "Program",
+  "LegacyProgram", // M1 (#268): renamed from "Program" — same commit as the model rename
   "GameBonusXp",
   "BodyMetric",
   "ScheduledItem",

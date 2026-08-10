@@ -30,7 +30,7 @@ model User {
   nutritionLogs    NutritionLog[]
   mobilityCheckins MobilityCheckin[]
   goals            Goal[]
-  programs         Program[]
+  legacyPrograms   LegacyProgram[]
   gameBonusXps     GameBonusXp[]
   bodyMetrics      BodyMetric[]
   scheduledItems   ScheduledItem[]
@@ -439,7 +439,9 @@ model PlanRevision {
   @@index([triggerNoteId])
 }
 
-model Program {
+// M1 (#268): renamed from `Program` — retired legacy table, superseded by Plan.
+// The `Program` name is reserved for the Sprint-16 multi-domain model.
+model LegacyProgram {
   id        String   @id @default(cuid())
   name      String
   startedOn DateTime

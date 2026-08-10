@@ -91,7 +91,9 @@ export async function buildExportPayload(db: ScopedClient): Promise<ExportPayloa
     db.nutritionLog.findMany({ orderBy: { createdAt: "asc" } }),
     db.mobilityCheckin.findMany({ orderBy: { createdAt: "asc" } }),
     db.goal.findMany({ orderBy: { createdAt: "asc" } }),
-    db.program.findMany({ orderBy: { createdAt: "asc" } }),
+    // M1 (#268): model renamed Program → LegacyProgram; the export payload key
+    // stays `program` for goaldmine-export-v1 format stability.
+    db.legacyProgram.findMany({ orderBy: { createdAt: "asc" } }),
     db.gameBonusXp.findMany({ orderBy: { createdAt: "asc" } }),
     db.bodyMetric.findMany({ orderBy: { createdAt: "asc" } }),
     db.scheduledItem.findMany({ orderBy: { createdAt: "asc" } }),

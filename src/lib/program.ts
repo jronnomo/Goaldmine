@@ -8,7 +8,7 @@ export type ActiveProgramSnapshot = {
   startedOn: Date;
   template: ProgramTemplate;
   // Track 2: high-water mark from Plan.confirmedThroughDate. null when no
-  // weeks have been confirmed, or when falling back to the Program table.
+  // weeks have been confirmed.
   confirmedThroughDate: Date | null;
 };
 
@@ -26,48 +26,39 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
   // to any active plan (transition-safe). This ensures the focus goal's plan
   // drives the daily prescription while remaining resilient during the transition
   // period when some goals may not yet have isFocus set.
-  // Falls back further to the global seeded Program for new users.
+  //
+  // No active Plan → null. M1/#269: the LegacyProgram-table fallback was
+  // deleted — a stale active legacy row can no longer shadow Plan resolution
+  // (override-invisibility bug class, analysis §2.2.3). Founder history was
+  // verified fully Plan-covered first (scripts/verify-legacy-program-coverage.ts).
   const db = await getDb();
   const plan = await db.plan.findFirst({
     where: { active: true },
     orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
   });
-  if (plan) {
-    return {
-      id: plan.id,
-      name: plan.name,
-      startedOn: plan.startedOn,
-      template: plan.planJson as unknown as ProgramTemplate,
-      confirmedThroughDate: plan.confirmedThroughDate ?? null,
-    };
-  }
-  const program = await db.program.findFirst({
-    where: { active: true },
-    orderBy: { createdAt: "desc" },
-  });
-  if (!program) return null;
+  if (!plan) return null;
   return {
-    id: program.id,
-    name: program.name,
-    startedOn: program.startedOn,
-    template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
-    confirmedThroughDate: null,
+    id: plan.id,
+    name: plan.name,
+    startedOn: plan.startedOn,
+    template: plan.planJson as unknown as ProgramTemplate,
+    confirmedThroughDate: plan.confirmedThroughDate ?? null,
   };
 }
 
 /**
  * Fallback for the game engine (engine.ts's program-fallback, REQ-004c):
- * the most-recently-updated plan/program regardless of `active`. Used ONLY
- * when getActiveProgram() returns null (e.g. right after completeGoalCore
+ * the most-recently-updated Plan regardless of `active`. Used ONLY when
+ * getActiveProgram() returns null (e.g. right after completeGoalCore
  * deactivates the goal's plan(s) — the character page must keep showing the
  * founder's historical XP/level instead of wiping to emptyState()).
  *
- * Mirrors getActiveProgram's precedence (Plan first, then Program) and
- * snapshot shape exactly — the only difference is dropping the `active: true`
- * filter and ordering purely by `updatedAt desc` ("most recently updated",
- * full stop; no isFocus tiebreak — that tiebreak in getActiveProgram exists
- * for the multi-active-plan transition case, which doesn't apply here).
+ * Mirrors getActiveProgram's snapshot shape exactly — the only difference is
+ * dropping the `active: true` filter and ordering purely by `updatedAt desc`
+ * ("most recently updated", full stop; no isFocus tiebreak — that tiebreak in
+ * getActiveProgram exists for the multi-active-plan transition case, which
+ * doesn't apply here). Zero Plan rows → null (M1/#269: the LegacyProgram
+ * fallback was deleted here too).
  *
  * getActiveProgram() itself is untouched — this is a separate, explicit
  * fallback the caller opts into, never an implicit change to "the" active
@@ -78,26 +69,13 @@ export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | nu
   const plan = await db.plan.findFirst({
     orderBy: { updatedAt: "desc" },
   });
-  if (plan) {
-    return {
-      id: plan.id,
-      name: plan.name,
-      startedOn: plan.startedOn,
-      template: plan.planJson as unknown as ProgramTemplate,
-      confirmedThroughDate: plan.confirmedThroughDate ?? null,
-    };
-  }
-  const program = await db.program.findFirst({
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!program) return null;
+  if (!plan) return null;
   return {
-    id: program.id,
-    name: program.name,
-    startedOn: program.startedOn,
-    template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
-    confirmedThroughDate: null,
+    id: plan.id,
+    name: plan.name,
+    startedOn: plan.startedOn,
+    template: plan.planJson as unknown as ProgramTemplate,
+    confirmedThroughDate: plan.confirmedThroughDate ?? null,
   };
 }
 
@@ -222,26 +200,13 @@ function coversDayKey(
  *     candidate): return `activeProgram` as {source:"active"} when present,
  *     else null. Bit-identical to today's out-of-plan/active behavior.
  *
- * SMOKE-1 (binding, additive precedence — checked BEFORE step 1 above):
- * `getActiveProgram()` falls back to the legacy `Program` table only when the
- * user has ZERO active `Plan` rows (see that function). When it does, the
- * resulting `activeProgram.id` is a Program-table id and can never appear in
- * `candidates`, because `getPlanWindowCandidates()` queries the Plan table
- * exclusively (every Plan row, active or not — see that function). A real
- * active Plan, by contrast, always appears there. So "activeProgram.id is
- * absent from candidates" is a reliable legacy-fallback signal, requiring no
- * extra flag on ActiveProgramSnapshot.
- *
- * When dayKey is strictly past AND activeProgram is that legacy-fallback AND
- * a candidate covers dayKey, the covering candidate wins over the legacy row
- * — the legacy row's `active` label was only ever a "nothing else to show"
- * placeholder, and letting it short-circuit step 1 for a date a real Plan
- * covers (a) mislabels the source (no archived badge) and (b) is actively
- * wrong: resolveDay's override lookup keys `planId` off whichever program won
- * here, so the real Plan's PlanDayOverride rows would otherwise be invisible.
- * Today/future dates, and past dates with no covering real-Plan candidate
- * (legacy-only users with zero Plan rows), are unaffected — this branch only
- * fires when a covering candidate is actually found.
+ * M1/#269: the old SMOKE-1 special case (a legacy Program-table fallback row
+ * losing to a covering real-Plan candidate on past dates) was deleted along
+ * with getActiveProgram()'s LegacyProgram fallback. `activeProgram` is now
+ * always a real Plan snapshot (or null), and a real Plan's id always appears
+ * among `candidates` for same-scope callers (getPlanWindowCandidates()
+ * fetches every Plan row, active or not) — so the legacy id-membership check
+ * had no remaining input that could trigger it.
  */
 export function pickProgramForDate(
   candidates: PlanWindowCandidate[],
@@ -298,19 +263,6 @@ export function pickProgramForDate(
     confirmedThroughDate: winner.confirmedThroughDate,
     source,
   });
-
-  // SMOKE-1: legacy-fallback active row loses to a covering real Plan on a
-  // past date — see the doc comment above. The winner's `active` flag is
-  // expected to always be false here (if a real Plan were active,
-  // getActiveProgram() would have returned it instead of falling back to
-  // Program), but we still label off the flag rather than hardcoding
-  // "archived", for defensive correctness.
-  const isLegacyFallback =
-    isPast && activeProgram !== null && !candidates.some((c) => c.id === activeProgram.id);
-  if (isLegacyFallback && covering.length > 0) {
-    const winner = pickCoveringWinner();
-    return toProgramForDate(winner, winner.active ? "active" : "archived");
-  }
 
   if (activeProgram && coversDayKey(activeProgram, dayKey)) {
     return {
@@ -389,19 +341,12 @@ export async function getPlanWindowCandidates(): Promise<PlanWindowCandidate[]> 
  * - Else: fall through to the active program (or null if none exists) —
  *   today's out-of-plan/active behavior, unchanged.
  *
- * The candidate query is skipped entirely for today/future dates (the hot
- * path) — pickProgramForDate's SMOKE-1 legacy-fallback branch is itself
- * gated on `isPast`, so it's a no-op there regardless.
- *
- * SMOKE-1: for a strictly-past `date`, the query can no longer be skipped
- * just because `activeProgram` already covers it — that's exactly the buggy
- * case (a legacy Program-table fallback "covers" its recorded window too).
- * pickProgramForDate needs the full candidate list to tell a legacy fallback
- * apart from a real active Plan (id membership — see its doc comment), so
- * every past-date lookup now fetches it. Accepted trade-off: one extra query
- * per past-date, single-day lookup (e.g. get_day) — batch callers (get_week,
- * the month view) already fetch `candidates` once per range and are
- * unaffected.
+ * The candidate query is skipped whenever it cannot matter: today/future
+ * dates (pickProgramForDate never consults candidates there), and past dates
+ * the active program already covers (step 1 wins before candidates are ever
+ * considered). M1/#269 restored the covered-past-date skip — it had been
+ * disabled only so the (now deleted) SMOKE-1 legacy check could run its
+ * id-membership test against the full candidate list.
  */
 export async function getProgramForDate(
   date: Date,
@@ -411,7 +356,8 @@ export async function getProgramForDate(
   const dayKey = dateKey(date);
   const todayKey = dateKey(now);
 
-  const mightNeedArchived = dayKey < todayKey;
+  const mightNeedArchived =
+    dayKey < todayKey && !(activeProgram && coversDayKey(activeProgram, dayKey));
   const candidates = mightNeedArchived ? await getPlanWindowCandidates() : [];
 
   return pickProgramForDate(candidates, dayKey, todayKey, activeProgram);

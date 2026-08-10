@@ -27,6 +27,8 @@ vi.mock("@/lib/db", () => ({
 
 import { getDb } from "@/lib/db";
 import {
+  getActiveProgram,
+  getMostRecentProgram,
   getProgramForDate,
   pickProgramForDate,
   type ActiveProgramSnapshot,
@@ -68,15 +70,35 @@ function candidate(overrides: Partial<PlanWindowCandidate> = {}): PlanWindowCand
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mkScopedDb(overrides: Record<string, any> = {}) {
+  // M1/#269: no legacyProgram accessor here on purpose — program.ts must
+  // never touch the LegacyProgram table anymore; if a regression reintroduces
+  // a read, these mocks throw (undefined accessor) instead of masking it.
   return {
     plan: {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    program: {
-      findFirst: vi.fn().mockResolvedValue(null),
-    },
     ...overrides,
+  };
+}
+
+// A realistic LegacyProgram DB row for the #269 regression tests — seeded
+// into an explicit `legacyProgram` mock to prove the row is IGNORED (the
+// accessor is never even called), not merely out-ranked.
+function legacyProgramDbRow() {
+  return {
+    id: "legacy-program-row",
+    name: "Legacy Seeded Program",
+    startedOn: parseDateKey("2026-01-01"),
+    phase: 1,
+    week: 1,
+    day: 1,
+    version: 1,
+    active: true,
+    planJson: template(4),
+    userId: "usr_founder",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
   };
 }
 
@@ -296,46 +318,44 @@ describe("pickProgramForDate (pure)", () => {
     expect(resultWithActive).toEqual({ ...stillActive, source: "active" });
   });
 
-  // ─── SMOKE-1: legacy Program-table fallback vs. a covering real Plan ──────
+  // ─── Simplified contract after M1/#269 (SMOKE-1 branch deleted) ───────────
   //
-  // getActiveProgram() falls back to the legacy `Program` table only when the
-  // user has zero active `Plan` rows (e.g. right after completing their only
-  // goal). That legacy row's id can never appear in `candidates` — see the
-  // pickProgramForDate doc comment. These pin down the new precedence: a
-  // covering real-Plan candidate beats the legacy row on past dates only.
+  // getActiveProgram() no longer reads the LegacyProgram table, so
+  // `activeProgram` is always a real Plan snapshot (or null) — the old
+  // SMOKE-1 special case (id-membership check demoting a legacy-fallback
+  // active row on past dates) is gone. These pin the restored single-path
+  // contract: a covering activeProgram wins step 1 unconditionally; candidate
+  // id-membership is never consulted.
 
-  it("SMOKE-1: past date + legacy-fallback active + covering (inactive) Plan candidate → the candidate wins, source archived", () => {
-    const legacyActive = snapshot({ id: "program-legacy" }); // id absent from candidates → legacy signal
-    const realPlan = candidate({ id: "plan-real", active: false }); // inactive: the user's completed-goal Plan
-    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-02-01", legacyActive);
-    expect(result).toEqual({
-      id: "plan-real",
-      name: realPlan.name,
-      startedOn: realPlan.startedOn,
-      template: realPlan.template,
-      confirmedThroughDate: realPlan.confirmedThroughDate,
-      source: "archived",
-    });
+  it("a covering activeProgram wins a past date as source:active even when its id is absent from candidates (no id-membership check — one resolution path)", () => {
+    // Pre-#269, this exact input (id ∉ candidates + covering candidate) was
+    // the legacy-fallback signal and the candidate won. Post-#269 the
+    // activeProgram can only be a real Plan, so step 1 wins unconditionally —
+    // callers that pass partial candidate lists get the Today contract back.
+    const active = snapshot({ id: "plan-not-in-candidates" });
+    const other = candidate({ id: "plan-other", active: false });
+    const result = pickProgramForDate([other], "2026-01-15", "2026-02-01", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1: same setup but the date is TODAY → legacy-fallback active still wins (unchanged)", () => {
-    const legacyActive = snapshot({ id: "program-legacy" });
+  it("TODAY covered by the activeProgram → active wins over a covering candidate (unchanged)", () => {
+    const active = snapshot({ id: "plan-today-active" });
     const realPlan = candidate({ id: "plan-real", active: false });
-    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-01-15", legacyActive);
-    expect(result).toEqual({ ...legacyActive, source: "active" });
+    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-01-15", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1: past date + legacy-fallback active + NO covering candidate → legacy active still wins (legacy-only user unchanged)", () => {
-    const legacyActive = snapshot({ id: "program-legacy" });
-    // No candidates at all — a legacy-only user with zero Plan rows ever.
-    const result = pickProgramForDate([], "2026-01-15", "2026-02-01", legacyActive);
-    expect(result).toEqual({ ...legacyActive, source: "active" });
+  it("past date + activeProgram + NO covering candidate → active fall-through still wins (unchanged)", () => {
+    const active = snapshot({ id: "plan-solo-active" });
+    // No candidates at all — e.g. a caller that fetched none.
+    const result = pickProgramForDate([], "2026-01-15", "2026-02-01", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1 unaffected case: past date covered by a REAL active Plan (id present in candidates) → active still wins (pre-fix step 1, unchanged)", () => {
+  it("realistic wiring: past date covered by the active Plan, which also appears among candidates → active wins as source:active", () => {
     const realActive = snapshot({ id: "plan-real-active" });
-    // The active Plan itself always appears among candidates (getPlanWindowCandidates
-    // fetches every Plan row, active or not) — so isLegacyFallback is false here.
+    // The active Plan always appears among candidates in production
+    // (getPlanWindowCandidates fetches every Plan row, active or not).
     const asCandidate = candidate({
       id: "plan-real-active",
       startedOn: realActive.startedOn,
@@ -367,13 +387,11 @@ describe("getProgramForDate (db-integrated)", () => {
     expect(planFindMany).not.toHaveBeenCalled();
   });
 
-  it("SMOKE-1: a real active Plan covering a PAST date still wins as source:active, even though the candidate query now runs unconditionally for past dates", async () => {
-    // Before SMOKE-1, this query was skipped whenever the active program
-    // already covered the date. That optimization no longer holds for past
-    // dates — pickProgramForDate needs the full candidate list to tell a
-    // legacy Program-table fallback apart from a real active Plan (see its
-    // doc comment) — so the query now runs, but since `active` here is a real
-    // Plan (present among candidates), the outcome is unchanged.
+  it("a real active Plan covering a PAST date wins as source:active AND skips the candidate query (M1/#269 restored the covered-past-date skip)", async () => {
+    // The unconditional past-date candidate fetch existed only so the deleted
+    // SMOKE-1 legacy check could run its id-membership test. With the legacy
+    // fallback gone, a past date the active plan covers is decided by step 1
+    // before candidates could ever matter — so the query is skipped again.
     const active = snapshot();
     const planFindFirst = vi.fn().mockResolvedValue(planDbRow(active, { active: true }));
     const planFindMany = vi.fn().mockResolvedValue([planDbRow(active, { active: true })]);
@@ -384,7 +402,7 @@ describe("getProgramForDate (db-integrated)", () => {
     const result = await getProgramForDate(parseDateKey("2026-01-15"), parseDateKey("2026-01-20"));
 
     expect(result).toEqual({ ...active, source: "active" });
-    expect(planFindMany).toHaveBeenCalled();
+    expect(planFindMany).not.toHaveBeenCalled();
   });
 
   it("no plans at all → null", async () => {
@@ -448,5 +466,77 @@ describe("getProgramForDate (db-integrated)", () => {
 
     expect(result).toBeNull();
     expect(planFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── M1/#269: LegacyProgram fallback deletion regressions ───────────────────
+//
+// getActiveProgram()/getMostRecentProgram() must NEVER read the LegacyProgram
+// table anymore — a stale active legacy row shadowing Plan resolution was a
+// live bug class (override-invisibility; analysis §2.2.3). Each test seeds an
+// explicit `legacyProgram` mock returning an ACTIVE legacy row and asserts
+// both the null/Plan outcome AND that the accessor was never called.
+
+describe("getActiveProgram / getMostRecentProgram — legacy fallback deleted (M1/#269)", () => {
+  it("active LegacyProgram row + zero active Plans → getActiveProgram returns null and never queries the legacy table", async () => {
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({ legacyProgram: { findFirst: legacyFindFirst } }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("active LegacyProgram row + an active Plan → the Plan wins (legacy table untouched)", async () => {
+    const active = snapshot({ id: "plan-wins" });
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: {
+          findFirst: vi.fn().mockResolvedValue(planDbRow(active, { active: true })),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        legacyProgram: { findFirst: legacyFindFirst },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toEqual(active);
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("getMostRecentProgram: zero Plan rows → null even with an active LegacyProgram row present (legacy table untouched)", async () => {
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({ legacyProgram: { findFirst: legacyFindFirst } }),
+    );
+
+    const result = await getMostRecentProgram();
+
+    expect(result).toBeNull();
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("getMostRecentProgram: an inactive Plan still wins over an active LegacyProgram row", async () => {
+    const inactivePlan = snapshot({ id: "plan-inactive-recent" });
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: {
+          findFirst: vi.fn().mockResolvedValue(planDbRow(inactivePlan, { active: false })),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        legacyProgram: { findFirst: legacyFindFirst },
+      }),
+    );
+
+    const result = await getMostRecentProgram();
+
+    expect(result).toEqual(inactivePlan);
+    expect(legacyFindFirst).not.toHaveBeenCalled();
   });
 });
