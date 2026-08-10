@@ -47,6 +47,46 @@ describe("NutritionToday — defaultDate passthrough (#294)", () => {
   });
 });
 
+describe("NutritionToday — day-total meter honesty (today-page-ia defect 4)", () => {
+  const plan = {
+    dinner: { items: [{ name: "steak" }], macros: { calories: 600, proteinG: 45 } },
+  };
+  const logAt = (calories: number): NutritionTodayLog[] => [
+    {
+      id: "log-1",
+      date: parseDatetimeLocalValue("2026-08-05T12:00"),
+      mealType: "lunch",
+      items: [{ name: "bowl" }],
+      notes: null,
+      calories,
+      proteinG: 30,
+      carbsG: 40,
+      fatG: 15,
+    },
+  ];
+
+  it("78% of target renders a 78%-wide fill meter — never a Bullseye (ceil(p×4) read as done from 76%)", () => {
+    // target 600 (dinner planned) · logged 468 = 78%
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, { logs: logAt(468), plan, showLogForm: false }),
+    );
+    expect(html).toContain('data-testid="daytotal-meter"');
+    expect(html).toContain("width:78%");
+    expect(html).toMatch(/aria-valuenow="78"/);
+    expect(html).not.toContain("daytotal-bullseye");
+    // No svg ring glyph in the day-total strip's meter role.
+    expect(html).not.toMatch(/role="progressbar"[^>]*>\s*<svg/);
+  });
+
+  it("no daily target → no meter at all (an empty track would fake a 0% reading); the note carries the state", () => {
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, { logs: logAt(468), plan: null, showLogForm: false }),
+    );
+    expect(html).not.toContain('data-testid="daytotal-meter"');
+    expect(html).toContain("No daily target set");
+  });
+});
+
 describe("NutritionToday — append-choice stub threading (#295)", () => {
   // defaultMeal() picks the composer's initial slot from the wall-clock hour;
   // logging one row per candidate slot makes the choice render deterministic.

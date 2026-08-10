@@ -73,6 +73,76 @@ export function sumPlanTargetMacros(
   return { calories, proteinG, carbsG, fatG };
 }
 
+/** Minimum logged-meal shape for the fallback-aware day sum. */
+export type LoggedMealMacrosLike = {
+  mealType: string;
+  calories?: number | null;
+  proteinG?: number | null;
+  carbsG?: number | null;
+  fatG?: number | null;
+};
+
+const MACRO4 = ["calories", "proteinG", "carbsG", "fatG"] as const;
+
+/**
+ * Fallback-aware day total — THE single source for any "so far today" figure
+ * that must agree with the Nutrition detail (UXR-TIA-09, BLOCKING; approved
+ * sign-off): a slot whose logged meals recorded **no** macros at all inherits
+ * that slot's *planned* macros instead of contributing zero.
+ *
+ * Semantics (kept byte-identical to the day-total math NutritionToday shipped
+ * before extraction — do not "simplify" these rules apart):
+ *  - Slots iterate MEAL_SLOTS; a log row with an unknown mealType is dropped.
+ *  - A slot contributes only when it has ≥1 logged meal.
+ *  - Per-field logged sum: a field counts when ANY meal in the slot recorded
+ *    it (summed across the meals that did). Unrecorded fields contribute 0 —
+ *    there is NO per-field plan fallback (a protein-only log does not borrow
+ *    planned calories).
+ *  - Only when NO meal in the slot recorded ANY of the four fields does the
+ *    whole slot fall back to `plan[slot].macros`.
+ *
+ * Both `FuelRail` and `NutritionToday` call this, so the Today strip and the
+ * nutrition detail can never print two contradicting day totals.
+ */
+export function sumLoggedDayMacrosWithPlanFallback(
+  logs: LoggedMealMacrosLike[],
+  plan: NutritionPlan | null | undefined,
+): DayMacros {
+  const acc: DayMacros = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+  for (const slot of MEAL_SLOTS) {
+    const meals = logs.filter((l) => l.mealType === slot);
+    if (meals.length === 0) continue;
+
+    const slotTotals: DayMacros = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
+    let anyFieldLogged = false;
+    for (const key of MACRO4) {
+      for (const m of meals) {
+        const v = m[key];
+        if (v != null) {
+          slotTotals[key] += v;
+          anyFieldLogged = true;
+        }
+      }
+    }
+
+    if (anyFieldLogged) {
+      acc.calories += slotTotals.calories;
+      acc.proteinG += slotTotals.proteinG;
+      acc.carbsG += slotTotals.carbsG;
+      acc.fatG += slotTotals.fatG;
+    } else {
+      const planned = plan?.[slot]?.macros;
+      if (planned) {
+        acc.calories += planned.calories ?? 0;
+        acc.proteinG += planned.proteinG ?? 0;
+        acc.carbsG += planned.carbsG ?? 0;
+        acc.fatG += planned.fatG ?? 0;
+      }
+    }
+  }
+  return acc;
+}
+
 /** Per-field remaining = max(0, target − soFar). */
 export function remainingMacros(target: DayMacros, soFar: DayMacros): DayMacros {
   return {
