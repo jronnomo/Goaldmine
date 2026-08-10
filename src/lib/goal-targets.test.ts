@@ -43,7 +43,7 @@ vi.mock("@/lib/records", () => ({
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 
-import { resolveMetricValue } from "@/lib/goal-targets";
+import { resolveMetricValue, resolveMetricStart } from "@/lib/goal-targets";
 import { prisma, getDb } from "@/lib/db";
 import { endOfDay } from "@/lib/calendar-core";
 
@@ -112,5 +112,70 @@ describe("resolveMetricValue day-granularity invariant", () => {
 
     expect(cutoffUsed.getTime()).toBe(endOfDay(MID_DAY_ASOF).getTime());
     expect(cutoffUsed.getTime()).not.toBe(MID_DAY_ASOF.getTime());
+  });
+});
+
+// ── bodyFatPct (amendment 5, docs/program-redesign/03-run-amendments.md) ─────
+//
+// Backs the Phase 2A cut goal's primary target (10% body fat). Mirrors the
+// weightLb contract exactly: latest Measurement.bodyFatPct as of endOfDay(asOf)
+// for the current value, earliest recorded reading for the start. The
+// bodyFatPct-not-null filter is load-bearing: most Measurement rows are
+// weight-only (daily weigh-ins), and a fresher weight-only row must never
+// shadow the older DEXA/scale BF reading the query is after.
+
+describe("resolveMetricValue — bodyFatPct (amendment 5)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockGetDb.mockResolvedValue(prisma);
+  });
+
+  it("resolves the latest bodyFatPct at the endOfDay(asOf) cutoff, filtering to bodyFatPct-not-null rows", async () => {
+    vi.mocked(prisma.measurement.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyFatPct: 18.4,
+    });
+
+    const result = await resolveMetricValue("bodyFatPct", MID_DAY_ASOF, GOAL_ID, false);
+
+    expect(result).toBe(18.4);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const call = vi.mocked(prisma.measurement.findFirst).mock.calls[0]![0] as any;
+
+    // Same day-granularity invariant as weightLb (see the suite above).
+    expect((call.where.date.lte as Date).getTime()).toBe(endOfDay(MID_DAY_ASOF).getTime());
+    // The not-null filter + latest-first ordering — a weight-only row (with
+    // bodyFatPct null) must not be selected over an older BF reading.
+    expect(call.where.bodyFatPct).toEqual({ not: null });
+    expect(call.orderBy).toEqual({ date: "desc" });
+  });
+
+  it("returns null when no measurement carries a bodyFatPct (honest no-data, not 0)", async () => {
+    vi.mocked(prisma.measurement.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const result = await resolveMetricValue("bodyFatPct", MID_DAY_ASOF, GOAL_ID, false);
+
+    expect(result).toBeNull();
+  });
+
+  it("resolveMetricStart: earliest recorded bodyFatPct (orderBy date asc, not-null filter)", async () => {
+    vi.mocked(prisma.measurement.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyFatPct: 22.1,
+    });
+
+    const result = await resolveMetricStart("bodyFatPct", GOAL_ID, false);
+
+    expect(result).toBe(22.1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const call = vi.mocked(prisma.measurement.findFirst).mock.calls[0]![0] as any;
+    expect(call.where).toEqual({ bodyFatPct: { not: null } });
+    expect(call.orderBy).toEqual({ date: "asc" });
+  });
+
+  it("resolveMetricStart: null when the user has never logged a BF reading", async () => {
+    vi.mocked(prisma.measurement.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const result = await resolveMetricStart("bodyFatPct", GOAL_ID, false);
+
+    expect(result).toBeNull();
   });
 });

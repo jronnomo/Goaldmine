@@ -52,6 +52,18 @@ export async function resolveMetricValue(
     return m?.weightLb ?? null;
   }
 
+  // Amendment 5 (docs/program-redesign/03-run-amendments.md): body-fat % —
+  // latest Measurement.bodyFatPct as of the cutoff, mirroring weightLb. The
+  // not-null filter matters: most Measurement rows are weight-only, and a
+  // fresher weight-only row must not shadow an older DEXA/scale BF reading.
+  if (metric === "bodyFatPct") {
+    const m = await db.measurement.findFirst({
+      where: { date: { lte: cutoff }, bodyFatPct: { not: null } },
+      orderBy: { date: "desc" },
+    });
+    return m?.bodyFatPct ?? null;
+  }
+
   if (metric.startsWith("baseline:")) {
     const testName = metric.slice("baseline:".length);
     const b = await db.baseline.findFirst({
@@ -166,6 +178,16 @@ export async function resolveMetricStart(
       orderBy: { date: "asc" },
     });
     return m?.weightLb ?? null;
+  }
+
+  // Amendment 5: start = EARLIEST recorded body-fat % (the baseline you're
+  // cutting from), mirroring weightLb.
+  if (metric === "bodyFatPct") {
+    const m = await db.measurement.findFirst({
+      where: { bodyFatPct: { not: null } },
+      orderBy: { date: "asc" },
+    });
+    return m?.bodyFatPct ?? null;
   }
 
   if (metric.startsWith("baseline:")) {

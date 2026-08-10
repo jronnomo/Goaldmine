@@ -305,7 +305,13 @@ describe("program fallback: no active AND no historical plan -> emptyState()", (
     vi.mocked(getDb).mockResolvedValue({
       // M1/#269: no legacyProgram accessor — getActiveProgram/getMostRecentProgram
       // resolve null from the Plan table alone; a legacy read would throw here.
+      // #277: zero Program rows (findFirst null / count 0) — the legacy-path
+      // tenant this scenario has always described.
       plan: { findFirst: vi.fn().mockResolvedValue(null) },
+      program: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),
+      },
     } as never);
 
     const state = await computeGameStateFresh();

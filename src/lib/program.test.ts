@@ -28,6 +28,7 @@ vi.mock("@/lib/db", () => ({
 import { getDb } from "@/lib/db";
 import {
   getActiveProgram,
+  getActiveProgramMembership,
   getMostRecentProgram,
   getProgramForDate,
   pickProgramForDate,
@@ -73,11 +74,41 @@ function mkScopedDb(overrides: Record<string, any> = {}) {
   // M1/#269: no legacyProgram accessor here on purpose — program.ts must
   // never touch the LegacyProgram table anymore; if a regression reintroduces
   // a read, these mocks throw (undefined accessor) instead of masking it.
+  //
+  // #277: getActiveProgram() is Program-first now, so a `program` accessor is
+  // required. The default models a ZERO-Program-rows tenant (findFirst active
+  // → null, count → 0) — the exact pre-Program legacy shape every test in
+  // this file predating #277 was written against, whose behavior the seam
+  // flip guarantees byte-identical.
   return {
     plan: {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    program: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+    },
+    ...overrides,
+  };
+}
+
+// A realistic Program DB row for the #277 seam tests. `userId` is present on
+// the raw row exactly as in production — the membership tests assert it never
+// leaks into the returned shape.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function programDbRow(overrides: Record<string, any> = {}) {
+  return {
+    id: "prog-1",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: parseDateKey("2026-01-01"),
+    endsOn: null,
+    notes: null,
+    attributionRules: null,
+    userId: "usr_founder",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
     ...overrides,
   };
 }
@@ -538,5 +569,198 @@ describe("getActiveProgram / getMostRecentProgram — legacy fallback deleted (M
 
     expect(result).toEqual(inactivePlan);
     expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #277: Program-first getActiveProgram (the seam) ────────────────────────
+//
+// The frozen contract: same signature, ActiveProgramSnapshot | null, `.id`
+// ALWAYS a Plan id. These pin the three selection branches AND the exact
+// query shapes — the legacy branch's args must stay byte-identical to the
+// pre-#277 query, and the Program branch must never issue an unscoped
+// `where: { active: true }` plan query (plan-critique Critical #1).
+
+describe("getActiveProgram — Program-first selection (#277)", () => {
+  it("active Program + attached active Plan → that Plan's snapshot, via a programId-scoped query (updatedAt desc)", async () => {
+    const attached = snapshot({ id: "plan-attached" });
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(attached, { active: true }));
+    const programFindFirst = vi.fn().mockResolvedValue(programDbRow());
+    const programCount = vi.fn().mockResolvedValue(1);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: { findFirst: programFindFirst, count: programCount },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    // .id is the PLAN's id — never prog-1.
+    expect(result).toEqual(attached);
+    expect(programFindFirst).toHaveBeenCalledWith({ where: { status: "active" } });
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    expect(planFindFirst).toHaveBeenCalledWith({
+      where: { active: true, programId: "prog-1" },
+      orderBy: { updatedAt: "desc" },
+    });
+    // The zero-rows gate is never consulted once an active Program exists.
+    expect(programCount).not.toHaveBeenCalled();
+  });
+
+  it("active Program with NO attached active Plan → null ('no rotation'), and no unscoped plan query ever fires", async () => {
+    // The founding-bug shape (plan-critique Critical #1): an UNSCOPED
+    // `where: { active: true }` query would find this dormant plan belonging
+    // to a goal outside the Program. The mock returns it ONLY for a query
+    // lacking a programId filter — so a fall-through regression surfaces as
+    // a non-null result here, not silently.
+    const dormant = snapshot({ id: "plan-dormant-other-goal" });
+    const planFindFirst = vi.fn().mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async (args: any) =>
+        args?.where?.programId !== undefined ? null : planDbRow(dormant, { active: true }),
+    );
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: {
+          findFirst: vi.fn().mockResolvedValue(programDbRow()),
+          count: vi.fn().mockResolvedValue(1),
+        },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    // Every plan query carried the programId scope.
+    for (const call of planFindFirst.mock.calls) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((call[0] as any).where.programId).toBe("prog-1");
+    }
+  });
+
+  it("zero Program rows → legacy isFocus-desc tiebreak query, byte-identical to pre-#277 (the per-tenant rollout gate)", async () => {
+    const focusPlan = snapshot({ id: "plan-focus" });
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(focusPlan, { active: true }));
+    const programCount = vi.fn().mockResolvedValue(0);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: { findFirst: vi.fn().mockResolvedValue(null), count: programCount },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toEqual(focusPlan);
+    expect(programCount).toHaveBeenCalledTimes(1);
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    // EXACT legacy args — the pre-Program tenant contract.
+    expect(planFindFirst).toHaveBeenCalledWith({
+      where: { active: true },
+      orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
+    });
+  });
+
+  it("Program rows exist but none active (retired Program) → null via the Program-aware path; the plan table is never queried", async () => {
+    // Subtlety pinned: an archived-Program user must NOT regress to
+    // isFocus-tiebreak behavior — retiring a Program means "no rotation",
+    // not "back to the old day resolution".
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(snapshot(), { active: true }));
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          count: vi.fn().mockResolvedValue(2), // e.g. one archived + one completed
+        },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(planFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #277: getActiveProgramMembership ───────────────────────────────────────
+
+describe("getActiveProgramMembership (#277)", () => {
+  it("no active Program row → null (zero-rows and retired users alike); goals never queried", async () => {
+    const goalFindMany = vi.fn().mockResolvedValue([]);
+    mockGetDb.mockResolvedValue(mkScopedDb({ goal: { findMany: goalFindMany } }));
+
+    const result = await getActiveProgramMembership();
+
+    expect(result).toBeNull();
+    expect(goalFindMany).not.toHaveBeenCalled();
+  });
+
+  it("active Program → Program's OWN id + full shape + member goals (any status), userId never leaked", async () => {
+    const rules = [
+      { match: { titleContains: ["walk"] }, goalIds: ["goal-cut", "goal-aws"], note: "Z2 walks count" },
+    ];
+    const goalFindMany = vi.fn().mockResolvedValue([
+      { id: "goal-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+      { id: "goal-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+      { id: "goal-aws", objective: "AWS SAA cert", kind: "project", status: "paused" },
+    ]);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        program: {
+          findFirst: vi.fn().mockResolvedValue(
+            programDbRow({ attributionRules: rules, notes: "Q3 block", endsOn: parseDateKey("2026-12-28") }),
+          ),
+          count: vi.fn().mockResolvedValue(1),
+        },
+        goal: { findMany: goalFindMany },
+      }),
+    );
+
+    const result = await getActiveProgramMembership();
+
+    expect(result).toEqual({
+      id: "prog-1", // the Program's own id — lives ONLY here, never in ActiveProgramSnapshot.id
+      name: "Phase 2A",
+      status: "active",
+      startedOn: parseDateKey("2026-01-01"),
+      endsOn: parseDateKey("2026-12-28"),
+      notes: "Q3 block",
+      attributionRules: rules,
+      memberGoals: [
+        { id: "goal-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+        { id: "goal-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+        { id: "goal-aws", objective: "AWS SAA cert", kind: "project", status: "paused" },
+      ],
+    });
+    // toEqual above already proves no extra keys (userId) on the top level;
+    // the goal query's select shape is the guard for memberGoals.
+    expect(result && "userId" in result).toBe(false);
+    expect(goalFindMany).toHaveBeenCalledWith({
+      where: { programId: "prog-1" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, objective: true, kind: true, status: true },
+    });
+  });
+
+  it("malformed attributionRules Json → attributionRules: null, no throw", async () => {
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        program: {
+          findFirst: vi.fn().mockResolvedValue(
+            programDbRow({ attributionRules: { not: "an array" } }),
+          ),
+          count: vi.fn().mockResolvedValue(1),
+        },
+        goal: { findMany: vi.fn().mockResolvedValue([]) },
+      }),
+    );
+
+    const result = await getActiveProgramMembership();
+
+    expect(result?.attributionRules).toBeNull();
+    expect(result?.memberGoals).toEqual([]);
   });
 });

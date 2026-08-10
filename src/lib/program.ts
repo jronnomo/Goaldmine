@@ -1,8 +1,14 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
 import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
+import { parseAttributionRules, type AttributionRule } from "@/lib/attribution-rules";
 
 export type ActiveProgramSnapshot = {
+  // FROZEN contract (#277 / plan §4.2): ALWAYS a Plan id, never a Program id.
+  // ≈6 planId-keyed call sites depend on this (every PlanDayOverride lookup,
+  // calendar.ts, override-integrity.ts). Program-shaped context lives in
+  // ActiveProgramMembership below — this type must never grow a Program id
+  // or membership field (keeps game/engine.ts decoupled from Program concepts).
   id: string;
   name: string;
   startedOn: Date;
@@ -10,6 +16,33 @@ export type ActiveProgramSnapshot = {
   // Track 2: high-water mark from Plan.confirmedThroughDate. null when no
   // weeks have been confirmed.
   confirmedThroughDate: Date | null;
+};
+
+/**
+ * Program-shaped context for the active multi-domain Program (#277 / plan
+ * §4.2). This is the ONLY place the Program's own id is exposed —
+ * ActiveProgramSnapshot.id stays a Plan id, so consumers that need the
+ * Program row (membership, attribution, the /program dashboard) opt into
+ * this separate lookup instead of the day-resolution seam growing new fields.
+ *
+ * memberGoals returns ALL goals attached via Goal.programId, each carrying
+ * its own `status` — consumers filter (e.g. the auto-link engine skips
+ * non-active goals; achieved goals are detached at completion anyway, but a
+ * defensive filter beats silently hiding attached rows here). Never leaks
+ * userId.
+ */
+export type ActiveProgramMembership = {
+  /** The Program's OWN id (not a Plan id — see the type doc above). */
+  id: string;
+  name: string;
+  status: string;
+  startedOn: Date;
+  endsOn: Date | null;
+  notes: string | null;
+  /** Parsed + validated attributionRules, or null when unset/malformed
+   *  (see parseAttributionRules — malformed Json never throws). */
+  attributionRules: AttributionRule[] | null;
+  memberGoals: { id: string; objective: string; kind: string; status: string }[];
 };
 
 export type TodayContext = {
@@ -21,17 +54,72 @@ export type TodayContext = {
   day: DayTemplate | null;
 };
 
+/**
+ * The seam (#277 / plan §4.2 — frozen external contract). Same signature and
+ * return shape as ever: `ActiveProgramSnapshot | null`, `.id` is ALWAYS a
+ * Plan id. Selection is now Program-first:
+ *
+ *  1. Active Program row exists (the partial unique index
+ *     `program_one_active_per_user` guarantees ≤1 per user) → the day is
+ *     owned by the Plan attached to THAT Program:
+ *     `plan.findFirst({ active: true, programId })`, most-recently-updated
+ *     wins if several are attached. Plan found → snapshot from it, exactly
+ *     as before. No attached active Plan → **null** ("Program with no
+ *     rotation" — a normal state: pure-project Programs, mid-transition).
+ *     NEVER fall through to an unscoped `plan.findFirst({ active: true })` —
+ *     multiple active Plans across goals is the normal steady state, so the
+ *     fall-through would surface another goal's dormant plan as "the day"
+ *     (the founding cross-goal leak bug this redesign exists to fix —
+ *     plan-critique Critical #1).
+ *
+ *  2. No active Program AND zero Program rows for this user (never adopted
+ *     Programs) → the legacy isFocus-desc tiebreak query, byte-identical to
+ *     the pre-#277 behavior. This is the per-tenant rollout gate: tenants
+ *     without Program rows are untouched by the seam flip.
+ *
+ *  3. No active Program but Program rows EXIST (all completed/archived/draft)
+ *     → null via the Program-aware path. Subtlety, deliberate: "zero Program
+ *     rows" means the user never adopted Programs (keep legacy behavior);
+ *     "has Programs but none active" means the user RETIRED their program —
+ *     they must not silently regress to isFocus-tiebreak day resolution.
+ *     Rollback semantics follow: archiving the founder's Program row yields
+ *     a safe "no rotation today" (this branch), while deleting the Program
+ *     rows entirely restores full legacy behavior (branch 2).
+ *
+ * M1/#269 (unchanged): the LegacyProgram-table fallback stays deleted — a
+ * stale active legacy row can never shadow Plan resolution.
+ */
 export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
-  // Prefer the focus goal's active Plan first (isFocus desc), then fall back
-  // to any active plan (transition-safe). This ensures the focus goal's plan
-  // drives the daily prescription while remaining resilient during the transition
-  // period when some goals may not yet have isFocus set.
-  //
-  // No active Plan → null. M1/#269: the LegacyProgram-table fallback was
-  // deleted — a stale active legacy row can no longer shadow Plan resolution
-  // (override-invisibility bug class, analysis §2.2.3). Founder history was
-  // verified fully Plan-covered first (scripts/verify-legacy-program-coverage.ts).
   const db = await getDb();
+
+  const program = await db.program.findFirst({ where: { status: "active" } });
+  if (program) {
+    // Program-owned rotation: ONLY a Plan attached to this Program may own
+    // the day. No `where: { active: true }` fall-through — see doc comment.
+    const plan = await db.plan.findFirst({
+      where: { active: true, programId: program.id },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!plan) return null; // Program with no rotation
+    return {
+      id: plan.id,
+      name: plan.name,
+      startedOn: plan.startedOn,
+      template: plan.planJson as unknown as ProgramTemplate,
+      confirmedThroughDate: plan.confirmedThroughDate ?? null,
+    };
+  }
+
+  // No ACTIVE Program. Distinguish "never adopted" (zero rows → legacy path)
+  // from "retired" (rows exist, none active → null). getDb() is
+  // tenant-scoped, so count() is this user's rows only.
+  const programRowCount = await db.program.count();
+  if (programRowCount > 0) return null; // retired/dormant Program user
+
+  // Zero Program rows: legacy pre-Program tenant. Byte-identical to the
+  // pre-#277 query — prefer the focus goal's active Plan first (isFocus
+  // desc), then any active plan (transition-safe while isFocus adoption
+  // was incomplete).
   const plan = await db.plan.findFirst({
     where: { active: true },
     orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
@@ -43,6 +131,44 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
     startedOn: plan.startedOn,
     template: plan.planJson as unknown as ProgramTemplate,
     confirmedThroughDate: plan.confirmedThroughDate ?? null,
+  };
+}
+
+/**
+ * Program-shaped context for the active Program, or null when the user has
+ * no ACTIVE Program row (zero rows and retired-Program users alike — there
+ * is no membership without an active Program). See ActiveProgramMembership's
+ * type doc for the shape contract; the Program's own id lives ONLY here.
+ *
+ * Deliberately a separate lookup from getActiveProgram(): the seam stays
+ * frozen (`.id` = Plan id, no new fields) while Program consumers
+ * (attribution engine, /program dashboard, program MCP pack) get the full
+ * Program row + membership here. An active Program with no rotation
+ * (getActiveProgram() → null) still HAS membership — the chewgether shape.
+ */
+export async function getActiveProgramMembership(): Promise<ActiveProgramMembership | null> {
+  const db = await getDb();
+
+  const program = await db.program.findFirst({ where: { status: "active" } });
+  if (!program) return null;
+
+  // All attached goals, any status, explicit select (never leaks userId).
+  // createdAt asc = stable, attachment-ordered listing.
+  const memberGoals = await db.goal.findMany({
+    where: { programId: program.id },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, objective: true, kind: true, status: true },
+  });
+
+  return {
+    id: program.id,
+    name: program.name,
+    status: program.status,
+    startedOn: program.startedOn,
+    endsOn: program.endsOn ?? null,
+    notes: program.notes ?? null,
+    attributionRules: parseAttributionRules(program.attributionRules),
+    memberGoals,
   };
 }
 
@@ -63,6 +189,23 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
  * getActiveProgram() itself is untouched — this is a separate, explicit
  * fallback the caller opts into, never an implicit change to "the" active
  * program lookup.
+ *
+ * #277 decision — deliberately NOT given the Program-first treatment (issue
+ * AC scopes it out; the reasoning, from its single caller,
+ * game/engine.ts:1012 `getActiveProgram() ?? getMostRecentProgram()`):
+ * the engine's semantic is "keep showing historical XP/level after
+ * completion/retirement instead of wiping /character to emptyState()", and
+ * it consumes template + startedOn only — never overrides or 'the day'.
+ * Filtering by Program membership here would break exactly that continuity
+ * for a user whose historical Plans predate (or sit outside) their Program
+ * — e.g. the founder retiring a Program must not blank the character page.
+ * "Most-recently-updated Plan, full stop" is the history-preserving pick;
+ * a user with zero Plans ever (the pure-project chewgether shape) still
+ * gets null → emptyState, which is correct for a user who never had a
+ * rotation. Note the seam flip does widen this fallback's reach: an active
+ * Program with no rotation now makes getActiveProgram() null, so the engine
+ * lands here and may read a NON-member Plan's window — acceptable because
+ * it feeds only historical XP display, never day resolution or overrides.
  */
 export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | null> {
   const db = await getDb();
