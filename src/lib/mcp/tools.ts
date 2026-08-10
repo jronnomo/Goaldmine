@@ -646,7 +646,7 @@ function registerReadTools(server: McpServer) {
         "AUTHORITATIVE TASK FIELDS: `todayTask` is one of 'workout' | 'rest' | 'baseline' | 'hike' | 'out_of_plan' — the single source of truth for what today actually is. `activeWorkout` is the session to do (null on baseline/hike/out_of_plan); `deferredWorkout` is the rotation session that stepped aside (non-null only on baseline/hike). On a baseline day the tests in `baselinesDue` ARE the session — do NOT prescribe `deferredWorkout` as today's work. For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. `workoutDeferredForBaseline`/`workoutDeferredForHike` are deprecated booleans kept for one release (they equal todayTask === 'baseline'/'hike'). " +
         "Also surfaces plannedHikeToday (hike detail if planned today) and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
-        "focusGoal is the isFocus=true goal; activeGoal is a duplicate kept for one release (saved-prompt compatibility — remove next release). " +
+        "focusGoal is the goal driving the day — the focus goal (or the Program's rotation-owning goal when a Program is active); activeGoal is a duplicate kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
         "PROGRAM-SHAPED MERGE (when the user has an active Program): the payload is ONE merged shape, never a fitness-vs-project fork. Rotation fields above reflect the PROGRAM's plan only (isInPlan/confidence describe that plan's window — never some other goal's plan); an active Program with no rotation plan yields todayTask 'out_of_plan' with null/[] fitness fields — that is the normal 'no rotation today' state for a pure-project Program, NOT an error. On top: `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (today's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), `goalMarks` (per-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition), `todayItems` (same union, saved-prompt-compatible shape + goalId/goalObjective), and `goalSections` keyed by goalId ({objective, kind, status, todayItems, feasibility}) — feasibility computed per ACTIVE project-kind member goal (null if unrated/error). A day can carry BOTH a rotation session and project work — read both. " +
         "LEGACY (no Program): behavior is unchanged. focusGoal.kind === 'project' → the old project-shaped payload (todayTask null, fitness scalars null/false/[], todayItems + feasibility for that goal only); fitness or no focus goal → fitness fields fully populated, todayItems [], feasibility absent, and `program` is null with scheduledItemsToday/goalMarks [].",
@@ -1044,7 +1044,7 @@ function registerReadTools(server: McpServer) {
       title: "List all training goals",
       description:
         "Show every training goal — active and inactive — with focus flag, tracking status, target date, status, and target count. " +
-        "active=true means the goal is tracked and contributes events to the calendar and Today strip; isFocus=true means this goal's plan drives the daily prescription (exactly one should be true at a time). " +
+        "active=true means the goal is tracked and contributes events to the calendar and Today strip. isFocus is the LEGACY single-focus flag: for tenants without a Program it marks the goal whose plan drives the daily prescription (exactly one should be true at a time); under an active Program the day is driven by the Program's rotation-owning goal instead, and isFocus remains only as a display/compat field. " +
         "targetDate=null indicates a someday goal (no calendar pin, no countdown). " +
         "Use to discover which goal is in focus, list all tracked goals with their target dates, or find someday goals. " +
         "Pair with get_goal for full detail on one goal. " +
@@ -1093,7 +1093,7 @@ function registerReadTools(server: McpServer) {
       description:
         "Full goal with targets, references, the active plan (with planJson — the ROTATION TEMPLATE, not the resolved per-date prescription), the most recent plan revisions, and an upcomingOverrides summary so you can see which dates diverge from the template. " +
         "Important: planJson tells you 'Mondays do this' — it does NOT include per-date overrides. To answer 'what's actually prescribed on date X', call get_day(X), not get_goal. To answer 'what's exercise Y prescribed at on its next occurrences', call find_exercise_in_plan. " +
-        "isFocus=true means this goal's plan drives the daily prescription; other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
+        "isFocus=true marks the legacy focus goal — its plan drives the daily prescription only for tenants without a Program (under an active Program, the rotation-owning member goal drives the day); other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
         "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision. " +
         "Plan fields (plans[]) are empty for someday goals (targetDate=null — no plan scaffolded; call update_goal with a targetDate to scaffold one). " +
         "attributionHints is the array of canonical exercise names that count as training this goal. " +
@@ -1236,7 +1236,9 @@ function registerReadTools(server: McpServer) {
         goalId: z
           .string()
           .optional()
-          .describe("Goal id (use list_goals to discover). Omit to use the current focus goal."),
+          .describe(
+            "Goal id (use list_goals to discover). Omit to default to the focus goal (or the Program's rotation-owning goal when a Program is active).",
+          ),
         asOf: DateKeyShape.optional().describe(
           "Compute as of this date (yyyy-mm-dd), end-of-day in the user's timezone. Defaults to today — pass a past date to inspect an earlier point.",
         ),
@@ -1483,7 +1485,7 @@ function registerReadTools(server: McpServer) {
         "Every scheduled baseline test for the active plan with per-checkpoint status: initial collection (week 1) and each retest week. " +
         "Use to answer 'what fitness tests are due', 'what baselines are overdue', 'when's the next retest', or to plan a baseline-collection day. " +
         "Includes overdue/due flags so the coach can call out missed tests before they drift. " +
-        "Returns the empty shape when the focus goal has no active plan — set a targetDate on a someday goal to scaffold its plan first.",
+        "Returns the empty shape when no rotation plan is active — the focus goal has no active plan (or, under a Program, the Program owns no rotation plan); set a targetDate on a someday goal to scaffold its plan first.",
     },
     async () => safe(() => getBaselineSchedule()),
   );
@@ -1573,7 +1575,7 @@ function registerReadTools(server: McpServer) {
     {
       title: "Cold-start coaching catch-up (one call)",
       description:
-        "One-call cold-start catch-up for a NEW coaching conversation — today's date, focus goal + days-to-go, " +
+        "One-call cold-start catch-up for a NEW coaching conversation — today's date, the current goal (the focus goal, or the Program's rotation-owning goal when a Program is active) + days-to-go, " +
         "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
         "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
         "the latest review (body truncated to 400 chars + truncated:true; full text via get_latest_review), " +
@@ -3209,7 +3211,7 @@ function registerWriteTools(server: McpServer) {
         "Past weeks are skipped in the conflict guard (stale planned hikes are unresolvable). " +
         "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances. " +
         "Pass dryRun:true to preview blockedBy and the target mark WITHOUT writing — useful for inspecting conflicts before committing. " +
-        "If the focus goal has no plan (someday goal), this tool operates on the next active plan — set a target date on the someday goal to scaffold its plan first.",
+        "Operates on the active rotation plan (the Program's plan when a Program is active; the focus goal's plan otherwise). If that goal has no plan (someday goal), set a target date on it to scaffold one first.",
       inputSchema: {
         weekIndex: z
           .number()
@@ -4900,7 +4902,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Create a new goal (with optional legend, targets, and attribution hints)",
       description:
-        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use the set_active_goal MCP tool to explicitly switch focus (propose-before-switching covenant applies). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists, and it does NOT join any Program — under an active Program the day keeps being driven by the Program's rotation-owning goal regardless of focus. To make the new goal drive Today: for Program users, attach it with attach_goal_to_program (or manage Programs via create_program / update_program / set_program_status); for tenants without a Program, use the set_active_goal compat shim (propose-before-switching covenant applies — and mind its blast radius: switching focus into a DIFFERENT Program deactivates the entire current one). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape.optional().describe(
@@ -5338,7 +5340,7 @@ function registerWriteTools(server: McpServer) {
           .string()
           .optional()
           .describe(
-            "Attribute id for the active goal kind (e.g. STR|END|MOB|CON for fitness). " +
+            "Attribute id for the current goal's kind — the Program's rotation-owning goal when a Program is active, else the focus goal (e.g. STR|END|MOB|CON for fitness). " +
               "Omit for overall-only XP.",
           ),
         date: z
@@ -5989,7 +5991,7 @@ function registerWriteTools(server: McpServer) {
         "tracked=false: goal is silenced from the calendar and Today strip. " +
         "Guard: the focus goal cannot be untracked — switch focus to another goal first (error text passes through from the guard). " +
         "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately). " +
-        "(To switch focus, use the set_active_goal MCP tool — mind its cross-Program blast radius.)",
+        "(To switch focus, use the set_active_goal MCP compat shim — mind its cross-Program blast radius: switching into a different Program deactivates the entire current one. Program membership itself is managed by the Program pack: create_program / attach_goal_to_program / set_program_status.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         tracked: z.boolean().describe("true = track the goal; false = untrack it"),
@@ -6018,7 +6020,7 @@ function registerWriteTools(server: McpServer) {
         "Resume re-activates the most recent plan. " +
         "Guard: the focus goal's plan cannot be paused — switch focus to another goal first (error text passes through from the guard). " +
         "Defensive no-op when resuming a goal that has no plan. " +
-        "(To switch focus, use the set_active_goal MCP tool — mind its cross-Program blast radius.)",
+        "(To switch focus, use the set_active_goal MCP compat shim — mind its cross-Program blast radius: switching into a different Program deactivates the entire current one. Under a Program, which goal's plan drives the day is a Program concern — manage it via create_program / attach_goal_to_program / set_program_status rather than focus flips.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         active: z
@@ -6104,9 +6106,9 @@ function registerWriteTools(server: McpServer) {
       title: "Generate weekly recap card (shareable image + stats)",
       description:
         "Render the week's recap as a share-ready image plus the underlying numbers. " +
-        "Defaults to the focus goal and the current week (through today). " +
+        "Defaults to the current goal — the focus goal (or the Program's rotation-owning goal when a Program is active) — and the current week (through today). " +
         'Use for "make my recap card", "weekly recap image", "card for last week". ' +
-        "Progress relates to the focus goal's baseline→target metrics. " +
+        "Progress relates to the featured goal's baseline→target metrics. " +
         "Pass goalId for a specific catalogued goal, weekOffset (0=this week, -1=last week) for a different week, " +
         'format for the target surface: "story" 9:16 (default), "post" 4:5 feed post, "square" 1:1.',
       inputSchema: {
@@ -6120,7 +6122,9 @@ function registerWriteTools(server: McpServer) {
         goalId: z
           .string()
           .optional()
-          .describe("Catalogued goal to feature; defaults to the focus goal"),
+          .describe(
+            "Catalogued goal to feature; defaults to the focus goal (or the Program's rotation-owning goal when a Program is active)",
+          ),
         template: z
           .enum(["coal", "parchment"])
           .optional()
