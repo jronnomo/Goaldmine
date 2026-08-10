@@ -86,6 +86,11 @@ const MOCK_DAY: ResolvedDay = {
   ],
   crossGoalConflicts: [],
   resolvedPlan: { id: "plan-1", name: "Elbert Prep", source: "active" },
+  // #282: program-shaped additions. This fixture models a ZERO-Program tenant
+  // (the legacy shaper's only remaining audience), so all three are empty.
+  program: null,
+  scheduledItemsToday: [],
+  goalMarks: [],
 };
 
 /** A project-kind active goal. */

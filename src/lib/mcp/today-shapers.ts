@@ -67,9 +67,12 @@ export type ProjectTodayPayload = Omit<ResolvedDay, "todayTask"> & {
  * Pure function — no DB calls, no side effects. Every ResolvedDay field is
  * explicitly handled so the return has the same keys as the fitness payload.
  *
- * Field handling (29 ResolvedDay fields):
+ * Field handling (32 ResolvedDay fields):
  *   CARRY      date, dateKey, isInPlan, isGoalDate, confidence,
- *              otherGoalEvents, crossGoalConflicts
+ *              otherGoalEvents, crossGoalConflicts,
+ *              program, scheduledItemsToday, goalMarks (#282 — this shaper is
+ *              only reached when r.program is null (zero-Program legacy
+ *              tenants), so these carry through as null/[]/[] by definition)
  *   FILTERED   notesAboutDate (type:'review' excluded — weekly-review note is
  *              fitness noise; project-relevant notes pass through)
  *   OVERRIDE   goalObjective ← activeGoal.objective
@@ -98,6 +101,11 @@ export function shapeProjectTodayPayload(
     confidence: r.confidence,
     otherGoalEvents: r.otherGoalEvents,
     crossGoalConflicts: r.crossGoalConflicts,
+    // #282 additions — carried, not re-nulled: this legacy shaper is only
+    // reached when r.program is null, so these are null/[]/[] by definition.
+    program: r.program,
+    scheduledItemsToday: r.scheduledItemsToday,
+    goalMarks: r.goalMarks,
 
     // ── CARRY with filter ──────────────────────────────────────────────────
     // Exclude weekly-review notes — they are fitness coaching artefacts and
