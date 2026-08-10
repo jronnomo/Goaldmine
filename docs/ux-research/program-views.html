@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goaldmine · Program views — pixel mockup (chosen direction: Marked Lane)</title>
+
+<!--
+  ════════════════════════════════════════════════════════════════════════
+  FONTS — STAND-INS ONLY.
+  The real app loads Geist / Geist Mono / DM Serif Display through
+  next/font and exposes them as --font-sans / --font-mono / --font-display
+  (see @theme inline in src/app/globals.css). This file must render offline
+  from file:// with no CDN, so each face is replaced by a system stack and
+  every usage site below carries an HTML comment naming the real token.
+  ════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   1. TOKENS — copied byte-for-byte from src/app/globals.css.
+   This block and the dark block are the ONLY places a color literal
+   appears in this document. Everything downstream is var(--…).
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #9A480F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
+
+  /* Stand-in faces. Real: var(--font-sans) / var(--font-mono) / var(--font-display). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-mono1, ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: Georgia, "Times New Roman", serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --background: #0F0B07;
+    --foreground: #F4E9D4;
+    --muted: #9C8866;
+    --card: #1A130C;
+    --border: #3A2E1F;
+    --accent: #D4A437;
+    --accent-fg: #0F0B07;
+    --accent-soft: rgba(212, 164, 55, 0.12);
+    --target: #D97A3D;
+    --target-fg: #FFFFFF;
+    --success: #7FA45C;
+    --warning: #E0915C;
+    --danger: #C0392B;
+  }
+}
+
+/* Explicit override — mirrors ThemeToggle.tsx writing data-theme on <html>. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #FAF3E3; --foreground: #1F1408; --muted: #7A5E3A; --card: #FFFBF0;
+  --border: #D9C8A2; --accent: #8A6212; --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14); --target: #9A480F; --target-fg: #FFFBF0;
+  --success: #4E6B36; --warning: #A8511A; --danger: #A82A1F;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0F0B07; --foreground: #F4E9D4; --muted: #9C8866; --card: #1A130C;
+  --border: #3A2E1F; --accent: #D4A437; --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12); --target: #D97A3D; --target-fg: #FFFFFF;
+  --success: #7FA45C; --warning: #E0915C; --danger: #C0392B;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. GALLERY CHROME (not part of the product UI)
+   ══════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.page-head { max-width: 980px; margin: 0 auto; padding: 28px 20px 8px; }
+/* Display face below stands in for var(--font-display) (DM Serif Display). */
+.page-head h1 { font-family: var(--font-display); font-size: 26px; font-weight: 400; margin: 0 0 6px; }
+.page-head .meta { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+.page-head .guide { font-size: 13.5px; line-height: 1.6; max-width: 68ch; margin: 0; }
+.page-head .guide b { font-weight: 600; }
+
+.theme-toggle {
+  position: fixed; top: 14px; right: 14px; z-index: 60;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 16px;
+  border-radius: 9999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--foreground);
+  font: inherit; font-size: 13px; cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.theme-toggle:hover { border-color: var(--accent); }
+
+.gallery { display: flex; flex-wrap: wrap; gap: 34px; padding: 22px 20px 10px; align-items: flex-start; justify-content: center; }
+.panel { display: flex; gap: 16px; align-items: flex-start; }
+.panel > .col-notes { width: 224px; padding-top: 34px; }
+@media (max-width: 700px) { .panel { flex-direction: column; } .panel > .col-notes { width: 390px; max-width: 100%; padding-top: 0; } }
+
+.panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px 4px; }
+
+/* --- annotation layer: deliberately unlike any product surface --- */
+.note {
+  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  border-left: 2px dashed var(--muted); padding: 2px 0 2px 9px; margin: 0 0 12px;
+}
+.note b { color: var(--foreground); font-weight: 600; }
+.note code { font-family: var(--font-mono); font-size: 10.5px; } /* stands in for var(--font-mono) */
+.note.inline { margin: 6px 0 0; }
+.flag { color: var(--warning); font-weight: 600; }
+
+/* --- device frame --- */
+.phone {
+  width: 390px; flex: 0 0 390px;
+  background: var(--background); color: var(--foreground);
+  border: 1px solid var(--border); border-radius: 26px;
+  overflow: hidden; position: relative;
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+/* page shell — Tailwind: max-w-md mx-auto p-4 space-y-4 */
+.screen { max-width: 28rem; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.screen.with-nav { padding-bottom: 8px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. SHIPPED CLASS GRAMMAR, HAND-COMPILED
+   ══════════════════════════════════════════════════════════════════════ */
+/* Card — rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm */
+.card {
+  border-radius: 16px; border: 1px solid var(--border); background: var(--card);
+  padding: 16px; box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+.card.flush { padding: 16px 16px 4px; }
+
+/* H1 — text-2xl font-semibold tracking-tight */
+.h1 { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+/* h2 inside Card — text-base font-semibold tracking-tight */
+.h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+/* eyebrow — text-xs uppercase tracking-wide text-[var(--muted)] */
+.eyebrow { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); margin: 0; }
+/* tighter eyebrow — text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)] */
+.eyebrow-t { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); margin: 0; }
+.subline { font-size: 0.875rem; color: var(--muted); margin: 4px 0 0; }
+.body-sm { font-size: 0.8125rem; line-height: 1.5; margin: 0; }
+.muted { color: var(--muted); }
+
+/* divided list — divide-y divide-[var(--border)] */
+.divide { list-style: none; margin: 0; padding: 0; }
+.divide > li + li { border-top: 1px solid var(--border); }
+/* row — flex items-center justify-between py-3 gap-2 min-h-[44px] */
+.row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0; gap: 8px; min-height: 44px; width: 100%;
+  background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.row:hover .row-title { color: var(--accent); }
+.row-title { font-size: 0.875rem; line-height: 1.35; flex: 1 1 auto; transition: color 140ms ease-out; }
+
+/* StatTile — rounded-lg border py-2 text-center */
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tile { border-radius: 8px; border: 1px solid var(--border); padding: 8px 4px; text-align: center; }
+.tile-v { font-size: 1.125rem; font-weight: 600; font-variant-numeric: tabular-nums; margin: 0; }
+.tile-l { font-size: 0.75rem; color: var(--muted); margin: 0; }
+
+/* outline chip — text-xs rounded-full px-2 py-0.5 border text-[var(--muted)] */
+.chip { font-size: 0.75rem; border-radius: 9999px; padding: 2px 8px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+
+/* quick-pick row — flex gap-2 overflow-x-auto py-1 + right-edge fade */
+.qp-wrap { position: relative; }
+.qp-row { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0; }
+.qp-chip {
+  flex-shrink: 0; display: flex; flex-direction: column; justify-content: center;
+  border-radius: 9999px; padding: 0 14px; min-height: 44px;
+  border: 1px solid var(--border); text-align: left;
+  background: none; color: inherit; font: inherit; cursor: pointer;
+}
+.qp-chip:hover { border-color: var(--accent); }
+.qp-chip .n { font-size: 0.875rem; font-weight: 500; }
+.qp-chip .s { font-size: 11px; color: var(--muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.qp-chip.scan { flex-direction: row; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-size: 0.875rem; font-weight: 500; }
+.qp-fade { position: absolute; top: 0; right: 0; bottom: 0; width: 24px; pointer-events: none; background: linear-gradient(to right, transparent, var(--card)); }
+
+/* warning wash banner */
+.wash-warning {
+  border: 1px solid var(--warning); border-left-width: 3px; padding: 16px;
+  border-radius: 12px; /* ⚠ verify visually — radius is not in the shipped class string */
+  background: color-mix(in srgb, var(--warning) 8%, var(--card));
+}
+
+/* primary button — rounded-lg bg-[var(--accent)] text-[var(--accent-fg)] min-h-[44px] font-medium */
+.btn-primary {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 44px; border-radius: 8px; border: 0;
+  background: var(--accent); color: var(--accent-fg);
+  font: inherit; font-size: 0.9375rem; font-weight: 500; cursor: pointer;
+}
+
+/* BottomNav — real shell is fixed bottom-0 inset-x-0 …/95 backdrop-blur z-40.
+   Inside a static frame it sits at the flow bottom instead. */
+.nav { border-top: 1px solid var(--border); background: color-mix(in srgb, var(--card) 95%, transparent); backdrop-filter: blur(8px); }
+.nav ul { display: grid; grid-template-columns: repeat(5, 1fr); max-width: 28rem; margin: 0 auto; padding: 0; list-style: none; }
+.nav a {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 12px 0; min-height: 44px; text-decoration: none;
+  font-size: 0.875rem; font-weight: 500; color: var(--muted);
+  transition: color 140ms ease-out;
+}
+.nav a[aria-current="page"] { color: var(--accent); }
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   4. R1/R3/R5 — THE MARK LANE
+   GRAYSCALE CONTRACT: hue is decoration. The three marks differ by
+   SILHOUETTE (disc / square / triangle) and state differs by FILL
+   (hollow vs solid). Desaturate this whole file and nothing is lost —
+   the palette is iso-luminant by design (1.00–1.35:1 in grayscale),
+   so color could never have carried identity here anyway.
+   ══════════════════════════════════════════════════════════════════════ */
+.lane {
+  flex: 0 0 auto; display: grid;
+  grid-template-columns: repeat(3, 18px) 22px; /* 3 fixed slots + overflow */
+  gap: 2px; align-items: center; justify-items: center;
+}
+.mk { font-size: 14px; line-height: 1; display: inline-block; }
+.mk.hs { color: var(--target); }   /* Handstand  ● / ○ */
+.mk.bc { color: var(--success); }  /* Body comp  ■ / □ */
+.mk.aw { color: var(--accent); }   /* AWS        ▲ / △ */
+.mk.sched { color: var(--accent); } /* ◆ — hardcoded in MarkerIcon.tsx */
+.slot-empty { visibility: hidden; }
+.ovf { border-radius: 9999px; background: var(--accent-soft); padding: 0 4px; font-size: 9px; line-height: 1.6; color: var(--muted); }
+
+.legend-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
+  font-size: 11px; color: var(--muted); padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+.legend-strip .lg { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+.gutter { flex: 0 0 40px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); }
+
+/* fan-out receipt — reuses the .item-row-anim grid-rows expand grammar */
+.item-row-anim {
+  display: grid; grid-template-rows: 1fr; opacity: 1;
+  transition: grid-template-rows 220ms cubic-bezier(0.16,1,0.3,1), opacity 220ms cubic-bezier(0.16,1,0.3,1);
+}
+.item-row-anim > .item-row-inner { overflow: hidden; }
+.receipt { list-style: none; margin: 0; padding: 0 0 12px 48px; }
+.receipt li { display: flex; gap: 8px; align-items: baseline; font-size: 12px; line-height: 1.5; padding: 3px 4px; color: var(--muted); }
+.receipt li b { color: var(--foreground); font-weight: 600; }
+
+/* .macro-flash — verbatim from src/app/globals.css:419-438 (270ms,
+   cubic-bezier(0.16,1,0.3,1), transparent → --accent-soft → transparent). */
+@keyframes macro-flash {
+  0%   { background-color: transparent; }
+  40%  { background-color: var(--accent-soft); }
+  100% { background-color: transparent; }
+}
+.macro-flash { border-radius: 4px; animation: macro-flash 270ms cubic-bezier(0.16,1,0.3,1); } /* ⚠ playtest 220–320ms */
+.receipt li:nth-child(1) .macro-flash { animation-delay: 0ms; }
+.receipt li:nth-child(2) .macro-flash { animation-delay: 90ms; }  /* ⚠ playtest stagger 60–120ms */
+.receipt li:nth-child(3) .macro-flash { animation-delay: 180ms; }
+.replay {
+  font: inherit; font-size: 11px; color: var(--muted); cursor: pointer;
+  background: none; border: 1px dashed var(--muted); border-radius: 9999px;
+  padding: 0 10px; min-height: 44px; margin-left: 48px;
+}
+
+/* qty-bump — globals.css F5 */
+@keyframes qty-bump { 0% { transform: translateY(3px); opacity: 0.4; } 100% { transform: translateY(0); opacity: 1; } }
+.qty-bump { animation: qty-bump 140ms cubic-bezier(0.16,1,0.3,1); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   5. R6 — CeilingRule (flat bar, NOT a Bullseye)
+   A Bullseye at progress=0.80 renders 4 of 4 rings — visually "done",
+   the exact opposite of "held at 80". So the headline readiness number
+   never rides a Bullseye. Same h-1.5 rounded-full grammar as XpBar.
+   ══════════════════════════════════════════════════════════════════════ */
+.rule { position: relative; height: 6px; margin: 10px 0 6px; }
+.rule-track { position: absolute; inset: 0 20% 0 0; background: var(--border); border-radius: 9999px 0 0 9999px; }
+.rule-hatch {
+  position: absolute; inset: 0 0 0 80%; border-radius: 0 9999px 9999px 0; overflow: hidden;
+  background-color: var(--card);
+  background-image: repeating-linear-gradient(45deg, var(--border) 0 2px, transparent 2px 5px);
+}
+.rule-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 9999px; min-width: 3px; }
+.rule-stile { position: absolute; left: 80%; top: -2px; bottom: -2px; width: 2px; background: var(--warning); } /* ⚠ verify visually: 2px overhang */
+.rule-scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+
+.readout { display: flex; align-items: flex-end; gap: 10px; }
+.readout .num { font-size: 2rem; line-height: 1; font-weight: 600; font-variant-numeric: tabular-nums; }
+.readout .den { font-size: 0.75rem; color: var(--muted); padding-bottom: 3px; }
+
+.spark-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
+.spark { flex: 1 1 auto; height: 34px; display: block; }
+.spark-now { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+
+.gate { display: flex; align-items: center; gap: 8px; padding: 10px 0; min-height: 44px; font-size: 0.8125rem; }
+.gate .txt { flex: 1 1 auto; }
+.goal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.goal-head .name { font-size: 1rem; font-weight: 600; letter-spacing: -0.025em; }
+
+.pill-success { display: inline-flex; align-items: center; border-radius: 9999px; padding: 2px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: var(--success); border: 1px solid var(--success); background: color-mix(in srgb, var(--success) 8%, var(--card)); }
+
+/* proportional block band */
+.band { position: relative; display: flex; gap: 2px; height: 10px; margin: 12px 0 4px; }
+.band .seg { border-radius: 2px; position: relative; overflow: hidden; }
+.band .seg.past { background: var(--muted); }
+.band .seg.cur { background: var(--accent-soft); }
+.band .seg.fut { background: var(--border); }
+.band .seg:first-child { border-radius: 9999px 2px 2px 9999px; }
+.band .seg:last-child { border-radius: 2px 9999px 9999px 2px; }
+.seg-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); min-width: 2px; }
+.band-tick { position: absolute; right: 0; top: -4px; bottom: -4px; width: 2px; background: var(--target); }
+.band-labels { display: flex; gap: 2px; font-size: 10px; color: var(--muted); }
+.band-labels span { text-align: center; overflow: hidden; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   6. CALENDAR — grid-cols-[16px_repeat(7,1fr)] gap-1, cells min-h-[3.75rem]
+   ══════════════════════════════════════════════════════════════════════ */
+.cal-head, .week { display: grid; grid-template-columns: 16px repeat(7, 1fr); gap: 4px; }
+.cal-head { margin-bottom: 4px; }
+.cal-head span { font-size: 0.75rem; color: var(--muted); text-align: center; font-weight: 500; }
+.weeks { display: flex; flex-direction: column; gap: 4px; }
+.cell {
+  min-height: 60px; border-radius: 8px; border: 1px solid var(--border); background: var(--card);
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px;
+  padding: 4px; font-size: 0.75rem; color: inherit; font-family: inherit; cursor: pointer;
+  transition: border-color 140ms ease-out;
+}
+.cell:hover { border-color: var(--accent); }
+.cell.out { border-color: color-mix(in srgb, var(--border) 50%, transparent); background: transparent; color: var(--muted); cursor: default; }
+.cell.quiet { background: var(--background); }
+.cell.today { box-shadow: 0 0 0 2px var(--accent); }
+.cell.done { box-shadow: 0 0 11px -3px var(--accent); }
+.cell .dnum { font-variant-numeric: tabular-nums; }
+.cell .marks { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 2px; }
+.cell .marks .mk { font-size: 13px; }
+.dash { color: var(--muted); font-size: 13px; line-height: 1; }
+
+/* WeekRail — 16px gutter, 2px spine */
+.rail { display: flex; justify-content: center; padding: 3px 0; }
+.rail i { width: 2px; border-radius: 1px; flex: 1 0 auto; background: var(--border); }
+.rail.done i { background: var(--muted); }
+.rail.now i { background: var(--accent); }
+.rail.prov i {
+  background: transparent;
+  background-image: repeating-linear-gradient(to bottom, var(--muted) 0, var(--muted) 4px, transparent 4px, transparent 13px);
+}
+
+/* span bar on the conditional second grid row */
+.span-bar {
+  grid-row: 2; min-height: 18px; display: flex; align-items: center; padding: 0 8px;
+  font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, var(--card));
+  border: 1px solid var(--border); overflow: hidden; white-space: nowrap;
+}
+.span-bar.cap-l { border-radius: 9999px 0 0 9999px; border-right: 0; }
+.span-bar.cap-r { border-radius: 0 9999px 9999px 0; border-left: 0; justify-content: flex-end; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   7. BottomSheet (open state) — mirrors globals.css .bottom-sheet-panel
+   ══════════════════════════════════════════════════════════════════════ */
+.sheet-host { position: relative; }
+.scrim { position: absolute; inset: 0; background: color-mix(in srgb, var(--foreground) 45%, transparent); border-radius: 0 0 26px 26px; } /* real: rgba(0,0,0,0.45) */
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; max-width: 28rem; margin-inline: auto;
+  background: var(--card); border-radius: 16px 16px 0 0; padding: 8px 16px 20px;
+  box-shadow: 0 -8px 30px color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+.sheet-grip { width: 36px; height: 4px; border-radius: 9999px; background: var(--border); margin: 4px auto 10px; }
+.stepper { display: flex; align-items: center; gap: 4px; }
+.stepper button {
+  width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: none; color: inherit;
+  font: inherit; font-size: 1.125rem; font-weight: 500; cursor: pointer;
+}
+.stepper button:first-of-type { border-radius: 8px 0 0 8px; }
+.stepper button:last-of-type { border-radius: 0 8px 8px 0; }
+.stepper .qty { min-width: 56px; text-align: center; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1rem; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   8. REDUCED MOTION — neutralizes every transition/animation used above.
+   Every claim state is legible at rest: a logged mark is solid, an
+   unlogged mark is hollow. No information depends on the flash.
+   ══════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .macro-flash, .qty-bump { animation: none; }
+  .item-row-anim, .row-title, .cell, .nav a, .qp-chip { transition: none; }
+  * { scroll-behavior: auto; }
+}
+
+/* provisional footer */
+.provisional { max-width: 980px; margin: 8px auto 60px; padding: 20px; border: 1px dashed var(--warning); border-radius: 12px; }
+.provisional h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 10px; color: var(--warning); }
+.provisional ol { margin: 0; padding-left: 20px; font-size: 12.5px; line-height: 1.75; color: var(--muted); }
+.provisional ol b { color: var(--foreground); }
+</style>
+</head>
+<body>
+
+<!-- Bullseye ring stacks, declared once. Geometry copied from
+     src/components/Bullseye.tsx renderRings(). CSS custom properties
+     inherit into the <use> shadow tree, so these stay theme-reactive. -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <symbol id="be-hollow" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></symbol>
+  <symbol id="be-6" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="var(--target)"/></symbol>
+  <symbol id="be-14" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="10" fill="var(--target-fg)"/><circle cx="16" cy="16" r="5" fill="var(--target)"/></symbol>
+  <symbol id="be-20" viewBox="0 0 32 32"><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></symbol>
+</svg>
+
+<button class="theme-toggle" id="themeBtn" type="button" aria-label="Theme: system (click to change)">
+  <span aria-hidden="true" id="themeGlyph">◐</span><span id="themeLabel">system</span>
+</button>
+
+<header class="page-head">
+  <h1>Goaldmine · Program views</h1>
+  <p class="meta">Pixel mockup · 9 Aug 2026 · chosen direction: <b>Marked Lane</b> · all four panels must be inspected in both themes</p>
+  <p class="guide">
+    <b>Reading guide.</b> Four 390px frames, left to right: unified Today, the <code>/program</code> dashboard, the
+    cross-goal August calendar, and the SavedMeal quick-pick paired with a shared-metric chart. Identity is a
+    <b>monochrome geometric mark</b> per member goal — <span class="mk hs">●</span> Handstand,
+    <span class="mk bc">■</span> Body comp, <span class="mk aw">▲</span> AWS — living in a fixed-width right-hand lane
+    inside each row's 44px hit area. Hollow means <i>claimed but not logged</i>; solid means <i>logged, and the link is
+    written</i>. Every item carries every claim it serves; nothing is suppressed for being someone else's rotation.
+    Desaturate any screenshot here and no information is lost: hue is decoration, silhouette is identity.
+    Dashed-left grey notes are annotation, never product UI.
+  </p>
+</header>
+
+<main class="gallery">
+
+<!-- ═══════════════════════════════════ PANEL 1 ═══════════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 1 · Unified Today · Mon 24 Aug 2026</p>
+    <div class="phone">
+      <div class="screen with-nav">
+
+        <!-- Card: rounded-2xl border bg-[var(--card)] p-4 shadow-sm -->
+        <section class="card">
+          <p class="eyebrow">Phase 2A · Block 1 · Week 3 of 20</p>
+          <h1 class="h1" style="margin-top:6px">Upper — pressing anchor</h1>
+          <p class="subline">Monday, Aug 24 · Block 1, day 1 of 56</p>
+        </section>
+
+        <section class="card flush">
+          <p class="eyebrow-t">Today · 3 goals</p>
+
+          <!-- R4: persistent legend strip — teaches the marks once, at the top -->
+          <div class="legend-strip">
+            <span class="lg"><span class="mk hs" aria-hidden="true">●</span> Handstand</span>
+            <span class="lg"><span class="mk bc" aria-hidden="true">■</span> Body comp</span>
+            <span class="lg"><span class="mk aw" aria-hidden="true">▲</span> AWS</span>
+            <span class="lg" style="opacity:.85">hollow = claimed · solid = logged</span>
+          </div>
+
+          <ul class="divide">
+            <li>
+              <button class="row" type="button" aria-label="AM. Fasted incline walk 45 minutes at 15 percent, 2.3 miles per hour, plus AWS lectures. Logged. Counts toward Handstand, Body composition, and AWS certification.">
+                <span class="gutter">AM</span>
+                <span class="row-title">Fasted incline walk 45′ @15%, 2.3 mph + AWS lectures</span>
+                <span class="lane" aria-hidden="true">
+                  <span class="mk hs">●</span><span class="mk bc">■</span><span class="mk aw">▲</span><span></span>
+                </span>
+              </button>
+              <!-- fan-out receipt: .item-row-anim in its resting EXPANDED state -->
+              <div class="item-row-anim"><div class="item-row-inner">
+                <ul class="receipt" id="receipt">
+                  <li><span class="mk hs" aria-hidden="true">●</span><span class="macro-flash"><b>Handstand</b> — counted (Z2 base). Nothing to re-read.</span></li>
+                  <li><span class="mk bc" aria-hidden="true">■</span><span class="macro-flash"><b>Body comp</b> — counted (Z2 base). Weight target moves at Sunday's weigh-in.</span></li>
+                  <li><span class="mk aw" aria-hidden="true">▲</span><span class="macro-flash"><b>AWS</b> — +1.0 h study · 19 of 120 h · readiness 12 → 13</span></li>
+                </ul>
+                <button class="replay" id="replayBtn" type="button">↻ replay fan-out flash (mockup-only affordance)</button>
+              </div></div>
+            </li>
+            <li><button class="row" type="button" aria-label="Lift. Overhead press, incline dumbbell bench, TRX accessory. Not logged. Claimed by Handstand.">
+              <span class="gutter">Lift</span><span class="row-title">Overhead press · incline DB bench · TRX accessory</span>
+              <span class="lane" aria-hidden="true"><span class="mk hs">○</span><span class="mk bc slot-empty">□</span><span class="mk aw slot-empty">△</span><span></span></span>
+            </button></li>
+            <li><button class="row" type="button" aria-label="PM. Skill block A, Balance. Wrist prep first, 20 minutes or less. Not logged. Claimed by Handstand.">
+              <span class="gutter">PM</span><span class="row-title">Skill block A — Balance · Wrist Prep first · ≤20′</span>
+              <span class="lane" aria-hidden="true"><span class="mk hs">○</span><span class="mk bc slot-empty">□</span><span class="mk aw slot-empty">△</span><span></span></span>
+            </button></li>
+            <li><button class="row" type="button" aria-label="Due. Weigh-in and waist tape. Not logged. Claimed by Body composition.">
+              <span class="gutter">Due</span><span class="row-title">Weigh-in + waist tape</span>
+              <span class="lane" aria-hidden="true"><span class="mk hs slot-empty">○</span><span class="mk bc">□</span><span class="mk aw slot-empty">△</span><span></span></span>
+            </button></li>
+            <li><button class="row" type="button" aria-label="Fuel. 1,500 to 1,600 calories, protein floor 150 to 155 grams. 1 of 3 meals logged. Claimed by Body composition.">
+              <span class="gutter">Fuel</span><span class="row-title">1,500–1,600 cal · protein floor 150–155 g</span>
+              <!-- mono stands in for var(--font-mono) (Geist Mono) -->
+              <span class="mono muted" style="font-size:12px">1 / 3</span>
+              <span class="lane" aria-hidden="true"><span class="mk hs slot-empty">○</span><span class="mk bc">□</span><span class="mk aw slot-empty">△</span><span></span></span>
+            </button></li>
+          </ul>
+        </section>
+      </div>
+
+      <nav class="nav" aria-label="Primary">
+        <ul>
+          <li><a href="#" aria-current="page"><svg width="6" height="6" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-6"/></svg>Today</a></li>
+          <li><a href="#"><svg width="6" height="6" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg>Plan</a></li>
+          <li><a href="#"><svg width="6" height="6" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg>Log</a></li>
+          <li><a href="#"><svg width="6" height="6" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg>Progress</a></li>
+          <li><a href="#"><svg width="6" height="6" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg>More</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+
+  <div class="col-notes">
+    <p class="note"><b>Card</b> ×2, <b>BottomNav</b> (5-col grid, <b>Bullseye</b> at size 6 — filled disc active, hollow ring inactive).</p>
+    <p class="note"><b>R2/R3.</b> The AM walk serves all three goals and says so. No rotation-owner suppression: the lane is the same three columns on every row, so a claim's <i>absence</i> is as scannable as its presence.</p>
+    <p class="note">Lane slots are <b>positional</b> — column 1 is always Handstand. With more than 3 member goals the lane packs left-to-right by claim order and the remainder collapses to a <code>+N</code> chip. <span class="flag">⚠ playtest</span> positional vs packed at 3 goals.</p>
+    <p class="note"><b>R5.</b> AM is solid because it is logged; the other four are hollow because they are only claimed. The state is legible with animation entirely disabled.</p>
+    <p class="note">Receipt reuses <code>.item-row-anim</code> + <code>.macro-flash</code> from <code>globals.css</code>. <span class="flag">⚠ playtest</span> 90 ms stagger. The replay button is mockup-only and would not ship.</p>
+    <p class="note"><span class="flag">⚠ verify visually</span> 40px gutter — "Lift" at 11px semibold is the widest label.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════ PANEL 2 ═══════════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 2 · /program dashboard</p>
+    <div class="phone">
+      <div class="screen">
+
+        <section class="card">
+          <h1 class="h1">Phase 2A — Lighter and Upside Down</h1>
+          <p class="subline">Aug 10 – Dec 31 2026 · week 3 of 20 · 15 of 144 days</p>
+
+          <div class="band" role="img" aria-label="Program band. Block 0, 14 days, complete. Block 1, 56 days, current, 1 day in. Block 2, 49 days, upcoming. Block 3, 25 days, upcoming. Goal date December 31 at the end of the band.">
+            <span class="seg past" style="flex:14"></span>
+            <span class="seg cur" style="flex:56"><span class="seg-fill" style="width:1.8%"></span></span>
+            <span class="seg fut" style="flex:49"></span>
+            <span class="seg fut" style="flex:25"></span>
+            <span class="band-tick" aria-hidden="true"></span>
+          </div>
+          <div class="band-labels" aria-hidden="true">
+            <span style="flex:14">B0</span><span style="flex:56">B1</span><span style="flex:49">B2</span><span style="flex:25">B3</span>
+          </div>
+          <p class="subline" style="font-size:12px">Block 1 · pressing anchor · day 1 of 56 · <span class="tnum">Dec 31</span> goal date</p>
+
+          <div class="tiles" style="margin-top:14px">
+            <div class="tile"><p class="tile-v">15</p><p class="tile-l">days in</p></div>
+            <div class="tile"><p class="tile-v">129</p><p class="tile-l">days left</p></div>
+            <div class="tile"><p class="tile-v">Dec 31</p><p class="tile-l">goal date</p></div>
+          </div>
+        </section>
+
+        <!-- ── Handstand: OPEN-NOT-BINDING ── -->
+        <section class="card">
+          <div class="goal-head">
+            <span class="mk hs" style="font-size:16px" aria-hidden="true">●</span>
+            <span class="name">Handstand</span>
+            <span class="chip" style="margin-left:auto">coverage 2 of 6</span>
+          </div>
+          <div class="readout"><span class="num">12</span><span class="den">readiness · rawScore 12</span></div>
+
+          <div class="rule" role="img" aria-label="Ceiling rule. Readiness 12 of 100. A ceiling holds this goal at 80 until its gates clear; the zone above 80 is ruled off.">
+            <span class="rule-track"></span><span class="rule-hatch"></span>
+            <span class="rule-fill" style="width:12%"></span><span class="rule-stile"></span>
+          </div>
+          <div class="rule-scale"><span class="tnum">0</span><span class="tnum">ceiling 80</span><span class="tnum">100</span></div>
+
+          <div class="spark-row">
+            <div role="img" aria-label="Handstand readiness over the first 15 days, rising from 0 to 12 against a ceiling reference line at 80." style="flex:1">
+              <svg class="spark" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden="true">
+                <line x1="0" y1="11.6" x2="100" y2="11.6" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+                <polyline fill="none" stroke="var(--target)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+                  points="0,42 11,42 22,41.2 33,41.2 44,40.5 55,40.1 66,39.3 77,38.6 88,38.2 100,37.4"/>
+              </svg>
+            </div>
+            <span class="spark-now tnum">12</span>
+          </div>
+
+          <p class="body-sm"><b>2 gates to clear before this can pass 80.</b></p>
+          <ul class="divide" style="margin-top:2px">
+            <li><div class="gate"><svg width="14" height="14" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg><span class="txt">handstand hold <span class="tnum">4 s of 20</span></span><span class="chip">w.35</span></div></li>
+            <li><div class="gate"><svg width="14" height="14" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg><span class="txt">wall HSPU <span class="tnum">0 of 5</span></span><span class="chip">w.25</span></div></li>
+          </ul>
+          <p class="body-sm muted" style="margin-top:8px">Gates are mastery checks — the score waits for them, it doesn't lose points.</p>
+        </section>
+
+        <!-- ── Body comp: no gates, unscored metric ── -->
+        <section class="card">
+          <div class="goal-head">
+            <span class="mk bc" style="font-size:16px" aria-hidden="true">■</span>
+            <span class="name">Body comp</span>
+            <span class="chip" style="margin-left:auto">no gates</span>
+          </div>
+          <div class="readout"><span class="num">28</span><span class="den">readiness</span></div>
+
+          <div class="rule" role="img" aria-label="Ceiling rule. Readiness 28 of 100. No gates on this goal; the ceiling zone above 80 is ruled off but nothing is holding the score.">
+            <span class="rule-track"></span><span class="rule-hatch"></span>
+            <span class="rule-fill" style="width:28%"></span><span class="rule-stile"></span>
+          </div>
+          <div class="rule-scale"><span class="tnum">0</span><span class="tnum">ceiling 80</span><span class="tnum">100</span></div>
+
+          <div class="spark-row">
+            <div role="img" aria-label="Body composition readiness over the first 15 days, rising from 0 to 28 against a ceiling reference line at 80." style="flex:1">
+              <svg class="spark" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden="true">
+                <line x1="0" y1="11.6" x2="100" y2="11.6" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+                <polyline fill="none" stroke="var(--success)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+                  points="0,42 11,40.5 22,39 33,37.4 44,35.9 55,34.4 66,33.6 77,32.9 88,32.1 100,31.4"/>
+              </svg>
+            </div>
+            <span class="spark-now tnum">28</span>
+          </div>
+
+          <p class="body-sm muted"><span class="tnum">52</span> across measured targets only (<span class="tnum">2 of 3</span>)</p>
+
+          <div class="wash-warning" style="margin-top:10px">
+            <p class="eyebrow-t" style="color:var(--warning)">Unscored metric</p>
+            <p class="body-sm" style="margin-top:6px"><b>Body fat %</b> — logged but not scored yet. The engine can't read this metric; it counts as <span class="tnum">0</span> at weight <span class="tnum">.45</span>.</p>
+          </div>
+        </section>
+
+        <!-- ── AWS ── -->
+        <section class="card">
+          <div class="goal-head">
+            <span class="mk aw" style="font-size:16px" aria-hidden="true">▲</span>
+            <span class="name">AWS</span>
+            <span class="chip" style="margin-left:auto">1 gate</span>
+          </div>
+          <div class="readout"><span class="num">12</span><span class="den">readiness</span></div>
+
+          <div class="rule" role="img" aria-label="Ceiling rule. Readiness 12 of 100. One gate must clear before this goal can pass 80.">
+            <span class="rule-track"></span><span class="rule-hatch"></span>
+            <span class="rule-fill" style="width:12%"></span><span class="rule-stile"></span>
+          </div>
+          <div class="rule-scale"><span class="tnum">0</span><span class="tnum">ceiling 80</span><span class="tnum">100</span></div>
+
+          <div class="spark-row">
+            <div role="img" aria-label="AWS readiness over the first 15 days, rising from 0 to 12 against a ceiling reference line at 80." style="flex:1">
+              <svg class="spark" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden="true">
+                <line x1="0" y1="11.6" x2="100" y2="11.6" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+                <polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+                  points="0,42 11,42 22,41.2 33,40.5 44,40.1 55,39.3 66,38.9 77,38.2 88,37.8 100,37.4"/>
+              </svg>
+            </div>
+            <span class="spark-now tnum">12</span>
+          </div>
+
+          <p class="body-sm">study <span class="tnum">19 of 120 h</span> · sections <span class="tnum">4 of 23</span></p>
+          <ul class="divide" style="margin-top:2px">
+            <li><div class="gate"><svg width="14" height="14" viewBox="0 0 32 32" aria-hidden="true"><use href="#be-hollow"/></svg><span class="txt">practice exam — no attempt</span><span class="chip">w.25</span></div></li>
+          </ul>
+        </section>
+
+        <!-- ── annotated aside: the OTHER gate state ── -->
+        <p class="note inline" style="margin:0 0 -8px"><b>Mockup aside</b> — not a fourth goal. Same CeilingRule at the second gate state, so the report can show both side by side.</p>
+        <section class="card">
+          <p class="eyebrow-t" style="color:var(--warning)">Held at 80</p>
+          <div class="readout" style="margin-top:6px"><span class="num">80</span><span class="den">readiness · rawScore 91</span></div>
+          <div class="rule" role="img" aria-label="Ceiling rule, held state. Raw score 91 but readiness is held at 80 by two unclear gates. The bar stops exactly at the ceiling stile.">
+            <span class="rule-track"></span><span class="rule-hatch"></span>
+            <span class="rule-fill" style="width:80%"></span><span class="rule-stile"></span>
+          </div>
+          <div class="rule-scale"><span class="tnum">0</span><span class="tnum">ceiling 80</span><span class="tnum">100</span></div>
+          <p class="body-sm" style="margin-top:8px">Your work adds up to <span class="tnum">91</span> — the ceiling holds it at <span class="tnum">80</span> until both gates clear.</p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-notes">
+    <p class="note"><b>Card</b>, <b>StatTile</b> ×3, <b>Bullseye</b> (hollow, size 14) on each gate row.</p>
+    <p class="note"><b>R6.</b> The headline number rides a flat <b>CeilingRule</b>, never a Bullseye — <code>Bullseye progress={0.80}</code> renders 4 of 4 rings and reads "done", the precise opposite of "held at 80."</p>
+    <p class="note">Hatch 80→100 is <code>repeating-linear-gradient</code> in <code>var(--border)</code> over <code>var(--card)</code>; the solid track stops at 80 so the hatch is visible against it. <span class="flag">⚠ verify visually</span> at 1× and 3×.</p>
+    <p class="note">Sparklines are <code>preserveAspectRatio="none"</code> + <code>vector-effect="non-scaling-stroke"</code> with <b>no terminal dot</b> — a circle would render as an ellipse under non-uniform scale. Current value sits adjacent as text.</p>
+    <p class="note"><span class="flag">⚠ verify visually</span> the y-domain is pinned 0–100 so the 80 line stays on canvas; at day 15 that makes all three series hug the floor. Alternative: auto-domain plus an out-of-range caret for the ceiling.</p>
+    <p class="note"><span class="flag">⚠ verify visually</span> Block 1's fill is 1 of 56 days ≈ 1.8% — a 1px sliver at 390px. Honest, but easy to mistake for a rendering artifact.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════ PANEL 3 ═══════════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 3 · Cross-goal calendar · August 2026</p>
+    <div class="phone">
+      <div class="screen">
+        <section class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <h2 class="h2">August 2026</h2>
+            <span class="chip">week 3 of 20</span>
+          </div>
+
+          <!-- grid-cols-[16px_repeat(7,1fr)] — col 1 is the WeekRail gutter -->
+          <div class="cal-head" aria-hidden="true">
+            <span></span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+          </div>
+
+          <div class="weeks">
+            <!-- Jul 27 – Aug 2 : before the plan -->
+            <div class="week">
+              <span class="rail" aria-hidden="true"><i></i></span>
+              <span class="cell out"><span class="dnum">27</span></span><span class="cell out"><span class="dnum">28</span></span>
+              <span class="cell out"><span class="dnum">29</span></span><span class="cell out"><span class="dnum">30</span></span>
+              <span class="cell out"><span class="dnum">31</span></span>
+              <button class="cell quiet" type="button" aria-label="August 1. Before the program starts."><span class="dnum">1</span></button>
+              <button class="cell quiet" type="button" aria-label="August 2. Before the program starts."><span class="dnum">2</span></button>
+            </div>
+
+            <!-- Aug 3 – 9 : still pre-plan -->
+            <div class="week">
+              <span class="rail" aria-hidden="true"><i></i></span>
+              <button class="cell quiet" type="button" aria-label="August 3. Before the program starts."><span class="dnum">3</span></button>
+              <button class="cell quiet" type="button" aria-label="August 4. Before the program starts."><span class="dnum">4</span></button>
+              <button class="cell quiet" type="button" aria-label="August 5. Before the program starts."><span class="dnum">5</span></button>
+              <button class="cell quiet" type="button" aria-label="August 6. Before the program starts."><span class="dnum">6</span></button>
+              <button class="cell quiet" type="button" aria-label="August 7. Before the program starts."><span class="dnum">7</span></button>
+              <button class="cell quiet" type="button" aria-label="August 8. Before the program starts."><span class="dnum">8</span></button>
+              <button class="cell quiet" type="button" aria-label="August 9. Before the program starts."><span class="dnum">9</span></button>
+            </div>
+
+            <!-- Aug 10 – 16 : week 1, confirmed -->
+            <div class="week">
+              <span class="rail done" aria-hidden="true"><i></i></span>
+              <button class="cell done" type="button" aria-label="August 10. Logged. Counts toward Handstand, Body comp and AWS."><span class="dnum">10</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 11. Logged. Counts toward Handstand and AWS."><span class="dnum">11</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 12. Logged. Counts toward Handstand and AWS."><span class="dnum">12</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 13. Logged. Counts toward Handstand and AWS."><span class="dnum">13</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell" type="button" aria-label="August 14. Observance — nothing planned and nothing owed."><span class="dnum">14</span><span class="dash" aria-hidden="true">—</span></button>
+              <button class="cell" type="button" aria-label="August 15. Observance — nothing planned and nothing owed."><span class="dnum">15</span><span class="dash" aria-hidden="true">—</span></button>
+              <button class="cell done" type="button" aria-label="August 16. Logged. Counts toward Body comp and AWS."><span class="dnum">16</span><span class="marks" aria-hidden="true"><span class="mk bc">■</span><span class="mk aw">▲</span></span></button>
+            </div>
+
+            <!-- Aug 17 – 23 : week 2, confirmed -->
+            <div class="week">
+              <span class="rail done" aria-hidden="true"><i></i></span>
+              <button class="cell done" type="button" aria-label="August 17. Logged. Counts toward Handstand, Body comp and AWS."><span class="dnum">17</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 18. Logged. Counts toward Handstand and AWS."><span class="dnum">18</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 19. Logged. Counts toward Handstand, Body comp and AWS, plus one scheduled item."><span class="dnum">19</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span><span class="mk aw">▲</span><span class="ovf">+1</span></span></button>
+              <button class="cell done" type="button" aria-label="August 20. Logged. Counts toward Handstand and AWS."><span class="dnum">20</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 21. Logged. Counts toward Handstand and AWS."><span class="dnum">21</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 22. Logged. Counts toward AWS."><span class="dnum">22</span><span class="marks" aria-hidden="true"><span class="mk aw">▲</span></span></button>
+              <button class="cell done" type="button" aria-label="August 23. Logged. Counts toward Body comp and AWS."><span class="dnum">23</span><span class="marks" aria-hidden="true"><span class="mk bc">■</span><span class="mk aw">▲</span></span></button>
+            </div>
+
+            <!-- Aug 24 – 30 : week 3, current. Second grid row carries the travel span-bar. -->
+            <div class="week">
+              <span class="rail now" aria-hidden="true"><i></i></span>
+              <button class="cell today done" type="button" aria-label="August 24. Today. Logged. Counts toward Handstand, Body comp and AWS."><span class="dnum">24</span><span class="marks" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span><span class="mk aw">▲</span></span></button>
+              <button class="cell" type="button" aria-label="August 25. Planned, not logged. Claimed by Handstand and AWS."><span class="dnum">25</span><span class="marks" aria-hidden="true"><span class="mk hs">○</span><span class="mk aw">△</span></span></button>
+              <button class="cell" type="button" aria-label="August 26. Planned, not logged. Claimed by Handstand and AWS."><span class="dnum">26</span><span class="marks" aria-hidden="true"><span class="mk hs">○</span><span class="mk aw">△</span></span></button>
+              <button class="cell" type="button" aria-label="August 27. Planned, not logged. Claimed by Handstand and AWS. Travel window begins."><span class="dnum">27</span><span class="marks" aria-hidden="true"><span class="mk hs">○</span><span class="mk aw">△</span></span></button>
+              <button class="cell" type="button" aria-label="August 28. Planned, not logged. Claimed by Handstand and AWS. Travel."><span class="dnum">28</span><span class="marks" aria-hidden="true"><span class="mk hs">○</span><span class="mk aw">△</span></span></button>
+              <button class="cell" type="button" aria-label="August 29. Planned, not logged. Claimed by AWS. Travel."><span class="dnum">29</span><span class="marks" aria-hidden="true"><span class="mk aw">△</span></span></button>
+              <button class="cell" type="button" aria-label="August 30. Planned, not logged. Claimed by Body comp and AWS. Travel."><span class="dnum">30</span><span class="marks" aria-hidden="true"><span class="mk bc">□</span><span class="mk aw">△</span></span></button>
+              <!-- conditional second row: grid-column 5 (Thu) / span 4 -> Sun, no right cap (continues) -->
+              <span class="span-bar cap-l" style="grid-column: 5 / span 4" aria-hidden="true">Travel · reduced volume</span>
+            </div>
+
+            <!-- Aug 31 – Sep 6 : span-bar continuation, right cap -->
+            <div class="week">
+              <span class="rail prov" aria-hidden="true"><i></i></span>
+              <button class="cell" type="button" aria-label="August 31. Planned, not logged. Claimed by Handstand, Body comp and AWS. Travel window ends."><span class="dnum">31</span><span class="marks" aria-hidden="true"><span class="mk hs">○</span><span class="mk bc">□</span><span class="mk aw">△</span></span></button>
+              <span class="cell out"><span class="dnum">1</span></span><span class="cell out"><span class="dnum">2</span></span>
+              <span class="cell out"><span class="dnum">3</span></span><span class="cell out"><span class="dnum">4</span></span>
+              <span class="cell out"><span class="dnum">5</span></span><span class="cell out"><span class="dnum">6</span></span>
+              <span class="span-bar cap-r" style="grid-column: 2 / span 1" aria-hidden="true">ends</span>
+            </div>
+          </div>
+        </section>
+
+        <p class="note inline" style="margin:0"><b>Annotation — the restraint on Aug 14–15.</b> The observance window gets <i>no</i> marker row, <i>no</i> wash, <i>no</i> <code>✕</code>, <i>no</i> conflict wedge, <i>no</i> dashed top border. Just an em dash where marks would be. Every one of those treatments means "something happened here that you should look at." Nothing happened. A blank cell would read as data loss; the dash reads as a deliberate, closed day.</p>
+
+        <section class="card">
+          <p class="eyebrow-t">Legend</p>
+          <ul class="divide" style="margin-top:6px">
+            <li><div class="gate"><span class="mk hs" aria-hidden="true">●</span><span class="txt">Handstand</span><span class="chip">rotation</span></div></li>
+            <li><div class="gate"><span class="mk bc" aria-hidden="true">■</span><span class="txt">Body comp</span><span class="chip">weigh-in Mon/Sun</span></div></li>
+            <li><div class="gate"><span class="mk aw" aria-hidden="true">▲</span><span class="txt">AWS</span><span class="chip">daily study</span></div></li>
+            <li><div class="gate"><span class="mk sched" aria-hidden="true">◆</span><span class="txt">Scheduled item</span><span class="chip">MarkerIcon</span></div></li>
+            <li><div class="gate"><span class="ovf" aria-hidden="true">+1</span><span class="txt">More claims than the 3-slot cap</span></div></li>
+            <li><div class="gate"><span class="dash" aria-hidden="true">—</span><span class="txt">Observance · nothing planned, nothing owed</span></div></li>
+            <li><div class="gate"><span aria-hidden="true"><span class="mk hs">○</span> <span class="mk hs">●</span></span><span class="txt">hollow = claimed · solid = logged</span></div></li>
+          </ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-notes">
+    <p class="note"><b>Card</b>, <b>WeekRail</b> (16px gutter — solid muted = confirmed, accent = current week, <code>.rail-spine-dashed-muted</code> = provisional), <b>MarkerIcon</b> vocabulary, <b>Bullseye</b> intentionally absent from day cells.</p>
+    <p class="note"><b>Hollow/solid does real work here.</b> Past weeks are solid, future weeks hollow, with no separate past/future styling. R5 pays for the calendar for free.</p>
+    <p class="note">Aug 19 shows the <code>+N</code> overflow: three goal marks plus a <code>◆</code> scheduled item exceeds the 3-slot cap.</p>
+    <p class="note">Travel span-bar occupies the conditional second grid row: <code>grid-column: 5 / span 4</code> in week 3, <code>2 / span 1</code> in week 4. Caps are asymmetric — the flat edge is the week-boundary continuation.</p>
+    <p class="note"><span class="flag">⚠ verify visually</span> span-bar 18px min-height, and the label truncating to "Travel ·" at 390px on the short segment.</p>
+    <p class="note"><span class="flag">⚠ playtest</span> 13px marks in a 60px cell with three marks plus a <code>+N</code> chip — the wrap point.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════ PANEL 4 ═══════════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 4 · SavedMeal quick-pick + shared-metric chart</p>
+    <div class="phone sheet-host">
+      <div class="screen">
+
+        <section class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <h2 class="h2">Add to lunch</h2>
+            <span class="chip"><span class="tnum">1 / 3</span> meals</span>
+          </div>
+
+          <!-- NEW: Saved meals block, first above the existing food quick-pick -->
+          <p class="eyebrow-t" style="margin-top:8px">Saved meals</p>
+          <div class="qp-wrap">
+            <div class="qp-row">
+              <!-- mono lines below stand in for var(--font-mono) (Geist Mono) -->
+              <button class="qp-chip" type="button" aria-label="Protein Brookie, saved meal, 310 calories, 31 grams protein"><span class="n">Protein Brookie</span><span class="s">310 · 31P</span></button>
+              <button class="qp-chip" type="button" aria-label="Chipotle Protein Bowl, saved meal, 670 calories, 71 grams protein"><span class="n">Chipotle Protein Bowl</span><span class="s">670 · 71P</span></button>
+              <button class="qp-chip" type="button" aria-label="Overnight oats, saved meal, 420 calories, 28 grams protein"><span class="n">Overnight oats</span><span class="s">420 · 28P</span></button>
+            </div>
+            <span class="qp-fade" aria-hidden="true"></span>
+          </div>
+
+          <!-- EXISTING: food quick-pick, unchanged, shown for contrast -->
+          <p class="eyebrow-t" style="margin-top:12px">Foods</p>
+          <div class="qp-wrap">
+            <div class="qp-row">
+              <button class="qp-chip scan" type="button" aria-label="Scan a barcode">▦ Scan</button>
+              <button class="qp-chip" type="button" aria-label="Greek yogurt, Chobani"><span class="n">Greek yogurt</span><span class="s">Chobani</span></button>
+              <button class="qp-chip" type="button" aria-label="Chicken thigh"><span class="n">Chicken thigh</span></button>
+              <button class="qp-chip" type="button" aria-label="Rice, jasmine"><span class="n">Rice, jasmine</span></button>
+            </div>
+            <span class="qp-fade" aria-hidden="true"></span>
+          </div>
+        </section>
+
+        <section class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <h2 class="h2">Pull-Up Max Reps</h2>
+            <span class="pill-success">Holding 25</span>
+          </div>
+
+          <div role="img" aria-label="Pull-up max reps over eight sessions, drifting from 27 down to 25 and holding, against a dashed floor reference line at 25." style="margin:10px 0 4px">
+            <svg class="spark" style="height:56px" viewBox="0 0 100 56" preserveAspectRatio="none" aria-hidden="true">
+              <line x1="0" y1="44" x2="100" y2="44" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+              <polyline fill="none" stroke="var(--foreground)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"
+                points="0,20 14,26 28,20 43,26 57,44 71,26 85,44 100,44"/>
+            </svg>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)">
+            <span>8 sessions</span><span class="tnum">Floor 25</span>
+          </div>
+
+          <p class="eyebrow-t" style="margin-top:14px">Shared by 2 goals</p>
+          <ul class="divide" style="margin-top:2px">
+            <li><div class="gate" style="align-items:flex-start"><span class="mk hs" style="margin-top:2px" aria-hidden="true">●</span><span class="txt"><b>Handstand</b> — Maintenance. Hold 25 while you specialize. <span class="muted">Worth <span class="tnum">10 of 100</span>.</span></span></div></li>
+            <li><div class="gate" style="align-items:flex-start"><span class="mk bc" style="margin-top:2px" aria-hidden="true">■</span><span class="txt"><b>Body comp</b> — Lean-mass canary. A drop here means the cut is too deep. <span class="muted">Worth <span class="tnum">15 of 100</span>.</span></span></div></li>
+          </ul>
+        </section>
+
+        <div style="height:230px" aria-hidden="true"></div>
+      </div>
+
+      <!-- BottomSheet, open. Mirrors globals.css .bottom-sheet / .bottom-sheet-panel. -->
+      <div class="scrim" aria-hidden="true"></div>
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="Protein Brookie — servings">
+        <div class="sheet-grip" aria-hidden="true"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h2 class="h2">Protein Brookie</h2>
+          <span class="chip">saved meal</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <span class="eyebrow-t">Servings</span>
+          <div class="stepper">
+            <button type="button" aria-label="Decrease servings">−</button>
+            <!-- mono numeral stands in for var(--font-mono) (Geist Mono) -->
+            <span class="qty qty-bump" aria-live="polite">0.5</span>
+            <button type="button" aria-label="Increase servings">+</button>
+          </div>
+        </div>
+
+        <p class="body-sm muted" style="margin:14px 0 4px">Scaled preview</p>
+        <p class="mono" style="font-size:1.125rem;margin:0 0 16px">335 cal · 35.5 P</p>
+
+        <button class="btn-primary" type="button">Add to meal</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-notes">
+    <p class="note"><b>Card</b>, the shipped <b>quick-pick chips row</b> (<code>flex gap-2 overflow-x-auto py-1</code> + right-edge fade), <b>BottomSheet</b> in its open state, <b>StatTile</b> grammar reused by the chip subline.</p>
+    <p class="note">Saved meals sit <i>above</i> the food row and share its chip grammar exactly — the only difference is the mono <code>310 · 31P</code> subline where a food chip carries a brand. Same shape, new content type; no new vocabulary to learn.</p>
+    <p class="note">Stepper buttons are a true 44×44; the numeral carries <code>.qty-bump</code> from <code>globals.css</code> so rapid taps read as ticks.</p>
+    <p class="note">The metric chart uses <b>one</b> reference line. A second (goal, average, projection) is what turns these into unreadable ladders — the two goals' stakes go in the list below instead, in words.</p>
+    <p class="note"><span class="flag">⚠ verify visually</span> scrim is <code>color-mix(--foreground 45%)</code>; the shipped value is a literal <code>rgba(0,0,0,0.45)</code>, which in dark mode is slightly heavier than this.</p>
+    <p class="note"><span class="flag">⚠ playtest</span> the chip fade at 24px — a chip ending near the fade can look disabled.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="provisional">
+  <h2>⚠ Provisional / verify-visually</h2>
+  <ol>
+    <li><b>CeilingRule stile overhang</b> — 2px wide × 2px proud of the 6px bar top and bottom. Reads as a gate post at 390px; confirm it doesn't read as a rendering seam at 1×.</li>
+    <li><b>CeilingRule hatch</b> — <code>repeating-linear-gradient(45deg, var(--border) 0 2px, transparent 2px 5px)</code>. In dark mode <code>--border</code> is <code>#3A2E1F</code> on <code>--card #1A130C</code>; the hatch may fall below the visible threshold.</li>
+    <li><b>Warning-wash banner radius</b> — 12px. The shipped class string (<code>border border-l-[3px] p-4</code>) specifies no radius.</li>
+    <li><b>Sparkline y-domain</b> — pinned 0–100 so the 80 ceiling stays on canvas. At day 15 every series hugs the floor. Alternative: auto-domain plus an out-of-range caret.</li>
+    <li><b>Block-band Block 1 fill</b> — 1 of 56 days ≈ 1.8%, a sub-2px sliver. Consider a 3px minimum so "started" is distinguishable from "not started".</li>
+    <li><b>Mark lane width</b> — 3 × 18px slots + 22px overflow + gaps = 82px. Confirm the longest row title still gets two lines at 390px rather than three.</li>
+    <li><b>Mark glyph sizes</b> — 14px in the Today lane, 13px in calendar cells (matching <code>MarkerIcon size={13}</code>), 16px in goal-card headers. Confirm <code>▲</code>/<code>△</code> optical weight against <code>●</code>/<code>○</code> across system font fallbacks.</li>
+    <li><b>Positional vs packed lane slots</b> — this mockup pins column 1 to Handstand so claims align as columns down the list. Packing left-to-right scans worse but scales past 3 goals. Playtest at 3 and at 5 goals.</li>
+    <li><b>Fan-out stagger</b> — 90ms between marks (0 / 90 / 180). The shipped <code>.macro-flash</code> is 270ms, so the last line finishes at 450ms.</li>
+    <li><b>Observance em dash</b> — <code>—</code> at 13px in <code>var(--muted)</code>. Confirm it does not read as a minus sign or a redaction.</li>
+    <li><b>Span-bar</b> — 18px min-height, 12% muted wash. Confirm the label truncates gracefully on a 1-column continuation segment.</li>
+    <li><b>+N overflow chip</b> — 9px muted on <code>var(--accent-soft)</code>, lifted from <code>CalendarMonth.tsx</code>. Verified small; re-verify beside three 13px marks.</li>
+    <li><b>Gate-row Bullseye</b> — size 14, hollow. At sizes below 14 the filled variant loses its centre ring, so gate rows must never drop below 14.</li>
+    <li><b>BottomSheet scrim</b> — <code>color-mix(in srgb, var(--foreground) 45%, transparent)</code> stands in for the literal <code>rgba(0,0,0,0.45)</code>; the two diverge in dark mode.</li>
+    <li><b>Fonts</b> — this file uses system stacks for Geist / Geist Mono / DM Serif Display. Metrics, and therefore every wrap point above, will shift once the real faces load.</li>
+  </ol>
+</footer>
+
+<script>
+// Single inline script. Mirrors src/components/ThemeToggle.tsx (system → light →
+// dark, data-theme on <html>) plus one mockup-only affordance: replaying the
+// fan-out flash. No dependencies, no network, no storage requirement.
+(function () {
+  var ORDER = ["system", "light", "dark"];
+  var GLYPH = { system: "◐", light: "☀", dark: "☾" };
+  var i = 0;
+  var btn = document.getElementById("themeBtn");
+  var glyph = document.getElementById("themeGlyph");
+  var label = document.getElementById("themeLabel");
+
+  btn.addEventListener("click", function () {
+    i = (i + 1) % ORDER.length;
+    var t = ORDER[i];
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    glyph.textContent = GLYPH[t];
+    label.textContent = t;
+    btn.setAttribute("aria-label", "Theme: " + t + " (click to change)");
+  });
+
+  document.getElementById("replayBtn").addEventListener("click", function () {
+    var spans = document.querySelectorAll("#receipt .macro-flash");
+    for (var n = 0; n < spans.length; n++) {
+      spans[n].classList.remove("macro-flash");
+      void spans[n].offsetWidth; // force reflow so the animation restarts
+      spans[n].classList.add("macro-flash");
+    }
+  });
+})();
+</script>
+</body>
+</html>
