@@ -107,6 +107,7 @@ import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
 import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import { deriveSavedMealLog } from "@/lib/saved-meal";
 
 const DateKeyShape = z
   .string()
@@ -202,12 +203,33 @@ type LogNoteInput = z.infer<typeof LogNoteSchema>;
 
 const LogNutritionShape = {
   mealType: MealTypeShape,
-  items: z.array(NutritionItemShape).min(1),
+  items: z
+    .array(NutritionItemShape)
+    .min(1)
+    .optional()
+    .describe(
+      "Food items eaten. REQUIRED unless savedMealId is provided. Precedence: when items are passed together with savedMealId, these items replace the saved meal's items entirely (explicit values win over derived ones).",
+    ),
   notes: z.string().optional(),
   macros: PlannedMealMacrosShape.optional().describe(
-    "Optional estimated macros for this meal (calories, proteinG, carbsG, fatG, fiberG, sodiumMg). Provide your best estimate from the items so the dashboard can total the day; omit any field you can't estimate.",
+    "Optional estimated macros for this meal (calories, proteinG, carbsG, fatG, fiberG, sodiumMg). Provide your best estimate from the items so the dashboard can total the day; omit any field you can't estimate. " +
+      "Precedence: when passed together with savedMealId, these macros replace the saved meal's scaled macros entirely (explicit values win over derived ones).",
   ),
   date: z.string().optional().describe("ISO datetime; default = now"),
+  savedMealId: z
+    .string()
+    .optional()
+    .describe(
+      "Log a SavedMeal by reference (id from list_saved_meals). Items + macros are derived from the saved meal, with macros scaled by servings ÷ the meal's defaultServings and item qty annotated (e.g. '1 bowl ×2') when that factor ≠ 1. " +
+        "Unknown/foreign ids return a friendly not-found error. Explicit items/macros passed in the same call take precedence over the derived values.",
+    ),
+  servings: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      "How many servings were eaten (default 1). Only meaningful with savedMealId: the saved meal's macros are multiplied by servings ÷ defaultServings.",
+    ),
 } as const;
 const LogNutritionSchema = z.object(LogNutritionShape);
 type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
@@ -439,17 +461,52 @@ async function logNoteCore(db: DbClient, input: LogNoteInput): Promise<{ id: str
 }
 
 async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise<{ id: string; message: string }> {
+  let items = input.items;
+  let macros = input.macros;
+  let savedMealSuffix = "";
+
+  // #275: savedMealId derives items+macros from the user's SavedMeal, scaled
+  // by servings ÷ defaultServings. The scoped client injects userId into the
+  // findUnique where — another user's meal id resolves to null, so the same
+  // friendly not-found error covers both "deleted" and "not yours".
+  if (input.savedMealId) {
+    const meal = await db.savedMeal.findUnique({ where: { id: input.savedMealId } });
+    if (!meal) {
+      throw new Error(
+        `Saved meal not found: ${input.savedMealId}. It may have been deleted — call list_saved_meals to look up current ids, or pass items directly.`,
+      );
+    }
+    const servings = input.servings ?? 1;
+    const derived = deriveSavedMealLog(
+      { items: meal.items, macros: meal.macros, defaultServings: meal.defaultServings },
+      servings,
+    );
+    // Precedence (documented in the input schema): explicit items/macros
+    // passed in the same call win wholesale over the derived values.
+    items = items ?? derived.items;
+    macros = macros ?? derived.macros;
+    savedMealSuffix = ` from saved meal "${meal.name}" (${servings} serving${servings === 1 ? "" : "s"})`;
+  }
+
+  if (!items || items.length === 0) {
+    throw new Error(
+      "items is required when savedMealId is not provided — pass the foods eaten, or a savedMealId from list_saved_meals.",
+    );
+  }
+
   const n = await db.nutritionLog.create({
     data: {
       date: input.date ? parseDateInput(input.date) : new Date(),
       mealType: input.mealType,
-      items: input.items as Prisma.InputJsonValue,
+      items: items as Prisma.InputJsonValue,
       notes: input.notes ?? null,
       // Optional macros — undefined fields are omitted (stored as null).
-      ...input.macros,
+      // Items + macros land in ONE row in ONE write, so the item list and the
+      // day's totals can never desync (the update_nutrition invariant).
+      ...macros,
     },
   });
-  return { id: n.id, message: "Nutrition logged" };
+  return { id: n.id, message: `Nutrition logged${savedMealSuffix}` };
 }
 
 // Decode a literal `\uXXXX` escape into its character. Conservative on purpose:
@@ -1890,6 +1947,26 @@ function registerReadTools(server: McpServer) {
   );
 
   server.registerTool(
+    "list_saved_meals",
+    {
+      title: "List the user's saved meals (reusable meal templates)",
+      description:
+        "Every SavedMeal for the current user — id, name, items, macros, defaultServings — sorted by name. " +
+        "Use this to find the savedMealId for log_nutrition(savedMealId, servings), to check whether a name already exists before save_meal (save_meal upserts by name), " +
+        "or to answer 'what meals do I have saved'. The stored items/macros describe defaultServings worth of the meal.",
+    },
+    async () =>
+      safe(async () => {
+        const db = await getDb();
+        const savedMeals = await db.savedMeal.findMany({
+          omit: { userId: true },
+          orderBy: { name: "asc" },
+        });
+        return { count: savedMeals.length, savedMeals };
+      }),
+  );
+
+  server.registerTool(
     "find_exercise_in_plan",
     {
       title: "Where + when is this exercise prescribed? (override-aware lookup)",
@@ -3155,7 +3232,9 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a meal",
       description:
-        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
+        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. " +
+        "SAVED MEALS: for a frequently-eaten meal saved via save_meal, pass savedMealId (+ servings, default 1) instead of re-entering items/macros — items and macros are derived from the saved meal, scaled by servings ÷ defaultServings. Explicit items/macros passed alongside savedMealId take precedence over the derived values. " +
+        "Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
       inputSchema: LogNutritionShape,
     },
     async (input) => safe(async () => logNutritionCore(await getDb(), input)),
@@ -3293,6 +3372,109 @@ function registerWriteTools(server: McpServer) {
         const db = await getDb();
         await db.nutritionLog.delete({ where: { id } });
         return { id, message: "Nutrition deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "save_meal",
+    {
+      title: "Save a reusable meal (upsert by name)",
+      description:
+        "Save a frequently-eaten meal ONCE so it can be re-logged by reference via log_nutrition(savedMealId, servings) without re-entering items and macros — e.g. 'Protein Brookie', 'Chipotle Protein Bowl'. " +
+        "UPSERT BY NAME (per user): one saved meal per name — saving a name that already exists (case-insensitive match) REPLACES that meal's items/macros/defaultServings in place and keeps the newly passed casing; no duplicate is created. Omitting macros on a re-save clears any stored macros. " +
+        "items + macros should describe defaultServings worth of the meal (defaultServings defaults to 1); log_nutrition scales macros by servings ÷ defaultServings at log time. " +
+        "Browse with list_saved_meals; remove with delete_saved_meal.",
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            "Meal name, unique per user (e.g. 'Protein Brookie'). Re-saving an existing name (case-insensitive) updates that meal in place.",
+          ),
+        items: z
+          .array(NutritionItemShape)
+          .min(1)
+          .describe("Food items for defaultServings worth of the meal — same shape as log_nutrition items."),
+        macros: PlannedMealMacrosShape.optional().describe(
+          "Estimated macros (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) for defaultServings worth of the meal. Omit fields you can't estimate; omitting the whole object stores no macros (and clears them on a re-save).",
+        ),
+        defaultServings: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            "How many servings the stored items/macros describe (default 1). log_nutrition scales macros by servings ÷ this value.",
+          ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        const name = input.name.trim();
+        // Zod already rejects the empty string; this catches whitespace-only.
+        if (!name) throw new Error("save_meal requires a non-empty name.");
+
+        // Upsert-by-name: the scoped client injects userId into the where, so
+        // the case-insensitive match only ever sees the caller's own meals.
+        const existing = await db.savedMeal.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+        });
+
+        const defaultServings = input.defaultServings ?? 1;
+        if (existing) {
+          const updated = await db.savedMeal.update({
+            where: { id: existing.id },
+            data: {
+              name, // latest casing wins
+              items: input.items as Prisma.InputJsonValue,
+              // Replace semantics: a re-save describes the meal fully — an
+              // omitted macros object clears any previously stored macros.
+              macros:
+                input.macros === undefined
+                  ? Prisma.DbNull
+                  : (input.macros as Prisma.InputJsonValue),
+              defaultServings,
+            },
+          });
+          return {
+            id: updated.id,
+            name: updated.name,
+            updated: true,
+            message: `Saved meal "${updated.name}" updated in place (upsert-by-name — no duplicate created).`,
+          };
+        }
+
+        const created = await db.savedMeal.create({
+          data: {
+            name,
+            items: input.items as Prisma.InputJsonValue,
+            ...(input.macros !== undefined && { macros: input.macros as Prisma.InputJsonValue }),
+            defaultServings,
+          },
+        });
+        return {
+          id: created.id,
+          name: created.name,
+          updated: false,
+          message: `Saved meal "${created.name}" created. Log it via log_nutrition(savedMealId: "${created.id}", servings).`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "delete_saved_meal",
+    {
+      title: "Delete a saved meal",
+      description:
+        "Permanently remove a SavedMeal by id (look ids up via list_saved_meals). " +
+        "Past NutritionLog rows that were logged from it are untouched — this only removes the reusable template.",
+      inputSchema: { id: z.string().describe("SavedMeal.id from list_saved_meals") },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        const db = await getDb();
+        await db.savedMeal.delete({ where: { id } });
+        return { id, message: "Saved meal deleted" };
       }),
   );
 
@@ -4734,7 +4916,7 @@ function registerWriteTools(server: McpServer) {
       description:
         "Log multiple meals in one all-or-nothing transaction. " +
         "Use for bulk meal entry — a full HelloFresh week, prepped meal-prep schedule, or replaying meals from a paper log. " +
-        "Each operation has the same shape as a single log_nutrition call (mealType, items[], notes?, macros?, date?). " +
+        "Each operation has the same shape as a single log_nutrition call (mealType, items[]?, notes?, macros?, date?, savedMealId?, servings?) — saved-meal references resolve inside the transaction with the same scaling/precedence rules as log_nutrition. " +
         `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
       inputSchema: {
         operations: z

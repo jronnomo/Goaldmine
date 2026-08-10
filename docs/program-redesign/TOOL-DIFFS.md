@@ -15,6 +15,59 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — #275: `save_meal` / `list_saved_meals` / `delete_saved_meal` NEW + `log_nutrition` gains `savedMealId`/`servings`
+
+**Issue:** #275 (Sprint 16 — Additive schema, epic #258)
+
+**Connector reconnect REQUIRED after deploy** — three new tools + a changed
+`log_nutrition`/`batch_log_nutrition` input shape; the claude.ai connector
+caches the old tool list and will neither see the new tools nor accept the new
+params until reconnected.
+
+**New tools:**
+
+- `save_meal { name, items[], macros?, defaultServings? }` — **upsert-by-name
+  per user** (case-insensitive match; re-saving an existing name replaces its
+  items/macros/defaultServings in place, latest casing wins, omitted macros
+  clear stored ones — no duplicates). `items`/`macros` describe
+  `defaultServings` worth of the meal (default 1). Returns
+  `{ id, name, updated, message }`.
+- `list_saved_meals {}` — READ tool; the caller's saved meals
+  (`id, name, items, macros, defaultServings, createdAt, updatedAt`), sorted
+  by name, `omit: { userId: true }`. Leaky-reads coverage added in
+  `src/lib/mcp/leaky-reads.test.ts`.
+- `delete_saved_meal { id }` — removes the template; past NutritionLog rows
+  are untouched.
+
+**Changed inputs:**
+
+- `log_nutrition` — `items` is now OPTIONAL (still `min(1)` when present);
+  new optional `savedMealId` + `servings` (default 1). With `savedMealId`,
+  items+macros are derived from the SavedMeal: macros scaled by
+  `servings ÷ defaultServings` (rounded to 1 decimal), item `qty` annotated
+  (e.g. `"1 brookie ×2"`) when the factor ≠ 1. **Precedence:** explicit
+  `items`/`macros` passed in the same call replace the derived values
+  wholesale. Unknown/foreign `savedMealId` → friendly not-found error.
+  Omitting both `items` and `savedMealId` → friendly items-required error.
+  The write still lands via the single `logNutritionCore` create (items +
+  macros in one row — the update_nutrition coherence invariant holds).
+- `batch_log_nutrition` — operations inherit the same shape; saved-meal
+  references resolve inside the transaction (scaling/precedence identical).
+
+**Scaling/parse helpers:** pure, in new `src/lib/saved-meal.ts`
+(`deriveSavedMealLog`, `savedMealScaleFactor`, `scaleSavedMealMacros`,
+`annotateItemsForFactor`) — unit-tested in `src/lib/saved-meal.test.ts`.
+
+**Seed note (no prisma/seed.ts change):** the Phase 2A import creates the
+founder's two starter meals — **Protein Brookie** (310 cal / 6.5 F / 31 P /
+42.5 C per brookie) and **Chipotle Protein Bowl** (670 cal / 20 F / 71 P /
+60 C per full bowl), both `defaultServings: 1`.
+
+**Out of scope here:** dashboard composer quick-pick UI (Sprint 19 wires it);
+this story is MCP-only.
+
+---
+
 ## 2026-08-09 — M1 deploy note (no tool-shape change): `Program` → `LegacyProgram` rename + fallback deletion
 
 **Issues:** #267 / #268 / #269 (Sprint 15 — Legacy retirement, epic #257)

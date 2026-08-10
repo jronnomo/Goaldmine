@@ -28,6 +28,13 @@ const {
   mockCompleteGoalCore,
   mockReopenGoalCore,
   mockRenderCompletionCard,
+  mockSavedMealFindMany,
+  mockSavedMealFindFirst,
+  mockSavedMealFindUnique,
+  mockSavedMealCreate,
+  mockSavedMealUpdate,
+  mockSavedMealDelete,
+  mockNutritionLogCreate,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -54,16 +61,34 @@ const {
   const mockFindUnique = vi.fn().mockResolvedValue(null);
   const mockGoalUpdate = vi.fn().mockResolvedValue({});
 
+  // #275 SavedMeal tooling — dedicated spies (not the shared mockFindMany)
+  // so upsert/scaling assertions can inspect exactly one model's calls.
+  const mockSavedMealFindMany = vi.fn().mockResolvedValue([]);
+  const mockSavedMealFindFirst = vi.fn().mockResolvedValue(null);
+  const mockSavedMealFindUnique = vi.fn().mockResolvedValue(null);
+  const mockSavedMealCreate = vi.fn().mockResolvedValue({ id: "sm-new", name: "Meal" });
+  const mockSavedMealUpdate = vi.fn().mockResolvedValue({ id: "sm-1", name: "Meal" });
+  const mockSavedMealDelete = vi.fn().mockResolvedValue({ id: "sm-1" });
+  const mockNutritionLogCreate = vi.fn().mockResolvedValue({ id: "n-1" });
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
     note: { findMany: mockFindMany },
     baseline: { findMany: mockFindMany },
     hike: { findMany: mockFindMany },
-    nutritionLog: { findMany: mockFindMany },
+    nutritionLog: { findMany: mockFindMany, create: mockNutritionLogCreate },
     bodyMetric: { findMany: mockFindMany },
     plan: { findFirst: mockFindFirst },
     goal: { findUniqueOrThrow: mockFindUniqueOrThrow, findUnique: mockFindUnique, update: mockGoalUpdate },
+    savedMeal: {
+      findMany: mockSavedMealFindMany,
+      findFirst: mockSavedMealFindFirst,
+      findUnique: mockSavedMealFindUnique,
+      create: mockSavedMealCreate,
+      update: mockSavedMealUpdate,
+      delete: mockSavedMealDelete,
+    },
   };
 
   // complete_goal's before/after game-state diff + goal-completion cores —
@@ -84,6 +109,13 @@ const {
     mockCompleteGoalCore,
     mockReopenGoalCore,
     mockRenderCompletionCard,
+    mockSavedMealFindMany,
+    mockSavedMealFindFirst,
+    mockSavedMealFindUnique,
+    mockSavedMealCreate,
+    mockSavedMealUpdate,
+    mockSavedMealDelete,
+    mockNutritionLogCreate,
   };
 });
 
@@ -188,12 +220,13 @@ vi.mock("@/lib/records", () => ({
   getExerciseSummaries: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/nutrition-plan", async () => {
-  const { z } = await import("zod");
-  const objSchema = z.object({});
+  // Real shapes + MACRO_KEYS (pure zod, no DB): the #275 saved-meal scaling
+  // path (saved-meal.ts) iterates MACRO_KEYS — a stubbed [] would silently
+  // drop every scaled macro in the log_nutrition tests below. Only the two
+  // behavior-bearing functions stay stubbed.
+  const actual = await vi.importActual<typeof import("@/lib/nutrition-plan")>("@/lib/nutrition-plan");
   return {
-    NutritionPlanShape: objSchema,
-    PlannedMealMacrosShape: objSchema,
-    MACRO_KEYS: [],
+    ...actual,
     applyNutritionPlanPatch: vi.fn(),
     parseStoredNutritionPlan: vi.fn().mockReturnValue(null),
   };
@@ -249,6 +282,7 @@ vi.mock("@/lib/recap-render", () => ({
 
 // ── Imports (after all vi.mock calls) ─────────────────────────────────────────
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Prisma } from "@/generated/prisma/client";
 import { registerAll } from "@/lib/mcp/tools";
 import { resolveDay } from "@/lib/calendar";
 import { getActiveProgram, getPlanWindowCandidates } from "@/lib/program";
@@ -895,5 +929,265 @@ describe("get_week — time-aware per-day resolution (REQ-007a/S1)", () => {
       expect(payload.days[i].isInPlan).toBe(false);
       expect(payload.days[i].resolvedPlan).toBeNull();
     }
+  });
+});
+
+// ── #275: SavedMeal tools — leaky-reads coverage + upsert/scaling behavior ───
+// list_saved_meals is a new READ tool → per repo convention it needs coverage
+// here. The omit assertion follows this file's documented strategy (query CALL
+// ARGS, not mocked returns). Tenant isolation itself is the scoped client's
+// job (db.scoped.test.ts) — what this suite proves is that the handler reaches
+// SavedMeal ONLY through the getDb() scoped client (mockDb), never the raw
+// prisma singleton, so production rows are always the caller's own.
+describe("list_saved_meals — leaky-reads coverage (#275)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockSavedMealFindMany).mockResolvedValue([
+      {
+        id: "sm-1",
+        name: "Protein Brookie",
+        items: [{ name: "Protein Brookie", qty: "1 brookie" }],
+        macros: { calories: 310, fatG: 6.5, proteinG: 31, carbsG: 42.5 },
+        defaultServings: 1,
+        createdAt: new Date("2026-08-01"),
+        updatedAt: new Date("2026-08-01"),
+      },
+    ]);
+  });
+
+  it("savedMeal.findMany called on the scoped client with omit: { userId: true }", async () => {
+    const handler = fakeServer.getHandler("list_saved_meals");
+    const result = (await handler({})) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ omit: { userId: true }, orderBy: { name: "asc" } }),
+    );
+  });
+
+  it("payload carries the meal fields but no userId and no private note-type content", async () => {
+    const handler = fakeServer.getHandler("list_saved_meals");
+    const result = (await handler({})) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    const text = result.content[0].text;
+    for (const forbidden of ["userId", "standing_rule", "\"review\"", "open_item"]) {
+      expect(text).not.toContain(forbidden);
+    }
+    const payload = JSON.parse(text) as {
+      count: number;
+      savedMeals: Array<Record<string, unknown>>;
+    };
+    expect(payload.count).toBe(1);
+    expect(payload.savedMeals[0]).toMatchObject({
+      id: "sm-1",
+      name: "Protein Brookie",
+      defaultServings: 1,
+    });
+  });
+});
+
+describe("save_meal — upsert-by-name (#275)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockSavedMealFindFirst).mockResolvedValue(null);
+    vi.mocked(mockSavedMealCreate).mockResolvedValue({ id: "sm-new", name: "Protein Brookie" });
+    vi.mocked(mockSavedMealUpdate).mockResolvedValue({ id: "sm-1", name: "Protein Brookie" });
+  });
+
+  it("creates when no meal with that name exists (case-insensitive lookup)", async () => {
+    const handler = fakeServer.getHandler("save_meal");
+    const result = (await handler({
+      name: "Protein Brookie",
+      items: [{ name: "Protein Brookie", qty: "1 brookie" }],
+      macros: { calories: 310, fatG: 6.5, proteinG: 31, carbsG: 42.5 },
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealFindFirst).toHaveBeenCalledWith({
+      where: { name: { equals: "Protein Brookie", mode: "insensitive" } },
+    });
+    expect(mockSavedMealCreate).toHaveBeenCalledTimes(1);
+    const data = (vi.mocked(mockSavedMealCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data).toMatchObject({
+      name: "Protein Brookie",
+      macros: { calories: 310, fatG: 6.5, proteinG: 31, carbsG: 42.5 },
+      defaultServings: 1,
+    });
+    expect(mockSavedMealUpdate).not.toHaveBeenCalled();
+
+    const payload = JSON.parse(result.content[0].text) as { updated: boolean };
+    expect(payload.updated).toBe(false);
+  });
+
+  it("updates in place when the name already exists — no duplicate row", async () => {
+    vi.mocked(mockSavedMealFindFirst).mockResolvedValue({ id: "sm-1", name: "protein brookie" });
+
+    const handler = fakeServer.getHandler("save_meal");
+    const result = (await handler({
+      name: "Protein Brookie",
+      items: [{ name: "Protein Brookie", qty: "1 brookie" }],
+      defaultServings: 2,
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealUpdate).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(mockSavedMealUpdate).mock.calls[0][0] as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ id: "sm-1" });
+    // Latest casing wins; replace semantics: omitted macros clear stored ones.
+    expect(call.data.name).toBe("Protein Brookie");
+    expect(call.data.defaultServings).toBe(2);
+    expect(call.data.macros).toBe(Prisma.DbNull);
+    expect(mockSavedMealCreate).not.toHaveBeenCalled();
+
+    const payload = JSON.parse(result.content[0].text) as { updated: boolean };
+    expect(payload.updated).toBe(true);
+  });
+
+  it("rejects a whitespace-only name with a friendly error (Zod min(1) covers empty at the MCP layer)", async () => {
+    const handler = fakeServer.getHandler("save_meal");
+    const result = (await handler({
+      name: "   ",
+      items: [{ name: "Something" }],
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("non-empty name");
+    expect(mockSavedMealCreate).not.toHaveBeenCalled();
+    expect(mockSavedMealUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("delete_saved_meal (#275)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockSavedMealDelete).mockResolvedValue({ id: "sm-1" });
+  });
+
+  it("deletes by id through the scoped client", async () => {
+    const handler = fakeServer.getHandler("delete_saved_meal");
+    const result = (await handler({ id: "sm-1" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealDelete).toHaveBeenCalledWith({ where: { id: "sm-1" } });
+  });
+});
+
+describe("log_nutrition + savedMealId (#275)", () => {
+  const brookieRow = {
+    id: "sm-1",
+    name: "Protein Brookie",
+    items: [{ name: "Protein Brookie", qty: "1 brookie" }],
+    macros: { calories: 310, fatG: 6.5, proteinG: 31, carbsG: 42.5 },
+    defaultServings: 1,
+    createdAt: new Date("2026-08-01"),
+    updatedAt: new Date("2026-08-01"),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockSavedMealFindUnique).mockResolvedValue(brookieRow);
+    vi.mocked(mockNutritionLogCreate).mockResolvedValue({ id: "n-1" });
+  });
+
+  it("derives items + scaled macros (servings ÷ defaultServings) in ONE nutritionLog.create", async () => {
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "snack",
+      savedMealId: "sm-1",
+      servings: 2,
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealFindUnique).toHaveBeenCalledWith({ where: { id: "sm-1" } });
+    // Items + macros land in one row in one write — never desynced.
+    expect(mockNutritionLogCreate).toHaveBeenCalledTimes(1);
+    const data = (vi.mocked(mockNutritionLogCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.calories).toBe(620);
+    expect(data.fatG).toBe(13);
+    expect(data.proteinG).toBe(62);
+    expect(data.carbsG).toBe(85);
+    // Human-readable qty annotation when servings ≠ 1.
+    expect(data.items).toEqual([{ name: "Protein Brookie", qty: "1 brookie ×2" }]);
+
+    const payload = JSON.parse(result.content[0].text) as { message: string };
+    expect(payload.message).toContain('saved meal "Protein Brookie"');
+    expect(payload.message).toContain("2 servings");
+  });
+
+  it("explicit items/macros passed alongside savedMealId take precedence over derived values", async () => {
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "dinner",
+      savedMealId: "sm-1",
+      servings: 2,
+      items: [{ name: "Custom item", qty: "1 plate" }],
+      macros: { calories: 500 },
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    const data = (vi.mocked(mockNutritionLogCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    // Explicit macros replace the derived ones wholesale (no 620-cal bleed-through).
+    expect(data.calories).toBe(500);
+    expect(data.fatG).toBeUndefined();
+    expect(data.proteinG).toBeUndefined();
+    expect(data.items).toEqual([{ name: "Custom item", qty: "1 plate" }]);
+  });
+
+  it("unknown savedMealId → friendly not-found error, no raw Prisma exception, nothing written", async () => {
+    vi.mocked(mockSavedMealFindUnique).mockResolvedValue(null);
+
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "lunch",
+      savedMealId: "sm-missing",
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Saved meal not found: sm-missing");
+    expect(result.content[0].text).toContain("list_saved_meals");
+    expect(mockNutritionLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("regression: without savedMealId, behavior is unchanged (items+macros pass straight through)", async () => {
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "breakfast",
+      items: [{ name: "Oatmeal", qty: "1 cup" }],
+      macros: { calories: 300, proteinG: 12 },
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockSavedMealFindUnique).not.toHaveBeenCalled();
+    const data = (vi.mocked(mockNutritionLogCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.items).toEqual([{ name: "Oatmeal", qty: "1 cup" }]);
+    expect(data.calories).toBe(300);
+    expect(data.proteinG).toBe(12);
+
+    const payload = JSON.parse(result.content[0].text) as { message: string };
+    expect(payload.message).toBe("Nutrition logged");
+  });
+
+  it("no items and no savedMealId → friendly items-required error", async () => {
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({ mealType: "lunch" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("items is required when savedMealId is not provided");
+    expect(mockNutritionLogCreate).not.toHaveBeenCalled();
   });
 });
