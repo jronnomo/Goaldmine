@@ -21,6 +21,9 @@
 import { cache } from "react";
 import { prisma, getDb } from "@/lib/db";
 import { getActiveProgram, getMostRecentProgram, type ActiveProgramSnapshot } from "@/lib/program";
+// #299: the shared rotation-owner accessor (see the goal fetch in
+// _computeGameState for the tracked single-ledger fallback semantics).
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { dateKey, parseDateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
 import {
   rotationDay as rotationDayOf,
@@ -1016,12 +1019,35 @@ async function _computeGameState(): Promise<GameState> {
     bonusRaw,
     completedGoalsRaw,
   ] = await Promise.all([
-    // 1. Focus goal (isFocus=true drives the daily prescription + XP attribute pack)
-    db.goal.findFirst({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, kind: true },
-    }),
+    // 1. The goal whose KIND gates the attribute pack (#299, isFocus sweep).
+    //    Primary path: the rotation-owning goal via the shared #297 helper —
+    //    same resolution as calendar/Today/plan-lint, so the pack can never
+    //    disagree with the day the ledger is scoring. Equivalence across the
+    //    founder-history coverage set (proven by scripts/
+    //    diff-engine-goal-context.ts pre/post snapshots, zero delta):
+    //      • zero-Program rows → the helper IS the legacy isFocus query
+    //        (byte-identical where/orderBy) — same goal, same kind, same XP.
+    //      • active Program with rotation → the owner goal; for the founder
+    //        the owner and the focus goal coincide (S4 backfill), and even
+    //        when they diverge only goal.kind feeds XP — same kind = same
+    //        ledger.
+    //    TRACKED EXCEPTION (single-ledger v1 semantics, A3/Q3 — the M4c
+    //    non-goal): when the helper yields null but the tenant still has a
+    //    focus goal (active Program with NO rotation plan, or a retired
+    //    Program), fall back to the legacy isFocus lookup instead of
+    //    defaulting the pack to "fitness". The ledger keeps ONE goal context
+    //    (no per-goal XP in v1); wiping the pack just because the rotation
+    //    paused would silently re-gate attributes. Revisit when single-ledger
+    //    v1 gains multi-goal awareness (Backlog: engine multi-goal ledger).
+    (async () => {
+      const owner = await getRotationOwnerGoal();
+      if (owner) return { id: owner.id, kind: owner.kind };
+      return db.goal.findFirst({
+        where: { isFocus: true },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, kind: true },
+      });
+    })(),
 
     // 2. Workouts: ALL TIME — pure nested select (CRIT-2: no select+include mix)
     //    Ordered (startedAt ASC, id ASC) for deterministic PR replay.

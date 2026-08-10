@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 
 // Hoisted above other imports (Vitest auto-hoists vi.mock regardless of literal
 // position, but written here to match records.test.ts's convention). Only the
@@ -321,5 +321,171 @@ describe("program fallback: no active AND no historical plan -> emptyState()", (
     expect(state.xp).toBe(0);
     expect(state.streak).toEqual({ current: 0, longest: 0, todayCounted: false });
     expect(state.badges.every((b) => b.dateKey === null)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #299 (isFocus sweep, engine site) — the goal-context lookup swap.
+// Primary path: rotation owner via getRotationOwnerGoal(); TRACKED EXCEPTION:
+// legacy isFocus fallback when the helper yields null but a focus goal exists
+// (single-ledger v1 — A3/Q3). These tests prove the DB path's output is
+// byte-identical to the pure pipeline fed the same goal — XP totals,
+// attribute pack, events, badges, quest — for the founder-shape fixtures.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("#299: fresh goal-context resolution (rotation owner ?? legacy focus)", () => {
+  const PLAN_ROW = {
+    id: "p1",
+    name: "test",
+    startedOn: program.startedOn,
+    planJson: template,
+    confirmedThroughDate: null,
+  };
+  const WORKOUT_ROWS = [
+    {
+      id: "w1",
+      startedAt: new Date("2026-06-23T15:00:00.000Z"),
+      status: "completed",
+      source: null,
+      exercises: [
+        {
+          name: "Goblet Squat",
+          sets: [{ weightLb: 100, reps: 5, durationSec: null, distanceMi: null }],
+        },
+      ],
+    },
+  ];
+  const OWNER_SELECT_ROW = {
+    // Superset row the shared helper returns (only id/kind are consumed here).
+    id: "g1",
+    objective: "Owner goal",
+    targetDate: null,
+    kind: "fitness",
+    isFocus: true,
+    legend: null,
+    targets: [],
+    githubRepo: null,
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function mkFreshDb(overrides: Record<string, any> = {}) {
+    return {
+      plan: { findFirst: vi.fn().mockResolvedValue(PLAN_ROW) },
+      program: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(0),
+      },
+      goal: {
+        findFirst: vi.fn().mockResolvedValue(OWNER_SELECT_ROW),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      workout: { findMany: vi.fn().mockResolvedValue(WORKOUT_ROWS) },
+      hike: { findMany: vi.fn().mockResolvedValue([]) },
+      baseline: { findMany: vi.fn().mockResolvedValue([]) },
+      nutritionLog: { findMany: vi.fn().mockResolvedValue([]) },
+      note: { findMany: vi.fn().mockResolvedValue([]) },
+      mobilityCheckin: { findMany: vi.fn().mockResolvedValue([]) },
+      gameBonusXp: { findMany: vi.fn().mockResolvedValue([]) },
+      ...overrides,
+    } as never;
+  }
+
+  // The pure pipeline fed the SAME data + the same goal — the before/after
+  // yardstick (the pre-#299 lookup resolved this exact goal for both shapes).
+  function pureState() {
+    return computeGameStateFromData(
+      baseData(WORKOUT_ROWS, []) as never,
+      now,
+    );
+  }
+
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  it("zero-Program founder shape: the helper's compat path resolves the SAME focus goal — full state byte-identical to the pure pipeline", async () => {
+    const db = mkFreshDb();
+    vi.mocked(getDb).mockResolvedValue(db);
+    const { prisma } = await import("@/lib/db");
+    vi.mocked(prisma.planDayOverride.findMany).mockResolvedValue([]);
+
+    const fresh = await computeGameStateFresh();
+
+    // XP totals, attribute pack, events, badges, quest — the whole state.
+    expect(fresh).toEqual(pureState());
+    // And the resolution went through the legacy isFocus compat query
+    // (zero Program rows), exactly like the pre-#299 inline lookup.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const goalCalls = (db as any).goal.findFirst.mock.calls as [{ where?: { isFocus?: unknown } }][];
+    expect(goalCalls.some((c) => c[0]?.where?.isFocus === true)).toBe(true);
+  });
+
+  it("active Program shape: the rotation owner's goal gates the pack — same kind ⇒ state byte-identical; isFocus never queried", async () => {
+    // plan.findFirst serves BOTH getActiveProgram calls (engine's own + the
+    // helper's): the Program-attached active plan.
+    const db = mkFreshDb({
+      program: {
+        findFirst: vi.fn().mockResolvedValue({ id: "prog-1", status: "active" }),
+        count: vi.fn().mockResolvedValue(1),
+      },
+      goal: {
+        // The helper resolves the owner via the plans relation; the legacy
+        // fallback must never fire on this shape.
+        findFirst: vi.fn().mockImplementation((args: { where?: { plans?: unknown } }) =>
+          Promise.resolve(args?.where?.plans ? OWNER_SELECT_ROW : null),
+        ),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const { prisma } = await import("@/lib/db");
+    vi.mocked(prisma.planDayOverride.findMany).mockResolvedValue([]);
+
+    const fresh = await computeGameStateFresh();
+
+    expect(fresh).toEqual(pureState());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const goalCalls = (db as any).goal.findFirst.mock.calls as [{ where?: { isFocus?: unknown } }][];
+    expect(goalCalls.some((c) => c[0]?.where?.isFocus === true)).toBe(false);
+  });
+
+  it("TRACKED EXCEPTION — Program with no rotation plan: falls back to the legacy focus goal (its kind still gates the pack, never the 'fitness' default)", async () => {
+    const db = mkFreshDb({
+      program: {
+        findFirst: vi.fn().mockResolvedValue({ id: "prog-1", status: "active" }),
+        count: vi.fn().mockResolvedValue(1),
+      },
+      plan: {
+        // Program-attached active plan: none. getMostRecentProgram (no where
+        // clause) still finds the historical plan — the engine keeps showing
+        // historical XP (REQ-004c), and the pack falls back to the focus goal.
+        findFirst: vi
+          .fn()
+          .mockImplementation((args: { where?: { programId?: unknown } }) =>
+            Promise.resolve(args?.where?.programId ? null : PLAN_ROW),
+          ),
+      },
+      goal: {
+        findFirst: vi.fn().mockImplementation((args: { where?: { isFocus?: unknown } }) =>
+          Promise.resolve(
+            args?.where?.isFocus ? { id: "g-proj", kind: "project" } : null,
+          ),
+        ),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const { prisma } = await import("@/lib/db");
+    vi.mocked(prisma.planDayOverride.findMany).mockResolvedValue([]);
+
+    const fresh = await computeGameStateFresh();
+
+    // The focus fallback's kind gates the pack — proof the tracked exception
+    // fired instead of a silent null → "fitness" default.
+    expect(fresh.goalKind).toBe("project");
   });
 });
