@@ -7,6 +7,9 @@
 // (delete-tools-routing.test.ts idiom); the hooks are spied via a partial
 // module mock — their BEHAVIOR is covered by attribution-hooks.test.ts, this
 // file proves the ROUTING:
+//   - log_nutrition   → autoLinkNutrition(db, { nutritionLogId, date })
+//   - batch_log_nutrition → autoLinkNutrition(TX client, …) per op — links
+//     ride the batch transaction.
 //   - log_metric      → mirrorActivityGoalLink(db, { log_entry, goalId, date })
 //   - a hook failure is swallowed (the logged activity still succeeds).
 
@@ -113,6 +116,63 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAutoLinkNutrition.mockResolvedValue([]);
   mockMirrorActivityGoalLink.mockResolvedValue([]);
+});
+
+// ── log_nutrition ─────────────────────────────────────────────────────────────
+
+describe("log_nutrition → autoLinkNutrition", () => {
+  it("fires the hook with the root db client and the created row's id + date", async () => {
+    const { db } = makeDb();
+
+    const res = await fakeServer.getHandler("log_nutrition")({
+      mealType: "dinner",
+      items: [{ name: "97% beef" }],
+      date: "2026-08-10",
+    });
+
+    expect(payload(res).id).toBe("n-single");
+    expect(mockAutoLinkNutrition).toHaveBeenCalledTimes(1);
+    const [writer, args] = mockAutoLinkNutrition.mock.calls[0]!;
+    expect(writer).toBe(db);
+    expect(args).toEqual({ nutritionLogId: "n-single", date: expect.any(Date) });
+  });
+
+  it("a hook failure is swallowed — the meal still logs", async () => {
+    makeDb();
+    mockAutoLinkNutrition.mockRejectedValueOnce(new Error("link write down"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await fakeServer.getHandler("log_nutrition")({
+      mealType: "lunch",
+      items: [{ name: "chipotle bowl" }],
+    });
+
+    expect(payload(res).id).toBe("n-single");
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+
+// ── batch_log_nutrition ───────────────────────────────────────────────────────
+
+describe("batch_log_nutrition → autoLinkNutrition rides the transaction", () => {
+  it("each op's hook receives the TX client, not the root client", async () => {
+    const { db, tx } = makeDb();
+
+    const res = await fakeServer.getHandler("batch_log_nutrition")({
+      operations: [
+        { mealType: "breakfast", items: [{ name: "eggs" }], date: "2026-08-10" },
+        { mealType: "lunch", items: [{ name: "bowl" }], date: "2026-08-10" },
+      ],
+    });
+
+    expect(payload(res).applied).toBe(2);
+    expect(mockAutoLinkNutrition).toHaveBeenCalledTimes(2);
+    for (const call of mockAutoLinkNutrition.mock.calls) {
+      expect(call[0]).toBe(tx); // the transaction client — links roll back with the batch
+      expect(call[0]).not.toBe(db);
+    }
+  });
 });
 
 // ── log_metric ────────────────────────────────────────────────────────────────
