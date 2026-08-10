@@ -126,7 +126,9 @@ import {
   shapeProgramTodayPayload,
   shapeLegacyProjectTodayPayload,
 } from "@/lib/mcp/today-shapers";
-import { deriveSavedMealLog } from "@/lib/saved-meal";
+import { deriveSavedMealLog, linkedFoodPortions, type SavedMealItem } from "@/lib/saved-meal";
+import { buildItemSnapshot, buildQtyDisplay, computeItemMacros } from "@/lib/food-units";
+import type { LibraryFood } from "@/lib/food-types";
 import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 
 const DateKeyShape = z
@@ -156,6 +158,33 @@ const NutritionItemShape = z.object({
   name: z.string().min(1).describe("Food group / brand item, e.g. '97% beef', 'Kroger hamburger buns'"),
   qty: z.string().optional().describe("Free-form quantity, e.g. '8 oz', '1 cup', '2 slices'"),
   notes: z.string().optional(),
+});
+
+// save_meal items: NutritionItemShape plus OPTIONAL food-linked bundle fields.
+// A foodId links the item to a FoodLibrary row; at save time the server
+// snapshots that food's per-basis macros (source) and computes the item's own
+// macro contribution (itemMacros) from amount+unit — §B.5 snapshot-off-at-save,
+// so a later FoodLibrary edit never silently rewrites the bundle. Legacy
+// text-only items (name/qty/notes) remain fully valid.
+const SavedMealItemShape = NutritionItemShape.extend({
+  foodId: z
+    .string()
+    .optional()
+    .describe(
+      "FoodLibrary id to LINK this item to a real food (get ids from the day's logged items or the food library). Linked items expand on log with full per-item fidelity: structured amount/unit, per-item macros, and FoodUsage counting — exactly as if the user had picked the food by hand.",
+    ),
+  amount: z
+    .number()
+    .positive()
+    .optional()
+    .describe("Structured quantity for the linked food (pairs with unit), e.g. 8 for '8 oz'."),
+  unit: z
+    .string()
+    .optional()
+    .describe("Unit key for amount: 'g' | 'oz' | 'serving' | a portion key (e.g. 'large')."),
+  itemMacros: PlannedMealMacrosShape.optional().describe(
+    "This item's OWN macro contribution for defaultServings worth of the meal. Usually omit — it's computed from the linked food's snapshot at amount×unit; pass explicitly only to override.",
+  ),
 });
 
 // Shared input shapes for the single-op tools below. Exposed as constants so
@@ -240,7 +269,8 @@ const LogNutritionShape = {
     .string()
     .optional()
     .describe(
-      "Log a SavedMeal by reference (id from list_saved_meals). Items + macros are derived from the saved meal, with macros scaled by servings ÷ the meal's defaultServings and item qty annotated (e.g. '1 bowl ×2') when that factor ≠ 1. " +
+      "Log a SavedMeal by reference (id from list_saved_meals). Items + macros are derived from the saved meal, scaled by servings ÷ the meal's defaultServings. " +
+        "Food-linked bundle items expand to full structured rows (scaled amount/unit + per-item itemMacros from the save-time food snapshot, FoodUsage counted per food) — identical to the user hand-picking each food; text-only items get qty annotated (e.g. '1 bowl ×2') when the factor ≠ 1. " +
         "Unknown/foreign ids return a friendly not-found error. Explicit items/macros passed in the same call take precedence over the derived values.",
     ),
   servings: z
@@ -480,10 +510,43 @@ async function logNoteCore(db: DbClient, input: LogNoteInput): Promise<{ id: str
   return { id: n.id, message: "Note logged" };
 }
 
+/**
+ * Best-effort FoodUsage bump for a saved-meal expansion: each linked food
+ * counts a "use" (usageCount + lastUsedAt + last portion), mirroring the web
+ * composer's recordFoodUse on bundle expansion / chip picks. Rides the
+ * caller's client so batch_log_nutrition's bumps join its transaction.
+ * Never throws — usage stats must not fail a log write.
+ */
+async function bumpFoodUsagesBestEffort(
+  db: DbClient,
+  portions: Array<{ foodId: string; amount?: number; unit?: string }>,
+): Promise<void> {
+  for (const p of portions) {
+    try {
+      const portionFields =
+        p.amount != null && p.unit ? { lastAmount: p.amount, lastUnit: p.unit } : {};
+      const existing = await db.foodUsage.findFirst({ where: { foodId: p.foodId } });
+      if (existing) {
+        await db.foodUsage.update({
+          where: { id: existing.id },
+          data: { usageCount: { increment: 1 }, lastUsedAt: new Date(), ...portionFields },
+        });
+      } else {
+        await db.foodUsage.create({
+          data: { foodId: p.foodId, usageCount: 1, lastUsedAt: new Date(), ...portionFields },
+        });
+      }
+    } catch {
+      // best-effort — a failed bump never fails the nutrition write
+    }
+  }
+}
+
 async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise<{ id: string; message: string }> {
   let items = input.items;
   let macros = input.macros;
   let savedMealSuffix = "";
+  let expandedPortions: Array<{ foodId: string; amount?: number; unit?: string }> = [];
 
   // #275: savedMealId derives items+macros from the user's SavedMeal, scaled
   // by servings ÷ defaultServings. The scoped client injects userId into the
@@ -503,6 +566,11 @@ async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise
     );
     // Precedence (documented in the input schema): explicit items/macros
     // passed in the same call win wholesale over the derived values.
+    if (!input.items) {
+      // The derived expansion is what actually gets logged → each linked food
+      // counts a use (same contract as the web composer's bundle expansion).
+      expandedPortions = linkedFoodPortions(derived.items);
+    }
     items = items ?? derived.items;
     macros = macros ?? derived.macros;
     savedMealSuffix = ` from saved meal "${meal.name}" (${servings} serving${servings === 1 ? "" : "s"})`;
@@ -534,6 +602,11 @@ async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise
   await autoLinkNutrition(db, { nutritionLogId: n.id, date: n.date }).catch(
     swallowAutoLinkError("logNutritionCore"),
   );
+  // Saved-meal bundle expansion → FoodUsage bump per linked food (parity with
+  // the web composer's recordFoodUse). Best-effort; empty for text-only meals.
+  if (expandedPortions.length > 0) {
+    await bumpFoodUsagesBestEffort(db, expandedPortions);
+  }
   return { id: n.id, message: `Nutrition logged${savedMealSuffix}` };
 }
 
@@ -2074,7 +2147,8 @@ function registerReadTools(server: McpServer) {
       description:
         "Every SavedMeal for the current user — id, name, items, macros, defaultServings — sorted by name. " +
         "Use this to find the savedMealId for log_nutrition(savedMealId, servings), to check whether a name already exists before save_meal (save_meal upserts by name), " +
-        "or to answer 'what meals do I have saved'. The stored items/macros describe defaultServings worth of the meal.",
+        "or to answer 'what meals do I have saved'. The stored items/macros describe defaultServings worth of the meal. " +
+        "Items may be food-linked bundle rows (foodId/amount/unit/itemMacros + a save-time source snapshot) that expand with per-item fidelity at log time; users can also create these from the web composer's 'Save as meal'.",
     },
     async () =>
       safe(async () => {
@@ -3378,7 +3452,7 @@ function registerWriteTools(server: McpServer) {
       title: "Log a meal",
       description:
         "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. " +
-        "SAVED MEALS: for a frequently-eaten meal saved via save_meal, pass savedMealId (+ servings, default 1) instead of re-entering items/macros — items and macros are derived from the saved meal, scaled by servings ÷ defaultServings. Explicit items/macros passed alongside savedMealId take precedence over the derived values. " +
+        "SAVED MEALS: for a frequently-eaten meal saved via save_meal, pass savedMealId (+ servings, default 1) instead of re-entering items/macros — items and macros are derived from the saved meal, scaled by servings ÷ defaultServings. Food-linked bundle items expand with full per-item fidelity (structured amount/unit + itemMacros per item), exactly as if the user picked each food by hand. Explicit items/macros passed alongside savedMealId take precedence over the derived values. " +
         "Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
       inputSchema: { ...LogNutritionShape, requestId: RequestIdShape },
     },
@@ -3528,6 +3602,76 @@ function registerWriteTools(server: McpServer) {
       }),
   );
 
+  // save_meal item resolution: items carrying a foodId get the linked food's
+  // per-basis macro snapshot (source) captured AT SAVE TIME — §B.5
+  // snapshot-off-at-save doctrine: a later FoodLibrary edit does NOT silently
+  // rewrite the bundle (re-save the meal to refresh). itemMacros/qty are
+  // computed from amount×unit when not explicitly passed. FoodLibrary is the
+  // SHARED catalog (non-scoped) → raw prisma read, matching food-actions.ts.
+  async function resolveSavedMealItemsForSave(
+    items: Array<z.infer<typeof SavedMealItemShape>>,
+  ): Promise<{ items: SavedMealItem[]; unresolvedFoodIds: string[] }> {
+    const foodIds = [...new Set(items.map((i) => i.foodId).filter((v): v is string => !!v))];
+    const rows =
+      foodIds.length > 0
+        ? await prisma.foodLibrary.findMany({ where: { id: { in: foodIds } } })
+        : [];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const unresolvedFoodIds: string[] = [];
+
+    const resolved = items.map((i): SavedMealItem => {
+      const base: SavedMealItem = {
+        name: i.name,
+        ...(i.qty !== undefined && { qty: i.qty }),
+        ...(i.notes !== undefined && { notes: i.notes }),
+        ...(i.foodId !== undefined && { foodId: i.foodId }),
+        ...(i.amount !== undefined && { amount: i.amount }),
+        ...(i.unit !== undefined && { unit: i.unit }),
+        ...(i.itemMacros !== undefined && { itemMacros: i.itemMacros }),
+      };
+      if (!i.foodId) return base;
+      const row = byId.get(i.foodId);
+      if (!row) {
+        unresolvedFoodIds.push(i.foodId);
+        return base;
+      }
+      const lf: LibraryFood = {
+        id: row.id,
+        barcode: row.barcode,
+        name: row.name,
+        brand: row.brand,
+        servingSize: row.servingSize,
+        basis: row.basis as "serving" | "100g",
+        perServing: {
+          calories: row.calories,
+          proteinG: row.proteinG,
+          carbsG: row.carbsG,
+          fatG: row.fatG,
+          fiberG: row.fiberG,
+          sodiumMg: row.sodiumMg,
+        },
+      };
+      const source = buildItemSnapshot(lf);
+      const hasPortion =
+        typeof i.amount === "number" && Number.isFinite(i.amount) && i.amount > 0 && !!i.unit;
+      const qty =
+        i.qty ?? (hasPortion ? buildQtyDisplay(i.amount!, i.unit!, source) : undefined);
+      const itemMacros =
+        i.itemMacros ??
+        (hasPortion
+          ? computeItemMacros({ name: i.name, amount: i.amount, unit: i.unit, source })
+          : undefined);
+      return {
+        ...base,
+        ...(qty !== undefined && { qty }),
+        ...(itemMacros !== undefined && { itemMacros }),
+        source,
+      };
+    });
+
+    return { items: resolved, unresolvedFoodIds };
+  }
+
   server.registerTool(
     "save_meal",
     {
@@ -3536,6 +3680,7 @@ function registerWriteTools(server: McpServer) {
         "Save a frequently-eaten meal ONCE so it can be re-logged by reference via log_nutrition(savedMealId, servings) without re-entering items and macros — e.g. 'Protein Brookie', 'Chipotle Protein Bowl'. " +
         "UPSERT BY NAME (per user): one saved meal per name — saving a name that already exists (case-insensitive match) REPLACES that meal's items/macros/defaultServings in place and keeps the newly passed casing; no duplicate is created. Omitting macros on a re-save clears any stored macros. " +
         "items + macros should describe defaultServings worth of the meal (defaultServings defaults to 1); log_nutrition scales macros by servings ÷ defaultServings at log time. " +
+        "FOOD-LINKED BUNDLES: give an item a foodId (+ amount/unit) to link it to a FoodLibrary food — the food's macro snapshot is captured at save time, and logging the meal expands each linked item as a full structured row (per-item macros, scaled amounts, FoodUsage counting), indistinguishable from the user picking that food by hand. Text-only items remain fully supported. " +
         "Browse with list_saved_meals; remove with delete_saved_meal.",
       inputSchema: {
         name: z
@@ -3545,11 +3690,13 @@ function registerWriteTools(server: McpServer) {
             "Meal name, unique per user (e.g. 'Protein Brookie'). Re-saving an existing name (case-insensitive) updates that meal in place.",
           ),
         items: z
-          .array(NutritionItemShape)
+          .array(SavedMealItemShape)
           .min(1)
-          .describe("Food items for defaultServings worth of the meal — same shape as log_nutrition items."),
+          .describe(
+            "Food items for defaultServings worth of the meal — log_nutrition item shape plus optional food-linking fields (foodId/amount/unit/itemMacros).",
+          ),
         macros: PlannedMealMacrosShape.optional().describe(
-          "Estimated macros (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) for defaultServings worth of the meal. Omit fields you can't estimate; omitting the whole object stores no macros (and clears them on a re-save).",
+          "Estimated macros (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) for defaultServings worth of the meal. Omit fields you can't estimate; omitting the whole object stores no macros (and clears them on a re-save). For fully food-linked bundles this can be omitted — totals derive from the linked items at log time.",
         ),
         defaultServings: z
           .number()
@@ -3567,6 +3714,14 @@ function registerWriteTools(server: McpServer) {
         // Zod already rejects the empty string; this catches whitespace-only.
         if (!name) throw new Error("save_meal requires a non-empty name.");
 
+        // Snapshot linked foods at save time (see resolveSavedMealItemsForSave).
+        const { items: resolvedItems, unresolvedFoodIds } =
+          await resolveSavedMealItemsForSave(input.items);
+        const unresolvedSuffix =
+          unresolvedFoodIds.length > 0
+            ? ` NOTE: ${unresolvedFoodIds.length} foodId${unresolvedFoodIds.length === 1 ? "" : "s"} not found in FoodLibrary (${unresolvedFoodIds.join(", ")}) — those items were stored as text-only.`
+            : "";
+
         // Upsert-by-name: the scoped client injects userId into the where, so
         // the case-insensitive match only ever sees the caller's own meals.
         const existing = await db.savedMeal.findFirst({
@@ -3579,7 +3734,7 @@ function registerWriteTools(server: McpServer) {
             where: { id: existing.id },
             data: {
               name, // latest casing wins
-              items: input.items as Prisma.InputJsonValue,
+              items: resolvedItems as Prisma.InputJsonValue,
               // Replace semantics: a re-save describes the meal fully — an
               // omitted macros object clears any previously stored macros.
               macros:
@@ -3593,14 +3748,14 @@ function registerWriteTools(server: McpServer) {
             id: updated.id,
             name: updated.name,
             updated: true,
-            message: `Saved meal "${updated.name}" updated in place (upsert-by-name — no duplicate created).`,
+            message: `Saved meal "${updated.name}" updated in place (upsert-by-name — no duplicate created).${unresolvedSuffix}`,
           };
         }
 
         const created = await db.savedMeal.create({
           data: {
             name,
-            items: input.items as Prisma.InputJsonValue,
+            items: resolvedItems as Prisma.InputJsonValue,
             ...(input.macros !== undefined && { macros: input.macros as Prisma.InputJsonValue }),
             defaultServings,
           },
@@ -3609,7 +3764,7 @@ function registerWriteTools(server: McpServer) {
           id: created.id,
           name: created.name,
           updated: false,
-          message: `Saved meal "${created.name}" created. Log it via log_nutrition(savedMealId: "${created.id}", servings).`,
+          message: `Saved meal "${created.name}" created. Log it via log_nutrition(savedMealId: "${created.id}", servings).${unresolvedSuffix}`,
         };
       }),
   );

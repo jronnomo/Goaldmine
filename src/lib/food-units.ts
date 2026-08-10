@@ -18,7 +18,7 @@
  */
 
 import type { FoodMacros, MacroKey, LibraryFood } from "@/lib/food-types";
-import type { NutritionItem, ItemFoodSnapshot } from "@/lib/nutrition-log-ops";
+import type { NutritionItem, ItemFoodSnapshot, ItemMacros } from "@/lib/nutrition-log-ops";
 import { scaleMacros } from "@/lib/food-resolve-local";
 import { BUILTINS } from "@/lib/food-builtins";
 import { MACRO_KEYS } from "@/lib/food-types";
@@ -106,6 +106,43 @@ export function recalcItemMacros(item: NutritionItem): FoodMacros | null {
 
   const servings = grams / 100;
   return scaleMacros(perBasis, servings);
+}
+
+// ── computeItemMacros / withItemMacros ────────────────────────────────────────
+
+/**
+ * The item's own macro contribution as a stored snapshot (`itemMacros`):
+ * recalcItemMacros with null keys dropped. undefined when the item is
+ * freehand/legacy or its amount/unit can't be resolved against the snapshot.
+ */
+export function computeItemMacros(item: NutritionItem): ItemMacros | undefined {
+  const m = recalcItemMacros(item);
+  if (!m) return undefined;
+  const out: ItemMacros = {};
+  for (const k of MACRO_KEYS) {
+    const v = m[k];
+    if (v != null) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Attach the computed per-item macro snapshot to a food-resolved item (a copy).
+ * Also the refresh path for amount/unit edits: an existing itemMacros is
+ * overwritten with the recomputed value, and a STRUCTURED item whose portion
+ * no longer resolves (amount cleared to 0, stale unit) gets its stale snapshot
+ * dropped rather than kept lying. Freehand items pass through unchanged
+ * (their snapshot, if any, came from a bundle and has no recompute basis).
+ */
+export function withItemMacros(item: NutritionItem): NutritionItem {
+  const itemMacros = computeItemMacros(item);
+  if (itemMacros) return { ...item, itemMacros };
+  if (item.source && item.itemMacros) {
+    const rest = { ...item };
+    delete rest.itemMacros;
+    return rest;
+  }
+  return { ...item };
 }
 
 // ── sumStructuredMacros ───────────────────────────────────────────────────────

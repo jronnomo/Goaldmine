@@ -87,6 +87,59 @@ describe("NutritionToday — day-total meter honesty (today-page-ia defect 4)", 
   });
 });
 
+describe("NutritionToday — per-item macro display (food-linked bundles)", () => {
+  const logWithItemMacros: NutritionTodayLog[] = [
+    {
+      id: "log-im",
+      date: parseDatetimeLocalValue("2026-08-05T12:00"),
+      mealType: "lunch",
+      items: [
+        {
+          name: "97% Lean Beef",
+          qty: "200 g",
+          amount: 200,
+          unit: "g",
+          itemMacros: { calories: 260, proteinG: 42, carbsG: 0, fatG: 9 },
+        },
+        { name: "Kroger Hamburger Buns", qty: "1 serving", itemMacros: { calories: 140, proteinG: 5, carbsG: 26, fatG: 2 } },
+      ],
+      notes: null,
+      calories: 400,
+      proteinG: 47,
+    },
+  ];
+
+  it("items carrying itemMacros render the per-item breakdown — each item with its own compact macro line", () => {
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, { logs: logWithItemMacros, plan: null, showLogForm: false }),
+    );
+    expect(html).toContain('data-testid="meal-item-breakdown"');
+    // Individual items still visible with their qty…
+    expect(html).toContain("97% Lean Beef (200 g)");
+    expect(html).toContain("Kroger Hamburger Buns (1 serving)");
+    // …each with its own muted macro readout.
+    expect(html).toContain("260 cal · 42P · 0C · 9F");
+    expect(html).toContain("140 cal · 5P · 26C · 2F");
+  });
+
+  it("meals without itemMacros keep the joined summary — zero regression for legacy logs", () => {
+    const legacy: NutritionTodayLog[] = [
+      {
+        id: "log-legacy",
+        date: parseDatetimeLocalValue("2026-08-05T12:00"),
+        mealType: "lunch",
+        items: [{ name: "eggs", qty: "3" }, { name: "toast" }],
+        notes: null,
+      },
+    ];
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, { logs: legacy, plan: null, showLogForm: false }),
+    );
+    expect(html).not.toContain("meal-item-breakdown");
+    expect(html).toContain("eggs (3), toast");
+  });
+});
+
 describe("NutritionToday — append-choice stub threading (#295)", () => {
   // defaultMeal() picks the composer's initial slot from the wall-clock hour;
   // logging one row per candidate slot makes the choice render deterministic.
