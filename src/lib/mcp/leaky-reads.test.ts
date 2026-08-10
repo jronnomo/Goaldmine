@@ -127,7 +127,14 @@ const {
       findMany: mockGoalFindMany,
       update: mockGoalUpdate,
     },
-    program: { findFirst: mockProgramFindFirst, findUnique: mockProgramFindUnique },
+    // #300: `count` serves getRotationOwnerGoal's tenant-shape branch; the 0
+    // default keeps every fixture on the legacy zero-Program resolution path
+    // (the focus-goal mock each test already wires).
+    program: {
+      findFirst: mockProgramFindFirst,
+      findUnique: mockProgramFindUnique,
+      count: vi.fn().mockResolvedValue(0),
+    },
     activityGoalLink: { findMany: mockActivityLinkFindMany },
     scheduledItem: { findMany: mockScheduledItemFindMany },
     savedMeal: {

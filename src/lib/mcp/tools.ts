@@ -670,11 +670,12 @@ function registerReadTools(server: McpServer) {
               lastAcknowledgedAt: true,
             },
           }),
-          db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true, kind: true, objective: true, githubRepo: true, targets: true, targetDate: true },
-          }),
+          // #300: the day-driving goal via the shared #297 accessor —
+          // rotation owner under a Program, legacy focus goal for
+          // zero-Program tenants (byte-identical row there). null under a
+          // rotation-less/retired Program — the merged Program payload
+          // carries the member context then; no goal is silently guessed.
+          getRotationOwnerGoal(),
         ]);
         const activeGoal = activeGoalRow
           ? {
@@ -1244,11 +1245,15 @@ function registerReadTools(server: McpServer) {
     async ({ goalId, asOf }) =>
       safe(async () => {
         const db = await getDb();
+        // #300: omitted-goalId default via the shared #297 accessor (rotation
+        // owner under a Program; legacy focus goal for zero-Program tenants).
         const goal = goalId
           ? await db.goal.findUniqueOrThrow({ where: { id: goalId } })
-          : await db.goal.findFirst({ where: { isFocus: true }, orderBy: { updatedAt: "desc" } });
+          : await getRotationOwnerGoal();
         if (!goal) {
-          throw new Error("No focused goal found — pass goalId, or set a goal to focus first.");
+          throw new Error(
+            "No current goal to default to — the active Program has no rotation (or no goal is focused). Pass goalId explicitly (use list_goals to discover ids).",
+          );
         }
         const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
         const asOfDate = asOf ? parseDateKey(asOf) : new Date();
@@ -1279,17 +1284,20 @@ function registerReadTools(server: McpServer) {
     async () =>
       safe(async () => {
         const db = await getDb();
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        const notes = await db.note.findMany({
-          where: { resolvedAt: null },
-          omit: { userId: true },
-          orderBy: { date: "desc" },
-        });
+        // #300: the rotation plan via getActiveProgram() — snapshot.id IS a
+        // Plan id (frozen #277 contract); the legacy isFocus-desc branch
+        // inside the seam covers zero-Program tenants. Mirrors
+        // getPendingNotesCount (#297).
+        const [program, notes] = await Promise.all([
+          getActiveProgram(),
+          db.note.findMany({
+            where: { resolvedAt: null },
+            omit: { userId: true },
+            orderBy: { date: "desc" },
+          }),
+        ]);
         return {
-          planId: plan?.id ?? null,
+          planId: program?.id ?? null,
           notes,
           count: notes.length,
         };
@@ -1608,11 +1616,10 @@ function registerReadTools(server: McpServer) {
         ] = await Promise.all([
           resolveDay(now),
           getActiveProgram(),
-          db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true, objective: true, targetDate: true, kind: true },
-          }),
+          // #300: the session's default goal via the shared #297 accessor
+          // (rotation owner under a Program; legacy focus goal for
+          // zero-Program tenants; null when a Program has no rotation).
+          getRotationOwnerGoal(),
           // ASC puts NULL first (Postgres default) → never-acknowledged rules surface
           // first in the brief. Intentional: stale rules are the ones the coach is most
           // at risk of forgetting. get_today_plan uses desc/nulls-last (freshest first)
@@ -4589,11 +4596,12 @@ function registerWriteTools(server: McpServer) {
         // 3. Day context for weekIndex + todayTask
         const r = await resolveDay(dayStart);
 
-        // 4. Focus goal for narrative caption
-        const focusGoal = await db.goal.findFirst({
-          where: { isFocus: true, active: true },
-          select: { objective: true, kind: true },
-        });
+        // 4. Narrative-caption goal (#300): the rotation owner under a
+        //    Program, legacy focus goal otherwise — the caption names the
+        //    goal the day actually served. (The old query's extra
+        //    `active: true` belt is covered by invariant: the focus goal
+        //    cannot be untracked, and a rotation owner's plan is active.)
+        const focusGoal = await getRotationOwnerGoal();
 
         // 5. Footage markers — highlight-first, then capturedAt asc, then createdAt asc
         const rawMarkers = await db.footageMarker.findMany({
@@ -5206,11 +5214,19 @@ function registerWriteTools(server: McpServer) {
           resolvedFingerprint = matching[0].fingerprint ?? fingerprintFinding(rule, matching[0].context);
         }
 
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        if (!plan) throw new Error("No active plan found for the focus goal.");
+        // #300: the SAME rotation plan lint_plan runs on — getActiveProgram()
+        // (snapshot.id is a Plan id, frozen #277 contract), matching
+        // lintActivePlan's own #297 resolution so an ack always lands on the
+        // plan whose findings it suppresses.
+        const programSnapshot = await getActiveProgram();
+        const plan = programSnapshot
+          ? await db.plan.findFirst({ where: { id: programSnapshot.id } })
+          : null;
+        if (!plan) {
+          throw new Error(
+            "No active rotation plan found — the active Program has no rotation (or no plan is active). Nothing to acknowledge against.",
+          );
+        }
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -5261,11 +5277,17 @@ function registerWriteTools(server: McpServer) {
         if (rule === undefined && fingerprint === undefined) {
           throw new Error("Provide at least one of `rule` or `fingerprint`.");
         }
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        if (!plan) throw new Error("No active plan found for the focus goal.");
+        // #300: same rotation-plan resolution as acknowledge_lint_finding /
+        // lintActivePlan above — one source of truth for "the linted plan".
+        const programSnapshot = await getActiveProgram();
+        const plan = programSnapshot
+          ? await db.plan.findFirst({ where: { id: programSnapshot.id } })
+          : null;
+        if (!plan) {
+          throw new Error(
+            "No active rotation plan found — the active Program has no rotation (or no plan is active). Nothing to clear.",
+          );
+        }
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -5329,12 +5351,17 @@ function registerWriteTools(server: McpServer) {
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // 1. Resolve focus goal for attribute validation
-        const goal = await db.goal.findFirst({
-          where: { isFocus: true },
-          orderBy: { updatedAt: "desc" },
-          select: { id: true, kind: true },
-        });
+        // 1. Resolve the pack-gating goal for attribute validation (#300):
+        //    rotation owner ?? legacy focus — the SAME composition the XP
+        //    engine's own goal-context uses (#299), so a granted attribute is
+        //    always valid for the pack the ledger will render it under.
+        const goal =
+          (await getRotationOwnerGoal()) ??
+          (await db.goal.findFirst({
+            where: { isFocus: true },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, kind: true },
+          }));
         const pack = rulePackForGoal(goal?.kind ?? "fitness");
         const validIds = pack.attributes.map((a) => a.id);
 
@@ -5347,7 +5374,7 @@ function registerWriteTools(server: McpServer) {
           }
           if (!goal) {
             throw new Error(
-              "No active goal — omit the attribute field to grant overall-only XP.",
+              "No rotation-owning or focused goal to validate the attribute against — omit the attribute field to grant overall-only XP.",
             );
           }
         }
