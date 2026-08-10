@@ -15,6 +15,51 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — `rolling:*` metric family: `GoalTargetSchema` gains optional `rolling` params (create_goal / update_goal_targets / promote_note_to_goal / preview_goal_feasibility)
+
+**What:** first readiness-engine metric-family extension since the redesign
+froze scoring. `rolling:<opaque slug>` targets are ENGINE-COMPUTED
+session-consistency windows (Phase 2A repeatability merge — "≥20s hold hit
+in 4 of last 6 sessions", "3× ≥20s within ≤5 attempts in one block"): the
+value is derived from logged workout sets, never from LogEntry rows.
+
+**Input-shape change (all four tools that accept `GoalTargetSchema`):** each
+target gains an optional `rolling` object —
+`{ exercise, minSeconds, hitsPerSession? (default 1), attemptCap?, window? (default 6) }`
+— REQUIRED when `metric` starts with `rolling:`, REJECTED on any other
+family (cross-field refinement, both directions). `attemptCap` must be
+≥ `hitsPerSession`. `rolling.exercise` is canonicalized on write
+(`canonicalExerciseName`, the attributionHints doctrine).
+
+**Semantics (resolver, `src/lib/goal-targets.ts` + pure math in
+`src/lib/rolling-metrics.ts`):** sessions = completed workouts (startedAt ≤
+end-of-day cutoff) with ≥1 set of the canonical exercise carrying a non-null
+`durationSec`; one workout = one session; attempts = those sets in
+(exercise orderIndex, setIndex) order; qualifying hold = `durationSec ≥
+minSeconds`; with `attemptCap`, the hits must land within some consecutive
+span of ≤ cap attempts. Value = hit-sessions among the trailing `window`
+sessions — 0..window, regresses as old hits roll out. Zero sessions ever →
+null (untested; readiness coverage shows the gap). Auto-captured start = 0
+(never current). Feasibility/Reach: `rolling` family is conservative
+no-rate (verdict `unknown`; gating rolling targets floor the tier).
+
+**Output shapes:** unchanged — rolling values flow through
+`compute_readiness` / `compare_dates` / `get_goal` breakdowns as plain
+numerics like any other target.
+
+**Coach doctrine:** docs/project-gotchas.md §F-8 — the coach controls the
+denominator by what gets logged under the canonical exercise name in a
+completed workout; log every deliberate attempt as its own set; incidental
+holds must NOT be logged as the tracker's exercise; never re-log rolling
+values via `log_metric`.
+
+**Connector reconnect:** YES — `GoalTargetSchema` (nested input schema of
+create_goal / update_goal_targets / promote_note_to_goal /
+preview_goal_feasibility) and two tool descriptions changed. Reconnect the
+claude.ai connector after deploy so the cached schemas refresh.
+
+---
+
 ## 2026-08-10 — B7/G7: `create_goal` scaffolding is Program-aware + opt-in (`scaffoldPlan` input, `scaffolded` output)
 
 **Issue:** integration-gate check G7 + blocker B7

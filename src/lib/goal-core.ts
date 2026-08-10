@@ -24,6 +24,7 @@ import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
 import { setProgramStatusCore } from "@/lib/program-core";
 import type { RarityTier } from "@/lib/rarity-core";
 import { canonicalExerciseName } from "@/lib/records";
+import { canonicalizeRollingTargets } from "@/lib/rolling-metrics";
 
 export interface CreateGoalCoreInput {
   objective: string;
@@ -173,6 +174,10 @@ export async function createGoalCore(
       targets = source.targets as unknown as GoalTarget[];
     }
   }
+  // Canonicalize rolling:* params.exercise on write (same doctrine as the
+  // attributionHints canonicalization below). Read-side matching also
+  // canonicalizes, so this is storage hygiene, not a correctness dependency.
+  if (targets) targets = canonicalizeRollingTargets(targets);
 
   // Canonicalize attributionHints on write
   const attributionHints: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =

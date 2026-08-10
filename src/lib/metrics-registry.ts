@@ -36,6 +36,13 @@ export type GoalTarget = {
    * snapshot. Only meaningful for `log:*` metrics; ignored for other families.
    */
   cumulative?: boolean;
+  /**
+   * Session-consistency parameters — REQUIRED when metric starts with
+   * "rolling:", forbidden otherwise (GoalTargetSchema enforces both
+   * directions). The metric key is an opaque slug; these params carry the
+   * semantics (exercise, threshold, hits, attempt cap, window).
+   */
+  rolling?: RollingParams;
 };
 
 export type MetricSpec = {
@@ -57,6 +64,108 @@ export const LOG_METRIC_PREFIX = "log:" as const;
  * and rarity.ts (observedSeriesFor). metricFamilyFor maps the prefix to "strength-like".
  */
 export const EXERCISE_METRIC_PREFIX = "exercise:" as const;
+
+/**
+ * Namespace prefix for ENGINE-COMPUTED session-consistency trackers.
+ * Format: "rolling:<opaque slug>" — e.g. "rolling:hs_triple20_of6".
+ *
+ * The key after the prefix is an OPAQUE identity slug — it carries no
+ * semantics. All semantics live in the target's required `rolling` params
+ * (see RollingParams / GoalTargetSchema's cross-field refinement): which
+ * exercise's timed sets form the session universe, the qualifying-hold
+ * threshold, hits-per-session, the optional attempt cap, and the window.
+ *
+ * Value = number of "hit" sessions within the trailing `window` qualifying
+ * sessions as of the cutoff (0..window) — a SNAPSHOT that can REGRESS as
+ * old hit-sessions roll out of the window. Zero qualifying sessions ever
+ * (as of the cutoff) → null (untested; coverage shows the gap honestly).
+ *
+ * Resolution lives in goal-targets.ts (resolveMetricValue /
+ * resolveMetricStart); the pure window math lives in rolling-metrics.ts;
+ * metricFamilyFor maps the prefix to the conservative "rolling" family
+ * (no norm, no observed series — feasibility stays honest/unknown).
+ * Like exercise:*, rolling entries are dynamic and NOT in METRICS.
+ */
+export const ROLLING_METRIC_PREFIX = "rolling:" as const;
+
+/** Default RollingParams.hitsPerSession when absent (one qualifying hold makes a hit-session). */
+export const ROLLING_DEFAULT_HITS_PER_SESSION = 1;
+/** Default RollingParams.window when absent (trailing six qualifying sessions). */
+export const ROLLING_DEFAULT_WINDOW = 6;
+
+/**
+ * Parameters for a `rolling:*` session-consistency tracker. Stored on the
+ * GoalTarget (`rolling` field) — REQUIRED for rolling:* metrics, forbidden
+ * elsewhere (enforced by GoalTargetSchema's cross-field refinement).
+ */
+export type RollingParams = {
+  /**
+   * Exercise whose timed sets define the session universe. Canonicalized on
+   * write (canonicalExerciseName — same hand-curated alias map as PRs/records);
+   * the resolver also canonicalizes both sides at read time, so legacy
+   * uncanonicalized JSON still matches.
+   */
+  exercise: string;
+  /** Qualifying-hold threshold: a set qualifies iff durationSec ≥ minSeconds. Must be > 0. */
+  minSeconds: number;
+  /** Qualifying holds required within one session for it to count as a hit. Int ≥ 1; default 1. */
+  hitsPerSession?: number;
+  /**
+   * Optional attempt cap: the hits must land within SOME consecutive span of
+   * ≤ attemptCap attempts (workout's matching-exercise sets in
+   * (exercise orderIndex, setIndex) order). Int ≥ hitsPerSession. Absent =
+   * anywhere in the session.
+   */
+  attemptCap?: number;
+  /** Trailing qualifying-session window the value is computed over. Int ≥ 1; default 6. */
+  window?: number;
+};
+
+/** Zod schema for RollingParams — defaults materialized on parse (hitsPerSession 1, window 6). */
+export const RollingParamsSchema = z
+  .object({
+    exercise: z
+      .string()
+      .min(1)
+      .describe(
+        "Exercise whose timed sets define the session universe (canonicalized on write — same alias map as PRs). " +
+          "Sessions = completed workouts containing ≥1 set of this exercise with a non-null durationSec.",
+      ),
+    minSeconds: z
+      .number()
+      .positive()
+      .describe("Qualifying-hold threshold in seconds — a set qualifies iff durationSec ≥ minSeconds."),
+    hitsPerSession: z
+      .number()
+      .int()
+      .min(1)
+      .default(ROLLING_DEFAULT_HITS_PER_SESSION)
+      .describe("Qualifying holds required within one session for it to count as a hit (default 1)."),
+    attemptCap: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional: the hits must land within a span of ≤ attemptCap CONSECUTIVE attempts " +
+          "(sets in exercise-order/setIndex order). Must be ≥ hitsPerSession. Omit = anywhere in the session.",
+      ),
+    window: z
+      .number()
+      .int()
+      .min(1)
+      .default(ROLLING_DEFAULT_WINDOW)
+      .describe("Trailing qualifying-session window the value is computed over (default 6)."),
+  })
+  .superRefine((p, ctx) => {
+    if (p.attemptCap !== undefined && p.attemptCap < p.hitsPerSession) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attemptCap"],
+        message: `attemptCap (${p.attemptCap}) must be ≥ hitsPerSession (${p.hitsPerSession}) — ${p.hitsPerSession} hits cannot fit in a span of ${p.attemptCap} attempts.`,
+      });
+    }
+  });
 
 /**
  * Zod schema for GoalTarget — mirrors the GoalTarget type exactly.
@@ -84,6 +193,31 @@ export const GoalTargetSchema = z.object({
     "up to the current date. Do NOT use for metrics logged as running totals " +
     "(e.g. MRR, body weight) — that overcounts. Default false = snapshot (latest entry).",
   ),
+  rolling: RollingParamsSchema.optional().describe(
+    "Session-consistency parameters — REQUIRED when metric starts with 'rolling:', forbidden otherwise. " +
+    "The engine computes the value from logged workout sets: sessions = completed workouts with ≥1 timed set " +
+    "of `exercise`; value = hit-sessions in the trailing `window` (a snapshot that can regress).",
+  ),
+}).superRefine((t, ctx) => {
+  // Cross-field refinement: rolling params and the rolling: prefix travel
+  // together — in BOTH directions. A rolling: metric without params is
+  // uncomputable (the key is an opaque slug; params carry all semantics);
+  // params on any other family would silently do nothing.
+  const isRolling = t.metric.startsWith(ROLLING_METRIC_PREFIX);
+  if (isRolling && t.rolling === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["rolling"],
+      message: `metric '${t.metric}' is a rolling:* tracker — the 'rolling' params object ({exercise, minSeconds, hitsPerSession?, attemptCap?, window?}) is required.`,
+    });
+  }
+  if (!isRolling && t.rolling !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["rolling"],
+      message: `'rolling' params are only valid on rolling:* metrics — metric '${t.metric}' is not one. Drop the params or rename the metric to 'rolling:<slug>'.`,
+    });
+  }
 });
 
 /** Curated registry — keeps the UI to known metrics and avoids typos. */
