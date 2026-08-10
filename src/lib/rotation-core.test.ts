@@ -610,7 +610,7 @@ describe("mergeDayOverride parity — resolveDay / buildCell / engine frozen dec
     const cases: { test: Pick<BaselineTest, "initialWeek" | "retestWeeks">; weeks: number[] }[] = [
       { test: { retestWeeks: [4, 10] }, weeks: [1, 2, 3, 4, 5, 9, 10, 11] },
       { test: { initialWeek: 3, retestWeeks: [8] }, weeks: [1, 2, 3, 4, 7, 8, 9] },
-      { test: { initialWeek: 2 }, weeks: [1, 2, 3] },
+      { test: { initialWeek: 2, retestWeeks: [] }, weeks: [1, 2, 3] },
       // Degenerate: a retest listed AT/BEFORE the initial week never fires
       // (weekIdx > initialWeek strictness) — plan-lint flags these as errors.
       { test: { initialWeek: 5, retestWeeks: [5, 4] }, weeks: [4, 5, 6] },
