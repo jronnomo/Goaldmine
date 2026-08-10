@@ -28,9 +28,14 @@ vi.mock("@/lib/food-actions", () => ({
   listLibraryFoods: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("@/lib/saved-meal-actions", () => ({
+  listSavedMealsLite: vi.fn().mockResolvedValue([]),
+}));
+
 import { getLogSheetData } from "@/lib/log-sheet-data";
 import { resolveDay } from "@/lib/calendar";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { listSavedMealsLite } from "@/lib/saved-meal-actions";
 
 const NOW = new Date("2026-07-10T18:00:00.000Z");
 
@@ -57,6 +62,7 @@ describe("getLogSheetData", () => {
     vi.mocked(resolveDay).mockResolvedValue({ nutritionPlan: null } as never);
     vi.mocked(getQuickPickFoods).mockResolvedValue([]);
     vi.mocked(listLibraryFoods).mockResolvedValue([]);
+    vi.mocked(listSavedMealsLite).mockResolvedValue([]);
   });
 
   it("queries nutritionLog with the exact startOfDay/endOfDay window bounds", async () => {
@@ -109,14 +115,17 @@ describe("getLogSheetData", () => {
     expect(data.dayTarget).toBeNull();
   });
 
-  it("passes getQuickPickFoods / listLibraryFoods results through unchanged", async () => {
+  it("passes getQuickPickFoods / listLibraryFoods / listSavedMealsLite results through unchanged", async () => {
     const quickPicks = [{ id: "q1" }];
     const library = [{ id: "l1" }, { id: "l2" }];
+    const saved = [{ id: "sm1", name: "Protein Brookie", items: [], defaultServings: 1 }];
     vi.mocked(getQuickPickFoods).mockResolvedValue(quickPicks as never);
     vi.mocked(listLibraryFoods).mockResolvedValue(library as never);
+    vi.mocked(listSavedMealsLite).mockResolvedValue(saved as never);
     const data = await getLogSheetData(NOW);
     expect(data.quickPickFoods).toBe(quickPicks);
     expect(data.libraryFoods).toBe(library);
+    expect(data.savedMeals).toBe(saved);
   });
 
   it("defaults now to new Date() when no argument is passed", async () => {

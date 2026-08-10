@@ -23,7 +23,11 @@ import {
   buildQtyDisplay,
 } from "@/lib/food-units";
 import { parseFoodQuery } from "@/lib/food-parse";
+import { deriveSavedMealLog, type SavedMealLite } from "@/lib/saved-meal";
+import { listSavedMealsLite } from "@/lib/saved-meal-actions";
+import type { NutritionMacros } from "@/lib/nutrition-plan";
 
+import { BottomSheet } from "@/components/BottomSheet";
 import { LibraryPickerOverlay } from "@/components/LibraryPickerOverlay";
 
 // Dynamic import: ScanFoodSheet + zxing-wasm are browser-only.
@@ -117,6 +121,63 @@ export function mergeEstimateIntoForm(
   return { itemsText: newItemsText, macroValues: newMacros };
 }
 
+// ── SavedMeal quick-pick helpers (#296) ───────────────────────────────────────
+
+/**
+ * Expand a SavedMeal into composer-ready items + scaled macros for `servings`
+ * servings. Pure — delegates to src/lib/saved-meal.ts's deriveSavedMealLog,
+ * the SAME helper log_nutrition(savedMealId, servings) runs server-side, so
+ * the web composer and the coach's MCP channel converge on identical
+ * NutritionLog content (items qty annotated "×0.5" etc., macros scaled by
+ * servings ÷ defaultServings and rounded to 1 decimal).
+ *
+ * ⚑ Deliberately NO savedMealId/servings form field on the web path
+ * (UXR-PV-64): itemsJson stays the single structured channel; this expansion
+ * submits already-scaled items exactly like any other composed meal.
+ */
+export function expandSavedMealForComposer(
+  meal: SavedMealLite,
+  servings: number,
+): { items: NutritionItem[]; macros?: NutritionMacros } {
+  const derived = deriveSavedMealLog(
+    { items: meal.items, macros: meal.macros ?? null, defaultServings: meal.defaultServings },
+    servings,
+  );
+  return { items: derived.items, macros: derived.macros };
+}
+
+/**
+ * Chip second line: "670 · 71P" — calories and protein, the two numbers that
+ * decide the tap against a protein floor (UXR-PV-60). Null when the meal has
+ * neither (chip renders name-only).
+ */
+export function savedMealChipMacros(macros: NutritionMacros | undefined): string | null {
+  if (!macros) return null;
+  const parts: string[] = [];
+  if (macros.calories != null) parts.push(String(Math.round(macros.calories)));
+  if (macros.proteinG != null) parts.push(`${Math.round(macros.proteinG)}P`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/** Sheet macro preview: "335 cal · 35.5 P" (scaled values, tabular-nums). */
+export function savedMealPreviewMacros(macros: NutritionMacros | undefined): string | null {
+  if (!macros) return null;
+  const parts: string[] = [];
+  if (macros.calories != null) parts.push(`${Math.round(macros.calories)} cal`);
+  if (macros.proteinG != null) parts.push(`${macros.proteinG} P`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+// Servings stepper: fractions are the point (the Chipotle bowl logs in
+// 0.25/0.5 steps — UXR-PV-61/62; step ⚠[0.25–0.5], floor 0.25).
+const SAVED_MEAL_SERVINGS_STEP = 0.25;
+const SAVED_MEAL_SERVINGS_MIN = 0.25;
+
+/** "1", "0.5", "1.25" — never "1.00". */
+function formatServings(v: number): string {
+  return String(Number(v.toFixed(2)));
+}
+
 // ── Barcode icon (hand-rolled 20px fill icon, barcode aesthetic) ───────────────
 
 function BarcodeIcon() {
@@ -186,6 +247,7 @@ export function useFoodComposer({
   addItem,
   quickPickFoods,
   libraryFoods,
+  savedMeals,
 }: {
   /**
    * Called on every food-resolved add (chip / scan / estimate / add-anyway). B-3 rule:
@@ -193,11 +255,23 @@ export function useFoodComposer({
    * The host (MealComposer.addItemToComposer) owns the macro total: it recomputes
    * it from the items array so the total always equals sumStructuredMacros(items) +
    * residual. This hook no longer touches macros at all.
+   *
+   * #296: a SavedMeal expansion is addItem-several — the host accepts an
+   * array in ONE call (N sequential calls would each read the same stale
+   * `items` closure and drop all but the last), plus optional known macros
+   * (`opts.macros`, the saved meal's scaled totals) that the host credits to
+   * its macro authority. Single-item calls behave exactly as before.
    */
-  addItem: (item: NutritionItem) => void;
+  addItem: (item: NutritionItem | NutritionItem[], opts?: { macros?: NutritionMacros }) => void;
   quickPickFoods?: LibraryFood[];
   /** Pre-loaded library foods for the Browse-library picker. */
   libraryFoods?: LibraryFood[];
+  /**
+   * #296: server-fetched SavedMeal list for the quick-pick row. Undefined →
+   * the hook lazy-fetches on mount (the quickPickFoods precedent); [] →
+   * loaded-and-empty (renders the coach note).
+   */
+  savedMeals?: SavedMealLite[];
 }): { controls: ReactNode; sheet: ReactNode } {
   // Quick-pick chip state: two orthogonal state slices, merged via useMemo.
   //   lazyFoods    — fetched on mount (no prop provided path)
@@ -213,6 +287,17 @@ export function useFoodComposer({
     const baseFiltered = base.filter((b) => !localIds.has(b.id));
     return [...localAdditions, ...baseFiltered].slice(0, 8);
   }, [quickPickFoods, lazyFoods, localAdditions]);
+
+  // SavedMeal quick-pick state (#296). lazySavedMeals: null = not loaded yet
+  // (row renders nothing — no empty-note flash), [] = loaded and empty.
+  const [lazySavedMeals, setLazySavedMeals] = useState<SavedMealLite[] | null>(null);
+  const savedMealList = savedMeals ?? lazySavedMeals;
+
+  // SavedMeal sheet state: which meal is open + the servings being composed.
+  const [activeSavedMeal, setActiveSavedMeal] = useState<SavedMealLite | null>(null);
+  const [savedServings, setSavedServings] = useState(1);
+  // Re-key nonce so the servings numeral replays the shipped .qty-bump tick.
+  const [servingsBump, setServingsBump] = useState(0);
 
   // Scan sheet state
   const [scanOpen, setScanOpen] = useState(false);
@@ -245,6 +330,41 @@ export function useFoodComposer({
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally once on mount
+
+  // #296: SavedMeal lazy fetch — exact mirror of the quickPickFoods pattern.
+  useEffect(() => {
+    if (savedMeals !== undefined) return; // server provided → skip
+    listSavedMealsLite()
+      .then((meals) => setLazySavedMeals(meals))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally once on mount
+
+  // ── SavedMeal handlers (#296) ─────────────────────────────────────────────
+
+  function openSavedMeal(meal: SavedMealLite) {
+    setActiveSavedMeal(meal);
+    setSavedServings(meal.defaultServings > 0 ? meal.defaultServings : 1);
+  }
+
+  function bumpSavedServings(delta: number) {
+    setSavedServings((prev) => {
+      const next = Math.max(SAVED_MEAL_SERVINGS_MIN, Number((prev + delta).toFixed(2)));
+      return next;
+    });
+    setServingsBump((n) => n + 1);
+  }
+
+  function handleSavedMealAdd() {
+    if (!activeSavedMeal) return;
+    // UXR-PV-63: through addItem(), never setItemsText — one call carrying
+    // the whole expansion (see the addItem prop doc) plus the scaled macros.
+    const { items, macros } = expandSavedMealForComposer(activeSavedMeal, savedServings);
+    if (items.length > 0 || macros) {
+      addItem(items, macros ? { macros } : undefined);
+    }
+    setActiveSavedMeal(null);
+  }
 
   // ── handleAdd ─────────────────────────────────────────────────────────────
 
@@ -394,6 +514,68 @@ export function useFoodComposer({
 
   const controls: ReactNode = (
     <>
+      {/* ── Saved meals row (#296) — FIRST block, above the food quick-pick
+          (UXR-PV-59: `controls` owns addItem and is injected identically into
+          every host, create and edit). null while the lazy fetch is pending —
+          no skeleton, no flash. Zero rows → the coach note (creation is
+          MCP-only for now; issue AC wants the path stated, not a form). */}
+      {savedMealList !== null && (
+        <div data-testid="saved-meal-row">
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+            Saved meals
+          </p>
+          {savedMealList.length === 0 ? (
+            <p data-testid="saved-meal-empty" className="text-xs text-[var(--muted)]">
+              No saved meals yet — saved meals are created by your coach.
+            </p>
+          ) : (
+            <div className="relative">
+              <div
+                role="group"
+                aria-label="Saved meals"
+                className="flex gap-2 overflow-x-auto py-1 [-webkit-overflow-scrolling:touch]"
+              >
+                {savedMealList.slice(0, 8).map((meal) => {
+                  const macroLine = savedMealChipMacros(meal.macros);
+                  return (
+                    <button
+                      key={meal.id}
+                      type="button"
+                      data-testid={`saved-meal-chip-${meal.id}`}
+                      // UXR-PV-61: opens the servings sheet — NEVER adds
+                      // directly (the Chipotle bowl logs in fractions).
+                      onClick={() => openSavedMeal(meal)}
+                      className="flex-shrink-0 flex flex-col justify-center rounded-full px-3 min-h-[44px]
+                                 border border-[var(--border)] text-left"
+                    >
+                      <span className="text-sm font-medium truncate max-w-[14ch]">
+                        {meal.name}
+                      </span>
+                      {/* Mono numerals vs the food chip's sans brand line —
+                          the typographic channel that says "adds several,
+                          not one" (UXR-PV-60). */}
+                      {macroLine && (
+                        <span className="font-mono text-[11px] text-[var(--muted)] truncate max-w-[12ch]">
+                          {macroLine}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Right-edge fade mask — verbatim the food quick-pick's */}
+              <div
+                className="absolute top-0 right-0 bottom-0 w-6 pointer-events-none"
+                style={{
+                  background:
+                    "linear-gradient(to right, transparent, var(--card))",
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Chips row ──────────────────────────────────────────────────────── */}
       {quickPick.length === 0 ? (
         // Empty library: full-label Scan button
@@ -718,6 +900,93 @@ export function useFoodComposer({
           // Picker stays open behind ScanFoodSheet so user can add more.
         }}
       />
+
+      {/* SavedMealSheet (#296) — BottomSheet is the only mechanically correct
+          host: portaled to document.body, so it works from inside the Log
+          sheet without iOS's nested-dialog dismissal bug (UXR-PV-61). */}
+      <BottomSheet
+        open={activeSavedMeal !== null}
+        onClose={() => setActiveSavedMeal(null)}
+        title={activeSavedMeal?.name ?? "Saved meal"}
+        data-testid="saved-meal-sheet"
+      >
+        {activeSavedMeal &&
+          (() => {
+            const meal = activeSavedMeal;
+            const { items: previewItems, macros: previewMacros } =
+              expandSavedMealForComposer(meal, savedServings);
+            const previewLine = savedMealPreviewMacros(previewMacros);
+            return (
+              <div className="flex flex-col gap-4 px-4 py-4">
+                {/* Scaled item preview (live) */}
+                {previewItems.length > 0 && (
+                  <ul className="flex flex-col gap-1.5">
+                    {previewItems.map((item, i) => (
+                      <li key={i} className="text-sm text-[var(--foreground)]">
+                        {item.name}
+                        {item.qty && (
+                          <span className="text-[var(--muted)]"> · {item.qty}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Servings stepper — the shipped h-11 w-11 −/+ idiom;
+                    default = defaultServings, fractions down to 0.25. */}
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    data-testid="saved-meal-servings-dec"
+                    aria-label="Decrease servings"
+                    disabled={savedServings <= SAVED_MEAL_SERVINGS_MIN}
+                    onClick={() => bumpSavedServings(-SAVED_MEAL_SERVINGS_STEP)}
+                    className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
+                  >
+                    −
+                  </button>
+                  {/* Re-keyed so the one-shot .qty-bump tick replays each tap. */}
+                  <span
+                    key={`sv-${servingsBump}`}
+                    className={`min-w-[92px] text-center font-mono text-sm text-[var(--foreground)]${
+                      servingsBump > 0 ? " qty-bump" : ""
+                    }`}
+                  >
+                    {formatServings(savedServings)} serving
+                    {savedServings === 1 ? "" : "s"}
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="saved-meal-servings-inc"
+                    aria-label="Increase servings"
+                    onClick={() => bumpSavedServings(SAVED_MEAL_SERVINGS_STEP)}
+                    className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent-soft)] text-xl leading-none text-[var(--accent)] disabled:opacity-30"
+                  >
+                    ＋
+                  </button>
+                </div>
+
+                {/* Macro preview — scaled live with the stepper */}
+                {previewLine && (
+                  <p className="text-center text-sm tabular-nums text-[var(--muted)]">
+                    {previewLine}
+                  </p>
+                )}
+
+                {/* Expands into the composed meal via addItem — prefills,
+                    never locks the form; items stay editable before submit. */}
+                <button
+                  type="button"
+                  data-testid="saved-meal-add"
+                  onClick={handleSavedMealAdd}
+                  className="w-full min-h-[44px] rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-fg)]"
+                >
+                  Add to meal
+                </button>
+              </div>
+            );
+          })()}
+      </BottomSheet>
     </>
   );
 

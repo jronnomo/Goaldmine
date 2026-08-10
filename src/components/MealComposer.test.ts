@@ -11,6 +11,16 @@ import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MealComposer, type MealDefaults } from "@/components/MealComposer";
+import {
+  expandSavedMealForComposer,
+  savedMealChipMacros,
+} from "@/components/useFoodComposer";
+import {
+  annotateItemsForFactor,
+  savedMealScaleFactor,
+  scaleSavedMealMacros,
+  type SavedMealLite,
+} from "@/lib/saved-meal";
 import { dateKey } from "@/lib/calendar-core";
 import type { ExistingMealStub } from "@/lib/nutrition-merge";
 
@@ -155,5 +165,135 @@ describe("MealComposer — append-vs-separate choice (#295)", () => {
       }),
     );
     expect(macrosOnly).toContain("(custom entry)");
+  });
+});
+
+// ── #296: SavedMeal composer quick-pick ──────────────────────────────────────
+
+const BROOKIE: SavedMealLite = {
+  id: "sm-brookie",
+  name: "Protein Brookie",
+  items: [{ name: "Protein brookie", qty: "1 brookie" }],
+  macros: { calories: 310, proteinG: 31, carbsG: 28, fatG: 9 },
+  defaultServings: 1,
+};
+
+const BOWL: SavedMealLite = {
+  id: "sm-bowl",
+  name: "Chipotle Protein Bowl",
+  items: [
+    { name: "Chipotle bowl", qty: "1 bowl" },
+    { name: "Guac", notes: "side" },
+  ],
+  macros: { calories: 670, proteinG: 71, carbsG: 52, fatG: 22 },
+  defaultServings: 1,
+};
+
+describe("MealComposer — SavedMeal quick-pick row (#296)", () => {
+  it("renders chips from the server-fetched list — name plus the mono cal·protein line", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "create", savedMeals: [BROOKIE, BOWL] }),
+    );
+
+    expect(html).toContain('data-testid="saved-meal-row"');
+    expect(html).toContain('data-testid="saved-meal-chip-sm-brookie"');
+    expect(html).toContain('data-testid="saved-meal-chip-sm-bowl"');
+    expect(html).toContain("Protein Brookie");
+    // UXR-PV-60: the two numbers that decide the tap, mono at 11px.
+    expect(html).toContain("310 · 31P");
+    expect(html).toContain("670 · 71P");
+    expect(html).toContain('aria-label="Saved meals"');
+  });
+
+  it("is the FIRST block inside the composer controls — above the food quick-pick / scan affordance", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "create", savedMeals: [BROOKIE] }),
+    );
+    const savedIdx = html.indexOf('data-testid="saved-meal-row"');
+    const scanIdx = html.indexOf('data-testid="scan-affordance"');
+    const estimateIdx = html.indexOf('data-testid="estimate-input"');
+    expect(savedIdx).toBeGreaterThan(-1);
+    expect(savedIdx).toBeLessThan(scanIdx);
+    expect(savedIdx).toBeLessThan(estimateIdx);
+  });
+
+  it("empty list renders the coach note (creation is MCP-only), cleanly, no chips", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "create", savedMeals: [] }),
+    );
+    expect(html).toContain('data-testid="saved-meal-empty"');
+    expect(html).toContain("saved meals are created by your coach");
+    expect(html).not.toContain("saved-meal-chip-");
+  });
+
+  it("no savedMeals prop (lazy path, pre-fetch) renders NOTHING — no skeleton, no flash", () => {
+    const html = renderToStaticMarkup(createElement(MealComposer, { mode: "create" }));
+    expect(html).not.toContain("saved-meal-row");
+    expect(html).not.toContain("saved-meal-empty");
+  });
+
+  it("chips are buttons that open a sheet — never a direct one-tap log (no submit-type chip)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "create", savedMeals: [BOWL] }),
+    );
+    // The chip is an explicit type="button" (cannot submit the host form).
+    expect(html).toMatch(
+      /<button type="button"[^>]*data-testid="saved-meal-chip-sm-bowl"/,
+    );
+  });
+});
+
+describe("SavedMeal expansion — scaling via the pure src/lib/saved-meal.ts helpers (#296)", () => {
+  it("half a Chipotle bowl: factor 0.5, macros halved, qty annotated ×0.5 (the fractions pattern)", () => {
+    const { items, macros } = expandSavedMealForComposer(BOWL, 0.5);
+
+    // Factor math IS the imported helper's math.
+    expect(savedMealScaleFactor(0.5, BOWL.defaultServings)).toBe(0.5);
+    expect(macros).toEqual(scaleSavedMealMacros(BOWL.macros, 0.5));
+    expect(macros).toEqual({ calories: 335, proteinG: 35.5, carbsG: 26, fatG: 11 });
+
+    // Item annotation mirrors annotateItemsForFactor exactly (the same
+    // NutritionLog text the coach's log_nutrition(savedMealId) path writes).
+    expect(items).toEqual(annotateItemsForFactor(BOWL.items, 0.5));
+    expect(items[0].qty).toBe("1 bowl ×0.5");
+    expect(items[1].qty).toBe("×0.5 of saved qty");
+  });
+
+  it("2 servings of the brookie: macros doubled, qty '1 brookie ×2'", () => {
+    const { items, macros } = expandSavedMealForComposer(BROOKIE, 2);
+    expect(macros).toEqual({ calories: 620, proteinG: 62, carbsG: 56, fatG: 18 });
+    expect(items[0].qty).toBe("1 brookie ×2");
+  });
+
+  it("defaultServings servings: factor 1 — items untouched, macros verbatim", () => {
+    const { items, macros } = expandSavedMealForComposer(BROOKIE, BROOKIE.defaultServings);
+    expect(items).toEqual(BROOKIE.items);
+    expect(macros).toEqual(BROOKIE.macros);
+  });
+
+  it("defaultServings > 1 divides: 1 serving of a 2-serving batch is factor 0.5", () => {
+    const batch: SavedMealLite = { ...BROOKIE, defaultServings: 2 };
+    const { macros } = expandSavedMealForComposer(batch, 1);
+    expect(savedMealScaleFactor(1, 2)).toBe(0.5);
+    expect(macros).toEqual({ calories: 155, proteinG: 15.5, carbsG: 14, fatG: 4.5 });
+  });
+
+  it("macro-less saved meal expands items only (no macros key)", () => {
+    const bare: SavedMealLite = { ...BROOKIE, macros: undefined };
+    const { items, macros } = expandSavedMealForComposer(bare, 2);
+    expect(macros).toBeUndefined();
+    expect(items[0].qty).toBe("1 brookie ×2");
+  });
+});
+
+describe("savedMealChipMacros — the chip's second line", () => {
+  it("formats '670 · 71P', rounding for the 11px chip", () => {
+    expect(savedMealChipMacros({ calories: 670.4, proteinG: 70.6 })).toBe("670 · 71P");
+  });
+  it("degrades to whichever number exists, or null for none", () => {
+    expect(savedMealChipMacros({ calories: 310 })).toBe("310");
+    expect(savedMealChipMacros({ proteinG: 31 })).toBe("31P");
+    expect(savedMealChipMacros(undefined)).toBeNull();
+    expect(savedMealChipMacros({})).toBeNull();
   });
 });

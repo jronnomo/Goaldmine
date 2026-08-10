@@ -295,6 +295,7 @@ export function LogLauncher({
                         <LogNutritionForm
                           quickPickFoods={data?.quickPickFoods}
                           libraryFoods={data?.libraryFoods}
+                          savedMeals={data?.savedMeals}
                           trackedSoFar={data?.trackedSoFar}
                           dayTarget={data?.dayTarget}
                           onLogged={fetchData}
