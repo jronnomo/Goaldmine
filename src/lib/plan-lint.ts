@@ -225,10 +225,13 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   }
 
   const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true, goal: { isFocus: true } },
-    orderBy: { updatedAt: "desc" },
-  });
+  // #297: lint the SAME plan the day resolution runs on — program.id IS the
+  // rotation Plan's id (getActiveProgram's frozen #277 contract), so fetch
+  // that row directly instead of a third re-implementation of the
+  // isFocus-desc query. Under a Program this lints the rotation owner's
+  // plan/goal even when isFocus points elsewhere; for zero-Program tenants
+  // the seam's legacy branch resolves the same active plan as before.
+  const plan = await db.plan.findFirst({ where: { id: program.id } });
   if (!plan) return { planId: null, findings: [] };
 
   const goal = await db.goal.findUnique({ where: { id: plan.goalId } });

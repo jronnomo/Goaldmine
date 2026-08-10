@@ -23,6 +23,10 @@ import {
   otherGoalEvents as filterOtherGoalEvents,
   type GoalEvent,
 } from "@/lib/goal-events";
+// #297: THE shared "current goal" accessor — rotation owner under a Program,
+// legacy isFocus fallback for zero-Program tenants. Replaces this file's
+// three inline `isFocus: true` reads.
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import {
   crossGoalConflicts as computeCrossGoalConflicts,
   type CrossGoalConflict,
@@ -196,26 +200,33 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  // Phase 1: fetch focus goal (gates the ScheduledItem query in Phase 2) alongside
-  // the active program + the full plan-window candidate list (REQ-003) — neither
-  // of the latter two depends on `goal`, so they run in the same round-trip instead
+  // Phase 1: fetch the day-driving goal (gates the ScheduledItem query in Phase 2)
+  // alongside the active program + the full plan-window candidate list (REQ-003) —
+  // none of these depends on another, so they run in the same round-trip instead
   // of forcing an extra sequential step.
-  // [v2] MED-1: the goal fetch alone would be a single indexed query; folding program
-  // + candidates in here keeps the "goal gates Phase 2" shape while avoiding a second
-  // await before Phase 2 can start. Accepted trade-off — #38's AC text does not forbid
-  // it; latency impact is sub-millisecond.
-  const [goal, program, allCandidates] = await Promise.all([
-    db.goal.findFirst({
-      where: { isFocus: true },
-      // Deterministically picks the most-recently-updated if multiple are
-      // stuck isFocus=true (bad state).
-      orderBy: { updatedAt: "desc" },
-      // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
-      select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
-    }),
+  // #297: the goal read is Program-aware — getRotationOwnerGoal() resolves the
+  // active Program's rotation-owning goal (Plan.goalId), falling back to the
+  // legacy isFocus query ONLY for zero-Program-rows tenants (byte-identical
+  // there — same where/orderBy, superset select mapped back to the same shape).
+  // A Program with no rotation (or a retired-Program tenant) yields null,
+  // exactly like the seam.
+  const [ownerGoal, program, allCandidates] = await Promise.all([
+    getRotationOwnerGoal(),
     getActiveProgram(),
     getPlanWindowCandidates(),
   ]);
+  // Preserve the exact pre-#297 field shape (REQ-003 select: kind for
+  // PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate) so the month
+  // payload stays byte-identical for zero-Program tenants.
+  const goal = ownerGoal
+    ? {
+        id: ownerGoal.id,
+        targetDate: ownerGoal.targetDate,
+        objective: ownerGoal.objective,
+        legend: ownerGoal.legend,
+        kind: ownerGoal.kind,
+      }
+    : null;
 
   // REQ-003: candidates overlapping the visible grid, for buildCell's per-cell
   // pickProgramForDate call. The active plan's overrides must always be
@@ -904,6 +915,16 @@ export type ResolveDayCtx = {
    *     `null` means "caller already determined there is no active Program".
    */
   membership?: ActiveProgramMembership | null;
+  /**
+   * #297: the day-driving goal (rotation owner under a Program, legacy focus
+   * goal for zero-Program tenants — getRotationOwnerGoal()'s result trimmed
+   * to the three fields resolveDay reads), pre-fetched by range callers so 7
+   * resolveDay calls don't issue 7 redundant owner lookups. Same key-presence
+   * semantics as `program`/`membership` above; explicit `null` means "caller
+   * already determined no goal drives the day" (rotation-less Program /
+   * retired-Program tenants).
+   */
+  dayGoal?: { id: string; targetDate: Date | null; objective: string } | null;
 };
 
 /**
@@ -1068,11 +1089,18 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       },
       orderBy: { date: "desc" },
     }),
-    db.goal.findFirst({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, targetDate: true, objective: true },
-    }),
+    // #297: Program-aware day-goal read — the rotation owner under a Program,
+    // the legacy focus goal for zero-Program tenants (byte-identical there).
+    // Feeds isGoalDate + goalObjective below; null under a rotation-less
+    // Program is correct (no goal-date pin belongs to "the day" then —
+    // member goals' own target dates ride otherGoalEvents/goal-events).
+    // ctx.dayGoal (key-presence semantics, like program/membership) lets
+    // range callers batch this to one lookup per week.
+    ctx?.dayGoal !== undefined
+      ? Promise.resolve(ctx.dayGoal)
+      : getRotationOwnerGoal().then((g) =>
+          g ? { id: g.id, targetDate: g.targetDate, objective: g.objective } : null,
+        ),
     db.nutritionLog.findMany({
       where: { date: { gte: dayStart, lte: dayEnd } },
       orderBy: { date: "asc" },
@@ -1465,11 +1493,21 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
   const db = await getDb();
   const [plan, count] = await Promise.all([
-    db.plan.findFirst({
-      where: { active: true, goal: { isFocus: true } },
-      orderBy: { updatedAt: "desc" },
-      include: { goal: { select: { id: true } } },
-    }),
+    // #297: the rotation plan comes from getActiveProgram() — the SAME
+    // resolution calendar day-building uses — instead of a third inline
+    // re-implementation of the isFocus-desc query. snapshot.id is a Plan id
+    // (frozen #277 contract); one point-read recovers goalId for the link
+    // target. Zero-Program tenants resolve via the seam's legacy branch
+    // (active plan, isFocus-desc tiebreak) — for a normally-shaped tenant
+    // (focused goal owns the active plan) this is the same plan as before.
+    getActiveProgram().then((snapshot) =>
+      snapshot
+        ? db.plan.findFirst({
+            where: { id: snapshot.id },
+            select: { id: true, goalId: true },
+          })
+        : null,
+    ),
     // Only count notes that actually call for a coaching decision: audibles
     // (plan changes) and feedback. Journals are diary entries you rarely
     // "resolve", and standing_rules are never resolved by design — counting
@@ -1477,7 +1515,7 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
     db.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
   ]);
   if (!plan) return { count, goalId: null, planId: null };
-  return { count, goalId: plan.goal.id, planId: plan.id };
+  return { count, goalId: plan.goalId, planId: plan.id };
 }
 
 // --- Long-effort reconciliation helpers ---

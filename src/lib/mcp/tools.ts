@@ -60,6 +60,11 @@ import {
   pickProgramForDate,
   type ActiveProgramSnapshot,
 } from "@/lib/program";
+// #297/#300: THE shared "current goal" accessor — rotation owner under a
+// Program, legacy isFocus fallback for zero-Program tenants, null for
+// rotation-less/retired-Program tenants. Replaces this file's inline
+// `isFocus: true` default-goal reads.
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { getGoalStory } from "@/lib/goal-story";
 import {
   MAX_DAY_TEMPLATE_BYTES,
@@ -814,11 +819,17 @@ function registerReadTools(server: McpServer) {
         // own internal lookup use — so this can never disagree with them.
         // #284: Program membership fetched ONCE here too and threaded to every
         // resolveDay via ctx.membership — never 7 redundant lookups.
-        const [activeProgram, membership, candidates] = await Promise.all([
+        // #297: same batching for the day-driving goal (rotation owner under a
+        // Program, legacy focus goal for zero-Program tenants) via ctx.dayGoal.
+        const [activeProgram, membership, candidates, dayGoalRow] = await Promise.all([
           getActiveProgram(),
           getActiveProgramMembership(),
           getPlanWindowCandidates(),
+          getRotationOwnerGoal(),
         ]);
+        const dayGoal = dayGoalRow
+          ? { id: dayGoalRow.id, targetDate: dayGoalRow.targetDate, objective: dayGoalRow.objective }
+          : null;
 
         // Anchor pick: identifies which plan's rotation the requested week
         // snaps to (rotation weeks are plan-relative — anchored on that plan's
@@ -900,6 +911,8 @@ function registerReadTools(server: McpServer) {
           // #284: membership fetched once above — explicit value (including
           // null) short-circuits resolveDay's own lookup on all 7 days.
           membership,
+          // #297: day-driving goal fetched once above — same short-circuit.
+          dayGoal,
         }));
 
         const days = await Promise.all(

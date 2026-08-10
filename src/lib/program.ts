@@ -1,5 +1,12 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
-import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar";
+// #297: import the pure date primitives from the LEAF module (calendar-core),
+// not the calendar.ts barrel. calendar.ts imports this module (and, via
+// goal-events → goal-focus, so does everything goal-focus touches) — pulling
+// primitives through the barrel created a program ⇄ calendar cycle that made
+// it unsafe for goal-focus.ts / override-integrity.ts to call
+// getActiveProgram(). Same functions, same behavior; calendar.ts re-exports
+// these verbatim from calendar-core.
+import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar-core";
 import { daysDelta, isInPlan } from "@/lib/rotation-core";
 import { getDb } from "@/lib/db";
 import { parseAttributionRules, type AttributionRule } from "@/lib/attribution-rules";

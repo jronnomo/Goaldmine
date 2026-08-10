@@ -414,9 +414,12 @@ describe("resolveDay — #282 program + scheduledItemsToday + goalMarks", () => 
       focusGoalId: null,
       program: programForDate,
       membership,
+      // #297: the day-driving goal is batched by range callers too — with all
+      // three provided, resolveDay must not touch the Program table at all.
+      dayGoal: { id: "g-handstand", targetDate: null, objective: "Freestanding handstand" },
     });
-    // Both program resolution AND membership came from ctx — the Program table
-    // was never consulted (get_week's 7-day batching contract).
+    // Program resolution, membership, AND the day goal all came from ctx — the
+    // Program table was never consulted (get_week's 7-day batching contract).
     expect(programFindFirst).not.toHaveBeenCalled();
     expect(r.program?.id).toBe("prog-1");
     expect(r.scheduledItemsToday).toHaveLength(1);
@@ -427,6 +430,7 @@ describe("resolveDay — #282 program + scheduledItemsToday + goalMarks", () => 
       focusGoalId: null,
       program: programForDate,
       membership: null,
+      dayGoal: null,
     });
     // Explicit null = caller already determined "no active Program".
     expect(r2.program).toBeNull();
