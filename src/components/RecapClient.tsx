@@ -10,6 +10,7 @@
 
 import { useState, useEffect } from "react";
 import type { RecapTemplate, RecapCardFormat, RecapHighlight } from "@/lib/recap";
+import { HIGHLIGHT_ICON_EMOJI } from "@/lib/recap-icons";
 import { markRecapPosted } from "@/lib/recap-actions";
 
 // #231: max manual Retry attempts against the uncached satori/resvg render
@@ -399,7 +400,7 @@ export function RecapClient({
             <option value="">None</option>
             {(candidates ?? []).map((h) => (
               <option key={h.id} value={h.id}>
-                {h.icon} {h.label}{h.meta ? ` — ${h.meta}` : ""}
+                {HIGHLIGHT_ICON_EMOJI[h.icon]} {h.label}{h.meta ? ` — ${h.meta}` : ""}
               </option>
             ))}
             <option value="__custom__">Custom…</option>

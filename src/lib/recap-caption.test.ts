@@ -60,7 +60,7 @@ const FITNESS_RECAP: WeeklyRecap = {
 const PR_HIGHLIGHT: RecapHighlight = {
   id: "pr:Goblet Squat",
   kind: "pr",
-  icon: "🏆",
+  icon: "trophy",
   label: "Goblet Squat",
   meta: "65 lb",
   sub: "new PR",
@@ -290,7 +290,7 @@ describe("composeCaption", () => {
     const noSubHighlight: RecapHighlight = {
       id: "hike:test",
       kind: "hike",
-      icon: "⛰️",
+      icon: "mountain",
       label: "Bear Peak",
       meta: "8.2 mi · 3,768 ft",
       sub: null,
