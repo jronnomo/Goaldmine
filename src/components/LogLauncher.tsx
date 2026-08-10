@@ -117,7 +117,7 @@ const ImportIcon = () => (
 /** Fixed-height placeholder matching the meal list + macro line — no layout shift. */
 function LogSheetSkeleton() {
   return (
-    <div className="mb-4 animate-pulse" aria-hidden>
+    <div className="mb-4 motion-safe:animate-pulse" aria-hidden>
       <div className="h-3 w-32 rounded bg-[var(--border)] mb-3" />
       <div className="space-y-2">
         <div className="h-4 rounded bg-[var(--border)]" />
@@ -133,7 +133,13 @@ export function LogLauncher({
   onClose,
   open,
 }: LogLauncherProps) {
-  const [expanded, setExpanded] = useState<ExpandedRow>(null);
+  // UXR-TIA-41 (approved sign-off): the sheet opens on the MEAL composer — a
+  // CONSTANT default, never context-aware (an adaptive default would destroy
+  // the spatial memory that makes the 3-tap path feel like one gesture).
+  // Kills the zero-information second tap: 4 taps → 3 for the app's
+  // highest-frequency write (~4.5 meals/day), ~31:1 against the weekly
+  // weigh-in's one extra tap.
+  const [expanded, setExpanded] = useState<ExpandedRow>("meal");
 
   const [state, setState] = useState<LogSheetState>({ phase: "idle", data: null });
 
