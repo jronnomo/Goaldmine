@@ -35,6 +35,11 @@ import {
   type WeekConflict,
   type ResolveDayCtx,
 } from "@/lib/calendar";
+import {
+  daysDelta,
+  weekIndex as weekIndexOf,
+  dateForRotationSlot,
+} from "@/lib/rotation-core";
 import { orphanedOverrideWarning } from "@/lib/override-integrity";
 import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
@@ -854,13 +859,10 @@ function registerReadTools(server: McpServer) {
           };
         }
 
-        const anchorStartMid = startOfDay(anchorPick.startedOn);
-        const baseDayStart = startOfDay(baseDate);
-        const anchorDaysDelta = Math.floor(
-          (baseDayStart.getTime() - anchorStartMid.getTime()) / (24 * 3600 * 1000),
-        );
-        const anchorWi = Math.floor(anchorDaysDelta / 7) + 1;
-        const weekStart = addDays(anchorStartMid, (anchorWi - 1) * 7);
+        // B4/A3: rotation-core's canonical anchor math (same formulas
+        // resolveDay uses — floor daysDelta → weekIndex).
+        const anchorWi = weekIndexOf(daysDelta(anchorPick.startedOn, baseDate));
+        const weekStart = dateForRotationSlot(anchorPick.startedOn, anchorWi, 1);
         const weekEnd = addDays(weekStart, 6);
 
         // Pre-assemble goal events + cross-goal conflicts for the whole week
@@ -920,12 +922,9 @@ function registerReadTools(server: McpServer) {
         // week") than an arbitrary extrapolation from whichever date the caller
         // happened to pass in.
         const day0Pick = dayPicks[0];
-        const wi = day0Pick
-          ? Math.floor(
-              (startOfDay(weekStart).getTime() - startOfDay(day0Pick.startedOn).getTime()) /
-                (24 * 3600 * 1000 * 7),
-            ) + 1
-          : null;
+        // weekIndexOf(daysDelta(...)) — identical to the old direct
+        // floor(msDiff / 7 days) + 1 by the identity floor(floor(x)/7) === floor(x/7).
+        const wi = day0Pick ? weekIndexOf(daysDelta(day0Pick.startedOn, weekStart)) : null;
         const totalWeeks = day0Pick ? day0Pick.template.totalWeeks : null;
 
         return {
@@ -2586,15 +2585,12 @@ async function guardedAdvanceConfirmedThrough(
     };
   }
 
-  // Derive the current confirmed week index from confirmedThroughDate.
+  // Derive the current confirmed week index from confirmedThroughDate
+  // (rotation-core's canonical daysDelta → weekIndex).
   const currentWeekIdx: number = (() => {
     if (!program.confirmedThroughDate) return 0;
-    const startMid = startOfDay(program.startedOn);
-    const markMid = startOfDay(program.confirmedThroughDate);
-    const delta = Math.floor(
-      (markMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
-    );
-    return delta < 0 ? 0 : Math.floor(delta / 7) + 1;
+    const delta = daysDelta(program.startedOn, program.confirmedThroughDate);
+    return delta < 0 ? 0 : weekIndexOf(delta);
   })();
 
   // C-1: refuse if target is below current mark — use reopen_week instead.

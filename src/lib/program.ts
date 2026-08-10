@@ -1,5 +1,6 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
 import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar";
+import { daysDelta, isInPlan } from "@/lib/rotation-core";
 import { getDb } from "@/lib/db";
 import { parseAttributionRules, type AttributionRule } from "@/lib/attribution-rules";
 
@@ -290,9 +291,9 @@ export type PlanWindowCandidate = ActiveProgramSnapshot & {
 };
 
 /**
- * Pure coverage check — same daysDelta math as resolveDay (calendar.ts:843-848):
- * daysDelta = floor((startOfDay(target) - startOfDay(startedOn)) / 1 day);
- * covered = 0 <= daysDelta < template.totalWeeks * 7.
+ * Pure coverage check — rotation-core's daysDelta/isInPlan (B4/A3: the same
+ * canonical math resolveDay uses):
+ * covered = 0 <= daysDelta(startedOn, target) < template.totalWeeks * 7.
  *
  * S4 clamp: when `goalCompletedAt` is provided, the window's effective end is
  * clamped to the completion day itself — the completion day IS covered, the
@@ -309,10 +310,10 @@ function coversDayKey(
   targetDayKey: string,
   goalCompletedAt?: Date | null,
 ): boolean {
-  const startMid = startOfDay(program.startedOn);
   const targetMid = parseDateKey(targetDayKey); // === startOfDay(that date)
-  const daysDelta = Math.floor((targetMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return false;
+  if (!isInPlan(daysDelta(program.startedOn, targetMid), program.template.totalWeeks)) {
+    return false;
+  }
   if (goalCompletedAt && targetMid.getTime() > startOfDay(goalCompletedAt).getTime()) return false;
   return true;
 }
