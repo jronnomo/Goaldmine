@@ -18,10 +18,18 @@ export function ReadinessChart({
   data,
   targetDate,
   ariaLabel,
+  frozen = false,
 }: {
   data: Point[];
   targetDate?: string;
   ariaLabel?: string;
+  /**
+   * #292 / UXR-PV-47: a completed goal's frozen (R9) arc — stroke-only
+   * var(--muted), NO fill, NEVER dashed (dashed means provisional in this
+   * app; frozen is the most certain data we have). Default false keeps the
+   * live rendering byte-identical for every existing consumer.
+   */
+  frozen?: boolean;
 }) {
   // UXR-GCU-49 (goal-celebration-upgrade.md §7.1/§8.3): Recharts' default
   // 1500ms mount animation was live and unguarded on every consumer of this
@@ -48,7 +56,14 @@ export function ReadinessChart({
       : "Readiness trend chart, no data");
 
   return (
-    <div className="h-48" role="img" aria-label={computedLabel}>
+    <div
+      className="h-48"
+      role="img"
+      aria-label={computedLabel}
+      // Only stamped on the frozen variant — the live path emits no new
+      // attribute, keeping existing consumers' markup byte-identical.
+      {...(frozen ? { "data-arc-variant": "frozen" } : {})}
+    >
       <div aria-hidden="true" className="w-full h-full">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={formatted} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
@@ -97,9 +112,10 @@ export function ReadinessChart({
             <Area
               type="monotone"
               dataKey="score"
-              stroke="var(--accent)"
-              strokeWidth={2}
-              fill="url(#readinessFill)"
+              stroke={frozen ? "var(--muted)" : "var(--accent)"}
+              strokeWidth={frozen ? 1 : 2}
+              fill={frozen ? "none" : "url(#readinessFill)"}
+              {...(frozen ? { fillOpacity: 0 } : {})}
               isAnimationActive={!reduce}
             />
           </AreaChart>
