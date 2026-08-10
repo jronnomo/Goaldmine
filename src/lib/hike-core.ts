@@ -14,6 +14,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma, getDb } from "@/lib/db";
 import { startOfDay, endOfDay } from "@/lib/calendar";
 import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
+import { mirrorActivityGoalLink, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 // ---------------------------------------------------------------------------
 // logHikeCore — verbatim lift of tools.ts:2404-2549 handler logic
@@ -104,6 +105,16 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
         notes: input.notes ?? null,
       },
     });
+    // #308 v1b: mirror the row's authoritative goalId into the link table
+    // (null goalId = legacy focus-at-read-time attribution → resolved focus
+    // id). No-op without an active Program / non-member goal; idempotent;
+    // best-effort (the hike row is already written).
+    await mirrorActivityGoalLink(db, {
+      activityType: ACTIVITY_LINK_TYPE.hike,
+      activityId: updated.id,
+      goalId: updated.goalId ?? focusGoalId,
+      date: updated.date,
+    }).catch(swallowAutoLinkError("logHikeCore:finalize"));
     return {
       id: updated.id,
       finalized: true,
@@ -161,6 +172,15 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
           notes: input.notes ?? null,
         },
       });
+      // #308 v1b mirror — the row keeps its stored goalId (the update never
+      // touches it); a legacy null-attributed row falls back to the resolved
+      // goal (== the focus goal in the branch that matched it).
+      await mirrorActivityGoalLink(db, {
+        activityType: ACTIVITY_LINK_TYPE.hike,
+        activityId: updated.id,
+        goalId: updated.goalId ?? resolvedGoalId,
+        date: updated.date,
+      }).catch(swallowAutoLinkError("logHikeCore:dedup"));
       return {
         id: updated.id,
         finalized: false,
@@ -188,6 +208,14 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
       goalId: resolvedGoalId,
     },
   });
+  // #308 v1b mirror — Hike.goalId stays authoritative; the link is a
+  // read-model copy written only when the goal is an active Program member.
+  await mirrorActivityGoalLink(db, {
+    activityType: ACTIVITY_LINK_TYPE.hike,
+    activityId: h.id,
+    goalId: h.goalId ?? null,
+    date: h.date,
+  }).catch(swallowAutoLinkError("logHikeCore:create"));
   return { id: h.id, finalized: false, deduped: false, message: "Hike logged" };
 }
 

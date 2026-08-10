@@ -40,6 +40,7 @@ import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma, getDb } from "@/lib/db";
 import type { ScopedClient } from "@/lib/db";
+import { autoLinkNutrition, swallowAutoLinkError } from "@/lib/attribution-hooks";
 import { formatWorkout, toFormattableWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
@@ -510,6 +511,14 @@ async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise
       ...macros,
     },
   });
+  // #309 v1c: link the meal to ACTIVE fitness-kind member goals only (never
+  // project goals; Program attributionRules do NOT apply to nutrition in v1 —
+  // see evaluateNutritionLinks). Written through the SAME client `db` so
+  // batch_log_nutrition's links ride its transaction. No-op without an active
+  // Program; idempotent; best-effort.
+  await autoLinkNutrition(db, { nutritionLogId: n.id, date: n.date }).catch(
+    swallowAutoLinkError("logNutritionCore"),
+  );
   return { id: n.id, message: `Nutrition logged${savedMealSuffix}` };
 }
 

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { prisma, getDb } from "@/lib/db";
 import { recordsSetInWorkout, type RecordSet } from "@/lib/records";
 import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
+import { autoLinkWorkout, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 // ---------------------------------------------------------------------------
 // Input types (mirrors SetInputShape / ExerciseInputShape in tools.ts)
@@ -155,6 +156,21 @@ export async function createWorkoutCore(
     status === "completed" && input.exercises.length > 0
       ? await recordsSetInWorkout(created.id)
       : [];
+
+  // #307 auto-link engine v1a: hint/rule-matched ActivityGoalLink rows for the
+  // new workout. No-op without an active Program; skipped for non-completed
+  // rows (skipDay placeholders); idempotent; writes are top-level scoped calls
+  // through the same client that created the workout. Best-effort — the
+  // workout is committed, so a link failure must not fail (and retry-dupe)
+  // the log call; backfill-attribution.ts repairs gaps.
+  await autoLinkWorkout(db, {
+    workoutId: created.id,
+    title: input.title ?? null,
+    source: input.source ?? null,
+    status,
+    startedAt: input.startedAt,
+    exerciseNames: input.exercises.map((ex) => ex.name),
+  }).catch(swallowAutoLinkError("createWorkoutCore"));
 
   return { id: created.id, recordsSet };
 }

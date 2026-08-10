@@ -9,7 +9,11 @@
 
 import { describe, it, expect } from "vitest";
 
-import { parseAttributionRules, type AttributionRule } from "@/lib/attribution-rules";
+import {
+  parseAttributionRules,
+  AttributionRulesAuthoringSchema,
+  type AttributionRule,
+} from "@/lib/attribution-rules";
 
 const VALID_RULES: AttributionRule[] = [
   {
@@ -85,5 +89,51 @@ describe("parseAttributionRules", () => {
     expect(parseAttributionRules(withExtras)).toEqual([
       { match: { titleContains: ["walk"] }, goalIds: ["goal-x"] },
     ]);
+  });
+});
+
+// ── Authoring schema (#307 consolidation — moved from program-core.ts) ───────
+// WRITE-side validation: stricter than the read boundary above. The guards
+// under test are exactly the two program-core carried: ≥1 match criterion and
+// ≥1 goalId (plus non-empty strings).
+
+describe("AttributionRulesAuthoringSchema", () => {
+  it("accepts the same valid rulesets the read boundary round-trips", () => {
+    const parsed = AttributionRulesAuthoringSchema.safeParse(VALID_RULES);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual(VALID_RULES);
+  });
+
+  it("rejects an empty match {} (the read boundary accepts it; the engine treats it as inert)", () => {
+    const r = AttributionRulesAuthoringSchema.safeParse([{ match: {}, goalIds: ["g1"] }]);
+    expect(r.success).toBe(false);
+    expect(r.success ? "" : r.error.issues[0]!.message).toMatch(/at least one of/);
+  });
+
+  it("rejects empty goalIds (a rule that links nothing is an authoring mistake)", () => {
+    const r = AttributionRulesAuthoringSchema.safeParse([
+      { match: { source: "strong" }, goalIds: [] },
+    ]);
+    expect(r.success).toBe(false);
+    expect(r.success ? "" : r.error.issues[0]!.message).toMatch(/at least one goalId/);
+  });
+
+  it("rejects empty-string criterion entries and goalIds", () => {
+    expect(
+      AttributionRulesAuthoringSchema.safeParse([{ match: { titleContains: [""] }, goalIds: ["g1"] }])
+        .success,
+    ).toBe(false);
+    expect(
+      AttributionRulesAuthoringSchema.safeParse([{ match: { source: "" }, goalIds: ["g1"] }]).success,
+    ).toBe(false);
+    expect(
+      AttributionRulesAuthoringSchema.safeParse([{ match: { source: "strong" }, goalIds: [""] }])
+        .success,
+    ).toBe(false);
+  });
+
+  it("everything the authoring schema stores, the read boundary parses back (no write→read gap)", () => {
+    const authored = AttributionRulesAuthoringSchema.parse(VALID_RULES);
+    expect(parseAttributionRules(authored)).toEqual(VALID_RULES);
   });
 });
