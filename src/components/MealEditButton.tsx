@@ -30,12 +30,17 @@ export type MealEditButtonMeal = {
 export function MealEditButton({
   meal,
   quickPickFoods,
+  libraryFoods,
   buttonClassName,
   buttonLabel = "Edit",
   onMutated,
 }: {
   meal: MealEditButtonMeal;
   quickPickFoods?: LibraryFood[];
+  /** Pre-loaded library foods for the composer's Browse-library picker.
+   *  Optional — omit and "Browse library" simply doesn't render (see
+   *  useFoodComposer's gate); zero behavior change for hosts that don't wire it. */
+  libraryFoods?: LibraryFood[];
   buttonClassName?: string;
   buttonLabel?: string;
   /** Called after a save or delete lands — lets the host (e.g. LogLauncher's
@@ -91,6 +96,7 @@ export function MealEditButton({
                 macros: meal.macros,
               }}
               quickPickFoods={quickPickFoods}
+              libraryFoods={libraryFoods}
               plannedTarget={meal.plannedTarget}
               onSaved={() => {
                 onMutated?.();

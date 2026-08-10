@@ -289,6 +289,7 @@ export function LogLauncher({
                                     <MealEditButton
                                       meal={meal}
                                       quickPickFoods={data.quickPickFoods}
+                                      libraryFoods={data.libraryFoods}
                                       onMutated={fetchData}
                                     />
                                   </li>

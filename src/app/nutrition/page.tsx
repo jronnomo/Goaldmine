@@ -150,7 +150,7 @@ export default async function NutritionPage() {
           <p className="text-sm text-[var(--muted)]">No meals logged in the last 30 days.</p>
         </Card>
       ) : (
-        <NutritionList groups={groups} quickPickFoods={quickPickFoods} />
+        <NutritionList groups={groups} quickPickFoods={quickPickFoods} libraryFoods={libraryFoods} />
       )}
 
       <Card title="Log a meal">

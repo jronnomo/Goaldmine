@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NutritionToday, type NutritionTodayLog } from "@/components/NutritionToday";
 import { parseDatetimeLocalValue } from "@/lib/calendar-core";
+import type { LibraryFood } from "@/lib/food-types";
 
 describe("NutritionToday — defaultDate passthrough (#294)", () => {
   it("showLogForm + defaultDate renders a composer seeded to that day, not today", () => {
@@ -186,5 +187,52 @@ describe("NutritionToday — append-choice stub threading (#295)", () => {
 
     expect(html).toContain('data-testid="meal-composer"');
     expect(html).not.toContain("append-choice");
+  });
+});
+
+// ── "Browse library" — libraryFoods threading fix ────────────────────────────
+// Root cause: NutritionToday had no `libraryFoods` prop at all, so neither its
+// inline log composer (LogNutritionForm, below) nor its per-meal edit composer
+// (MealEditButton, gated behind a closed-by-default BottomSheet — not
+// SSR-observable) could ever show "Browse library". This suite proves the fix
+// via the inline composer, which — unlike the per-meal edit sheet — renders
+// unconditionally whenever `showLogForm` is true, so the threaded prop is
+// directly visible in a static render.
+describe("NutritionToday — libraryFoods passthrough to the inline composer (Browse library fix)", () => {
+  const LIB_FOOD: LibraryFood[] = [
+    {
+      id: "food-1",
+      barcode: null,
+      name: "Chicken breast",
+      brand: null,
+      servingSize: "100 g",
+      basis: "100g",
+      perServing: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, fiberG: 0, sodiumMg: 74 },
+    },
+  ];
+
+  it("libraryFoods supplied: the inline log composer renders Browse library", () => {
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, {
+        logs: [],
+        plan: null,
+        showLogForm: true,
+        libraryFoods: LIB_FOOD,
+      }),
+    );
+    expect(html).toContain('data-testid="composer-browse-library"');
+    expect(html).toContain("Browse library");
+  });
+
+  it("libraryFoods omitted: no Browse library (regression guard — matches pre-fix behavior for any host that doesn't wire it)", () => {
+    const html = renderToStaticMarkup(
+      createElement(NutritionToday, {
+        logs: [],
+        plan: null,
+        showLogForm: true,
+      }),
+    );
+    expect(html).not.toContain("composer-browse-library");
+    expect(html).not.toContain("Browse library");
   });
 });

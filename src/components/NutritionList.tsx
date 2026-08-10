@@ -67,9 +67,14 @@ type UndoState = { id: string; label: string };
 export function NutritionList({
   groups,
   quickPickFoods,
+  libraryFoods,
 }: {
   groups: NutritionDayGroup[];
   quickPickFoods?: LibraryFood[];
+  /** Pre-loaded library foods for the composer's Browse-library picker.
+   *  Optional — omit and "Browse library" simply doesn't render (see
+   *  useFoodComposer's gate); zero behavior change for hosts that don't wire it. */
+  libraryFoods?: LibraryFood[];
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
   // Optimistic hide before the deferred commit. Keyed on the row id.
@@ -242,6 +247,7 @@ export function NutritionList({
                 macros: openRow.macros,
               }}
               quickPickFoods={quickPickFoods}
+              libraryFoods={libraryFoods}
               plannedTarget={openRow.plannedTarget}
               onSaved={() => setOpenId(null)}
               onDeleted={(snap) => handleDeleted(snap)}

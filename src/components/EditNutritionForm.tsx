@@ -24,10 +24,15 @@ export function EditNutritionForm({
   id,
   defaults,
   quickPickFoods,
+  libraryFoods,
 }: {
   id: string;
   defaults: MealDefaults;
   quickPickFoods?: LibraryFood[];
+  /** Pre-loaded library foods for the composer's Browse-library picker.
+   *  Optional — omit and "Browse library" simply doesn't render (see
+   *  useFoodComposer's gate); zero behavior change for hosts that don't wire it. */
+  libraryFoods?: LibraryFood[];
 }) {
   const router = useRouter();
   return (
@@ -36,6 +41,7 @@ export function EditNutritionForm({
       id={id}
       defaults={defaults}
       quickPickFoods={quickPickFoods}
+      libraryFoods={libraryFoods}
       onSaved={() => router.push("/nutrition")}
       onDeleted={async () => {
         await deleteNutrition(id);

@@ -140,12 +140,19 @@ export function NutritionToday({
   plan,
   showLogForm = true,
   quickPickFoods,
+  libraryFoods,
   defaultDate,
 }: {
   logs: NutritionTodayLog[];
   plan?: NutritionPlan | null;
   showLogForm?: boolean;
   quickPickFoods?: LibraryFood[];
+  /** Pre-loaded library foods for the composer's Browse-library picker
+   *  (both the per-meal edit composer and the inline log-form composer
+   *  below). Optional — omit and "Browse library" simply doesn't render
+   *  (see useFoodComposer's gate); zero behavior change for hosts that
+   *  don't wire it. */
+  libraryFoods?: LibraryFood[];
   /**
    * Pre-seed the inline log form (when `showLogForm`) to this calendar day
    * (dateKey "YYYY-MM-DD") instead of "now" — passed straight through to
@@ -262,6 +269,7 @@ export function NutritionToday({
                                   : undefined,
                               }}
                               quickPickFoods={quickPickFoods}
+                              libraryFoods={libraryFoods}
                             />
                           </div>
                         );
@@ -352,6 +360,7 @@ export function NutritionToday({
         <div className="border-t border-[var(--border)] pt-3">
           <LogNutritionForm
             quickPickFoods={quickPickFoods}
+            libraryFoods={libraryFoods}
             defaultDate={defaultDate}
             existingMeals={existingMeals}
           />
