@@ -38,14 +38,16 @@ export type ScheduledBaseline = {
   dayOfWeek: number;
   retestWeeks: number[];
   checkpoints: ScheduledCheckpoint[];
-  latestResult: { date: Date; value: number; units: string } | null;
+  /** capped (#276): the latest value hit an equipment ceiling — display marker only. */
+  latestResult: { date: Date; value: number; units: string; capped: boolean } | null;
   resultCount: number;
 };
 
 export type BaselineSummary = {
   testName: string;
   units: string;
-  latest: { date: Date; value: number };
+  /** capped (#276): equipment-ceiling marker on the latest result — display only, never PR/readiness math. */
+  latest: { date: Date; value: number; capped: boolean };
   earliest: { date: Date; value: number };
   count: number;
   /** Δ from earliest to latest. Direction is metric-dependent — display only. */
@@ -233,7 +235,7 @@ export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
     out.push({
       testName: g.testName,
       units: last.units,
-      latest: { date: last.date, value: last.value },
+      latest: { date: last.date, value: last.value, capped: last.capped },
       earliest: { date: first.date, value: first.value },
       count: g._count._all,
       delta: last.value - first.value,
@@ -299,7 +301,7 @@ export async function getBaselineScheduleForPlan(
   startedOn: Date | null;
   totalWeeks: number | null;
   scheduled: ScheduledBaseline[];
-  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[];
 }> {
   const now = opts?.now ?? new Date();
   const template = plan.planJson as unknown as ProgramTemplate;
@@ -355,7 +357,7 @@ export async function getBaselineScheduleForPlan(
       retestWeeks: test.retestWeeks,
       checkpoints,
       latestResult: latest
-        ? { date: latest.date, value: latest.value, units: latest.units }
+        ? { date: latest.date, value: latest.value, units: latest.units, capped: latest.capped }
         : null,
       resultCount: rows.length,
     };
@@ -363,7 +365,7 @@ export async function getBaselineScheduleForPlan(
 
   // Tests logged but not in the template — surface them so they're not lost.
   const scheduledNames = new Set(flat.map((f) => f.test.testName));
-  const unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[] = [];
+  const unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[] = [];
   for (const [testName, rows] of byName) {
     if (scheduledNames.has(testName)) continue;
     const latest = rows.at(-1)!;
@@ -371,7 +373,7 @@ export async function getBaselineScheduleForPlan(
       testName,
       units: latest.units,
       resultCount: rows.length,
-      latest: { date: latest.date, value: latest.value },
+      latest: { date: latest.date, value: latest.value, capped: latest.capped },
     });
   }
   unscheduledExtras.sort((a, b) => a.testName.localeCompare(b.testName));
@@ -396,7 +398,7 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   startedOn: Date | null;
   totalWeeks: number | null;
   scheduled: ScheduledBaseline[];
-  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[];
 }> {
   // Focus-strict: only return the focus goal's active plan (DC-6 + CRIT-2 fix).
   // When the focus goal has no active plan, return the empty shape rather than

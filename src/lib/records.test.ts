@@ -21,6 +21,8 @@ import {
   recordsSetInWorkout,
   canonicalExerciseName,
   getBaselineHistory,
+  getBaselineSummaries,
+  getBaselineScheduleForPlan,
 } from "@/lib/records";
 
 import { mapBaselineToSet } from "@/lib/baseline-workout";
@@ -839,5 +841,117 @@ describe("getBaselineHistory — query passes omit: { userId: true }", () => {
     expect(baselineFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { testName: "Pull-up Max Reps" } }),
     );
+  });
+});
+
+// ── Group: #276 Baseline.capped carried through the read payloads ────────────
+// capped is a display-only equipment-ceiling marker. These tests pin that the
+// records read surfaces (get_records_summary → getBaselineSummaries,
+// get_baseline_schedule → getBaselineScheduleForPlan) forward it — while the
+// PR/readiness math stays untouched (nothing here feeds bestSetSummary or
+// computeReadiness).
+
+describe("#276 capped — getBaselineSummaries carries latest.capped", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+  const groupBy = vi.fn();
+  const findFirst = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({ baseline: { groupBy, findFirst } });
+    groupBy.mockResolvedValue([{ testName: "8-Rep DB Press", _count: { _all: 2 } }]);
+    const earliest = {
+      id: "b-0",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-06-01"),
+      value: 55,
+      units: "lb",
+      capped: false,
+    };
+    const latest = {
+      id: "b-1",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-08-01"),
+      value: 65,
+      units: "lb",
+      capped: true,
+    };
+    findFirst.mockImplementation(({ orderBy }: { orderBy: { date: "asc" | "desc" } }) =>
+      Promise.resolve(orderBy.date === "asc" ? earliest : latest),
+    );
+  });
+
+  it("latest.capped = true flows into the summary row (delta math unchanged)", async () => {
+    const out = await getBaselineSummaries();
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.latest).toEqual({ date: new Date("2026-08-01"), value: 65, capped: true });
+    expect(out[0]!.earliest).toEqual({ date: new Date("2026-06-01"), value: 55 });
+    expect(out[0]!.delta).toBe(10);
+  });
+});
+
+describe("#276 capped — getBaselineScheduleForPlan carries capped on latestResult + unscheduledExtras", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+  const findMany = vi.fn();
+
+  const startedOn = new Date("2026-06-01T06:00:00.000Z");
+  const plan = {
+    startedOn,
+    weeks: 12,
+    planJson: {
+      baselineWeek: [
+        {
+          dayOfWeek: 1,
+          tests: [
+            { testName: "8-Rep DB Press", units: "lb", protocol: "8RM", retestWeeks: [6] },
+          ],
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({ baseline: { findMany } });
+    findMany.mockResolvedValue([
+      {
+        id: "b-1",
+        testName: "8-Rep DB Press",
+        date: new Date("2026-06-08"),
+        value: 65,
+        units: "lb",
+        capped: true,
+      },
+      {
+        id: "b-2",
+        testName: "Off-Template Row",
+        date: new Date("2026-06-09"),
+        value: 100,
+        units: "sec",
+        capped: true,
+      },
+    ]);
+  });
+
+  it("scheduled latestResult.capped and unscheduledExtras.latest.capped are forwarded", async () => {
+    const out = await getBaselineScheduleForPlan(plan, { now: new Date("2026-06-15") });
+
+    expect(out.scheduled).toHaveLength(1);
+    expect(out.scheduled[0]!.latestResult).toEqual({
+      date: new Date("2026-06-08"),
+      value: 65,
+      units: "lb",
+      capped: true,
+    });
+
+    expect(out.unscheduledExtras).toHaveLength(1);
+    expect(out.unscheduledExtras[0]!.latest).toEqual({
+      date: new Date("2026-06-09"),
+      value: 100,
+      capped: true,
+    });
   });
 });
