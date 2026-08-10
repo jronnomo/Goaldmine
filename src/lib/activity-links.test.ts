@@ -16,6 +16,7 @@ import {
 function link(partial: Partial<ActivityLinkRecord> & Pick<ActivityLinkRecord, "id" | "activityType" | "activityId">): ActivityLinkRecord {
   return {
     goalId: "goal-1",
+    source: "auto",
     userId: "user-1",
     activityDate: new Date("2026-08-01T06:00:00Z"),
     createdAt: new Date("2026-08-01T06:00:00Z"),
@@ -59,6 +60,24 @@ describe("computeOrphanLinks", () => {
     const report = computeOrphanLinks(links, existing);
     expect(report.orphans).toHaveLength(0);
     expect(report.unknownType).toHaveLength(0);
+  });
+
+  it("still flags a source='removed' TOMBSTONE whose activity is gone — classification is source-blind (UXR-PV-89)", () => {
+    // A tombstone only exists to block re-linking of a LIVE activity. Once
+    // the activity row is deleted the tombstone is garbage like any other
+    // dangling link (the delete-hooks should have removed it), so the
+    // verifier keeps flagging it rather than exempting it.
+    const links = [
+      link({ id: "l1", activityType: "workout", activityId: "w-gone", source: "removed" }),
+      link({ id: "l2", activityType: "workout", activityId: "w-live", source: "removed" }),
+    ];
+    const existing = new Map<string, Set<string>>([["workout", new Set(["w-live"])]]);
+
+    const report = computeOrphanLinks(links, existing);
+    expect(report.orphans.map((l) => l.id)).toEqual(["l1"]); // gone → flagged
+    expect(report.orphans[0]!.source).toBe("removed"); // reported as a tombstone
+    // A tombstone whose activity still exists is healthy — not an orphan.
+    expect(report.orphans.some((l) => l.id === "l2")).toBe(false);
   });
 
   it("separates orphans from survivors of the same type, and treats a missing map entry as nothing-exists", () => {

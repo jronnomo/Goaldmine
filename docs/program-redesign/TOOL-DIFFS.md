@@ -15,6 +15,63 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — UXR-PV-89: `attribute_activity` remove = TOMBSTONE (durable) + `list_activity_links` hides removed links by default
+
+**Issue:** #290 wave (Sprint 19 / M4b) — ledger sign-off `UXR-PV-89` from
+`docs/ux-research/program-views.md` §4.2.
+
+**Why:** "remove always wins" was not durable. `ActivityGoalLink.source` was
+`"auto" | "explicit"` only, and the auto-link engine writes with
+`createMany({ skipDuplicates: true })` (ON CONFLICT DO NOTHING) against
+`@@unique([activityType, activityId, goalId])` — so hard-deleting a link on
+remove freed the unique key, and any rules re-run over that activity (log-time
+hook retry, `scripts/backfill-attribution.ts`) silently resurrected the link
+the coach had just removed.
+
+**What changed:**
+
+- `attribute_activity` `action:'remove'` now **updates the row to
+  `source:'removed'` and keeps it** (a tombstone) instead of deleting. The
+  occupied unique key is what makes removal durable: the auto-engine's
+  insert-or-skip can never touch an existing row, so nothing short of an
+  explicit re-add brings the link back. Removing a non-existent OR
+  already-removed link stays an idempotent no-op (`changed:false`,
+  `removedSource:null`). The `removedSource` output field still reports the
+  pre-tombstone source on a real removal.
+- `attribute_activity` `action:'add'` over a tombstone **revives** it to
+  `source:'explicit'` in place (same row, no duplicate). New output field
+  `revived: boolean` on the add path; `upgraded` now strictly means
+  auto→explicit (it is `false` on a revival).
+- `list_activity_links` **excludes `source:'removed'` rows by default** — a
+  removed link reads as removed everywhere. New optional input
+  `includeRemoved: boolean` (default false) returns tombstones for audit
+  ("what did I remove?").
+- Delete-hooks are UNCHANGED and deliberately tombstone-blind: deleting an
+  activity hard-deletes ALL of its link rows including tombstones (once the
+  activity is gone there is nothing left to block). The orphan verifier
+  (`scripts/verify-activity-links.ts`) likewise still flags a tombstone whose
+  activity row is gone — such a row is drift, not policy — and its report now
+  prints each finding's `source`.
+- Schema: comment-only (`source` is a plain `String`; `// auto | explicit |
+  removed`). **No migration.**
+
+**Tests:** `src/lib/attribution-manual.test.ts` (remove→update-to-removed for
+auto and explicit alike, no delete call; already-removed no-op; revive
+add-path with `revived:true`/`upgraded:false`; an in-memory
+ON-CONFLICT-DO-NOTHING simulation proving `writeAutoLinks` skips a tombstoned
+key and never mutates the row; list default filter + `includeRemoved`),
+`src/lib/activity-delete-cores.test.ts` (delete-hook cleanup filters on
+(type, id) only — tombstones hard-deleted with their activity),
+`src/lib/activity-links.test.ts` (orphan classification stays source-blind —
+a tombstone whose activity is gone is still flagged).
+
+**Connector reconnect:** YES — `attribute_activity` gained the `revived`
+output field + changed remove semantics/messages, and `list_activity_links`
+gained the `includeRemoved` input. Reconnect the claude.ai MCP connector
+after this deploys.
+
+---
+
 ## 2026-08-10 — #282/#283/#284: the program-shaped day — `get_today_plan` merger + program context on `get_day` / `get_week` / `get_session_brief`
 
 **Issues:** #282 (ResolvedDay keys) · #283 (merger) · #284 (three read tools) — Sprint 18 "Program-shaped day", epic #260. Documented per #286.

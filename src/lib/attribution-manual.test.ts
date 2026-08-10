@@ -6,10 +6,17 @@
 //     is UPGRADED in place (update — no second create, so the unique
 //     constraint never sees a duplicate); an identical explicit link is an
 //     idempotent no-op; unknown goal / unknown activity id are clean errors.
-//   - remove: deletes regardless of source (explicit deletes as readily as
-//     auto); removing a non-existent link is a no-op success; remove never
-//     requires the underlying activity row to exist.
+//   - remove (UXR-PV-89 tombstone semantics): flips the row to
+//     source='removed' IN PLACE regardless of source — never a delete — so
+//     the unique key keeps blocking the auto-engine/backfill upsert from
+//     resurrecting the link; removing a non-existent OR already-removed link
+//     is a no-op success; remove never requires the underlying activity row
+//     to exist. Adding over a tombstone REVIVES it to 'explicit'.
+//   - auto-engine safety: writeAutoLinks' createMany({skipDuplicates:true})
+//     cannot touch a tombstone (ON CONFLICT DO NOTHING on the unique key) —
+//     simulated against an in-memory unique-key store below.
 //   - list: filters on activityDate (NEVER createdAt — plan critique #9);
+//     excludes source='removed' by default (includeRemoved for audit);
 //     omitted goalId resolves the active Program's member goals; explicit
 //     select without userId; limit+1 truncation signal.
 //
@@ -24,6 +31,7 @@ vi.mock("@/lib/db", () => ({ getDb: mockGetDb, prisma: {} }));
 
 import { startOfDay } from "@/lib/calendar-core";
 import { attributeActivityCore, listActivityLinksCore } from "@/lib/attribution-manual";
+import { writeAutoLinks } from "@/lib/attribution-hooks";
 
 const WORKOUT_STARTED_AT = new Date("2026-08-05T22:30:00.000Z");
 const HIKE_DATE = new Date("2026-07-19T06:00:00.000Z");
@@ -168,6 +176,7 @@ describe("attributeActivityCore — add", () => {
     expect(args.data.source).toBe("explicit");
     expect(args.data.note).toBeUndefined(); // note omitted ⇒ the auto rule's note is kept
     expect(r.upgraded).toBe(true);
+    expect(r.revived).toBe(false);
     expect(r.changed).toBe(true);
     expect(r.link?.source).toBe("explicit");
   });
@@ -245,11 +254,11 @@ describe("attributeActivityCore — add", () => {
 // attributeActivityCore — remove
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("attributeActivityCore — remove (always wins, regardless of source)", () => {
+describe("attributeActivityCore — remove (UXR-PV-89: tombstone, always wins, stays removed)", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it.each(["auto", "explicit"] as const)(
-    "deletes a source='%s' link just as readily",
+    "tombstones a source='%s' link just as readily — UPDATE to source='removed', never a delete",
     async (source) => {
       const tx = makeTx();
       tx.activityGoalLink.findUnique = vi.fn(async () => ({ id: "link-1", source }));
@@ -262,14 +271,19 @@ describe("attributeActivityCore — remove (always wins, regardless of source)",
         action: "remove",
       });
 
-      expect(tx.activityGoalLink.delete).toHaveBeenCalledOnce();
-      expect(tx.activityGoalLink.delete.mock.calls[0][0].where).toEqual({
+      // The row is KEPT — its unique key is what blocks resurrection.
+      expect(tx.activityGoalLink.delete).not.toHaveBeenCalled();
+      expect(tx.activityGoalLink.update).toHaveBeenCalledOnce();
+      const args = tx.activityGoalLink.update.mock.calls[0][0];
+      expect(args.where).toEqual({
         activityType_activityId_goalId: {
           activityType: "workout",
           activityId: "w-1",
           goalId: "g-1",
         },
       });
+      expect(args.data).toEqual({ source: "removed" });
+      expect(args.select.userId).toBeUndefined();
       expect(r.changed).toBe(true);
       expect(r.removedSource).toBe(source);
     },
@@ -286,6 +300,25 @@ describe("attributeActivityCore — remove (always wins, regardless of source)",
       action: "remove",
     });
 
+    expect(tx.activityGoalLink.delete).not.toHaveBeenCalled();
+    expect(tx.activityGoalLink.update).not.toHaveBeenCalled();
+    expect(r.changed).toBe(false);
+    expect(r.removedSource).toBeNull();
+  });
+
+  it("removing an ALREADY-REMOVED link is an idempotent no-op (no second write)", async () => {
+    const tx = makeTx();
+    tx.activityGoalLink.findUnique = vi.fn(async () => ({ id: "link-1", source: "removed" }));
+    wireDb(tx);
+
+    const r = await attributeActivityCore({
+      activityType: "workout",
+      activityId: "w-1",
+      goalId: "g-1",
+      action: "remove",
+    });
+
+    expect(tx.activityGoalLink.update).not.toHaveBeenCalled();
     expect(tx.activityGoalLink.delete).not.toHaveBeenCalled();
     expect(r.changed).toBe(false);
     expect(r.removedSource).toBeNull();
@@ -309,6 +342,102 @@ describe("attributeActivityCore — remove (always wins, regardless of source)",
     expect(r.changed).toBe(true);
     expect(tx.goal.findUnique).not.toHaveBeenCalled();
     expect(tx.workout.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// attributeActivityCore — revive (add over a tombstone)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("attributeActivityCore — add over a removed tombstone REVIVES it", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("updates the tombstone in place to source='explicit' — revived:true, upgraded:false", async () => {
+    const tx = makeTx();
+    tx.activityGoalLink.findUnique = vi.fn(async () => ({
+      ...EXISTING_AUTO_LINK,
+      source: "removed",
+    }));
+    wireDb(tx);
+
+    const r = await attributeActivityCore({
+      activityType: "workout",
+      activityId: "w-1",
+      goalId: "g-1",
+      action: "add",
+    });
+
+    expect(tx.activityGoalLink.create).not.toHaveBeenCalled(); // same row, no duplicate
+    expect(tx.activityGoalLink.update).toHaveBeenCalledOnce();
+    expect(tx.activityGoalLink.update.mock.calls[0][0].data.source).toBe("explicit");
+    expect(r.changed).toBe(true);
+    expect(r.revived).toBe(true);
+    expect(r.upgraded).toBe(false); // upgraded means auto→explicit, not a revival
+    expect(r.link?.source).toBe("explicit");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-engine safety — the tombstone occupies the unique key
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("auto-engine cannot resurrect a tombstone (writeAutoLinks × skipDuplicates)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("createMany({skipDuplicates:true}) skips the tombstoned key and never updates the row", async () => {
+    // In-memory simulation of Postgres ON CONFLICT DO NOTHING on
+    // @@unique([activityType, activityId, goalId]) — exactly what
+    // skipDuplicates compiles to. The tombstone row holds the key.
+    const store = [
+      { activityType: "workout", activityId: "w-1", goalId: "g-1", source: "removed" },
+    ];
+    const writer = {
+      activityGoalLink: {
+        createMany: vi.fn(
+          async (args: {
+            data: Array<{
+              activityType: string;
+              activityId: string;
+              goalId: string;
+              source: string;
+              activityDate: Date;
+            }>;
+            skipDuplicates: boolean;
+          }) => {
+            expect(args.skipDuplicates).toBe(true); // the load-bearing flag
+            let count = 0;
+            for (const row of args.data) {
+              const exists = store.some(
+                (s) =>
+                  s.activityType === row.activityType &&
+                  s.activityId === row.activityId &&
+                  s.goalId === row.goalId,
+              );
+              if (!exists) {
+                store.push({ ...row });
+                count++;
+              }
+            }
+            return { count };
+          },
+        ),
+      },
+    };
+
+    const created = await writeAutoLinks(
+      writer,
+      "workout",
+      "w-1",
+      startOfDay(WORKOUT_STARTED_AT),
+      ["g-1", "g-2"], // g-1 is tombstoned; g-2 is genuinely new
+    );
+
+    expect(created).toBe(1); // only g-2 inserted
+    // The tombstone row is untouched — still source='removed'.
+    const tombstone = store.find((s) => s.goalId === "g-1")!;
+    expect(tombstone.source).toBe("removed");
+    // And there is exactly ONE row for the tombstoned key (no duplicate).
+    expect(store.filter((s) => s.goalId === "g-1")).toHaveLength(1);
   });
 });
 
@@ -435,5 +564,17 @@ describe("listActivityLinksCore", () => {
     await listActivityLinksCore({ goalId: "g-1" });
     const args = fakeDb.activityGoalLink.findMany.mock.calls[0][0];
     expect(args.orderBy).toEqual([{ activityDate: "desc" }, { createdAt: "desc" }]);
+  });
+
+  it("EXCLUDES source='removed' tombstones by default (UXR-PV-89)", async () => {
+    await listActivityLinksCore({ goalId: "g-1" });
+    const args = fakeDb.activityGoalLink.findMany.mock.calls[0][0];
+    expect(args.where.source).toEqual({ not: "removed" });
+  });
+
+  it("includeRemoved:true drops the tombstone filter — the audit view", async () => {
+    await listActivityLinksCore({ goalId: "g-1", includeRemoved: true });
+    const args = fakeDb.activityGoalLink.findMany.mock.calls[0][0];
+    expect(args.where.source).toBeUndefined();
   });
 });
