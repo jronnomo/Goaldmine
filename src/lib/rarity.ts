@@ -26,8 +26,14 @@ import {
   type GoalFeasibility,
   type StackRarity,
   type TargetFeasibility,
+  type RarityTier,
 } from "@/lib/rarity-core";
+import {
+  computeRollingValueFromWorkouts,
+  rollingParamsFromTargets,
+} from "@/lib/rolling-metrics";
 import type { GoalTarget } from "@/lib/metrics-registry";
+import { ROLLING_METRIC_PREFIX } from "@/lib/metrics-registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Weeks remaining (calendar midnights, USER_TZ)
@@ -211,7 +217,18 @@ export type GoalLike = {
  */
 export async function computeGoalFeasibility(
   goal: GoalLike,
-  opts?: { now?: Date },
+  opts?: {
+    now?: Date;
+    /**
+     * Optional pre-resolved `current` values, keyed by metric — consulted ONLY
+     * in the fallback position (series window empty), where resolveMetricValue
+     * would otherwise be queried. Lets getReachTier() batch the rolling:*
+     * fallbacks into one shared workout scan instead of N identical unbounded
+     * scans (today-page-ia UXR-TIA-15). Values must be computed exactly as
+     * resolveMetricValue would — the default (absent) path is unchanged.
+     */
+    currentOverrides?: Map<string, number | null>;
+  },
 ): Promise<GoalFeasibility> {
   const now = opts?.now ?? new Date();
   const computedAt = now.toISOString();
@@ -266,9 +283,14 @@ export async function computeGoalFeasibility(
 
     let current: number | null = seriesCurrent;
     if (current === null) {
-      // Fallback to resolveMetricValue — thread cumulative so the SUM path is used
-      // if the series window happened to be empty.
-      current = await resolveMetricValue(t.metric, now, goal.id, t.cumulative ?? false);
+      if (opts?.currentOverrides?.has(t.metric)) {
+        // Pre-resolved by the caller (getReachTier's shared rolling scan).
+        current = opts.currentOverrides.get(t.metric) ?? null;
+      } else {
+        // Fallback to resolveMetricValue — thread cumulative so the SUM path is used
+        // if the series window happened to be empty.
+        current = await resolveMetricValue(t.metric, now, goal.id, t.cumulative ?? false);
+      }
     }
     if (current === null && t.start !== undefined && t.start !== null) {
       current = t.start;
@@ -313,6 +335,93 @@ export async function computeGoalFeasibility(
     weeksRemaining,
     computedAt,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Narrowed Reach read — tier + weeks only (today-page-ia UXR-TIA-15, approved)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ReachTierResult = {
+  /** Effective tier: coach override wins over the engine (effectiveTier semantics). */
+  tier: RarityTier | null;
+  weeksRemaining: number | null;
+};
+
+/**
+ * The Today Reach chip needs exactly two scalars — the effective tier and the
+ * weeks label. Cutting the FeasibilityReadout Card while calling full
+ * computeGoalFeasibility would save 0 queries (the research's own correction),
+ * so this read narrows honestly, without changing any tier value:
+ *
+ *  1. Coach override present → coach tier wins (effectiveTier = coach ?? computed),
+ *     so the engine result cannot affect the chip: ZERO queries.
+ *  2. Someday (targetDate null) / no parseable targets → unrated: ZERO queries
+ *     (mirrors computeGoalFeasibility's own unrated short-circuits).
+ *  3. Engine path: rolling:* targets' `current` fallbacks are batched into ONE
+ *     shared workout scan (the per-target resolveMetricValue rolling branch
+ *     re-runs an identical goal.findUnique + unbounded workout.findMany per
+ *     target — 3 rolling targets = 6 queries → 1 here). Query shape, ordering
+ *     and the pure computeRollingValueFromWorkouts computation are copied from
+ *     goal-targets.ts' rolling branch, so values are byte-identical; the
+ *     remaining engine math runs through computeGoalFeasibility unchanged.
+ */
+export async function getReachTier(
+  goal: GoalLike & { coachFeasibility?: unknown },
+  opts?: { now?: Date },
+): Promise<ReachTierResult> {
+  const now = opts?.now ?? new Date();
+  const coach = parseCoachFeasibility(goal.coachFeasibility ?? null);
+  const weeksRemaining =
+    goal.targetDate !== null ? weeksRemainingFrac(goal.targetDate, now) : null;
+
+  // 1. Coach override — the effective tier regardless of the engine.
+  if (coach !== null) {
+    return { tier: coach.tier, weeksRemaining };
+  }
+
+  // 2. Unrated short-circuits (same reasons computeGoalFeasibility returns
+  //    tier null with zero per-target queries).
+  if (goal.targetDate === null) return { tier: null, weeksRemaining: null };
+  const targets = parseTargets(goal.targets);
+  if (targets.length === 0) return { tier: null, weeksRemaining };
+
+  // 3. Engine tier — with the rolling fallbacks pre-batched.
+  const rollingMetrics = targets
+    .filter((t) => t.metric.startsWith(ROLLING_METRIC_PREFIX))
+    .map((t) => t.metric);
+  let currentOverrides: Map<string, number | null> | undefined;
+  if (rollingMetrics.length > 0) {
+    const db = await getDb();
+    // Same query as goal-targets.ts' rolling branch (status/cutoff/order/select)
+    // — run ONCE and shared across every rolling target.
+    const workouts = await db.workout.findMany({
+      where: { status: "completed", startedAt: { lte: now } },
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+      select: {
+        exercises: {
+          orderBy: { orderIndex: "asc" },
+          select: {
+            name: true,
+            sets: { orderBy: { setIndex: "asc" }, select: { durationSec: true } },
+          },
+        },
+      },
+    });
+    currentOverrides = new Map(
+      rollingMetrics.map((metric) => {
+        // Params come from the goal row already in hand — the same row the
+        // rolling branch's goal.findUnique would re-fetch.
+        const params = rollingParamsFromTargets(goal.targets, metric);
+        return [
+          metric,
+          params === null ? null : computeRollingValueFromWorkouts(workouts, params),
+        ] as const;
+      }),
+    );
+  }
+
+  const feasibility = await computeGoalFeasibility(goal, { now, currentOverrides });
+  return { tier: feasibility.tier, weeksRemaining: feasibility.weeksRemaining };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
