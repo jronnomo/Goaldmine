@@ -2726,7 +2726,8 @@ function registerWriteTools(server: McpServer) {
         "use a custom name only for one-off measurements. Each result drives the trend on /baselines/test/[testName] and " +
         "feeds get_baseline_history / get_baseline_schedule. " +
         "Idempotent per day: logging the same testName again on the same calendar date updates that result in place rather than creating a duplicate row. " +
-        "value must be > 0 — a 0/blank result is rejected as a phantom completion; to deliberately document a DNF / skipped / substituted test, pass allowZero=true (recorded with no workout mirror).",
+        "value must be > 0 — a 0/blank result is rejected as a phantom completion; to deliberately document a DNF / skipped / substituted test, pass allowZero=true (recorded with no workout mirror). " +
+        "If the result was limited by available equipment (e.g. maxed the heaviest dumbbell), pass capped=true so reads/dashboard mark the plateau as expected.",
       inputSchema: {
         testName: z.string(),
         value: z.number(),
@@ -2738,6 +2739,13 @@ function registerWriteTools(server: McpServer) {
           .optional()
           .describe(
             "Permit value=0 to document a DNF / skipped / substituted test. Without this, value<=0 is rejected as a phantom completion.",
+          ),
+        capped: z
+          .boolean()
+          .optional()
+          .describe(
+            "Set true when the value hit an equipment ceiling (e.g. a 65 lb dumbbell max) — a plateau at this value is expected, not a stall. " +
+              "Display annotation only (defaults to false): surfaces as a 'capped' marker in records/history/schedule reads and the dashboard; NEVER feeds PR or readiness math.",
           ),
       },
     },
@@ -2777,6 +2785,9 @@ function registerWriteTools(server: McpServer) {
               units: input.units,
               date,
               notes: input.notes ?? null,
+              // Full re-log semantics (mirrors notes): omitting capped on a
+              // same-day repeat log resets it to false.
+              capped: input.capped ?? false,
             },
           });
           await syncBaselineUpdateToWorkout({
@@ -2802,6 +2813,7 @@ function registerWriteTools(server: McpServer) {
             units: input.units,
             date,
             notes: input.notes ?? null,
+            capped: input.capped ?? false,
           },
         });
         await appendBaselineToDayWorkout({
@@ -3992,13 +4004,21 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Update a logged baseline result",
       description:
-        "Fix a baseline value/units/date/notes after the fact. Common when the user logs a misinterpreted score (e.g. total weight instead of per-DB).",
+        "Fix a baseline value/units/date/notes after the fact. Common when the user logs a misinterpreted score (e.g. total weight instead of per-DB). " +
+        "Also toggles the capped marker (equipment-ceiling annotation) on an existing result. Patch semantics: only fields you pass are changed.",
       inputSchema: {
         id: z.string(),
         value: z.number().optional(),
         units: z.string().optional(),
         date: z.string().optional().describe("ISO datetime"),
         notes: z.string().nullable().optional(),
+        capped: z
+          .boolean()
+          .optional()
+          .describe(
+            "Toggle the equipment-ceiling marker after the fact — true when the value hit a fixed load cap (e.g. 65 lb DB), so a plateau there is expected, not a stall. " +
+              "Display annotation only; never feeds PR or readiness math. Omit to leave unchanged.",
+          ),
       },
     },
     async (input) =>
@@ -4009,6 +4029,7 @@ function registerWriteTools(server: McpServer) {
         if (input.units !== undefined) data.units = input.units;
         if (input.date !== undefined) data.date = parseDateInput(input.date);
         if (input.notes !== undefined) data.notes = input.notes;
+        if (input.capped !== undefined) data.capped = input.capped;
         const before = await db.baseline.findUniqueOrThrow({ where: { id: input.id } });
         const updated = await db.baseline.update({ where: { id: input.id }, data });
         await syncBaselineUpdateToWorkout({

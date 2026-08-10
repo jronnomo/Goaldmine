@@ -35,6 +35,10 @@ const {
   mockSavedMealUpdate,
   mockSavedMealDelete,
   mockNutritionLogCreate,
+  mockBaselineFindFirst,
+  mockBaselineFindUniqueOrThrow,
+  mockBaselineCreate,
+  mockBaselineUpdate,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -71,11 +75,24 @@ const {
   const mockSavedMealDelete = vi.fn().mockResolvedValue({ id: "sm-1" });
   const mockNutritionLogCreate = vi.fn().mockResolvedValue({ id: "n-1" });
 
+  // #276 Baseline.capped — dedicated write-path spies (findMany stays the
+  // shared spy so the existing recent_history/weekly_summary omit counts hold).
+  const mockBaselineFindFirst = vi.fn().mockResolvedValue(null);
+  const mockBaselineFindUniqueOrThrow = vi.fn();
+  const mockBaselineCreate = vi.fn().mockResolvedValue({ id: "b-new" });
+  const mockBaselineUpdate = vi.fn();
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
     note: { findMany: mockFindMany },
-    baseline: { findMany: mockFindMany },
+    baseline: {
+      findMany: mockFindMany,
+      findFirst: mockBaselineFindFirst,
+      findUniqueOrThrow: mockBaselineFindUniqueOrThrow,
+      create: mockBaselineCreate,
+      update: mockBaselineUpdate,
+    },
     hike: { findMany: mockFindMany },
     nutritionLog: { findMany: mockFindMany, create: mockNutritionLogCreate },
     bodyMetric: { findMany: mockFindMany },
@@ -116,6 +133,10 @@ const {
     mockSavedMealUpdate,
     mockSavedMealDelete,
     mockNutritionLogCreate,
+    mockBaselineFindFirst,
+    mockBaselineFindUniqueOrThrow,
+    mockBaselineCreate,
+    mockBaselineUpdate,
   };
 });
 
@@ -1189,5 +1210,131 @@ describe("log_nutrition + savedMealId (#275)", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("items is required when savedMealId is not provided");
     expect(mockNutritionLogCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── #276: Baseline.capped — persistence round-trip via the mocked db ─────────
+// capped is a DISPLAY annotation only (equipment-ceiling marker). These tests
+// pin the write-path contract: log_baseline persists it (default false),
+// the same-day dedupe path carries it through the in-place update, and
+// update_baseline toggles it after the fact with patch semantics.
+// readiness.ts / rarity-core.ts / records canonicalization are untouched.
+describe("log_baseline / update_baseline — capped persistence (#276)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockBaselineFindFirst).mockResolvedValue(null);
+    vi.mocked(mockBaselineCreate).mockResolvedValue({ id: "b-new" });
+    vi.mocked(mockBaselineUpdate).mockResolvedValue({
+      id: "b-1",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-08-09"),
+      value: 65,
+      units: "lb",
+      notes: null,
+      capped: true,
+    });
+    vi.mocked(mockBaselineFindUniqueOrThrow).mockResolvedValue({
+      id: "b-1",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-08-09"),
+      value: 65,
+      units: "lb",
+      notes: null,
+      capped: false,
+    });
+  });
+
+  it("log_baseline capped:true persists on the created row", async () => {
+    const handler = fakeServer.getHandler("log_baseline");
+    const result = (await handler({
+      testName: "8-Rep DB Press",
+      value: 65,
+      units: "lb",
+      capped: true,
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockBaselineCreate).toHaveBeenCalledTimes(1);
+    const data = (vi.mocked(mockBaselineCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.capped).toBe(true);
+    expect(data.value).toBe(65);
+  });
+
+  it("log_baseline omitting capped defaults to false (regression: existing calls unaffected)", async () => {
+    const handler = fakeServer.getHandler("log_baseline");
+    const result = (await handler({
+      testName: "Pull-up Max",
+      value: 12,
+      units: "reps",
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    const data = (vi.mocked(mockBaselineCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    expect(data.capped).toBe(false);
+  });
+
+  it("log_baseline same-day re-log (dedupe path) carries capped through the in-place update", async () => {
+    vi.mocked(mockBaselineFindFirst).mockResolvedValue({
+      id: "b-existing",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-08-09"),
+      value: 60,
+      units: "lb",
+      notes: null,
+      capped: false,
+    });
+
+    const handler = fakeServer.getHandler("log_baseline");
+    const result = (await handler({
+      testName: "8-Rep DB Press",
+      value: 65,
+      units: "lb",
+      capped: true,
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockBaselineCreate).not.toHaveBeenCalled();
+    expect(mockBaselineUpdate).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(mockBaselineUpdate).mock.calls[0][0] as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ id: "b-existing" });
+    expect(call.data.capped).toBe(true);
+
+    const payload = JSON.parse(result.content[0].text) as { deduped: boolean };
+    expect(payload.deduped).toBe(true);
+  });
+
+  it("update_baseline toggles capped after the fact", async () => {
+    const handler = fakeServer.getHandler("update_baseline");
+    const result = (await handler({ id: "b-1", capped: true })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockBaselineUpdate).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(mockBaselineUpdate).mock.calls[0][0] as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    };
+    expect(call.where).toEqual({ id: "b-1" });
+    expect(call.data).toEqual({ capped: true });
+  });
+
+  it("update_baseline without capped leaves it out of the patch (no accidental reset)", async () => {
+    const handler = fakeServer.getHandler("update_baseline");
+    const result = (await handler({ id: "b-1", value: 70 })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const call = vi.mocked(mockBaselineUpdate).mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    expect(call.data).toEqual({ value: 70 });
+    expect("capped" in call.data).toBe(false);
   });
 });

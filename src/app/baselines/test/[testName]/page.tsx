@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { CappedMarker } from "@/components/CappedMarker";
 import { HistoryChart } from "@/components/HistoryChart";
 import { getBaselineHistory } from "@/lib/records";
 
@@ -65,6 +66,7 @@ export default async function BaselineTestDetail({
                 <div>
                   <p className="font-mono text-sm">
                     {h.value} <span className="text-[var(--muted)] text-xs">{h.units}</span>
+                    {h.capped && <CappedMarker />}
                   </p>
                   {h.notes && <p className="text-xs text-[var(--muted)] mt-0.5">{h.notes}</p>}
                 </div>

@@ -15,6 +15,44 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — #276: `log_baseline`/`update_baseline` gain `capped`; baseline read payloads carry it
+
+**Issue:** #276 (Sprint 16 — Additive schema, epic #258)
+
+**Connector reconnect REQUIRED after deploy** — `log_baseline` and
+`update_baseline` input shapes changed and three read payloads gained a field;
+the claude.ai connector caches the old shapes until reconnected.
+
+**Changed inputs:**
+
+- `log_baseline` — new optional `capped: boolean` (default `false`): the value
+  hit an equipment ceiling (e.g. a 65 lb dumbbell max), so a plateau at this
+  value is expected, not a stall. Persisted on create AND on the same-day
+  idempotent re-log (full re-log semantics — omitting `capped` on a repeat
+  log resets it to `false`, mirroring `notes`).
+- `update_baseline` — new optional `capped: boolean` with patch semantics
+  (omit = leave unchanged) to toggle the marker after the fact.
+
+**Changed outputs (additive field, display-only):**
+
+- `get_baseline_history` — rows now include `capped` (full-row read; came
+  along with the column).
+- `get_records_summary` — `baselines[].latest` gains `capped`.
+- `get_baseline_schedule` — `scheduled[].latestResult` and
+  `unscheduledExtras[].latest` gain `capped`.
+
+**Dashboard:** `/baselines` (scheduled rows + other-logged-tests rows) and
+`/baselines/test/[testName]` (all-results rows) render a compact muted
+`▲cap` marker (`src/components/CappedMarker.tsx`) next to capped values.
+Full chart treatment is deferred to Sprint 19.
+
+**Explicitly NOT changed (honesty-math purity):** `readiness.ts`,
+`rarity-core.ts`, and records PR/canonicalization
+(`EXERCISE_ALIAS_GROUPS`) are untouched — `capped` never feeds scoring,
+PR detection, or goal targets. It is an annotation, not an input.
+
+---
+
 ## 2026-08-09 — #275: `save_meal` / `list_saved_meals` / `delete_saved_meal` NEW + `log_nutrition` gains `savedMealId`/`servings`
 
 **Issue:** #275 (Sprint 16 — Additive schema, epic #258)
