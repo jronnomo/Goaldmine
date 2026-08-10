@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
 import { LogBaselineForm } from "@/components/LogBaselineForm";
-import { getDb } from "@/lib/db";
-import type { ProgramTemplate } from "@/lib/program-template";
+import { getActiveProgram } from "@/lib/program";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +13,14 @@ export default async function LogBaselinePage({
   const { testName } = await searchParams;
   const presetName = testName ? decodeURIComponent(testName) : null;
 
-  const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true, goal: { isFocus: true } },
-    orderBy: { updatedAt: "desc" },
-  });
-  const template = (plan?.planJson as unknown as ProgramTemplate | undefined) ?? null;
+  // #303 (isFocus retirement): the known-tests picker reads the DAY-DRIVING
+  // plan via the seam — the active Program's rotation plan, or the legacy
+  // focus-first active plan for zero-Program tenants — instead of the old
+  // direct `goal: { isFocus: true }` plan filter (which under a Program could
+  // surface a non-rotation plan's test list, the founding cross-goal leak
+  // class).
+  const snapshot = await getActiveProgram();
+  const template = snapshot?.template ?? null;
 
   const knownTests = template
     ? template.baselineWeek.flatMap((d) =>

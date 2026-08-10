@@ -75,14 +75,16 @@ export async function getFocusGoal(): Promise<FocusGoalRow | null> {
 }
 
 /**
- * FocusGoalRow plus the two extra fields the MCP default-goal sites need
+ * FocusGoalRow plus the extra fields the swept default-goal sites need
  * (get_today_plan reads githubRepo + targets; compute_readiness reads
- * targets). A superset select so every #297/#300 site resolves through ONE
- * helper instead of each re-selecting its own shape.
+ * targets; /compare's "Goal created" chip reads createdAt). A superset
+ * select so every #297/#300/#303 site resolves through ONE helper instead
+ * of each re-selecting its own shape.
  */
 export type RotationOwnerGoalRow = FocusGoalRow & {
   targets: unknown;
   githubRepo: string | null;
+  createdAt: Date;
 };
 
 const ROTATION_OWNER_SELECT = {
@@ -94,6 +96,7 @@ const ROTATION_OWNER_SELECT = {
   legend: true,
   targets: true,
   githubRepo: true,
+  createdAt: true,
 } as const;
 
 /**
