@@ -20,9 +20,12 @@ export function formatPlain(w: FormattableWorkout): string {
 
   for (const ex of [...w.exercises].sort((a, b) => a.orderIndex - b.orderIndex)) {
     lines.push("");
-    lines.push(ex.equipment ? `${ex.name} (${ex.equipment})` : ex.name);
+    const header = ex.equipment ? `${ex.name} (${ex.equipment})` : ex.name;
+    lines.push(`${header} [id: ${ex.id}]`);
     for (const s of [...ex.sets].sort((a, b) => a.setIndex - b.setIndex)) {
-      lines.push(`  Set ${s.setIndex}: ${formatSetValue(s)}`);
+      const rpe = s.rpe !== null ? `, RPE ${s.rpe}` : "";
+      lines.push(`  Set ${s.setIndex}: ${formatSetValue(s)}${rpe} [id: ${s.id}]`);
+      if (s.notes) lines.push(`  Note: ${s.notes}`);
     }
     if (ex.notes) lines.push(`  Note: ${ex.notes}`);
   }

@@ -38,7 +38,7 @@ import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma, getDb } from "@/lib/db";
 import type { ScopedClient } from "@/lib/db";
-import { formatWorkout, type ExportFormat } from "@/lib/formatters";
+import { formatWorkout, toFormattableWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import { lastTrainedForGoals, relativeTrainedLabel } from "@/lib/goal-attribution";
@@ -2120,7 +2120,10 @@ function registerReadTools(server: McpServer) {
       description:
         "Format a stored workout for sharing or copying — Strong-app txt, Markdown, plain text, or JSON. " +
         "Use when the user asks to share, copy, print, or export a workout, or wants a paste-friendly summary. " +
-        "Default 'strong' format round-trips the import — paste it back into Strong or log_workout and you get the same session.",
+        "Default 'strong' format round-trips the import — paste it back into Strong or log_workout and you get the same session. " +
+        "'json' and 'markdown'/'plain' formats also surface each exercise's and set's real id (json: exercises[].id/sets[].id fields; markdown/plain: an inline '[id: ...]' marker) plus set-level rpe/notes — " +
+        "use those ids with update_workout_exercise, update_workout_set, or workout_ops. " +
+        "'strong' format omits ids/rpe/set-notes to stay byte-identical with the importable Strong txt shape.",
       inputSchema: {
         workoutId: z.string(),
         format: z.enum(["strong", "markdown", "plain", "json"]).default("strong"),
@@ -2138,30 +2141,7 @@ function registerReadTools(server: McpServer) {
             },
           },
         });
-        const text = formatWorkout(
-          {
-            id: w.id,
-            title: w.title,
-            startedAt: w.startedAt,
-            source: w.source,
-            sourceUrl: w.sourceUrl,
-            notes: w.notes,
-            exercises: w.exercises.map((ex) => ({
-              name: ex.name,
-              equipment: ex.equipment,
-              orderIndex: ex.orderIndex,
-              notes: ex.notes,
-              sets: ex.sets.map((s) => ({
-                setIndex: s.setIndex,
-                reps: s.reps,
-                weightLb: s.weightLb,
-                durationSec: s.durationSec,
-                distanceMi: s.distanceMi,
-              })),
-            })),
-          },
-          format as ExportFormat,
-        );
+        const text = formatWorkout(toFormattableWorkout(w), format as ExportFormat);
         return { workoutId, format, text };
       }),
   );
@@ -4392,7 +4372,7 @@ function registerWriteTools(server: McpServer) {
       title: "Edit one exercise on a logged workout",
       description:
         "PATCH-style update for a single WorkoutExercise row (one exercise within a logged session). " +
-        "Pass the exercise's id (look it up via export_workout). Edits name, equipment, notes, or orderIndex. " +
+        "Pass the exercise's id (look it up via export_workout with format:'json' or 'markdown' — the default 'strong' format omits ids). Edits name, equipment, notes, or orderIndex. " +
         "Does NOT add or remove exercises and does NOT touch sets — use update_workout_set for set-level edits. " +
         "null clears nullable fields (equipment, notes). Returns the list of fields actually changed.",
       inputSchema: {
@@ -4429,7 +4409,7 @@ function registerWriteTools(server: McpServer) {
       title: "Edit one set on a logged workout",
       description:
         "PATCH-style update for a single Set row (one set within a logged exercise). " +
-        "Pass the set's id (look it up via export_workout). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. " +
+        "Pass the set's id (look it up via export_workout with format:'json' or 'markdown' — the default 'strong' format omits ids). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. " +
         "Use to correct a mis-logged rep count, weight, RPE, or annotation without re-logging the whole workout. " +
         "null clears nullable fields (all metric fields and notes). Returns the list of fields actually changed.",
       inputSchema: {
@@ -4470,7 +4450,7 @@ function registerWriteTools(server: McpServer) {
         "{op:'removeExercise', exerciseId} — drops one WorkoutExercise (cascade-deletes its sets). " +
         "{op:'addSet', workoutExerciseId, set:{setIndex?, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}} — adds a set (setIndex defaults to max+1). " +
         "{op:'removeSet', setId} — drops one set. " +
-        "Look up IDs via export_workout. For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
+        "Look up IDs via export_workout with format:'json' or 'markdown' (the default 'strong' format omits ids). For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
       inputSchema: {
         ops: z.array(WorkoutOpSchema).min(1).describe("Operations applied in order, atomically."),
       },
