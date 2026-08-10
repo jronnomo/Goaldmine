@@ -4,7 +4,7 @@ import { ShareWorkout } from "@/components/ShareWorkout";
 import { WorkoutEditor } from "@/components/WorkoutEditor";
 import type { WorkoutDTO } from "@/components/WorkoutEditor";
 import { getDb } from "@/lib/db";
-import type { FormattableWorkout } from "@/lib/formatters";
+import { toFormattableWorkout, type FormattableWorkout } from "@/lib/formatters";
 
 export const dynamic = "force-dynamic";
 
@@ -50,28 +50,11 @@ export default async function WorkoutDetail({
     })),
   };
 
-  // Separate shape for ShareWorkout (needs distanceMi, different fields).
-  const formattable: FormattableWorkout = {
-    id: workout.id,
-    title: workout.title,
-    startedAt: workout.startedAt,
-    source: workout.source,
-    sourceUrl: workout.sourceUrl,
-    notes: workout.notes,
-    exercises: workout.exercises.map((ex) => ({
-      name: ex.name,
-      equipment: ex.equipment,
-      orderIndex: ex.orderIndex,
-      notes: ex.notes,
-      sets: ex.sets.map((s) => ({
-        setIndex: s.setIndex,
-        reps: s.reps,
-        weightLb: s.weightLb,
-        durationSec: s.durationSec,
-        distanceMi: s.distanceMi,
-      })),
-    })),
-  };
+  // Separate shape for ShareWorkout (needs distanceMi, different fields) —
+  // same projection export_workout uses (src/lib/mcp/tools.ts), so the
+  // dashboard's "share" output stays consistent with the MCP tool's (id/rpe/
+  // notes included, see B2/#265).
+  const formattable: FormattableWorkout = toFormattableWorkout(workout);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">

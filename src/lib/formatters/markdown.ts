@@ -21,9 +21,11 @@ export function formatMarkdown(w: FormattableWorkout): string {
   for (const ex of [...w.exercises].sort((a, b) => a.orderIndex - b.orderIndex)) {
     lines.push("");
     const header = ex.equipment ? `**${ex.name}** _(${ex.equipment})_` : `**${ex.name}**`;
-    lines.push(header);
+    lines.push(`${header} [id: ${ex.id}]`);
     for (const s of [...ex.sets].sort((a, b) => a.setIndex - b.setIndex)) {
-      lines.push(`- Set ${s.setIndex}: ${formatSetValue(s)}`);
+      const rpe = s.rpe !== null ? ` (RPE ${s.rpe})` : "";
+      lines.push(`- Set ${s.setIndex}: ${formatSetValue(s)}${rpe} [id: ${s.id}]`);
+      if (s.notes) lines.push(`  > ${s.notes}`);
     }
     if (ex.notes) lines.push(`  > ${ex.notes}`);
   }
