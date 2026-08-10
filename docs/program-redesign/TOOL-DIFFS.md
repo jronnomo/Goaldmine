@@ -15,6 +15,51 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — #310: Program MCP pack part 1 — `create_program` / `update_program` / `set_program_status` NEW
+
+**Issue:** #310 (Sprint 17 — Seam flip, epic #259)
+
+**Connector reconnect REQUIRED after deploy** — three brand-new tools; the
+claude.ai connector caches the old tool list and will not see them until
+reconnected (Settings → Connectors → Goaldmine → reconnect).
+
+**New tools** (pack file `src/lib/mcp/tools/program-tools.ts`, cores in
+`src/lib/program-core.ts`, wired via `registerProgramTools` in `tools.ts`):
+
+- `create_program { name, startedOn, endsOn?, notes?, requestId? }` — creates
+  the multi-domain Program container. **Status always starts `draft`** (the
+  tool takes no status input); activation is `set_program_status`'s job, so
+  create can never trip the one-active constraint. `startedOn`/`endsOn` are
+  yyyy-mm-dd USER_TZ calendar dates via `parseDateInput`; `endsOn` before
+  `startedOn` is a friendly error. Returns the row (`id, name, status,
+  startedOn, endsOn, notes, createdAt, updatedAt`) — dates as yyyy-mm-dd,
+  instants as ISO, never `userId`.
+- `update_program { programId, name?, startedOn?, endsOn?, notes?,
+  attributionRules?, requestId? }` — true PATCH: only supplied fields change;
+  `null` clears `endsOn`/`notes`/`attributionRules`; `{programId}` alone is a
+  friendly no-op. **Does NOT accept `status`** (lifecycle lives in
+  `set_program_status`). `attributionRules` validated as
+  `Array<{ match: { titleContains?: string[], exerciseContains?: string[],
+  source?: string }, goalIds: string[], note?: string }>` with ≥1 match
+  criterion and ≥1 goalId per rule (local schema in `program-core.ts`; TODO
+  marked to consolidate with `src/lib/attribution-rules.ts` when the
+  auto-link engine lands it). Merged-window guard: the patched
+  startedOn/endsOn pair must stay ordered.
+- `set_program_status { programId, status, requestId? }` — `status ∈ draft |
+  active | completed | archived`. Second-activate returns a clean error
+  **naming the currently active Program** (app-level pre-check AND a P2002
+  catch for the `program_one_active_per_user` race — never a raw Postgres
+  unique-violation). Same-status call is an idempotent no-op
+  (`changed:false`).
+
+All three take the optional `requestId` idempotency key (#274
+`withWriteReceipt` semantics: same key ⇒ original result replayed with
+`replayed:true`).
+
+**Tests:** `src/lib/program-core.test.ts` — draft-only create, PATCH round
+trip, attributionRules validation, one-active enforcement on both the
+pre-check and P2002-race paths, same-status no-op.
+
 ## 2026-08-09 — #276: `log_baseline`/`update_baseline` gain `capped`; baseline read payloads carry it
 
 **Issue:** #276 (Sprint 16 — Additive schema, epic #258)

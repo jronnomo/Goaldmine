@@ -105,6 +105,7 @@ import {
   resolveTemplateTargets,
 } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
+import { registerProgramTools } from "@/lib/mcp/tools/program-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
@@ -567,6 +568,7 @@ export function registerAll(server: McpServer) {
   registerReadTools(server);
   registerWriteTools(server);
   registerProjectTools(server);
+  registerProgramTools(server);
   registerGitHubTools(server);
   registerRenderTools(server);
 }
