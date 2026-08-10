@@ -20,7 +20,10 @@
 
 import { dateKey, endOfDay, startOfDay } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
-import { getActiveProgramMembership } from "@/lib/program";
+import {
+  getActiveProgramMembership,
+  type RotationOwnerResolution,
+} from "@/lib/program";
 import { parseCompletionSnapshot } from "@/lib/goal-completion-core";
 import {
   computeReadiness,
@@ -117,6 +120,47 @@ export function nonMemberGoals<T extends { id: string }>(
   if (memberIds === null) return goals;
   const members = new Set(memberIds);
   return goals.filter((g) => !members.has(g.id));
+}
+
+/**
+ * Pure (#301): the /progress page's SINGLE-goal resolutions — the goal whose
+ * weight/MRR/burn-down gates render. The progress page shows one goal's
+ * detail here, so this follows the rotation-owner pattern (like the
+ * lib/domain batches), NOT the goals-page membership-list pattern:
+ *
+ *  - mode "program": the rotation-owning goal (found among the page's
+ *    already-fetched active goals), or null when the Program has no rotation
+ *    owner / the owner's goal isn't active — the gates simply stay off;
+ *    there is deliberately NO first-goal fallback under a Program (an
+ *    arbitrary member must not gate the Weight card). The owner also
+ *    appears exactly once on the page: as a member it renders in
+ *    ProgramReadinessSection and nonMemberGoals() has already excluded it
+ *    from the legacy readiness loop.
+ *  - mode "legacy": byte-identical to the pre-#301 derivations —
+ *    `find(isFocus) ?? activeGoals[0] ?? null` and
+ *    `find(isFocus && project)`.
+ */
+export function resolveProgressPrimaryGoals<
+  T extends { id: string; kind: string; isFocus: boolean },
+>(
+  activeGoals: readonly T[],
+  resolution: Pick<RotationOwnerResolution, "mode" | "goalId">,
+): { primaryGoal: T | null; primaryProjectGoal: T | null } {
+  if (resolution.mode === "program") {
+    const owner =
+      resolution.goalId !== null
+        ? (activeGoals.find((g) => g.id === resolution.goalId) ?? null)
+        : null;
+    return {
+      primaryGoal: owner,
+      primaryProjectGoal: owner?.kind === "project" ? owner : null,
+    };
+  }
+  return {
+    primaryGoal: activeGoals.find((g) => g.isFocus) ?? activeGoals[0] ?? null,
+    primaryProjectGoal:
+      activeGoals.find((g) => g.isFocus && g.kind === "project") ?? null,
+  };
 }
 
 // Defensive shape guard for Goal.targets (Json) — same hand-copied guard as
