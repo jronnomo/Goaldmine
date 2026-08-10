@@ -1,8 +1,12 @@
 import { LogNutritionForm } from "@/components/LogNutritionForm";
 import { MealEditButton } from "@/components/MealEditButton";
-import { Bullseye } from "@/components/Bullseye";
 import { MEAL_SLOTS, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
-import { sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
+import {
+  sumPlanTargetMacros,
+  sumLoggedDayMacrosWithPlanFallback,
+  hasAnyMacros,
+  MEAL_LABELS,
+} from "@/lib/nutrition-macros";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { ExistingMealStub } from "@/lib/nutrition-merge";
 import { dateKey } from "@/lib/calendar-core";
@@ -68,13 +72,6 @@ function loggedMacros(meals: NutritionTodayLog[]): Macros | null {
     }
   }
   return any ? out : null;
-}
-
-function addMacros(acc: { calories: number; proteinG: number; carbsG: number; fatG: number }, m: Macros) {
-  acc.calories += m.calories ?? 0;
-  acc.proteinG += m.proteinG ?? 0;
-  acc.carbsG += m.carbsG ?? 0;
-  acc.fatG += m.fatG ?? 0;
 }
 
 function formatMacros(macros: NonNullable<PlannedMeal["macros"]>): string {
@@ -157,23 +154,20 @@ export function NutritionToday({
   }).filter((r) => r.loggedSummary || r.planned);
 
   // Cumulative day totals. "target" sums every planned slot's macros via the
-  // shared helper. "so far" uses the actual macros you logged per slot, falling
-  // back to that slot's planned macros when a logged meal didn't record any
-  // (fallback logic is unique to this component — not in sumLoggedDayMacros).
+  // shared helper. "so far" uses the SHARED fallback-aware sum (UXR-TIA-09,
+  // BLOCKING): the same helper FuelRail uses, so the Today strip and this
+  // detail can never print two contradicting day totals.
   const target = sumPlanTargetMacros(plan);
-  const soFar = { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 };
-  for (const r of rows) {
-    if (r.loggedSummary) {
-      const src = r.actualMacros ?? r.planned?.macros;
-      if (src) addMacros(soFar, src);
-    }
-  }
+  const soFar = sumLoggedDayMacrosWithPlanFallback(logs, plan);
   const targetPositive = hasAnyMacros(target);
   const soFarPositive = hasAnyMacros(soFar);
   const showTotal = targetPositive || soFarPositive;
 
-  // Day-strip Bullseye (REQ-004, UXR-lib-05)
-  // Uses this component's own soFar (which includes planned-fallback) not the page's.
+  // Day-strip meter (today-page-ia defect 4 fix): the house h-1.5 track+fill,
+  // NOT a Bullseye — Bullseye's ceil(p×4) ring snap at size≥20 rendered any
+  // progress above 75% byte-identical to "done" (78% of calories read as
+  // complete). Continuous fill width is the honest readout; the shared
+  // fallback-aware soFar keeps this strip in lockstep with FuelRail.
   const calFill = targetPositive && target.calories > 0
     ? Math.min(1, soFar.calories / target.calories)
     : 0;
@@ -291,20 +285,26 @@ export function NutritionToday({
                   </span>
                 )}
               </div>
-              {/* Size-20 Bullseye — appended to the right of the strip (UXR-lib-05) */}
-              {targetPositive ? (
-                <Bullseye
-                  size={20}
-                  progress={calFill}
+              {/* Honest fill meter — replaces the size-20 progress Bullseye
+                  (ceil(p×4) showed "done" from 76%). No-target days render no
+                  meter at all: an empty track would read as 0% of a target
+                  that does not exist; the "No daily target set" note carries
+                  that state in words. */}
+              {targetPositive && (
+                <div
+                  role="progressbar"
+                  aria-valuenow={Math.round(calFill * 100)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
                   aria-label={`${Math.round(calFill * 100)}% of daily calorie target reached`}
-                  data-testid="daytotal-bullseye"
-                />
-              ) : (
-                <Bullseye
-                  size={20}
-                  aria-label="No daily calorie target set"
-                  data-testid="daytotal-bullseye"
-                />
+                  data-testid="daytotal-meter"
+                  className="w-16 shrink-0 self-center h-1.5 rounded-full bg-[var(--border)]/60 overflow-hidden"
+                >
+                  <div
+                    className="h-full rounded-full bg-[var(--accent)]"
+                    style={{ width: `${Math.round(calFill * 100)}%` }}
+                  />
+                </div>
               )}
             </div>
           )}

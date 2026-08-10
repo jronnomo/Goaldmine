@@ -285,6 +285,13 @@ export default async function DayDetail({
           "Planned" not "Planned workout" — goaldmine will grow non-workout disciplines. */}
       {shownTemplate && dayBlocks.length > 0 && (
         <CollapsibleCard
+          // ⚠ UXR-TIA-21: this data-dependent defaultOpen is safe ONLY by
+          // accident — the Log sheet has no workout row today, so no same-page
+          // server action can flip completedWorkouts.length while this page is
+          // mounted. The day the Log sheet gains a workout row, this prop flips
+          // mid-session and React removeAttribute("open")s the section shut
+          // under the user's finger (today-page-ia §4.2). If that happens,
+          // ship a literal here like the Today page's lids.
           defaultOpen={completedWorkouts.length === 0}
           title={
             isDeferred

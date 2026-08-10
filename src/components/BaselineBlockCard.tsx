@@ -10,10 +10,21 @@ export type BaselineBlockTest = {
   loggedOnDate?: { id: string; value: number; units: string; date: Date } | null;
 };
 
+/** Shared label for a baseline test block — also used by the Today page's
+ *  completed-baselines lid title (the lid shell replaces the Card shell). */
+export function baselineBlockLabel(
+  tests: BaselineBlockTest[],
+  weekIndex?: number | null,
+): string {
+  const checkpoint = tests[0]?.checkpoint;
+  return checkpoint === "initial" ? "Initial baselines" : `Retest (week ${weekIndex})`;
+}
+
 export function BaselineBlockCard({
   index,
   tests,
   weekIndex,
+  bare = false,
 }: {
   // A 0-based ordinal renders a "N. " prefix (the test block is the day's task).
   // Pass null to drop the prefix — used when every test is already logged and the
@@ -21,18 +32,20 @@ export function BaselineBlockCard({
   index: number | null;
   tests: BaselineBlockTest[];
   weekIndex?: number | null;
+  /** Render the content without the Card shell/title — for hosts that provide
+   *  their own (the Today page's Tier-3 completed-baselines lid). */
+  bare?: boolean;
 }) {
   if (tests.length === 0) return null;
 
-  const checkpoint = tests[0]!.checkpoint;
-  const label = checkpoint === "initial" ? "Initial baselines" : `Retest (week ${weekIndex})`;
+  const label = baselineBlockLabel(tests, weekIndex);
   const loggedCount = tests.filter((t) => t.loggedOnDate).length;
   const allLogged = loggedCount === tests.length;
   const prefix = index === null ? "" : `${index + 1}. `;
   const status = allLogged ? " ✓" : ` (${loggedCount}/${tests.length} logged)`;
 
-  return (
-    <Card title={`${prefix}${label}${status}`}>
+  const body = (
+    <>
       <p className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
         {allLogged
           ? "Completed — logged results below"
@@ -73,6 +86,9 @@ export function BaselineBlockCard({
           </li>
         ))}
       </ul>
-    </Card>
+    </>
   );
+
+  if (bare) return body;
+  return <Card title={`${prefix}${label}${status}`}>{body}</Card>;
 }

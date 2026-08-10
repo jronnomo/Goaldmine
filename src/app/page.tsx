@@ -1,14 +1,20 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { BaselineBlockCard } from "@/components/BaselineBlockCard";
+import { BaselineBlockCard, baselineBlockLabel } from "@/components/BaselineBlockCard";
+import { BlockCard } from "@/components/today/BlockCard";
+import { orderedTodaySections } from "@/components/today/today-manifest";
 import { Card } from "@/components/Card";
+import { CollapsibleCard } from "@/components/CollapsibleCard";
 import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
-import { NutritionToday } from "@/components/NutritionToday";
+import { FuelRail } from "@/components/today/FuelRail";
+import { ReachChip } from "@/components/today/ReachChip";
+import { SessionDossier } from "@/components/today/SessionDossier";
+import { ZoneDivider } from "@/components/today/ZoneDivider";
 import { CharacterHeader } from "@/components/game/CharacterHeader";
 import { QuestCard } from "@/components/game/QuestCard";
-import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay, USER_TZ } from "@/lib/calendar";
-import { CompletedWorkoutCard } from "@/components/days/CompletedWorkoutCard";
+import { addDays, dateKey, startOfDay, endOfDay, resolveDay, deriveDayDisplay } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getGoalCount } from "@/lib/goal-count";
@@ -21,16 +27,13 @@ import {
   phaseForWeekIndex,
   splitDayForRotationDay,
 } from "@/lib/program";
-import type { Block, ExercisePrescription } from "@/lib/program-template";
-import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
+import type { Block } from "@/lib/program-template";
 import { getFocusGoal, getRotationOwnerGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
 import { getQuickPickFoods } from "@/lib/food-actions";
 import { presentationForGoal } from "@/lib/goal-presentation";
-import { computeGoalFeasibility } from "@/lib/rarity";
-import { parseCoachFeasibility } from "@/lib/rarity-core";
-import { FeasibilityReadout } from "@/components/FeasibilityReadout";
+import { getReachTier } from "@/lib/rarity";
 import { TodayTimeline } from "@/components/today/TodayTimeline";
 import { assignGoalIdentities } from "@/lib/goal-identity";
 import { buildTodayTimeline } from "@/lib/day-rhythm";
@@ -163,9 +166,11 @@ export default async function HomePage() {
             Welcome to Goaldmine — start by creating your first goal. Once you add a goal with a
             target date, your Today view fills in automatically.
           </p>
+          {/* UXR-TIA-76 (opportunistic a11y fix): inline-flex + min-h-[44px]
+              gives the link a full-size tap target inside its text line. */}
           <Link
             href="/onboarding"
-            className="mt-3 inline-block text-sm font-medium text-[var(--accent)] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+            className="mt-3 inline-flex items-center min-h-[44px] text-sm font-medium text-[var(--accent)] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
           >
             Get started →
           </Link>
@@ -208,29 +213,26 @@ export default async function HomePage() {
   // between-goals branch — shared by both paths, computed exactly once.
 
   const db = await getDb();
-  const [recentWorkouts, resolved, gameState, weekGoalEvents, quickPickFoods, goalForFeas] =
+  // today-page-ia cuts: the Recent-workouts card AND its take-3 nested-sets
+  // query are gone (UXR-TIA-25 — strict subset of /history take:50); the
+  // quick-picks read is gone with the Nutrition Card (it only fed
+  // MealEditButton's sheet — the Log sheet self-fetches its own).
+  const [resolved, gameState, weekGoalEvents, goalForFeas] =
     await Promise.all([
-      db.workout.findMany({
-        where: { status: "completed" },
-        orderBy: { startedAt: "desc" },
-        take: 3,
-        include: { exercises: { include: { sets: true } } },
-      }),
       resolveDay(now),
       // UXR-PV-85: the duplicate db.nutritionLog.findMany was deleted —
       // resolveDay already returns today's logs (same window, same order) as
-      // resolved.loggedNutrition; NutritionToday consumes that below.
+      // resolved.loggedNutrition; the FuelRail consumes that below.
       computeGameState(),
       // REQ-106: 7-day lookahead for OtherGoalsStrip (today through today+6).
       // resolveDay already provides today's otherGoalEvents/crossGoalConflicts;
       // this call adds the week-ahead window. All date math via @/lib/calendar.
       getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
-      getQuickPickFoods(),
-      // GoalLike fields for computeGoalFeasibility — guarded because focusGoal can be null.
-      // #289: focusGoal may be fitness, null, OR a project goal (a project-focus
-      // Program member falls through to this path); computeGoalFeasibility is
-      // kind-aware — ProjectTodayView called it for the same goal before.
-      // A null focusGoal → goalForFeas resolves null → feasibility = null → no card rendered.
+      // Goal row for the narrowed Reach read — guarded because focusGoal can be
+      // null. #289: focusGoal may be fitness, null, OR a project goal (a
+      // project-focus Program member falls through to this path); getReachTier
+      // is kind-aware via computeGoalFeasibility. A null focusGoal → null row →
+      // null reach → no chip rendered.
       focusGoal
         ? db.goal.findUnique({
             where: { id: focusGoal.id },
@@ -249,14 +251,15 @@ export default async function HomePage() {
 
   // Second await batch — everything here needs `resolved` (D-2 kept the
   // feasibility read serial already; the additions ride the same round-trip).
-  const [feasibility, todayCompletedDetails, programRulesRow, memberDetailRows, rotationOwner] =
+  const [reach, todayCompletedDetails, programRulesRow, memberDetailRows, rotationOwner] =
     await Promise.all([
-      // FeasibilityReadout data. goalForFeas is null when focusGoal is null →
-      // feasibility null → no card rendered. .catch(() => null) guards against
-      // transient per-target query failures (D-4); the {feasibility && ...}
-      // JSX guard absorbs null cleanly with no card shown.
+      // Reach chip data — the NARROWED read (UXR-TIA-15, approved): tier +
+      // weeks only. Coach-override and unrated goals resolve at zero queries;
+      // rolling targets share one workout scan. .catch(() => null) guards
+      // against transient per-target query failures (D-4); a null reach (or a
+      // null tier) renders no chip at all (UXR-TIA-16).
       goalForFeas
-        ? computeGoalFeasibility(goalForFeas).catch(() => null)
+        ? getReachTier(goalForFeas).catch(() => null)
         : Promise.resolve(null),
       // Today's completed workouts, full detail — rendered in place of the
       // prescription when a workout was logged. UXR-PV-86: narrowed to the ids
@@ -342,16 +345,6 @@ export default async function HomePage() {
         ),
       })
     : [];
-  const coachFeas = goalForFeas ? parseCoachFeasibility(goalForFeas.coachFeasibility) : null;
-  const targetDateLabel =
-    goalForFeas?.targetDate != null
-      ? new Intl.DateTimeFormat("en-US", {
-          month: "short",
-          day: "numeric",
-          timeZone: USER_TZ,
-        }).format(goalForFeas.targetDate)
-      : null;
-
   // #285: getTodayContext's fields, now derived from resolveDay's output +
   // pure template lookups (field mapping, in-plan byte-identical):
   //   ctx.weekIndex → resolved.weekIndex           (already a ResolvedDay field)
@@ -464,27 +457,55 @@ export default async function HomePage() {
           ? "Hike Day"
           : rotationDayTemplate?.title);
 
-  return (
-    <div className="max-w-md mx-auto p-4 space-y-4">
-      {/* ── RPG Character Header — above hero; hidden when no active program ── */}
-      {gameState.goalKind !== null && (
-        <CharacterHeader state={gameState} />
-      )}
+  // ── today-page-ia zone derivations ──────────────────────────────────────
+  // Deferred lid: only on a not-completed day whose rotation session stepped
+  // aside (baseline/hike). Completed days never re-show the deferral.
+  const showDeferredLid = !isCompletedDay && deferredTemplate !== null && deferredBlocks.length > 0;
+  // TRACK zone = the Tier-3 lids. The ZoneDivider renders ONLY when this is
+  // non-empty (UXR-TIA-28) — an orphan "Tracking" label over nothing is the
+  // near-empty-copy failure this pass removes.
+  const trackZoneNonEmpty = showDeferredLid || showCompletedBaseline;
+  // Baseline-day-lie fix (UXR-TIA-27): the old naked "Nothing scheduled
+  // today." printed between a baseline card that IS the schedule and 916px of
+  // deferred prescription. It may appear only when NOTHING else carries the
+  // day — and for Program users not even then (the timeline owns the empty
+  // state with better copy at TodayTimeline.tsx); zero-Program tenants get a
+  // named state inside the Session card instead.
+  const showEmptySession =
+    !isCompletedDay &&
+    dayBlocks.length === 0 &&
+    deferredBlocks.length === 0 &&
+    !showProminentBaseline &&
+    !resolved.plannedHikeToday;
+  const plannedVsLogged =
+    isCompletedDay && display.plannedTitle && display.plannedTitle !== display.primaryTitle
+      ? `Planned: ${display.plannedTitle} → logged: ${display.primaryTitle}`
+      : null;
 
-      {/* REQ-106: Other-goals strip — between CharacterHeader and hero.
-          UXR-62-05: PRD-fixed placement honored. Server component renders null
-          when no non-focus events exist within the 7-day window.
-          UXR-PV-91 (approved): for Program users the "Also today" block is
-          suppressed — the timeline's mark lane already carries today's
-          claims — while the 7-day lookahead + conflict rows stay. */}
+  // ── Section manifest ({key, node} in TODAY_SECTION_ORDER — UXR-TIA-05/06).
+  // Keys are stable string literals; absent sections are null, never spliced,
+  // so a conditional section appearing/disappearing can't re-key its siblings.
+  const sections = orderedTodaySections({
+    // RPG Character Header — above hero; hidden when no active program
+    character: gameState.goalKind !== null ? <CharacterHeader state={gameState} /> : null,
+
+    // REQ-106: Other-goals strip — between CharacterHeader and hero.
+    // UXR-62-05: PRD-fixed placement honored. Server component renders null
+    // when no non-focus events exist within the 7-day window.
+    // UXR-PV-91 (approved): for Program users the "Also today" block is
+    // suppressed — the timeline's mark lane already carries today's
+    // claims — while the 7-day lookahead + conflict rows stay.
+    "other-goals": (
       <OtherGoalsStrip
         events={weekGoalEvents}
         conflicts={resolved.crossGoalConflicts}
         todayKey={todayDateKey}
         suppressTodayBlock={isProgramUser}
       />
+    ),
 
-      {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
+    // Hero: visually dominant workout card (REQ-D2)
+    hero: (
       <section
         className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
         aria-label="Today's workout"
@@ -492,15 +513,26 @@ export default async function HomePage() {
         {/* Eyeline: week / phase. #289: a Program tenant outside any rotation
             window (or with no rotation plan at all — the project-focus case)
             reads the Program's own name instead of a bare "Off plan"; the
-            zero-Program render is unchanged. */}
+            zero-Program render is unchanged.
+            today-page-ia: the Reach chip (Tier 4, 0px) rides this row's
+            previously-empty right slot — the FeasibilityReadout Card is CUT
+            (UXR-TIA-13/14). truncate on the label is the UXR-TIA-61 wrap
+            mitigation for long phase names. No chip when unrated (TIA-16). */}
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
+          <p className="text-xs uppercase tracking-wide text-[var(--muted)] truncate min-w-0">
             {resolved.weekIndex !== null
               ? `Week ${resolved.weekIndex}${todayPhase ? ` · Phase ${todayPhase.index} · ${todayPhase.name}` : ""}`
               : isProgramUser && resolved.program
                 ? resolved.program.name
                 : "Off plan"}
           </p>
+          {reach?.tier != null && goalForFeas && (
+            <ReachChip
+              tier={reach.tier}
+              weeksRemaining={reach.weeksRemaining}
+              goalId={goalForFeas.id}
+            />
+          )}
         </div>
 
         {/* Title. #289: for a Program tenant an out-of-rotation day is still a
@@ -541,173 +573,97 @@ export default async function HomePage() {
           </p>
         )}
       </section>
+    ),
 
-      {/* ── #288: Unified Today timeline — Program users only. ONE list for
-             the whole Program: rhythm-ladder order, every row carrying every
-             goal claim it serves in the mark lane (RFC §7 — never per-goal
-             sections). Renders null for zero-Program tenants, keeping their
-             page byte-identical to the pre-timeline render. ── */}
-      <TodayTimeline identities={identities} entries={timelineEntries} />
+    // #288: Unified Today timeline — Program users only. ONE list for the
+    // whole Program: rhythm-ladder order, every row carrying every goal claim
+    // it serves in the mark lane (RFC §7 — never per-goal sections). Renders
+    // null for zero-Program tenants, keeping their page byte-identical to the
+    // pre-timeline render. UXR-TIA-31: never wrap this in a CollapsibleCard —
+    // its aria-live region must stay in the accessibility tree. UNCHANGED by
+    // the today-page-ia reorder (owner-approved centerpiece).
+    timeline: <TodayTimeline identities={identities} entries={timelineEntries} />,
 
-      {/* ── Feasibility (Reach) card — server-rendered from computeGoalFeasibility.
-             Null when focusGoal is null (no focus goal set). Fitness hero above is
-             byte-identical whether or not focusGoal is null. ── */}
-      {feasibility && (
-        <FeasibilityReadout
-          feasibility={feasibility}
-          targetDateLabel={targetDateLabel}
-          coach={coachFeas}
-        />
-      )}
+    // ★ FuelRail (Tier 2, today-page-ia): the nutrition SCALAR — read ~4.5×/
+    // day, previously screen 3 — now one strip below the timeline. Data is
+    // already in hand (resolveDay's logs + plan): zero extra queries. The
+    // composer stays in the thumb zone (Log sheet); the rail's button opens it.
+    "fuel-rail": <FuelRail logs={resolved.loggedNutrition} plan={resolved.nutritionPlan} />,
 
-      {/* ── Baselines due — only when something is still outstanding (a completed
-             retest is demoted below the workout). ── */}
-      {showProminentBaseline && (
-        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={resolved.weekIndex} />
-      )}
+    // Baselines due — only when something is still outstanding (a completed
+    // retest is demoted to the TRACK lid below). index null: the tier grammar
+    // deleted the numbered flat stack (UXR-TIA-75).
+    "baseline-prominent": showProminentBaseline ? (
+      <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
+    ) : null,
 
-      {/* ── The day's workout. Once a session is logged we show the COMPLETED workout
-             (deriveDayDisplay — same source the calendar + detail use), so a swap shows
-             what was actually done. Otherwise: the active prescription, or the dimmed
-             deferred session on a baseline/hike day. ── */}
-      {isCompletedDay ? (
-        <>
-          {display.plannedTitle && display.plannedTitle !== display.primaryTitle && (
-            <p className="text-xs text-[var(--muted)] px-1">
-              Planned: {display.plannedTitle} → logged: {display.primaryTitle}
-            </p>
-          )}
-          {todayCompletedDetails.map((w) => (
-            <CompletedWorkoutCard key={w.id} workout={w} />
-          ))}
-        </>
-      ) : (
-        <>
-          {dayBlocks.length === 0 ? (
-            <p className="text-sm text-[var(--muted)] px-1">Nothing scheduled today.</p>
-          ) : (
-            dayBlocks.map((block, i) => (
-              <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
-            ))
-          )}
+    // ★ SessionDossier (Tier 1): the day's workout as ONE Card — completed
+    // sessions win over the prescription (deriveDayDisplay, same source the
+    // calendar + detail use), blocks render as native <details> rows with
+    // LITERAL open (see SessionDossier's binding header comment). Program
+    // tenants with an empty day render NO dossier — the timeline owns that
+    // state; zero-Program tenants get the named "No session scheduled today."
+    session: isCompletedDay ? (
+      <SessionDossier
+        workoutName={display.primaryTitle}
+        completed={todayCompletedDetails}
+        plannedVsLogged={plannedVsLogged}
+      />
+    ) : dayBlocks.length > 0 ? (
+      <SessionDossier workoutName={activeTemplate?.title ?? null} blocks={dayBlocks} />
+    ) : showEmptySession && !isProgramUser ? (
+      <SessionDossier emptyCopy="No session scheduled today." />
+    ) : null,
 
-          {/* Deferred rotation workout — stepped aside for today's baseline test or hike.
-              Dimmed + labelled so it reads as "normally here, not today", never the task. */}
-          {deferredTemplate && deferredBlocks.length > 0 && (
-            <>
-              <Card title={`Deferred today — ${deferredTemplate.title}`}>
-                <p className="text-xs text-[var(--warning)]">
-                  {resolved.todayTask === "baseline"
-                    ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
-                    : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
-                </p>
-              </Card>
-              <div className="opacity-60 space-y-4">
-                {deferredBlocks.map((block, i) => (
-                  <BlockCard key={i} block={block} index={i} />
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
+    // ── TRACK zone (Tier 3 only — structural rule: no Tier-1 Card below
+    //    this divider). Divider renders only when the zone is non-empty. ──
+    "zone-divider": trackZoneNonEmpty ? <ZoneDivider /> : null,
 
-      {/* ── Completed baselines — demoted below the workout as a quiet "done"
-             reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
-      {showCompletedBaseline && (
-        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
-      )}
-
-      {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}
-      <Card
-        title="Nutrition"
-        action={
-          <Link href="/nutrition" className="text-sm text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
-            All →
-          </Link>
-        }
+    // Deferred rotation workout — stepped aside for today's baseline test or
+    // hike. Was a 134px banner Card + 782px opacity-60 stack; now one closed
+    // lid (UXR-TIA-22). The dim is DROPPED (UXR-TIA-23 — ~2.6:1 AA failure);
+    // the closed lid plus the word "Deferred" carries "not today" better.
+    "deferred-lid": showDeferredLid ? (
+      <CollapsibleCard
+        variant="lid"
+        defaultOpen={false}
+        data-testid="today-deferred-lid"
+        title={`Deferred today — ${deferredTemplate!.title}`}
+        digest={`${deferredBlocks.length} block${deferredBlocks.length === 1 ? "" : "s"}`}
       >
-        <NutritionToday logs={resolved.loggedNutrition} plan={resolved.nutritionPlan} showLogForm={false} quickPickFoods={quickPickFoods} />
-      </Card>
+        <p className="text-xs text-[var(--warning)] mb-3">
+          {resolved.todayTask === "baseline"
+            ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
+            : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
+        </p>
+        <div className="space-y-4">
+          {deferredBlocks.map((block, i) => (
+            <BlockCard key={i} block={block} index={null} />
+          ))}
+        </div>
+      </CollapsibleCard>
+    ) : null,
 
-      {/* ── Recent workouts ── */}
-      {recentWorkouts.length > 0 && (
-        <Card
-          title="Recent workouts"
-          action={
-            <Link href="/history" className="text-sm text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
-              All →
-            </Link>
-          }
-        >
-          <ul className="space-y-2 text-sm">
-            {recentWorkouts.map((w) => (
-              <li key={w.id}>
-                <Link href={`/workouts/${w.id}`} className="flex justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded">
-                  <span>{w.title ?? "Workout"}</span>
-                  <span className="text-[var(--muted)]">
-                    {new Date(w.startedAt).toLocaleDateString()} · {w.exercises.length} ex
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+    // Completed baselines — a quiet TRACK-zone lid (UXR-TIA-24); the closed
+    // title + digest carry the payload so the lid is never empty.
+    "baselines-completed-lid": showCompletedBaseline ? (
+      <CollapsibleCard
+        variant="lid"
+        defaultOpen={false}
+        data-testid="today-baselines-completed-lid"
+        title={`${baselineBlockLabel(baselinesDue, resolved.weekIndex)} ✓`}
+        digest={`${baselinesDue.length}/${baselinesDue.length} logged`}
+      >
+        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} bare />
+      </CollapsibleCard>
+    ) : null,
+  });
+
+  return (
+    <div className="max-w-md mx-auto p-4 space-y-4">
+      {sections.map(({ key, node }) => (
+        <Fragment key={key}>{node}</Fragment>
+      ))}
     </div>
   );
-}
-
-function BlockCard({ block, index }: { block: Block; index: number }) {
-  const blockTitle = block.label ?? defaultBlockLabel(block.type);
-  return (
-    <Card title={`${index + 1}. ${blockTitle}`}>
-      <p className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
-        {blockTypeLabel(block.type)}
-        {block.rounds ? ` · ${block.rounds} rounds` : ""}
-        {block.restSec ? ` · ${block.restSec}s rest` : ""}
-      </p>
-      <ul className="space-y-2">
-        {block.exercises.map((ex, i) => (
-          <ExerciseRow key={i} ex={ex} />
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
-function ExerciseRow({ ex }: { ex: ExercisePrescription }) {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets} set${ex.sets === 1 ? "" : "s"}`);
-  if (ex.reps !== undefined) parts.push(`× ${ex.reps}`);
-  if (ex.durationSec) parts.push(formatSecs(ex.durationSec));
-  if (ex.weightHint) parts.push(ex.weightHint);
-
-  return (
-    <li>
-      <p className="font-medium">
-        {ex.name}
-        {ex.equipment ? (
-          <span className="text-[var(--muted)] font-normal"> · {ex.equipment}</span>
-        ) : null}
-      </p>
-      {parts.length > 0 && <p className="text-sm text-[var(--muted)]">{parts.join(" · ")}</p>}
-      {ex.notes && <p className="text-xs text-[var(--muted)] italic">{ex.notes}</p>}
-    </li>
-  );
-}
-
-function defaultBlockLabel(t: Block["type"]): string {
-  switch (t) {
-    case "straight":
-      return "Strength";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
 }

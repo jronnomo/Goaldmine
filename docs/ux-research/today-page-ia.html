@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goaldmine · Today page — "Fuel Rail + Weight Ladder" pixel mockup</title>
+
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  RESEARCH ARTIFACT — NOT SHIPPING CODE.
+
+  SOURCE OF TRUTH FOR TOKENS: src/app/globals.css. The two :root blocks below
+  are copied byte-for-byte from that file and are the ONLY place a colour
+  literal appears in this document. Everything downstream is var(--…) or
+  color-mix() over var(--…).
+
+  SOURCE OF TRUTH FOR GEOMETRY: the shipped components, hand-compiled from
+  their Tailwind class strings —
+    src/components/Card.tsx                      (rounded-2xl border p-4 shadow-sm)
+    src/components/AppHeader.tsx                 (sticky, h-12 + 1px border = 49px)
+    src/components/BottomNav.tsx                 (fixed, 5-col grid, max-w-md = 53px)
+    src/components/CollapsibleCard.tsx           (the Tier 3 lid grammar, verbatim)
+    src/components/today/TodayTimeline.tsx       (Tier 1 centrepiece — unchanged)
+    src/components/today/TimelineRow.tsx         (○/✓ glyph, truncating title)
+    src/components/MarkLane.tsx                  (fixed w-[64px] right lane)
+    src/components/MarkLegendStrip.tsx           (11px legend)
+    src/components/ReachMeter.tsx                (5 segments, 3px×9px, gap 1.5px)
+    src/components/CeilingRule.tsx               (h-1.5 track + accent fill)
+    src/components/BaselineBlockCard.tsx         (inline [value][Log] rows)
+    src/components/game/CharacterHeader.tsx      (medallion · XP · streak · attrs)
+    src/app/page.tsx                             (hero, slots, the strings cited)
+
+  FONTS ARE STAND-INS. The real app loads Geist Sans / Geist Mono through
+  next/font as --font-sans / --font-mono. This file must render offline from
+  file:// with zero network requests, so each face is a system stack.
+  DM Serif Display (--font-display) is deliberately NOT declared anywhere in
+  this file — it is barred from the Today page.
+  ══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ══════════════════════════════════════════════════════════════════════════
+   1. TOKENS — verbatim from src/app/globals.css.
+   The `.theme-light` / `.theme-dark` selectors are joined onto the same two
+   blocks so the side-by-side frames can each carry their own palette scope
+   without a third copy of the values.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root, .theme-light {
+  color-scheme: light;
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #9A480F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
+}
+:root[data-theme="dark"], .theme-dark {
+  color-scheme: dark;
+  --background: #0F0B07;
+  --foreground: #F4E9D4;
+  --muted: #9C8866;
+  --card: #1A130C;
+  --border: #3A2E1F;
+  --accent: #D4A437;
+  --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12);
+  --target: #D97A3D;
+  --target-fg: #FFFFFF;
+  --success: #7FA45C;
+  --warning: #E0915C;
+  --danger: #C0392B;
+}
+/* Stand-in faces — real app: var(--font-sans) / var(--font-mono) via next/font. */
+:root { --f-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+        --f-mono: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. GALLERY CHROME — annotation layer, deliberately unlike any product
+   surface (dashed rules, 11px type) so it can never be mistaken for UI.
+   ══════════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: var(--f-sans);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  color: var(--foreground); -webkit-font-smoothing: antialiased;
+}
+.head { max-width: 1180px; margin: 0 auto; padding: 26px 20px 4px; }
+.head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 4px; }
+.head .meta { font-size: 12.5px; color: var(--muted); margin: 0 0 16px; }
+.head h3 { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+           color: var(--muted); margin: 20px 0 8px; }
+
+.modebar { position: sticky; top: 0; z-index: 80; display: flex; gap: 8px; align-items: center;
+  padding: 10px 20px; background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.modebar .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+.modebtn { min-height: 44px; padding: 0 16px; border-radius: 9999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--foreground); font: inherit; font-size: 13px; cursor: pointer; }
+.modebtn[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.modebtn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+
+/* tier legend + what-changed table */
+.tiers { display: grid; grid-template-columns: 74px 1fr; gap: 4px 12px; font-size: 12.5px;
+  line-height: 1.5; max-width: 860px; }
+.tiers dt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tiers dd { margin: 0; color: var(--muted); }
+.tiers dd b { color: var(--foreground); font-weight: 600; }
+
+.chg { border-collapse: collapse; font-size: 12px; max-width: 860px; width: 100%; }
+.chg th, .chg td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: top; }
+.chg th { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  font-weight: 600; }
+.chg td.d { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--success);
+  white-space: nowrap; }
+.chg tr.total td { border-bottom: 0; font-weight: 600; }
+
+/* per-frame panels */
+.gallery { max-width: 1180px; margin: 0 auto; padding: 8px 20px 60px; }
+.panel { margin: 34px 0 0; }
+.panel-title { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  margin: 0 0 2px; }
+.panel-sub { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; max-width: 72ch; line-height: 1.5; }
+.panel-body { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+.phone-wrap { flex: 0 0 auto; }
+.wrap-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+  margin: 0 0 6px 4px; }
+.col-notes { flex: 1 1 280px; min-width: 280px; max-width: 400px; }
+body[data-mode="light"] .phone-wrap.dk { display: none; }
+body[data-mode="dark"]  .phone-wrap.lt { display: none; }
+
+.note { font-size: 11.5px; line-height: 1.55; color: var(--muted);
+  border-left: 2px dashed var(--muted); padding: 1px 0 1px 9px; margin: 0 0 11px; }
+.note b { color: var(--foreground); font-weight: 600; }
+.note code { font-family: var(--f-mono); font-size: 10.5px; }
+.note .tk { font-family: var(--f-mono); font-size: 10px; display: block; margin-top: 2px;
+  color: color-mix(in srgb, var(--muted) 80%, transparent); }
+.note.new { border-left-color: var(--accent); }
+.note.cut { border-left-color: var(--danger); }
+.flag { color: var(--warning); font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   3. DEVICE FRAME + FOLD INSTRUMENTATION
+   The frame is exactly 390px wide. Content flows to its natural height; the
+   844px viewport is INDICATED by two absolutely-positioned rules that add
+   zero height to the layout.
+   ══════════════════════════════════════════════════════════════════════════ */
+.phone { width: 390px; background: var(--background); color: var(--foreground);
+  font-family: var(--f-sans); border: 1px solid var(--border); border-radius: 24px;
+  overflow: hidden; box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 24%, transparent); }
+.phone :focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+
+/* AppHeader.tsx — sticky, h-12 (48px) + 1px bottom border = 49px */
+.app-hdr { position: sticky; top: 0; z-index: 30; height: 48px; display: flex; align-items: center;
+  gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 95%, transparent); backdrop-filter: blur(8px); }
+/* Real wordmark is var(--font-display); substituted here — the face is barred from this artifact. */
+.wordmark { font-size: 20px; letter-spacing: -0.02em; }
+.hdr-spacer { flex: 1; }
+.hdr-btn { width: 28px; height: 28px; border-radius: 9999px; border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); }
+
+.scroll { position: relative; min-height: 810px; }
+.fold, .vpend { position: absolute; left: 0; right: 0; height: 0; pointer-events: none; z-index: 20; }
+.fold { border-top: 1px dashed var(--danger); }
+.vpend { border-top: 1px dotted var(--muted); }
+.fold-tag, .vp-tag { position: absolute; right: 6px; font-size: 9px; line-height: 14px;
+  padding: 0 6px; border-radius: 9999px; white-space: nowrap; font-family: var(--f-mono); }
+.fold-tag { top: -7px; background: var(--danger); color: var(--target-fg); }
+.vp-tag { top: -7px; background: var(--card); color: var(--muted); border: 1px dotted var(--muted); }
+
+/* page.tsx: max-w-md mx-auto p-4 space-y-4, over main.pb-20 (80px nav clearance) */
+.screen { max-width: 28rem; margin: 0 auto; padding: 16px 16px 80px;
+  display: flex; flex-direction: column; gap: 16px; }
+
+/* BottomNav.tsx — 1px border-top + py-3 rows = 53px */
+.btm-nav { border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 95%, transparent); backdrop-filter: blur(8px); }
+.btm-nav ul { display: grid; grid-template-columns: repeat(5, 1fr); max-width: 28rem;
+  margin: 0 auto; padding: 0; list-style: none; }
+.btm-nav a { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 0;
+  text-decoration: none; font-size: 14px; font-weight: 500; color: var(--muted); }
+.btm-nav a[aria-current="page"] { color: var(--accent); }
+/* Log = the nutrition WRITE path (LogLauncher inside BottomSheet). FuelRail only reads. */
+.write-path { text-decoration: underline dashed var(--accent); text-underline-offset: 3px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   4. SHIPPED CLASS GRAMMAR, HAND-COMPILED
+   ══════════════════════════════════════════════════════════════════════════ */
+.card { border-radius: 1rem; border: 1px solid var(--border); background: var(--card); padding: 16px;
+  box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--foreground) 8%, transparent); }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 12px; }
+.h2 { font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+.h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+.card-action { font-size: 14px; color: var(--muted); text-decoration: none; }
+.eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); margin: 0; }
+.micro { font-size: 10px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); }
+.body { font-size: 14px; line-height: 20px; margin: 0; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Tier 0 — hero. Same visual shell as Card, hand-rolled, space-y-3 ── */
+.hero { border-radius: 1rem; border: 1px solid var(--border); background: var(--card); padding: 16px;
+  box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--foreground) 8%, transparent);
+  display: flex; flex-direction: column; gap: 12px; }
+/* page.tsx:496 — already flex/justify-between/gap-2 with ONE child. The Reach chip
+   takes the free right slot; this is why the chip costs 0px. */
+.eyeline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.quest { display: flex; gap: 8px; padding: 8px 12px; border-radius: 0.5rem; background: var(--accent-soft); }
+.quest-rule { align-self: stretch; width: 2px; border-radius: 9999px; background: var(--accent); flex-shrink: 0; }
+.quest p { margin: 0; }
+.quest .q1 { font-size: 14px; font-weight: 600; }
+.quest .q2 { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ── Tier 4 — Reach chip. ReachMeter.tsx geometry, never animated (UXR-63-21) ── */
+.reach { display: inline-flex; align-items: center; gap: 1.5px; text-decoration: none; flex-shrink: 0; }
+.reach i { display: inline-block; width: 3px; height: 9px; border-radius: 1px; background: var(--border); }
+.reach i.on { background: var(--accent); }
+.reach .word { margin-left: 6px; font-size: 12px; color: var(--accent); font-style: normal; }
+.reach .eta { margin-left: 4px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── Tier 2 — compact strip. NO h2. That absence is what defines the tier. ── */
+.strip { border-radius: 0.75rem; border: 1px solid var(--border); background: var(--card);
+  padding: 10px 12px; min-height: 44px; display: flex; flex-direction: column; gap: 6px; }
+
+/* ★ FuelRail */
+.fuel { text-decoration: none; color: inherit; }
+.fuel-l1 { display: flex; align-items: baseline; gap: 8px; }
+.fuel-head { font-family: var(--f-mono); font-size: 16px; font-weight: 500;
+  font-variant-numeric: tabular-nums; color: var(--foreground); }
+.fuel-all { margin-left: auto; font-size: 14px; color: var(--accent); }
+/* h-1.5 rounded-full track + accent fill — the house grammar for a PARTIAL readout
+   (CeilingRule.tsx:11-12). Never a Bullseye here. */
+.meter { height: 6px; border-radius: 9999px; overflow: hidden;
+  background: color-mix(in srgb, var(--border) 60%, transparent); }
+.meter > i { display: block; height: 100%; border-radius: 9999px; background: var(--accent); }
+.fuel-l3 { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── OtherGoalsStrip — Tier 2, quiet variant ── */
+.ogs { gap: 6px; }
+.ogs p { margin: 0; font-size: 14px; }
+.ogs .k { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.025em;
+  color: var(--muted); margin-right: 4px; }
+.claim-ring { outline: 1px solid var(--muted); outline-offset: 1px; border-radius: 9999px;
+  opacity: .65; font-size: 11px; }
+.ogs .conf { display: flex; gap: 6px; align-items: baseline; font-size: 13px; line-height: 1.45; }
+.ogs .conf .g { color: var(--warning); flex-shrink: 0; }
+
+/* ── CharacterHeader — Tier 1, one tap target → /character ── */
+.char { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; min-height: 72px;
+  border-radius: 1rem; border: 1px solid var(--border); background: var(--card); text-decoration: none;
+  color: inherit; box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--foreground) 8%, transparent); }
+.char-r1 { display: flex; align-items: center; gap: 10px; }
+.med { position: relative; width: 36px; height: 36px; flex-shrink: 0; margin-bottom: 4px; }
+/* Real LevelMedallion sets font-family: var(--font-display) here — see notes, flagged. */
+.med .chip { position: absolute; bottom: -5px; right: -5px; width: 20px; height: 20px;
+  border-radius: 9999px; background: var(--accent); color: var(--accent-fg); display: flex;
+  align-items: center; justify-content: center; font-size: 10px; line-height: 1;
+  border: 1.5px solid var(--card); }
+.xpwrap { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.xpbar { flex: 1; height: 6px; border-radius: 9999px; overflow: hidden; background: var(--accent-soft); }
+.xpbar > i { display: block; height: 100%; border-radius: 9999px; background: var(--accent); }
+.xplabel { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.streak { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.streak span { font-size: 14px; font-weight: 600; color: var(--warning); font-variant-numeric: tabular-nums; }
+.attrs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.attr { display: flex; align-items: center; gap: 4px; }
+.attr .a { font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.attr .n { font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.attr .b { width: 32px; height: 4px; border-radius: 9999px; overflow: hidden; background: var(--accent-soft); }
+.attr .b > i { display: block; height: 100%; border-radius: 9999px; background: var(--accent); }
+
+/* ── TodayTimeline — Tier 1, reproduced faithfully, NOT redesigned ── */
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; font-size: 11px;
+  color: var(--muted); margin: 0; }
+.legend .lg { display: inline-flex; align-items: center; gap: 4px; }
+.tl { list-style: none; margin: 8px 0 0; padding: 0; }
+.tl > li { display: flex; align-items: center; gap: 8px; }
+.tl > li + li { border-top: 1px solid var(--border); }
+.tl-link { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; min-height: 44px;
+  border-radius: 0.5rem; padding: 0 4px; text-decoration: none; color: inherit; }
+.tl-glyph { flex-shrink: 0; font-size: 14px; color: var(--muted); }
+.tl-glyph.done { color: var(--success); }
+.tl-title { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tl-title > b { font-weight: 500; }
+.tl-title > b.done { color: var(--muted); font-weight: 500; }
+.tl-detail { font-size: 12px; color: var(--muted); }
+/* MarkLane.tsx — w-[64px] shrink-0 justify-end. Position constancy is binding. */
+.lane { display: flex; width: 64px; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 4px; }
+.mk { font-size: 14px; line-height: 1; }
+.mk.g0 { color: var(--target); }   /* slot 0 ● / ○  Squat 2×BW */
+.mk.g1 { color: var(--success); }  /* slot 1 ■ / □  Sub-20 5K  */
+.mk.g2 { color: var(--accent); }   /* slot 2 ▲ / △  Handstand  */
+.lane .ovf { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Permanently empty in the real app — the space is RESERVED so the future
+   fan-out announcement lands in an element that already existed (UXR-PV-19). */
+.live { min-height: 16px; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+
+/* ── ★ SessionDossier — Tier 1. Blocks are native <details> rows. ── */
+.dossier { list-style: none; margin: 0; padding: 0; }
+.dossier > li + li { border-top: 1px solid var(--border); }
+.dossier summary { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 44px; cursor: pointer; list-style: none; }
+.dossier summary::-webkit-details-marker { display: none; }
+/* 14px/500 deliberately — 16px/600 belongs to Tiers 1 and 3, not to a row inside a card. */
+.dsg-label { font-size: 14px; font-weight: 500; }
+.dsg-digest { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  margin-left: auto; text-align: right; }
+.chev { font-size: 12px; color: var(--muted); flex-shrink: 0; transition: transform 150ms; }
+details[open] > summary .chev { transform: rotate(180deg); }
+.dsg-body { list-style: none; margin: 0; padding: 0 0 12px; }
+.dsg-body li + li { margin-top: 8px; }
+.ex-name { font-size: 14px; margin: 0; }
+.ex-rx { font-size: 12px; color: var(--muted); margin: 1px 0 0; font-variant-numeric: tabular-nums; }
+
+/* ── ★ ZoneDivider ── */
+.zone { display: flex; align-items: center; gap: 8px; padding: 4px; }
+.zone .w { font-size: 10px; text-transform: uppercase; letter-spacing: 0.025em; color: var(--muted); }
+.zone .r { height: 1px; flex: 1; background: var(--border); }
+
+/* ── Tier 3 lid — CollapsibleCard.tsx grammar, verbatim. opacity-60 DROPPED. ── */
+.lid { border-radius: 1rem; border: 1px solid var(--border); background: var(--card);
+  box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--foreground) 8%, transparent); }
+.lid > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 16px; min-height: 44px; cursor: pointer; list-style: none; }
+.lid > summary::-webkit-details-marker { display: none; }
+.lid .inner { padding: 0 16px 16px; }
+
+/* ── BaselineBlockCard — the baseline day's only write surface ── */
+.bt { list-style: none; margin: 0; padding: 0; }
+.bt > li + li { margin-top: 12px; }
+.bt-name { font-size: 14px; font-weight: 500; margin: 0; }
+.bt-proto { font-size: 12px; color: var(--muted); font-style: italic; margin: 2px 0 0; }
+.bl-form { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.bl-input { width: 96px; min-height: 44px; border-radius: 0.5rem; border: 1px solid var(--border);
+  background: transparent; color: var(--foreground); padding: 0 8px; font: inherit; font-size: 14px;
+  font-variant-numeric: tabular-nums; }
+.bl-btn { min-height: 44px; padding: 0 16px; border-radius: 0.5rem; border: 0; background: var(--accent);
+  color: var(--accent-fg); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+
+/* ── In-frame annotation markers (NOT product UI). The strike-slot contributes
+      exactly 0px: gap(16) + 0 + gap(16) + (-8) + (-8) = 16 = one unchanged gap. ── */
+.strike-slot { height: 0; margin: -8px 0; position: relative; }
+.strike-slot > span { position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  height: 16px; line-height: 14px; padding: 0 8px; border-radius: 9999px; white-space: nowrap;
+  font-size: 9.5px; background: var(--background); border: 1px dashed var(--danger);
+  color: var(--muted); }
+.strike-slot s { color: var(--danger); }
+.ghost { margin-top: -4px; font-size: 10px; line-height: 1.5; color: var(--muted);
+  border: 1px dashed var(--muted); border-radius: 0.5rem; padding: 6px 8px; }
+.ghost b { color: var(--foreground); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chev { transition: none; }
+  * { scroll-behavior: auto; }
+}
+@media (max-width: 1180px) { .col-notes { max-width: none; flex-basis: 100%; } }
+</style>
+</head>
+
+<body data-mode="both">
+
+<div class="modebar">
+  <span class="lbl">Theme</span>
+  <button class="modebtn" id="m-both"  aria-pressed="true"  onclick="setMode('both')">Both, side by side</button>
+  <button class="modebtn" id="m-light" aria-pressed="false" onclick="setMode('light')">Light</button>
+  <button class="modebtn" id="m-dark"  aria-pressed="false" onclick="setMode('dark')">Dark</button>
+</div>
+
+<div class="head">
+  <h1>Today page — "Fuel Rail + Weight Ladder"</h1>
+  <p class="meta">Week 6 · Phase 2 · Build · Mon Aug 10 · 390&nbsp;px · tokens from <code>src/app/globals.css</code>.
+     Research artifact, not shipping code.</p>
+
+  <h3>Tier grammar</h3>
+  <dl class="tiers">
+    <dt>Tier 0</dt><dd>Hero. <b>Exactly one per page.</b> 24px h1, hand-rolled card shell, 12px inner rhythm.</dd>
+    <dt>Tier 1</dt><dd>Primary <code>Card</code>. <b>Cap 2–3.</b> Has an <code>h2</code> at 16px/600. Structural rule: <b>no TRACK-zone surface may be Tier 1.</b></dd>
+    <dt>Tier 2</dt><dd>Compact strip. <b>No <code>h2</code> — that absence is what defines the tier.</b> 0.75rem radius, 10/12 padding.</dd>
+    <dt>Tier 3</dt><dd>Collapsed <code>&lt;details&gt;</code> lid, ~56–60px. Card shell, 16px/600 title that carries the payload.</dd>
+    <dt>Tier 4</dt><dd>Chip riding an existing line box. <b>0px.</b> Costs nothing because the flex row already had a free slot.</dd>
+  </dl>
+
+  <h3>What changed</h3>
+  <table class="chg">
+    <thead><tr><th>Surface</th><th>Current</th><th>New</th><th>Δ</th></tr></thead>
+    <tbody>
+      <tr><td>Nutrition Card → <b>★ FuelRail</b></td><td>slot 9 · Tier 1 Card · 283–331px</td><td>slot 4 · Tier 2 strip · 72–84px</td><td class="d">−205 … −253</td></tr>
+      <tr><td>Reach (<code>FeasibilityReadout</code>)</td><td>slot 5 · Tier 1 Card · 198–248px</td><td>Tier 4 chip in the hero eyeline · 0px</td><td class="d">−198 … −248</td></tr>
+      <tr><td>Deferred session</td><td>134px Card + 782px of <code>BlockCard</code>s at <code>opacity-60</code></td><td>Tier 3 lid · 56–60px · opacity dropped</td><td class="d">−856 … −860</td></tr>
+      <tr><td>Recent workouts</td><td>146px Card</td><td><b>CUT</b> — /history owns it</td><td class="d">−146</td></tr>
+      <tr class="total"><td colspan="3">Total removed from the ACT+TRACK stack <span class="flag">⚠</span> (Deferred applies on baseline/hike days only)</td><td class="d">−1,405 … −1,507</td></tr>
+      <tr><td colspan="3" style="color:var(--muted)">Not in the brief's strip, included for completeness: 3 × <code>BlockCard</code> (~362px incl. gaps <span class="flag">⚠</span>) → one <b>★ SessionDossier</b> (190px all-closed / ~262px with one open <span class="flag">⚠</span>)</td><td class="d">−100 … −172 <span class="flag">⚠</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="gallery">
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     FRAME A — NORMAL TRAINING DAY
+     ═══════════════════════════════════════════════════════════════════════ -->
+<section class="panel">
+  <p class="panel-title">Frame A — normal training day</p>
+  <p class="panel-sub">Full manifest. SessionDossier block 1 open, blocks 2–3 closed. The TRACK zone is
+     empty (no deferred session, no completed baselines) so <b>the ZoneDivider does not render</b> —
+     annotated at the foot of the frame.</p>
+
+  <div class="panel-body">
+
+    <!-- ── A / LIGHT ── -->
+    <div class="phone-wrap lt">
+      <p class="wrap-label">Light</p>
+      <div class="phone theme-light">
+        <header class="app-hdr">
+          <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+          <span class="wordmark">Goaldmine</span>
+          <span class="hdr-spacer"></span>
+          <span class="hdr-btn" aria-hidden>◐</span><span class="hdr-btn" aria-hidden>JG</span>
+        </header>
+
+        <div class="scroll">
+          <div class="fold"  style="top:742px"><span class="fold-tag">FOLD 742 = 844 − 49 − 53 ⚠ brief said 737</span></div>
+          <div class="vpend" style="top:795px"><span class="vp-tag">844px viewport floor</span></div>
+
+          <div class="screen">
+
+            <!-- 1 · CharacterHeader — Tier 1 · 92px -->
+            <a class="char" href="#character" aria-label="Character: Level 19, 12 day streak. Tap to view character sheet.">
+              <div class="char-r1">
+                <div class="med">
+                  <!-- Bullseye progress 340/500 = 0.68 → ceil(0.68×4) = 3 of 4 rings + outer shell -->
+                  <svg viewBox="0 0 32 32" width="36" height="36" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+                  <span class="chip" aria-hidden>19</span>
+                </div>
+                <div class="xpwrap">
+                  <div class="xpbar" role="progressbar" aria-valuenow="340" aria-valuemin="0" aria-valuemax="500" aria-label="340 / 500 XP"><i style="width:68%"></i></div>
+                  <span class="xplabel">340 / 500</span>
+                </div>
+                <span class="streak" aria-label="12 day streak">
+                  <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden style="color:var(--warning)"><path d="M10 2C10 2 6 6.5 6 10a4 4 0 0 0 8 0c0-1.5-1-3-1-3s-.5 1.5-2 2c0-2-1-3-1-5z" fill="currentColor"/></svg>
+                  <span>12</span>
+                </span>
+              </div>
+              <div class="attrs">
+                <span class="attr"><span class="a">STR</span><span class="n">8</span><span class="b"><i style="width:62%"></i></span></span>
+                <span class="attr"><span class="a">END</span><span class="n">5</span><span class="b"><i style="width:34%"></i></span></span>
+                <span class="attr"><span class="a">MOB</span><span class="n">4</span><span class="b"><i style="width:48%"></i></span></span>
+                <span class="attr"><span class="a">GRT</span><span class="n">6</span><span class="b"><i style="width:71%"></i></span></span>
+              </div>
+            </a>
+
+            <!-- 2 · OtherGoalsStrip — Tier 2 · 110px · no h2 -->
+            <div class="strip ogs" aria-label="Other goals this week">
+              <p><span class="k">This week:</span>
+                 <span class="claim-ring" aria-hidden>◆</span> Squat 1RM retest <span class="muted">(Thu)</span>
+                 <span class="muted"> · </span>
+                 <span class="claim-ring" aria-hidden>◆</span> 5K time trial <span class="muted">(Sat)</span></p>
+              <p class="conf"><span class="g" aria-hidden>◣</span>
+                 <span>Sat: the 5K trial and Lower Power both want fresh legs. Move one.</span></p>
+            </div>
+
+            <!-- 3 · Hero — Tier 0 · 205px · + Reach chip (Tier 4, 0px) -->
+            <section class="hero" aria-label="Today's workout">
+              <!-- page.tsx:496 — the flex row already existed with one child. -->
+              <div class="eyeline">
+                <p class="eyebrow">Week 6 · Phase 2 · Build</p>
+                <a class="reach" href="#goal" role="img" aria-label="Reach: Rare — 3 of 5">
+                  <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+                  <em class="word">Rare</em><span class="eta">· 12 wk</span>
+                </a>
+              </div>
+              <h1 class="h1">Lower Power</h1>
+              <p class="body muted">Monday, Aug 10 · 3 blocks · ~55 min</p>
+              <div class="quest">
+                <span class="quest-rule" aria-hidden></span>
+                <span style="flex-shrink:0;padding-top:2px"><svg viewBox="0 0 32 32" width="20" height="20" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg></span>
+                <div>
+                  <p class="q1">Today's quest · <span class="tnum" style="color:var(--accent)">~180 XP</span></p>
+                  <p class="q2">Bonus in play: the 12-day streak holds if you log before midnight.</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 4 · ★ FuelRail — Tier 2 · 72–84px ⚠ · whole strip links to /nutrition -->
+            <a class="strip fuel" href="#nutrition" aria-label="Fuel: 1,840 of 2,600 calories. 760 left. View all nutrition.">
+              <span class="fuel-l1">
+                <span class="micro">FUEL</span>
+                <span class="fuel-head">1,840 / 2,600 cal</span>
+                <span class="fuel-all">All →</span>
+              </span>
+              <span class="meter" role="progressbar" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100"><i style="width:70.8%"></i></span>
+              <span class="fuel-l3">760 left · 152p 186c 58f · 2 meals</span>
+            </a>
+
+            <!-- 5 · TodayTimeline — Tier 1 · 342px · UNCHANGED -->
+            <section class="card" data-testid="today-timeline">
+              <div class="card-head"><h2 class="h2">Today</h2></div>
+              <p class="legend">
+                <span class="lg"><span class="mk g0" style="font-size:11px">●</span> Squat 2×BW</span>
+                <span class="lg"><span class="mk g1" style="font-size:11px">■</span> Sub-20 5K</span>
+                <span class="lg"><span class="mk g2" style="font-size:11px">▲</span> Handstand</span>
+              </p>
+              <ol class="tl">
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Lower Power</b><span class="tl-detail"> · Primary · Accessory · Finisher</span></span></a>
+                  <span class="lane"><span class="mk g0">○</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Handstand practice</b><span class="tl-detail"> · 12 min wall holds</span></span></a>
+                  <span class="lane"><span class="mk g2">△</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Zone 2 run</b><span class="tl-detail"> · 35 min easy</span></span></a>
+                  <span class="lane"><span class="mk g1">□</span></span></li>
+                <li><a class="tl-link" href="#nutrition"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Meals</b><span class="tl-detail"> · 2,600 cal target · 2 meals logged</span></span></a>
+                  <span class="lane"><span class="mk g0">●</span><span class="mk g1">■</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Mobility</b><span class="tl-detail"> · 10 min hip flow</span></span></a>
+                  <span class="lane"><span class="mk g2">▲</span></span></li>
+              </ol>
+              <p class="live" aria-live="polite" role="status"></p>
+            </section>
+
+            <!-- 7 · ★ SessionDossier — Tier 1 · 190–500px ⚠ -->
+            <section class="card">
+              <div class="card-head"><h2 class="h2">Session</h2><span class="card-action">Lower Power</span></div>
+              <ol class="dossier">
+                <li><details open>
+                  <summary><span class="dsg-label">Primary strength</span>
+                    <span class="dsg-digest">Back Squat, RDL · 5 sets</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Back Squat</p><p class="ex-rx">3 × 3 · 82% · 3 min rest</p></li>
+                    <li><p class="ex-name">Romanian Deadlift</p><p class="ex-rx">2 × 8 · RPE 7 · 2 min rest</p></li>
+                  </ul>
+                </details></li>
+                <li><details>
+                  <summary><span class="dsg-label">Accessory</span>
+                    <span class="dsg-digest">Split Squat, Hip Thrust · 6 sets</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Rear-foot Split Squat</p><p class="ex-rx">3 × 10 each · RPE 7</p></li>
+                    <li><p class="ex-name">Hip Thrust</p><p class="ex-rx">3 × 12 · 90s rest</p></li>
+                  </ul>
+                </details></li>
+                <li><details>
+                  <summary><span class="dsg-label">Finisher</span>
+                    <span class="dsg-digest">Sled Push · 4 rounds</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Sled Push</p><p class="ex-rx">4 × 20 m · heavy · 90s rest</p></li>
+                  </ul>
+                </details></li>
+              </ol>
+            </section>
+
+            <p class="ghost"><b>ANNOTATION — not part of the UI.</b> The <b>ZoneDivider does not render here.</b>
+               The TRACK zone is empty on a normal training day: nothing is deferred and no baseline is
+               complete. The rule is drawn only when something follows it.</p>
+
+          </div>
+        </div>
+
+        <nav class="btm-nav"><ul>
+          <li><a href="#" aria-current="page"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/></svg>Today</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Plan</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg><span class="write-path" title="Nutrition write path — LogLauncher inside BottomSheet">Log</span></a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Progress</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>More</a></li>
+        </ul></nav>
+      </div>
+    </div>
+
+    <!-- ── A / DARK — identical markup, dark token scope ── -->
+    <div class="phone-wrap dk">
+      <p class="wrap-label">Dark</p>
+      <div class="phone theme-dark">
+        <header class="app-hdr">
+          <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+          <span class="wordmark">Goaldmine</span>
+          <span class="hdr-spacer"></span>
+          <span class="hdr-btn" aria-hidden>◐</span><span class="hdr-btn" aria-hidden>JG</span>
+        </header>
+        <div class="scroll">
+          <div class="fold"  style="top:742px"><span class="fold-tag">FOLD 742 = 844 − 49 − 53 ⚠ brief said 737</span></div>
+          <div class="vpend" style="top:795px"><span class="vp-tag">844px viewport floor</span></div>
+          <div class="screen">
+            <a class="char" href="#character" aria-label="Character: Level 19, 12 day streak. Tap to view character sheet.">
+              <div class="char-r1">
+                <div class="med">
+                  <svg viewBox="0 0 32 32" width="36" height="36" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+                  <span class="chip" aria-hidden>19</span>
+                </div>
+                <div class="xpwrap">
+                  <div class="xpbar" role="progressbar" aria-valuenow="340" aria-valuemin="0" aria-valuemax="500" aria-label="340 / 500 XP"><i style="width:68%"></i></div>
+                  <span class="xplabel">340 / 500</span>
+                </div>
+                <span class="streak" aria-label="12 day streak">
+                  <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden style="color:var(--warning)"><path d="M10 2C10 2 6 6.5 6 10a4 4 0 0 0 8 0c0-1.5-1-3-1-3s-.5 1.5-2 2c0-2-1-3-1-5z" fill="currentColor"/></svg>
+                  <span>12</span>
+                </span>
+              </div>
+              <div class="attrs">
+                <span class="attr"><span class="a">STR</span><span class="n">8</span><span class="b"><i style="width:62%"></i></span></span>
+                <span class="attr"><span class="a">END</span><span class="n">5</span><span class="b"><i style="width:34%"></i></span></span>
+                <span class="attr"><span class="a">MOB</span><span class="n">4</span><span class="b"><i style="width:48%"></i></span></span>
+                <span class="attr"><span class="a">GRT</span><span class="n">6</span><span class="b"><i style="width:71%"></i></span></span>
+              </div>
+            </a>
+            <div class="strip ogs" aria-label="Other goals this week">
+              <p><span class="k">This week:</span>
+                 <span class="claim-ring" aria-hidden>◆</span> Squat 1RM retest <span class="muted">(Thu)</span>
+                 <span class="muted"> · </span>
+                 <span class="claim-ring" aria-hidden>◆</span> 5K time trial <span class="muted">(Sat)</span></p>
+              <p class="conf"><span class="g" aria-hidden>◣</span>
+                 <span>Sat: the 5K trial and Lower Power both want fresh legs. Move one.</span></p>
+            </div>
+            <section class="hero" aria-label="Today's workout">
+              <div class="eyeline">
+                <p class="eyebrow">Week 6 · Phase 2 · Build</p>
+                <a class="reach" href="#goal" role="img" aria-label="Reach: Rare — 3 of 5">
+                  <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+                  <em class="word">Rare</em><span class="eta">· 12 wk</span>
+                </a>
+              </div>
+              <h1 class="h1">Lower Power</h1>
+              <p class="body muted">Monday, Aug 10 · 3 blocks · ~55 min</p>
+              <div class="quest">
+                <span class="quest-rule" aria-hidden></span>
+                <span style="flex-shrink:0;padding-top:2px"><svg viewBox="0 0 32 32" width="20" height="20" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg></span>
+                <div>
+                  <p class="q1">Today's quest · <span class="tnum" style="color:var(--accent)">~180 XP</span></p>
+                  <p class="q2">Bonus in play: the 12-day streak holds if you log before midnight.</p>
+                </div>
+              </div>
+            </section>
+            <a class="strip fuel" href="#nutrition" aria-label="Fuel: 1,840 of 2,600 calories. 760 left. View all nutrition.">
+              <span class="fuel-l1">
+                <span class="micro">FUEL</span>
+                <span class="fuel-head">1,840 / 2,600 cal</span>
+                <span class="fuel-all">All →</span>
+              </span>
+              <span class="meter" role="progressbar" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100"><i style="width:70.8%"></i></span>
+              <span class="fuel-l3">760 left · 152p 186c 58f · 2 meals</span>
+            </a>
+            <section class="card" data-testid="today-timeline">
+              <div class="card-head"><h2 class="h2">Today</h2></div>
+              <p class="legend">
+                <span class="lg"><span class="mk g0" style="font-size:11px">●</span> Squat 2×BW</span>
+                <span class="lg"><span class="mk g1" style="font-size:11px">■</span> Sub-20 5K</span>
+                <span class="lg"><span class="mk g2" style="font-size:11px">▲</span> Handstand</span>
+              </p>
+              <ol class="tl">
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Lower Power</b><span class="tl-detail"> · Primary · Accessory · Finisher</span></span></a>
+                  <span class="lane"><span class="mk g0">○</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Handstand practice</b><span class="tl-detail"> · 12 min wall holds</span></span></a>
+                  <span class="lane"><span class="mk g2">△</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Zone 2 run</b><span class="tl-detail"> · 35 min easy</span></span></a>
+                  <span class="lane"><span class="mk g1">□</span></span></li>
+                <li><a class="tl-link" href="#nutrition"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Meals</b><span class="tl-detail"> · 2,600 cal target · 2 meals logged</span></span></a>
+                  <span class="lane"><span class="mk g0">●</span><span class="mk g1">■</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Mobility</b><span class="tl-detail"> · 10 min hip flow</span></span></a>
+                  <span class="lane"><span class="mk g2">▲</span></span></li>
+              </ol>
+              <p class="live" aria-live="polite" role="status"></p>
+            </section>
+            <section class="card">
+              <div class="card-head"><h2 class="h2">Session</h2><span class="card-action">Lower Power</span></div>
+              <ol class="dossier">
+                <li><details open>
+                  <summary><span class="dsg-label">Primary strength</span>
+                    <span class="dsg-digest">Back Squat, RDL · 5 sets</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Back Squat</p><p class="ex-rx">3 × 3 · 82% · 3 min rest</p></li>
+                    <li><p class="ex-name">Romanian Deadlift</p><p class="ex-rx">2 × 8 · RPE 7 · 2 min rest</p></li>
+                  </ul>
+                </details></li>
+                <li><details>
+                  <summary><span class="dsg-label">Accessory</span>
+                    <span class="dsg-digest">Split Squat, Hip Thrust · 6 sets</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Rear-foot Split Squat</p><p class="ex-rx">3 × 10 each · RPE 7</p></li>
+                    <li><p class="ex-name">Hip Thrust</p><p class="ex-rx">3 × 12 · 90s rest</p></li>
+                  </ul>
+                </details></li>
+                <li><details>
+                  <summary><span class="dsg-label">Finisher</span>
+                    <span class="dsg-digest">Sled Push · 4 rounds</span>
+                    <span class="chev" aria-hidden>▼</span></summary>
+                  <ul class="dsg-body">
+                    <li><p class="ex-name">Sled Push</p><p class="ex-rx">4 × 20 m · heavy · 90s rest</p></li>
+                  </ul>
+                </details></li>
+              </ol>
+            </section>
+            <p class="ghost"><b>ANNOTATION — not part of the UI.</b> The <b>ZoneDivider does not render here.</b>
+               The TRACK zone is empty on a normal training day: nothing is deferred and no baseline is
+               complete. The rule is drawn only when something follows it.</p>
+          </div>
+        </div>
+        <nav class="btm-nav"><ul>
+          <li><a href="#" aria-current="page"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/></svg>Today</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Plan</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg><span class="write-path" title="Nutrition write path — LogLauncher inside BottomSheet">Log</span></a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Progress</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>More</a></li>
+        </ul></nav>
+      </div>
+    </div>
+
+    <!-- ── A / annotations ── -->
+    <div class="col-notes">
+      <p class="note"><b>1 · CharacterHeader</b> — Tier 1 · 92px · <code>game/CharacterHeader.tsx</code>.
+        One tap target → /character.
+        <span class="tk">--card --border --accent --accent-soft --warning --muted --foreground</span>
+        <span class="flag">⚠</span> the shipped <code>LevelMedallion.tsx</code> sets
+        <code>font-family: var(--font-display)</code> on the level chip. That contradicts "no display face
+        on Today" — substituted with sans here; needs a ruling.</p>
+
+      <p class="note"><b>2 · OtherGoalsStrip</b> — Tier 2 · 110px · <code>OtherGoalsStrip.tsx</code>.
+        <b>No h2</b> — the tier marker. For a Program tenant the "Also today" block is suppressed
+        (UXR-PV-91); the 7-day lookahead and the conflict row remain.
+        <span class="tk">--card --border --muted --foreground --warning</span>
+        Loud variant (target date ≤ 7d) swaps bg → <code>--accent-soft</code> + 2px <code>--target</code> left rail.</p>
+
+      <p class="note"><b>3 · Hero</b> — Tier 0 · 205px · hand-rolled <code>&lt;section&gt;</code> at
+        <code>page.tsx:490–540</code> + <code>QuestCard</code>. Inner rhythm 12px.
+        <span class="tk">--card --border --muted --foreground --accent-soft --accent</span></p>
+
+      <p class="note new"><b>3b · ★ Reach chip</b> — Tier 4 · <b>0px</b>. The eyeline at
+        <code>page.tsx:496</code> is already <code>flex / justify-between / gap-2</code> with one child,
+        so the chip is free. <code>ReachMeter</code> geometry: 5 × (3×9px), gap 1.5px, radius 1px.
+        Rare = 3 of 5. <code>aria-label="Reach: Rare — 3 of 5"</code>. Never animated (UXR-63-21).
+        <span class="tk">--accent (filled) --border (empty) --muted (· 12 wk)</span></p>
+
+      <p class="note new"><b>4 · ★ FuelRail</b> — Tier 2 · 72–84px <span class="flag">⚠</span> · NEW.
+        Whole strip is one link to /nutrition; it <b>reads only</b>. Replaces the 283–331px Card that sat
+        at slot 9.
+        <span class="tk">--card --border --muted --foreground --accent · meter track = color-mix(--border 60%)</span>
+        <b>No Bullseye here.</b> <code>Bullseye.tsx:136–143</code> snaps rings with
+        <code>ceil(progress × 4)</code> at size ≥ 20. At today's 70.8% that is 3 of 4 rings; one 200-cal
+        snack (78%) makes it <b>byte-identical to <code>filled</code></b>. The shipped nutrition day-total
+        strip already shows a completed bullseye at 81%. <code>CeilingRule.tsx:11–12</code> rules on this
+        class — the <code>h-1.5</code> track + accent fill is the house grammar for a partial readout.</p>
+
+      <p class="note"><b>5 · TodayTimeline</b> — Tier 1 · 342px · UNCHANGED, owner-approved centrepiece.
+        <code>TodayTimeline</code> + <code>MarkLegendStrip</code> + <code>TimelineRow</code> + <code>MarkLane</code>.
+        Lane is a fixed 64px right column — <b>position constancy across rows is binding</b>; at 390px
+        that leaves a 254px title zone (the Meals row truncates, correctly).
+        Status glyph is <code>○</code>/<code>✓</code>, never <code>●</code> — <code>●</code> is slot-0's
+        goal identity. The 16px <code>aria-live</code> region is permanently empty; the space is reserved.
+        <span class="tk">--card --border --muted --success --target --accent --foreground</span>
+        <span class="flag">⚠</span> no <code>+N</code> bucket at 3 member goals — it appears at 4+.</p>
+
+      <p class="note new"><b>7 · ★ SessionDossier</b> — Tier 1 · 190–500px <span class="flag">⚠</span> · NEW.
+        One Card titled "Session", workout name as a right-aligned muted action. Each block is a native
+        <code>&lt;details&gt;</code> row: 44px summary, 14px/500 label (deliberately <b>not</b> 16px/600 —
+        that weight is reserved for Tiers 1 and 3), 12px tabular digest, <code>▼</code> text chevron
+        rotating 180° over 150ms.
+        <span class="tk">--card --border --muted --foreground</span>
+        Block 1 open ≈ 262px <span class="flag">⚠</span>; all three closed ≈ 190px <span class="flag">⚠</span>.</p>
+
+      <p class="note cut"><b>CUT</b> — <code>FeasibilityReadout</code> Card (slot 5) and Recent workouts
+        Card. Reach survives as the Tier 4 chip; history belongs to /history.</p>
+
+      <p class="note"><b>Fold arithmetic.</b> 16 pad + 92 + 16 + 110 + 16 + 205 + 16 + 78
+        <span class="flag">⚠</span> = <b>549px</b> at the foot of FuelRail. The fold at 742 lands
+        <b>~177px <span class="flag">⚠</span> into TodayTimeline</b> — rows 1–3 above it. Above the fold:
+        character, other goals, hero + Reach, <b>the whole FuelRail</b>, and the first three timeline rows.
+        Verify in a browser: heights here are natural, not pinned.</p>
+
+      <p class="note"><b>Chrome.</b> <code>AppHeader</code> sticky 48px + 1px = <b>49px</b>.
+        <code>BottomNav</code> fixed <b>53px</b>, 5-col grid, max-w-md centred.
+        <b>Log</b> is the nutrition <b>write</b> path (<code>LogLauncher</code> in a <code>BottomSheet</code>) —
+        dashed-underlined in the frame. FuelRail deliberately does not duplicate it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     FRAME B — BASELINE / S-DAY
+     ═══════════════════════════════════════════════════════════════════════ -->
+<section class="panel">
+  <p class="panel-title">Frame B — baseline / S-day (6.4% of days)</p>
+  <p class="panel-sub">Hero reads "Baseline Testing". The rotation session steps aside, so
+     <code>dayBlocks.length === 0</code> — which is exactly the condition that makes
+     <code>page.tsx:587</code> print <b>"Nothing scheduled today."</b> That false string is the composition
+     defect this pass fixes; its absence is marked inline. The TRACK zone is non-empty here, so the
+     ZoneDivider <b>does</b> render.</p>
+
+  <div class="panel-body">
+
+    <!-- ── B / LIGHT ── -->
+    <div class="phone-wrap lt">
+      <p class="wrap-label">Light</p>
+      <div class="phone theme-light">
+        <header class="app-hdr">
+          <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+          <span class="wordmark">Goaldmine</span>
+          <span class="hdr-spacer"></span>
+          <span class="hdr-btn" aria-hidden>◐</span><span class="hdr-btn" aria-hidden>JG</span>
+        </header>
+        <div class="scroll">
+          <div class="fold"  style="top:742px"><span class="fold-tag">FOLD 742 = 844 − 49 − 53 ⚠ brief said 737</span></div>
+          <div class="vpend" style="top:795px"><span class="vp-tag">844px viewport floor</span></div>
+          <div class="screen">
+
+            <a class="char" href="#character" aria-label="Character: Level 19, 12 day streak. Tap to view character sheet.">
+              <div class="char-r1">
+                <div class="med">
+                  <svg viewBox="0 0 32 32" width="36" height="36" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+                  <span class="chip" aria-hidden>19</span>
+                </div>
+                <div class="xpwrap">
+                  <div class="xpbar" role="progressbar" aria-valuenow="340" aria-valuemin="0" aria-valuemax="500" aria-label="340 / 500 XP"><i style="width:68%"></i></div>
+                  <span class="xplabel">340 / 500</span>
+                </div>
+                <span class="streak" aria-label="12 day streak">
+                  <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden style="color:var(--warning)"><path d="M10 2C10 2 6 6.5 6 10a4 4 0 0 0 8 0c0-1.5-1-3-1-3s-.5 1.5-2 2c0-2-1-3-1-5z" fill="currentColor"/></svg>
+                  <span>12</span>
+                </span>
+              </div>
+              <div class="attrs">
+                <span class="attr"><span class="a">STR</span><span class="n">8</span><span class="b"><i style="width:62%"></i></span></span>
+                <span class="attr"><span class="a">END</span><span class="n">5</span><span class="b"><i style="width:34%"></i></span></span>
+                <span class="attr"><span class="a">MOB</span><span class="n">4</span><span class="b"><i style="width:48%"></i></span></span>
+                <span class="attr"><span class="a">GRT</span><span class="n">6</span><span class="b"><i style="width:71%"></i></span></span>
+              </div>
+            </a>
+
+            <div class="strip ogs" aria-label="Other goals this week">
+              <p><span class="k">This week:</span>
+                 <span class="claim-ring" aria-hidden>◆</span> Lower Power <span class="muted">(Tue)</span>
+                 <span class="muted"> · </span>
+                 <span class="claim-ring" aria-hidden>◆</span> 5K time trial <span class="muted">(Sat)</span></p>
+              <p class="conf"><span class="g" aria-hidden>◣</span>
+                 <span>Testing today means Tuesday's session starts on tired legs. Plan the warm-up long.</span></p>
+            </div>
+
+            <section class="hero" aria-label="Today's plan">
+              <div class="eyeline">
+                <p class="eyebrow">Week 6 · Phase 2 · Build</p>
+                <a class="reach" href="#goal" role="img" aria-label="Reach: Rare — 3 of 5">
+                  <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+                  <em class="word">Rare</em><span class="eta">· 12 wk</span>
+                </a>
+              </div>
+              <h1 class="h1">Baseline Testing</h1>
+              <p class="body muted">Monday, Aug 10 · 3 tests · warm up thoroughly, then test</p>
+              <div class="quest">
+                <span class="quest-rule" aria-hidden></span>
+                <span style="flex-shrink:0;padding-top:2px"><svg viewBox="0 0 32 32" width="20" height="20" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg></span>
+                <div>
+                  <p class="q1">Today's quest · <span class="tnum" style="color:var(--accent)">~220 XP</span></p>
+                  <p class="q2">Bonus in play: a retest that beats week 1 pays double on the target it serves.</p>
+                </div>
+              </div>
+            </section>
+
+            <a class="strip fuel" href="#nutrition" aria-label="Fuel: 1,840 of 2,600 calories. 760 left. View all nutrition.">
+              <span class="fuel-l1">
+                <span class="micro">FUEL</span>
+                <span class="fuel-head">1,840 / 2,600 cal</span>
+                <span class="fuel-all">All →</span>
+              </span>
+              <span class="meter" role="progressbar" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100"><i style="width:70.8%"></i></span>
+              <span class="fuel-l3">760 left · 152p 186c 58f · 2 meals</span>
+            </a>
+
+            <section class="card" data-testid="today-timeline">
+              <div class="card-head"><h2 class="h2">Today</h2></div>
+              <p class="legend">
+                <span class="lg"><span class="mk g0" style="font-size:11px">●</span> Squat 2×BW</span>
+                <span class="lg"><span class="mk g1" style="font-size:11px">■</span> Sub-20 5K</span>
+                <span class="lg"><span class="mk g2" style="font-size:11px">▲</span> Handstand</span>
+              </p>
+              <ol class="tl">
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Back Squat 1RM</b><span class="tl-detail"> · Retest due</span></span></a>
+                  <span class="lane"><span class="mk g0">○</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Zone 2 run</b><span class="tl-detail"> · 35 min easy</span></span></a>
+                  <span class="lane"><span class="mk g1">□</span></span></li>
+                <li><a class="tl-link" href="#nutrition"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Meals</b><span class="tl-detail"> · 2,600 cal target · 2 meals logged</span></span></a>
+                  <span class="lane"><span class="mk g0">●</span><span class="mk g1">■</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Mobility</b><span class="tl-detail"> · 10 min hip flow</span></span></a>
+                  <span class="lane"><span class="mk g2">▲</span></span></li>
+              </ol>
+              <p class="live" aria-live="polite" role="status"></p>
+            </section>
+
+            <!-- Zero-height marker: this is exactly where page.tsx:587 prints the false string. -->
+            <div class="strike-slot" aria-hidden><span><s>Nothing scheduled today.</s> — NOT printed</span></div>
+
+            <!-- 6 · BaselineBlockCard — Tier 1 · 394px · the day's ONLY write surface -->
+            <section class="card">
+              <div class="card-head"><h2 class="h2">Retest (week 6) — 0 of 3 logged</h2></div>
+              <p class="eyebrow" style="margin-bottom:8px">Tests · do these fresh, before any other lower-body work</p>
+              <ul class="bt">
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Back Squat 1RM <span class="muted" style="font-weight:400;font-size:12px">· lb</span></p>
+                  <p class="bt-proto">Work up in 3–5 singles. Stop at the first grinder.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="lb" aria-label="Back Squat 1RM value in lb" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Max pull-ups <span class="muted" style="font-weight:400;font-size:12px">· reps</span></p>
+                  <p class="bt-proto">One set to technical failure. Dead hang start, chin over the bar.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="reps" aria-label="Max pull-ups value in reps" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Standing reach <span class="muted" style="font-weight:400;font-size:12px">· in</span></p>
+                  <p class="bt-proto">Flat wall, heels down, single arm. Mark the highest fingertip.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="in" aria-label="Standing reach value in inches" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+              </ul>
+            </section>
+
+            <!-- ★ ZoneDivider — renders only because the TRACK zone below is non-empty -->
+            <div class="zone" aria-hidden><span class="w">Tracking</span><span class="r"></span></div>
+
+            <!-- 8 · Tier 3 lid — was 134px Card + 782px of BlockCards at opacity-60 -->
+            <details class="lid">
+              <summary><span class="h2">Deferred today — Lower Power</span><span class="chev" aria-hidden>▼</span></summary>
+              <div class="inner">
+                <p class="body muted" style="margin-bottom:8px">Baseline testing day — the tests above are today's
+                  session. A max-effort test is itself a hard day, so the regular workout steps aside.</p>
+                <ol class="dossier">
+                  <li><details><summary><span class="dsg-label">Primary strength</span><span class="dsg-digest">Back Squat, RDL · 5 sets</span><span class="chev" aria-hidden>▼</span></summary>
+                    <ul class="dsg-body"><li><p class="ex-name">Back Squat</p><p class="ex-rx">3 × 3 · 82% · 3 min rest</p></li></ul></details></li>
+                  <li><details><summary><span class="dsg-label">Accessory</span><span class="dsg-digest">Split Squat, Hip Thrust · 6 sets</span><span class="chev" aria-hidden>▼</span></summary>
+                    <ul class="dsg-body"><li><p class="ex-name">Hip Thrust</p><p class="ex-rx">3 × 12 · 90s rest</p></li></ul></details></li>
+                </ol>
+              </div>
+            </details>
+
+          </div>
+        </div>
+        <nav class="btm-nav"><ul>
+          <li><a href="#" aria-current="page"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/></svg>Today</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Plan</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg><span class="write-path" title="Nutrition write path — LogLauncher inside BottomSheet">Log</span></a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Progress</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>More</a></li>
+        </ul></nav>
+      </div>
+    </div>
+
+    <!-- ── B / DARK ── -->
+    <div class="phone-wrap dk">
+      <p class="wrap-label">Dark</p>
+      <div class="phone theme-dark">
+        <header class="app-hdr">
+          <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+          <span class="wordmark">Goaldmine</span>
+          <span class="hdr-spacer"></span>
+          <span class="hdr-btn" aria-hidden>◐</span><span class="hdr-btn" aria-hidden>JG</span>
+        </header>
+        <div class="scroll">
+          <div class="fold"  style="top:742px"><span class="fold-tag">FOLD 742 = 844 − 49 − 53 ⚠ brief said 737</span></div>
+          <div class="vpend" style="top:795px"><span class="vp-tag">844px viewport floor</span></div>
+          <div class="screen">
+            <a class="char" href="#character" aria-label="Character: Level 19, 12 day streak. Tap to view character sheet.">
+              <div class="char-r1">
+                <div class="med">
+                  <svg viewBox="0 0 32 32" width="36" height="36" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/><circle cx="16" cy="16" r="11" fill="var(--target-fg)"/><circle cx="16" cy="16" r="7" fill="var(--target)"/><circle cx="16" cy="16" r="3" fill="var(--target-fg)"/></svg>
+                  <span class="chip" aria-hidden>19</span>
+                </div>
+                <div class="xpwrap">
+                  <div class="xpbar" role="progressbar" aria-valuenow="340" aria-valuemin="0" aria-valuemax="500" aria-label="340 / 500 XP"><i style="width:68%"></i></div>
+                  <span class="xplabel">340 / 500</span>
+                </div>
+                <span class="streak" aria-label="12 day streak">
+                  <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden style="color:var(--warning)"><path d="M10 2C10 2 6 6.5 6 10a4 4 0 0 0 8 0c0-1.5-1-3-1-3s-.5 1.5-2 2c0-2-1-3-1-5z" fill="currentColor"/></svg>
+                  <span>12</span>
+                </span>
+              </div>
+              <div class="attrs">
+                <span class="attr"><span class="a">STR</span><span class="n">8</span><span class="b"><i style="width:62%"></i></span></span>
+                <span class="attr"><span class="a">END</span><span class="n">5</span><span class="b"><i style="width:34%"></i></span></span>
+                <span class="attr"><span class="a">MOB</span><span class="n">4</span><span class="b"><i style="width:48%"></i></span></span>
+                <span class="attr"><span class="a">GRT</span><span class="n">6</span><span class="b"><i style="width:71%"></i></span></span>
+              </div>
+            </a>
+            <div class="strip ogs" aria-label="Other goals this week">
+              <p><span class="k">This week:</span>
+                 <span class="claim-ring" aria-hidden>◆</span> Lower Power <span class="muted">(Tue)</span>
+                 <span class="muted"> · </span>
+                 <span class="claim-ring" aria-hidden>◆</span> 5K time trial <span class="muted">(Sat)</span></p>
+              <p class="conf"><span class="g" aria-hidden>◣</span>
+                 <span>Testing today means Tuesday's session starts on tired legs. Plan the warm-up long.</span></p>
+            </div>
+            <section class="hero" aria-label="Today's plan">
+              <div class="eyeline">
+                <p class="eyebrow">Week 6 · Phase 2 · Build</p>
+                <a class="reach" href="#goal" role="img" aria-label="Reach: Rare — 3 of 5">
+                  <i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i>
+                  <em class="word">Rare</em><span class="eta">· 12 wk</span>
+                </a>
+              </div>
+              <h1 class="h1">Baseline Testing</h1>
+              <p class="body muted">Monday, Aug 10 · 3 tests · warm up thoroughly, then test</p>
+              <div class="quest">
+                <span class="quest-rule" aria-hidden></span>
+                <span style="flex-shrink:0;padding-top:2px"><svg viewBox="0 0 32 32" width="20" height="20" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg></span>
+                <div>
+                  <p class="q1">Today's quest · <span class="tnum" style="color:var(--accent)">~220 XP</span></p>
+                  <p class="q2">Bonus in play: a retest that beats week 1 pays double on the target it serves.</p>
+                </div>
+              </div>
+            </section>
+            <a class="strip fuel" href="#nutrition" aria-label="Fuel: 1,840 of 2,600 calories. 760 left. View all nutrition.">
+              <span class="fuel-l1">
+                <span class="micro">FUEL</span>
+                <span class="fuel-head">1,840 / 2,600 cal</span>
+                <span class="fuel-all">All →</span>
+              </span>
+              <span class="meter" role="progressbar" aria-valuenow="71" aria-valuemin="0" aria-valuemax="100"><i style="width:70.8%"></i></span>
+              <span class="fuel-l3">760 left · 152p 186c 58f · 2 meals</span>
+            </a>
+            <section class="card" data-testid="today-timeline">
+              <div class="card-head"><h2 class="h2">Today</h2></div>
+              <p class="legend">
+                <span class="lg"><span class="mk g0" style="font-size:11px">●</span> Squat 2×BW</span>
+                <span class="lg"><span class="mk g1" style="font-size:11px">■</span> Sub-20 5K</span>
+                <span class="lg"><span class="mk g2" style="font-size:11px">▲</span> Handstand</span>
+              </p>
+              <ol class="tl">
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Back Squat 1RM</b><span class="tl-detail"> · Retest due</span></span></a>
+                  <span class="lane"><span class="mk g0">○</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph" aria-hidden>○</span>
+                  <span class="tl-title"><b>Zone 2 run</b><span class="tl-detail"> · 35 min easy</span></span></a>
+                  <span class="lane"><span class="mk g1">□</span></span></li>
+                <li><a class="tl-link" href="#nutrition"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Meals</b><span class="tl-detail"> · 2,600 cal target · 2 meals logged</span></span></a>
+                  <span class="lane"><span class="mk g0">●</span><span class="mk g1">■</span></span></li>
+                <li><a class="tl-link" href="#day"><span class="tl-glyph done" aria-hidden>✓</span>
+                  <span class="tl-title"><b class="done">Mobility</b><span class="tl-detail"> · 10 min hip flow</span></span></a>
+                  <span class="lane"><span class="mk g2">▲</span></span></li>
+              </ol>
+              <p class="live" aria-live="polite" role="status"></p>
+            </section>
+            <div class="strike-slot" aria-hidden><span><s>Nothing scheduled today.</s> — NOT printed</span></div>
+            <section class="card">
+              <div class="card-head"><h2 class="h2">Retest (week 6) — 0 of 3 logged</h2></div>
+              <p class="eyebrow" style="margin-bottom:8px">Tests · do these fresh, before any other lower-body work</p>
+              <ul class="bt">
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Back Squat 1RM <span class="muted" style="font-weight:400;font-size:12px">· lb</span></p>
+                  <p class="bt-proto">Work up in 3–5 singles. Stop at the first grinder.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="lb" aria-label="Back Squat 1RM value in lb" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Max pull-ups <span class="muted" style="font-weight:400;font-size:12px">· reps</span></p>
+                  <p class="bt-proto">One set to technical failure. Dead hang start, chin over the bar.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="reps" aria-label="Max pull-ups value in reps" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+                <li>
+                  <p class="bt-name"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden style="vertical-align:-2px;margin-right:4px"><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="2"/></svg>Standing reach <span class="muted" style="font-weight:400;font-size:12px">· in</span></p>
+                  <p class="bt-proto">Flat wall, heels down, single arm. Mark the highest fingertip.</p>
+                  <form class="bl-form" onsubmit="return false"><input class="bl-input" type="number" step="any" placeholder="in" aria-label="Standing reach value in inches" /><button class="bl-btn" type="submit">Log</button></form>
+                </li>
+              </ul>
+            </section>
+            <div class="zone" aria-hidden><span class="w">Tracking</span><span class="r"></span></div>
+            <details class="lid">
+              <summary><span class="h2">Deferred today — Lower Power</span><span class="chev" aria-hidden>▼</span></summary>
+              <div class="inner">
+                <p class="body muted" style="margin-bottom:8px">Baseline testing day — the tests above are today's
+                  session. A max-effort test is itself a hard day, so the regular workout steps aside.</p>
+                <ol class="dossier">
+                  <li><details><summary><span class="dsg-label">Primary strength</span><span class="dsg-digest">Back Squat, RDL · 5 sets</span><span class="chev" aria-hidden>▼</span></summary>
+                    <ul class="dsg-body"><li><p class="ex-name">Back Squat</p><p class="ex-rx">3 × 3 · 82% · 3 min rest</p></li></ul></details></li>
+                  <li><details><summary><span class="dsg-label">Accessory</span><span class="dsg-digest">Split Squat, Hip Thrust · 6 sets</span><span class="chev" aria-hidden>▼</span></summary>
+                    <ul class="dsg-body"><li><p class="ex-name">Hip Thrust</p><p class="ex-rx">3 × 12 · 90s rest</p></li></ul></details></li>
+                </ol>
+              </div>
+            </details>
+          </div>
+        </div>
+        <nav class="btm-nav"><ul>
+          <li><a href="#" aria-current="page"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="15" fill="var(--target)"/></svg>Today</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Plan</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg><span class="write-path" title="Nutrition write path — LogLauncher inside BottomSheet">Log</span></a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>Progress</a></li>
+          <li><a href="#"><svg viewBox="0 0 32 32" width="6" height="6" aria-hidden><circle cx="16" cy="16" r="14" fill="none" stroke="var(--muted)" stroke-width="4"/></svg>More</a></li>
+        </ul></nav>
+      </div>
+    </div>
+
+    <!-- ── B / annotations ── -->
+    <div class="col-notes">
+      <p class="note">Slots 1–4 are <b>identical to Frame A</b> — character 92px, other goals 110px,
+        hero 205px + Reach chip, FuelRail 72–84px <span class="flag">⚠</span>. The ACT zone's top half does
+        not change shape on an S-day; only the day's ask does.</p>
+
+      <p class="note"><b>5 · TodayTimeline</b> — Tier 1 · ≈298px <span class="flag">⚠</span>
+        (342 − one 44px row). The baseline row carries the <code>Retest due</code> detail from
+        <code>day-rhythm.ts:369</code> and marks slot 0.</p>
+
+      <p class="note cut"><b>DEFECT FIXED — the false string.</b> <code>page.tsx:587</code> prints
+        <b>"Nothing scheduled today."</b> whenever <code>dayBlocks.length === 0</code>. On a baseline day the
+        rotation workout is deferred, so <code>dayBlocks</code> is empty <i>by construction</i> — and the app
+        tells you nothing is scheduled while a 394px test card and a deferred session sit directly below it.
+        The fix is compositional, not a copy tweak: emptiness belongs to the <b>ACT zone as a whole</b>
+        (no dossier AND no baseline card AND no timeline entries), never to <code>dayBlocks</code> alone.
+        Marked inline with the zero-height dashed pill.</p>
+
+      <p class="note"><b>6 · BaselineBlockCard</b> — Tier 1 · 394px · <code>BaselineBlockCard.tsx</code>.
+        Three inline <code>[ value ][ Log ]</code> rows — <code>LogBaselineInlineForm</code>
+        (<code>"use client"</code>) is the day's <b>only write surface</b>. Input and button are both 44px.
+        <span class="tk">--card --border --muted --foreground --accent --accent-fg --success (logged value)</span>
+        <span class="flag">⚠</span> Rendered with <code>index={null}</code>: the <code>N.</code> ordinal
+        prefix numbered a flat block stack that the tiered grammar deletes. Recommend dropping the prefix.
+        <span class="flag">⚠ Owner decision needed:</span> this card starts at ~879px — <b>137px below the
+        fold</b>. On the one day type where the page has a single write target, that target needs a scroll.</p>
+
+      <p class="note new"><b>7 · ★ ZoneDivider</b> — 20–28px <span class="flag">⚠</span> · NEW.
+        "Tracking" at 10px uppercase + a 1px rule. Renders <b>only</b> when the TRACK zone is non-empty —
+        contrast Frame A, where it is absent.
+        <span class="tk">--muted (word) --border (rule)</span></p>
+
+      <p class="note new"><b>8 · Deferred lid</b> — Tier 3 · 56–60px <span class="flag">⚠</span>.
+        Was a 134px Card <b>plus</b> 782px of <code>BlockCard</code>s wrapped in <code>opacity-60</code>.
+        <b>The opacity is dropped</b> — a collapsed lid already says "not today", and dimming real
+        prescription text was costing contrast for nothing. The title carries the payload
+        ("Deferred today — Lower Power") so the lid is readable closed.
+        <span class="tk">--card --border --foreground --muted</span>
+        Structural rule honored: <b>no TRACK-zone surface is Tier 1.</b></p>
+
+      <p class="note"><b>Fold.</b> Same 742px rule. Above it: character, other goals, hero + Reach, FuelRail,
+        and timeline rows 1–3. Below: the rest of the timeline, the baseline card, the divider, the lid.
+        <span class="flag">⚠</span> Heights render naturally in this file — confirm the crossing point in a
+        browser at 390px before treating the numbers as measured.</p>
+
+      <p class="note"><b>Contrast spot-checks needed both themes:</b> <code>--muted</code> 12px detail
+        suffixes on <code>--card</code>; the Reach tier word in <code>--accent</code> at 12px; the
+        <code>--warning</code> conflict glyph (kept to the glyph only — body copy stays
+        <code>--foreground</code>, per the shipped OtherGoalsStrip).</p>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+// Theme control only. "both" scopes each frame via .theme-light / .theme-dark;
+// "light" / "dark" flip data-theme on :root so the gallery chrome follows too.
+function setMode(mode) {
+  document.body.dataset.mode = mode;
+  document.documentElement.dataset.theme = (mode === 'dark') ? 'dark' : 'light';
+  for (const m of ['both', 'light', 'dark']) {
+    document.getElementById('m-' + m).setAttribute('aria-pressed', String(m === mode));
+  }
+}
+</script>
+</body>
+</html>
