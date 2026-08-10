@@ -11,14 +11,17 @@ import { CollapsibleCard } from "@/components/CollapsibleCard";
 
 describe("CollapsibleCard — Tier-3 lid variant", () => {
   const lid = renderToStaticMarkup(
-    createElement(CollapsibleCard, {
-      variant: "lid" as const,
-      defaultOpen: false,
-      title: "Deferred today — Lower Power",
-      digest: "3 blocks",
-      "data-testid": "today-deferred-lid",
-      children: createElement("p", null, "body"),
-    }),
+    createElement(
+      CollapsibleCard,
+      {
+        variant: "lid" as const,
+        defaultOpen: false,
+        title: "Deferred today — Lower Power",
+        digest: "3 blocks",
+        "data-testid": "today-deferred-lid",
+      },
+      createElement("p", null, "body"),
+    ),
   );
 
   it("no h2 in a lid — muted text-sm span title + digest + chevron instead", () => {
@@ -43,11 +46,11 @@ describe("CollapsibleCard — Tier-3 lid variant", () => {
 
   it("default variant keeps the Tier-1/3 h2 for existing hosts", () => {
     const dflt = renderToStaticMarkup(
-      createElement(CollapsibleCard, {
-        title: "Planned: Upper Power",
-        defaultOpen: true,
-        children: createElement("p", null, "body"),
-      }),
+      createElement(
+        CollapsibleCard,
+        { title: "Planned: Upper Power", defaultOpen: true },
+        createElement("p", null, "body"),
+      ),
     );
     expect(dflt).toContain("<h2");
     expect(dflt).toContain("text-base font-semibold tracking-tight");
