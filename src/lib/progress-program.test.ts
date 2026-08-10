@@ -16,6 +16,7 @@ import {
   claimFromBreakdown,
   groupMetricRows,
   nonMemberGoals,
+  resolveProgressPrimaryGoals,
   PROGRESS_SERIES_MAX_POINTS,
   PROGRESS_SERIES_BATCH_SIZE,
 } from "@/lib/progress-program";
@@ -60,6 +61,83 @@ describe("nonMemberGoals — the zero-Program byte-identical contract", () => {
   it("empty member list keeps all goals (filtered copy)", () => {
     const out = nonMemberGoals(goals, []);
     expect(out).toEqual(goals);
+  });
+});
+
+// ─── #301: resolveProgressPrimaryGoals — the page's single-goal gates ────────
+
+describe("resolveProgressPrimaryGoals (#301 — rotation owner / legacy focus)", () => {
+  const mk = (id: string, kind = "fitness", isFocus = false) => ({ id, kind, isFocus });
+  const PROGRAM = (goalId: string | null) => ({ mode: "program" as const, goalId });
+  const LEGACY = { mode: "legacy" as const, goalId: null };
+
+  it("program mode: the rotation owner is the primary goal; no first-goal fallback", () => {
+    const goals = [mk("g-other"), mk("g-owner")];
+    const out = resolveProgressPrimaryGoals(goals, PROGRAM("g-owner"));
+    expect(out.primaryGoal?.id).toBe("g-owner");
+    expect(out.primaryProjectGoal).toBeNull(); // fitness owner → no project gates
+  });
+
+  it("program mode: a project-kind rotation owner also drives the project gates", () => {
+    const goals = [mk("g-fit"), mk("g-aws", "project")];
+    const out = resolveProgressPrimaryGoals(goals, PROGRAM("g-aws"));
+    expect(out.primaryGoal?.id).toBe("g-aws");
+    expect(out.primaryProjectGoal?.id).toBe("g-aws");
+  });
+
+  it("program mode with NO rotation owner: both null — gates stay off (never an arbitrary member)", () => {
+    const goals = [mk("g-a"), mk("g-b")];
+    const out = resolveProgressPrimaryGoals(goals, PROGRAM(null));
+    expect(out.primaryGoal).toBeNull();
+    expect(out.primaryProjectGoal).toBeNull();
+  });
+
+  it("program mode: an owner whose goal is not in the active list resolves null (paused owner)", () => {
+    const out = resolveProgressPrimaryGoals([mk("g-a")], PROGRAM("g-gone"));
+    expect(out.primaryGoal).toBeNull();
+  });
+
+  it("legacy mode: byte-identical derivations — find(isFocus) ?? first ?? null, and find(isFocus && project)", () => {
+    const focusProject = mk("g-proj", "project", true);
+    const goals = [mk("g-a"), focusProject, mk("g-b")];
+    const out = resolveProgressPrimaryGoals(goals, LEGACY);
+    expect(out.primaryGoal?.id).toBe("g-proj");
+    expect(out.primaryProjectGoal?.id).toBe("g-proj");
+
+    // No focus flag anywhere → first active goal wins the weight gate,
+    // project gates stay off — exactly the pre-#301 expressions.
+    const noFocus = resolveProgressPrimaryGoals([mk("g-a"), mk("g-b", "project")], LEGACY);
+    expect(noFocus.primaryGoal?.id).toBe("g-a");
+    expect(noFocus.primaryProjectGoal).toBeNull();
+
+    // Empty list → null (unchanged).
+    expect(resolveProgressPrimaryGoals([], LEGACY).primaryGoal).toBeNull();
+  });
+
+  it("dedupe property: a member rotation owner renders ONCE — excluded from the legacy loop, picked as primary", () => {
+    // The page pipeline: memberGoalIds → nonMemberGoals() strips members from
+    // the legacy readiness loop, while the owner still drives the gates.
+    const activeGoals = [mk("g-owner"), mk("g-member"), mk("g-solo")];
+    const memberGoalIds = ["g-owner", "g-member"];
+
+    const legacyLoopGoals = nonMemberGoals(activeGoals, memberGoalIds);
+    const { primaryGoal } = resolveProgressPrimaryGoals(activeGoals, PROGRAM("g-owner"));
+
+    expect(primaryGoal?.id).toBe("g-owner");
+    // The owner is NOT double-rendered: it is absent from the legacy loop
+    // (it lives in ProgramReadinessSection's member arcs)…
+    expect(legacyLoopGoals.map((g) => g.id)).toEqual(["g-solo"]);
+    // …i.e. exactly one of the two render surfaces carries it.
+    const inMemberSection = memberGoalIds.includes("g-owner");
+    const inLegacyLoop = legacyLoopGoals.some((g) => g.id === "g-owner");
+    expect(inMemberSection).toBe(true);
+    expect(inLegacyLoop).toBe(false);
+  });
+
+  it("dedupe property (defensive edge): an owner OUTSIDE the membership renders once too — via the legacy loop only", () => {
+    const activeGoals = [mk("g-owner-detached"), mk("g-member")];
+    const legacyLoopGoals = nonMemberGoals(activeGoals, ["g-member"]);
+    expect(legacyLoopGoals.map((g) => g.id)).toEqual(["g-owner-detached"]);
   });
 });
 

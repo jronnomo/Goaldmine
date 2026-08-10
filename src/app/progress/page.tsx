@@ -11,18 +11,34 @@ import { StatTile } from "@/components/StatTile";
 import { ProgramReadinessSection } from "@/components/progress/ProgramReadinessSection";
 import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
-import { getProgressProgramData, nonMemberGoals } from "@/lib/progress-program";
+import { getRotationOwnerGoal } from "@/lib/program";
+import {
+  getProgressProgramData,
+  nonMemberGoals,
+  resolveProgressPrimaryGoals,
+} from "@/lib/progress-program";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProgressPage() {
+  // #301: the page's single-goal gates (weight card, MRR, burn-down) key off
+  // the ROTATION-OWNING goal under a Program; zero-Program tenants keep the
+  // legacy focus-first query + derivations byte-identical (mode "legacy").
+  const resolution = await getRotationOwnerGoal();
+
   const db = await getDb();
   const [measurements, activeGoals, baselineCount, workoutCount, hikeCount] = await Promise.all([
     db.measurement.findMany({ orderBy: { date: "asc" }, take: 180 }),
     db.goal.findMany({
       where: { active: true },
-      orderBy: [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
+      // Program tenants: the deprecated focus key is dropped — the single-goal
+      // picks below come from the rotation owner, and this list only orders
+      // the legacy (non-member) readiness cards.
+      orderBy:
+        resolution.mode === "program"
+          ? [{ targetDate: { sort: "asc", nulls: "last" } }]
+          : [{ isFocus: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
     }),
     db.baseline.count(),
     db.workout.count({ where: { status: "completed" } }),
@@ -66,16 +82,20 @@ export default async function ProgressPage() {
     }),
   );
 
-  // REQ-006: identify the focus project goal for burn-down gating.
-  // Derived from activeGoals (no extra query); null when fitness is focus.
-  const focusProjectGoal = activeGoals.find((g) => g.isFocus && g.kind === "project") ?? null;
+  // #301 (was REQ-006): the burn-down / weight / MRR gates key off ONE goal —
+  // the rotation owner under a Program (it renders exactly once on this page:
+  // in ProgramReadinessSection, since nonMemberGoals excluded it from the
+  // legacy loop above), the legacy focus derivations otherwise. See
+  // resolveProgressPrimaryGoals for the full contract; derived from
+  // activeGoals (no extra query).
+  const { primaryGoal: focusGoal, primaryProjectGoal: focusProjectGoal } =
+    resolveProgressPrimaryGoals(activeGoals, resolution);
 
-  // Weight-card gate: only render when the focus goal tracks body weight (D-1, D-2).
-  const focusGoal = activeGoals.find((g) => g.isFocus) ?? activeGoals[0] ?? null;
+  // Weight-card gate: only render when that goal tracks body weight (D-1, D-2).
   const focusTargets = (focusGoal?.targets as unknown as GoalTarget[] | null) ?? [];
   const hasWeightTarget = focusTargets.some((t) => t.metric === "weightLb");
 
-  // MRR trend: only query + render when the focus goal has a "log:mrr" target (D-4).
+  // MRR trend: only query + render when that goal has a "log:mrr" target (D-4).
   // NOTE: GoalTarget.metric = "log:mrr" (with prefix); LogEntry.metric = "mrr" (bare key).
   const hasMrrTarget = focusTargets.some((t) => t.metric === "log:mrr");
   const mrrPoints: { date: string; value: number; tooltip: string }[] =
@@ -221,7 +241,8 @@ export default async function ProgressPage() {
         );
       })}
 
-      {/* REQ-006: milestone burn-down + MRR trend — only when a project goal is in focus.
+      {/* REQ-006/#301: milestone burn-down + MRR trend — only when the page's
+          primary goal (rotation owner / legacy focus) is a project goal.
           MilestoneBurnDown self-gates when milestoneCount=0.
           MRR trend gates on hasMrrTarget; shows honest placeholder when no rows logged. */}
       {focusProjectGoal && (
@@ -243,7 +264,8 @@ export default async function ProgressPage() {
         </>
       )}
 
-      {/* Weight card — gate on focus goal having a weightLb target (D-3). */}
+      {/* Weight card — gate on the primary goal (rotation owner / legacy
+          focus) having a weightLb target (D-3, #301). */}
       {hasWeightTarget && (
         <Card title="Weight">
           {weights.length === 0 ? (

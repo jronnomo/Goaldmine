@@ -14,7 +14,14 @@ import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getGoalCount } from "@/lib/goal-count";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
-import { getActiveProgram, getActiveProgramMembership, phaseForWeekIndex, splitDayForRotationDay } from "@/lib/program";
+import {
+  getActiveProgram,
+  getActiveProgramMembership,
+  getRotationOwnerGoal,
+  orderMembersFirst,
+  phaseForWeekIndex,
+  splitDayForRotationDay,
+} from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
@@ -78,8 +85,17 @@ export default async function HomePage() {
   // case — keeps falling through to its original (unchanged) behavior.
   if (!program && focusGoal === null) {
     const betweenGoalsDb = await getDb();
+    // #301: this feeds a goal-chip LIST ("choose your next focus"), so under
+    // an active Program the member goals sort first (this branch is reachable
+    // for a Program tenant with no rotation plan and no legacy focus flag —
+    // there is no rotation owner here by construction, since `program` is
+    // null). Zero-Program tenants keep the legacy focus-first query
+    // byte-identical (focusGoal === null already means no row wins that key).
+    // The isFocus SELECT stays: it is pass-through row data for
+    // BetweenGoalsActiveGoal's prop contract, not an ordering read.
+    const betweenGoalsMembership = await getActiveProgramMembership();
     const [
-      activeGoals,
+      activeGoalsRaw,
       latestAchieved,
       betweenGoalsGameState,
       betweenGoalsNutrition,
@@ -88,7 +104,9 @@ export default async function HomePage() {
     ] = await Promise.all([
       betweenGoalsDb.goal.findMany({
         where: { status: "active" },
-        orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
+        orderBy: betweenGoalsMembership
+          ? [{ updatedAt: "desc" }]
+          : [{ isFocus: "desc" }, { updatedAt: "desc" }],
         select: { id: true, objective: true, kind: true, targetDate: true, isFocus: true, active: true },
       }),
       betweenGoalsDb.goal.findFirst({
@@ -113,6 +131,16 @@ export default async function HomePage() {
         },
       }),
     ]);
+    // Members lead the chip list under a Program; stable within tiers over
+    // the DB's updatedAt-desc order. No rotation owner exists on this branch
+    // (see the comment above), so the owner argument is always null here.
+    const activeGoals = betweenGoalsMembership
+      ? orderMembersFirst(
+          activeGoalsRaw,
+          new Set(betweenGoalsMembership.memberGoals.map((m) => m.id)),
+          null,
+        )
+      : activeGoalsRaw;
     if (activeGoals.length > 0 || latestAchieved) {
       return (
         <BetweenGoalsToday
@@ -222,7 +250,7 @@ export default async function HomePage() {
 
   // Second await batch — everything here needs `resolved` (D-2 kept the
   // feasibility read serial already; the additions ride the same round-trip).
-  const [feasibility, todayCompletedDetails, programRulesRow, memberDetailRows] =
+  const [feasibility, todayCompletedDetails, programRulesRow, memberDetailRows, rotationOwner] =
     await Promise.all([
       // FeasibilityReadout data. goalForFeas is null when focusGoal is null →
       // feasibility null → no card rendered. .catch(() => null) guards against
@@ -254,24 +282,35 @@ export default async function HomePage() {
           })
         : Promise.resolve(null),
       // #288 (Program users only): member-goal detail for identity fidelity
-      // (isFocus/createdAt for the UXR-PV-04 sort, legend for short labels)
+      // (createdAt for the UXR-PV-04 sort, legend for short labels)
       // + attributionHints for the claim matcher. One findMany, batched.
+      // #301: the per-goal focus flag is no longer read here — the identity
+      // sort's lead key comes from the rotation owner below.
       isProgramUser
         ? db.goal.findMany({
             where: { id: { in: memberIds } },
-            select: { id: true, isFocus: true, createdAt: true, attributionHints: true, legend: true },
+            select: { id: true, createdAt: true, attributionHints: true, legend: true },
           })
         : Promise.resolve([]),
+      // #301 (Program users only): the rotation-owning goal — the day-driving
+      // goal keeps slot 0 in the mark lane (replaces the deprecated per-goal
+      // focus read that used to feed the UXR-PV-04 sort).
+      isProgramUser ? getRotationOwnerGoal() : Promise.resolve(null),
     ]);
 
   // #288: goal identities + the unified timeline (pure derivations — zero
   // additional queries; all inputs are already in hand).
   const memberDetailById = new Map(memberDetailRows.map((r) => [r.id, r]));
+  const rotationOwnerGoalId = rotationOwner?.goalId ?? null;
   const identities = isProgramUser
     ? assignGoalIdentities(
         memberGoals.map((g) => ({
           ...g,
-          isFocus: memberDetailById.get(g.id)?.isFocus,
+          // #301: assignGoalIdentities' lead sort key keeps its `isFocus`
+          // parameter name, but the semantic supplied here is "is the
+          // rotation-owning goal" — the goal whose plan drives the day holds
+          // slot 0 (●); the deprecated per-goal flag is no longer read.
+          isFocus: rotationOwnerGoalId !== null && g.id === rotationOwnerGoalId,
           createdAt: memberDetailById.get(g.id)?.createdAt,
           legend: memberDetailById.get(g.id)?.legend,
         })),

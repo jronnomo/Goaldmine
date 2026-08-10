@@ -15,6 +15,8 @@ import { prisma, getDb } from "@/lib/db";
 import { startOfDay, endOfDay } from "@/lib/calendar";
 import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
 import { mirrorActivityGoalLink, swallowAutoLinkError } from "@/lib/attribution-hooks";
+import { getRotationOwnerGoal, getActiveProgramMembership } from "@/lib/program";
+import { getFocusGoal } from "@/lib/goal-focus";
 
 // ---------------------------------------------------------------------------
 // logHikeCore — verbatim lift of tools.ts:2404-2549 handler logic
@@ -30,7 +32,10 @@ export interface LogHikeCoreInput {
   rpe?: number | null;
   status?: string; // default "completed"
   notes?: string | null;
-  goalId?: string | null; // null = focus goal
+  // null/omitted = the DEFAULT goal: the rotation-owning goal under a
+  // Program (see logHikeCore's resolution block); the focus goal for
+  // zero-Program tenants (legacy behavior, byte-identical).
+  goalId?: string | null;
   replacesPlannedHikeId?: string;
 }
 
@@ -47,15 +52,54 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
   const db = await getDb();
   const status = input.status ?? "completed";
 
-  // Resolve the goal id this hike should be attributed to.
-  // null means "focus goal at read time" (standard attribution).
-  // Fetch the focus goal id once so both attribution paths and the
-  // idempotency check can reference it without an extra round-trip.
-  const focusGoal = await db.goal.findFirst({
-    where: { isFocus: true },
-    select: { id: true },
-  });
-  const focusGoalId = focusGoal?.id ?? null;
+  // Resolve the DEFAULT attribution goal — what a null/omitted goalId means,
+  // at write time AND at read time (legacy rows with goalId=null read through
+  // this same default, so the two can never diverge — issue #298 AC).
+  //
+  // #298: under a Program the default is the ROTATION-OWNING goal (the goal
+  // whose prescription drives today) when it is fitness. A Program without a
+  // fitness rotation owner falls back to the single active fitness member if
+  // exactly ONE exists; with MULTIPLE fitness members the default is
+  // AMBIGUOUS — new attribution writes are rejected below (asking for an
+  // explicit goalId) rather than silently misattributed. A Program with no
+  // fitness members at all (pure-project shape) keeps the legacy focus
+  // fallback — nothing Program-side can own a hike. Zero-Program tenants are
+  // byte-identical to the pre-sweep behavior: null means "focus goal at read
+  // time" (resolved inside getRotationOwnerGoal's legacy branch).
+  //
+  // defaultGoalId is fetched once so the attribution paths, the idempotency
+  // check, and the link mirrors below all share one interpretation of null.
+  const resolution = await getRotationOwnerGoal();
+  let defaultGoalId: string | null = null;
+  let defaultIsAmbiguous = false;
+  if (resolution.mode === "program") {
+    if (resolution.goalId !== null && resolution.goalKind === "fitness") {
+      defaultGoalId = resolution.goalId;
+    } else {
+      const membership = await getActiveProgramMembership();
+      const fitnessMembers = (membership?.memberGoals ?? []).filter(
+        (g) => g.kind === "fitness" && g.status === "active",
+      );
+      if (fitnessMembers.length === 1) {
+        defaultGoalId = fitnessMembers[0].id;
+      } else if (fitnessMembers.length > 1) {
+        // Resolved to an error only when the default is actually NEEDED (a
+        // new attribution write with no explicit goalId) — see the gate
+        // below. Finalize-in-place keeps working: the row's stored goalId
+        // stays authoritative and the mirror degrades to null.
+        defaultIsAmbiguous = true;
+      } else {
+        // Zero fitness members (pure-project Program): nothing Program-side
+        // can own a hike — keep the legacy focus fallback (goal-focus.ts's
+        // deterministic winner), the pre-sweep interpretation of null.
+        const focusGoal = await getFocusGoal();
+        defaultGoalId = focusGoal?.id ?? null;
+      }
+    }
+  } else {
+    defaultGoalId = resolution.goalId;
+  }
+
   let resolvedGoalId: string | null = null;
   if (input.goalId) {
     const targetGoal = await db.goal.findUnique({
@@ -70,7 +114,7 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
     }
     resolvedGoalId = input.goalId;
   } else {
-    resolvedGoalId = focusGoalId;
+    resolvedGoalId = defaultGoalId;
   }
 
   if (input.replacesPlannedHikeId !== undefined) {
@@ -106,13 +150,15 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
       },
     });
     // #308 v1b: mirror the row's authoritative goalId into the link table
-    // (null goalId = legacy focus-at-read-time attribution → resolved focus
-    // id). No-op without an active Program / non-member goal; idempotent;
-    // best-effort (the hike row is already written).
+    // (null goalId = legacy default-at-read-time attribution → the resolved
+    // default id; null again when the default is ambiguous — the mirror
+    // no-ops rather than guessing). No-op without an active Program /
+    // non-member goal; idempotent; best-effort (the hike row is already
+    // written).
     await mirrorActivityGoalLink(db, {
       activityType: ACTIVITY_LINK_TYPE.hike,
       activityId: updated.id,
-      goalId: updated.goalId ?? focusGoalId,
+      goalId: updated.goalId ?? defaultGoalId,
       date: updated.date,
     }).catch(swallowAutoLinkError("logHikeCore:finalize"));
     return {
@@ -127,6 +173,18 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
     };
   }
 
+  // Ambiguity gate — only for paths that would PERSIST the default as this
+  // hike's attribution (the create/dedup paths below). Deliberately after the
+  // finalize-in-place branch above: finalizing a planned row never needs the
+  // default (the row's stored goalId stays authoritative), so ambiguity must
+  // not block it.
+  if (!input.goalId && defaultIsAmbiguous) {
+    throw new Error(
+      "This Program has multiple fitness member goals and no rotation owner to default to — " +
+        "pass goalId explicitly so the hike is attributed to the right goal (list_goals shows ids).",
+    );
+  }
+
   const hikeDate = input.date;
 
   // Idempotent scheduling: at most one *planned* hike per calendar day PER GOAL.
@@ -136,21 +194,22 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
   // Completed/skipped hikes can legitimately repeat on a date, so this only
   // applies to status='planned'.
   //
-  // Legacy rows may have goalId=null (focus-goal attribution at write time).
-  // When the resolved goal IS the focus goal, also match null-attributed rows
+  // Legacy rows may have goalId=null (default-goal attribution at read time —
+  // rotation owner under a Program, focus goal for zero-Program tenants).
+  // When the resolved goal IS that default, also match null-attributed rows
   // so a re-schedule deduplicates instead of creating a duplicate day entry.
   if (status === "planned") {
-    // matchesNullAttribution: resolvedGoalId is non-null and equals the focus
-    // goal, so null-goalId rows are the same logical hike as this one.
+    // matchesNullAttribution: resolvedGoalId is non-null and equals the
+    // default goal, so null-goalId rows are the same logical hike as this one.
     const matchesNullAttribution =
-      resolvedGoalId !== null && resolvedGoalId === focusGoalId;
+      resolvedGoalId !== null && resolvedGoalId === defaultGoalId;
     const existingPlanned = await db.hike.findFirst({
       where: {
         status: "planned",
         date: { gte: startOfDay(hikeDate), lte: endOfDay(hikeDate) },
         // Scope idempotency to the resolved goalId so two goals can each plan
         // a hike on the same day. Also catch legacy null-attributed rows when
-        // the resolved goal is the current focus goal.
+        // the resolved goal is the current default goal.
         ...(matchesNullAttribution
           ? { OR: [{ goalId: resolvedGoalId }, { goalId: null }] }
           : { goalId: resolvedGoalId }),
@@ -174,7 +233,7 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
       });
       // #308 v1b mirror — the row keeps its stored goalId (the update never
       // touches it); a legacy null-attributed row falls back to the resolved
-      // goal (== the focus goal in the branch that matched it).
+      // goal (== the default goal in the branch that matched it).
       await mirrorActivityGoalLink(db, {
         activityType: ACTIVITY_LINK_TYPE.hike,
         activityId: updated.id,
@@ -204,7 +263,9 @@ export async function logHikeCore(input: LogHikeCoreInput): Promise<LogHikeCoreR
       rpe: input.rpe ?? null,
       status,
       notes: input.notes ?? null,
-      // null = focus-goal attribution at read time (Hike.goalId nullable FK)
+      // null = default-goal attribution at read time (Hike.goalId nullable
+      // FK): rotation owner under a Program, focus goal for zero-Program
+      // tenants — see the resolution block at the top of this function.
       goalId: resolvedGoalId,
     },
   });

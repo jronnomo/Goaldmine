@@ -4,6 +4,7 @@
 import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
 import { prisma, getDb } from "@/lib/db";
 import { canonicalExerciseName } from "@/lib/exercise-canonical";
+import { getRotationOwnerGoal } from "@/lib/program";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
 
 export type CheckpointStatus = "upcoming" | "due" | "overdue" | "done";
@@ -356,14 +357,29 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   scheduled: ScheduledBaseline[];
   unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[];
 }> {
-  // Focus-strict: only return the focus goal's active plan (DC-6 + CRIT-2 fix).
-  // When the focus goal has no active plan, return the empty shape rather than
-  // silently showing another goal's baseline schedule on baselines/new.
+  // Rotation-plan-scoped, deliberately NOT member-goal-wide (#298 — this
+  // preserves DC-6 + CRIT-2's original rationale): the baseline schedule IS
+  // the live rotation's schedule. Under a Program exactly one Plan owns the
+  // day (the rotation owner's — its baselineWeek is the live schedule), and
+  // splicing dormant member plans' checkpoints into /baselines/new would
+  // recreate the "another goal's schedule shows up" bug CRIT-2 fixed. When
+  // no rotation owner exists (Program with no rotation, or retired Program
+  // rows), return the empty shape. Zero-Program tenants resolve the legacy
+  // focus goal via getRotationOwnerGoal() and keep their pre-sweep behavior:
+  // that goal's most-recently-updated active plan, else the empty shape.
   const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true, goal: { isFocus: true } },
-    orderBy: { updatedAt: "desc" },
-  });
+  const resolution = await getRotationOwnerGoal();
+  const plan =
+    resolution.mode === "program"
+      ? resolution.planId
+        ? await db.plan.findFirst({ where: { id: resolution.planId } })
+        : null
+      : resolution.goalId
+        ? await db.plan.findFirst({
+            where: { active: true, goalId: resolution.goalId },
+            orderBy: { updatedAt: "desc" },
+          })
+        : null;
   if (!plan) {
     return { startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] };
   }
