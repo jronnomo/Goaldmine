@@ -20,7 +20,11 @@ export function CollapsibleCard({
 }: {
   title: string;
   defaultOpen?: boolean;
-  children: ReactNode;
+  // Optional: a lid may render header-only (title + digest) with no body —
+  // and React's createElement typing requires optional children for the
+  // (type, props, ...children) call form used in .ts tests (children-in-props
+  // is banned by react/no-children-prop).
+  children?: ReactNode;
   className?: string;
   /** Right-rail digest before the chevron — a closed lid must never be an
    *  empty lid (today-page-ia §2.1). Non-interactive content only: a link
