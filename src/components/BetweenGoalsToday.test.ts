@@ -180,7 +180,7 @@ describe("BetweenGoalsToday", () => {
 
     // Daily-utility surfaces stay present — completing a goal doesn't gut Today.
     expect(html).toContain("Nutrition");
-    expect(html).toContain("Nothing planned or logged today yet.");
+    expect(html).toContain("Nothing planned or logged yet.");
   });
 
   it("no active goals, only a completion: ack card + single start-next-goal CTA", () => {
@@ -241,7 +241,7 @@ describe("BetweenGoalsToday", () => {
 
     // goalKind === null (genuinely new user) → header hidden, same gate as main Today.
     expect(html).not.toContain('data-testid="character-header"');
-    expect(html).toContain("Nothing planned or logged today yet.");
+    expect(html).toContain("Nothing planned or logged yet.");
     expect(html).not.toContain("✓ Completed:");
   });
 
@@ -261,7 +261,7 @@ describe("BetweenGoalsToday", () => {
     expect(html).toContain('data-testid="character-header"');
 
     // Logged nutrition renders instead of the empty-state note.
-    expect(html).not.toContain("Nothing planned or logged today yet.");
+    expect(html).not.toContain("Nothing planned or logged yet.");
     expect(html).toContain("Chicken bowl");
 
     // Today's completed workout renders via the same CompletedWorkoutCard as main Today.

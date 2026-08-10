@@ -90,6 +90,20 @@ export function parseDateKey(k: string): Date {
   return userTzWallClockToUTC(y!, m!, d!);
 }
 
+// Combine a dateKey ("YYYY-MM-DD") with the wall-clock time-of-day of `now`,
+// both read/written in USER_TZ. Used to seed a specific calendar day (e.g. the
+// day-detail page backfilling a past date or pre-planning a future one) with
+// "this time of day" rather than defaulting to midnight — mirrors the
+// Yesterday/-2h nudges elsewhere in the app, which shift the date while
+// preserving the clock time. Never do `new Date(dateKeyStr)` for this: that
+// parses as UTC midnight and drifts the day by the USER_TZ offset.
+export function dateKeyAtCurrentTime(k: string, now: Date): Date {
+  const [y, m, d] = k.split("-").map(Number);
+  const [, timePart] = toDatetimeLocalValue(now).split("T");
+  const [hour, minute] = timePart!.split(":").map(Number);
+  return userTzWallClockToUTC(y!, m!, d!, hour, minute);
+}
+
 export function startOfDay(d: Date): Date {
   const { year, month, day } = userParts(d);
   return userTzWallClockToUTC(year, month, day);
@@ -174,6 +188,28 @@ export function toDatetimeLocalValue(d: Date): string {
   const { year, month, day, hour, minute } = userParts(d);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${year}-${pad(month)}-${pad(day)}T${pad(hour)}:${pad(minute)}`;
+}
+
+// The inverse of toDatetimeLocalValue: parse a "YYYY-MM-DDTHH:MM[...]" string
+// (the value an <input type="datetime-local"> submits) as a USER_TZ wall
+// clock. MUST be used for any datetime-local form field — `new Date(s)`
+// parses that shape as server-local/UTC and silently shifts the instant by
+// the USER_TZ offset (this bit nutrition logging before it routed through
+// here — see workout-actions.ts's logNutrition/updateNutrition). Falls back
+// to a permissive `new Date(s)` parse for any other shape; callers validate
+// the result with `Number.isNaN(result.getTime())`.
+export function parseDatetimeLocalValue(s: string): Date {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (m) {
+    return userTzWallClockToUTC(
+      Number(m[1]),
+      Number(m[2]),
+      Number(m[3]),
+      Number(m[4]),
+      Number(m[5]),
+    );
+  }
+  return new Date(s);
 }
 
 // ─── weekRangeLabel ───────────────────────────────────────────────────────────

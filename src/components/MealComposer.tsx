@@ -9,7 +9,12 @@ import { useFormFeedback } from "@/lib/use-form-feedback";
 import { logNutrition, updateNutrition } from "@/lib/workout-actions";
 import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
-import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
+import {
+  dateKey,
+  dateKeyAtCurrentTime,
+  shiftWallClock,
+  toDatetimeLocalValue,
+} from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
 import type { DayMacros } from "@/lib/nutrition-macros";
@@ -84,6 +89,16 @@ export type MealComposerProps =
       /** Called after a successful log (post-revalidatePath, form already
        *  reset) — lets the host refetch a list it owns. See LogNutritionForm. */
       onLogged?: () => void;
+      /**
+       * Pre-seed the date/time control to this calendar day (dateKey
+       * "YYYY-MM-DD") instead of "now" — e.g. the day-detail page backfilling a
+       * past date or pre-planning a future one (#294). Time-of-day still
+       * defaults to "now" (mirrors the Yesterday/-2h nudges below); the visible
+       * date/time control (#293) lets the user adjust further. Ignored/absent
+       * for hosts with no day context (e.g. the global Log sheet), which keep
+       * seeding "now" exactly as before.
+       */
+      defaultDate?: string;
     } & DayContextProps)
   | ({
       mode: "edit";
@@ -97,6 +112,17 @@ export type MealComposerProps =
     } & DayContextProps);
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Create-mode initial/reset `whenDate`: "now" unless a host-provided
+ * `defaultDate` (dateKey) pins the composer to a specific day (#294 — the
+ * day-detail page backfilling a past day or pre-planning a future one), in
+ * which case the target day's wall-clock time-of-day matches "now" (see
+ * dateKeyAtCurrentTime) rather than snapping to midnight.
+ */
+function createModeSeedDate(defaultDate: string | undefined): Date {
+  return defaultDate ? dateKeyAtCurrentTime(defaultDate, new Date()) : new Date();
+}
 
 function defaultMeal(): MealType {
   const h = new Date().getHours();
@@ -182,6 +208,9 @@ export function MealComposer(props: MealComposerProps) {
   const trackedSoFar  = props.trackedSoFar;
   const dayTarget     = props.dayTarget;
   const libraryFoods  = props.libraryFoods;
+  // Direct discriminant check (not the `isEdit` alias) so TS narrows `props`
+  // to the create member here regardless of where this constant is read.
+  const createDefaultDate = props.mode === "create" ? props.defaultDate : undefined;
 
   // ── Canonical state ────────────────────────────────────────────────────────
   const seedItems = isEdit ? props.defaults.items : [];
@@ -191,7 +220,9 @@ export function MealComposer(props: MealComposerProps) {
   );
   const [notes, setNotes] = useState(isEdit ? props.defaults.notes : "");
   const [whenDate, setWhenDate] = useState<Date>(() =>
-    isEdit && props.defaults.date ? new Date(props.defaults.date) : new Date(),
+    isEdit && props.defaults.date
+      ? new Date(props.defaults.date)
+      : createModeSeedDate(createDefaultDate),
   );
   // Heal-on-seed: a fully food-resolved meal (every item carries `source`) derives
   // its total from the items, so trust the items over the stored macro columns —
@@ -481,7 +512,10 @@ export function MealComposer(props: MealComposerProps) {
     setRawText("");
     setMealType(defaultMeal());
     setNotes("");
-    setWhenDate(new Date());
+    // Re-seed the SAME target day (not "now") so logging several meals in a row
+    // for a backfilled/pre-planned day (#294) keeps landing on that day instead
+    // of snapping back to today after the first save.
+    setWhenDate(createModeSeedDate(createDefaultDate));
     setMacros({
       calories: null,
       proteinG: null,
@@ -1033,29 +1067,61 @@ export function MealComposer(props: MealComposerProps) {
           >
             Now
           </button>
-          <span className="ml-1 text-xs text-[var(--muted)]">
-            {formatResolvedWhen(whenDate)}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowExactTime((s) => !s)}
-            className="text-xs text-[var(--accent)]"
-          >
-            {showExactTime ? "hide" : "exact time"}
-          </button>
+          {/* Edit mode (UNCHANGED, #293 AC4): resolved label + "exact time"
+              disclosure toggle, hidden by default. */}
+          {isEdit && (
+            <>
+              <span className="ml-1 text-xs text-[var(--muted)]">
+                {formatResolvedWhen(whenDate)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExactTime((s) => !s)}
+                className="text-xs text-[var(--accent)]"
+              >
+                {showExactTime ? "hide" : "exact time"}
+              </button>
+            </>
+          )}
         </div>
-        {/* Single name="date" — submits whether shown or hidden. */}
-        <input
-          type="datetime-local"
-          name="date"
-          hidden={!showExactTime}
-          value={toDatetimeLocalValue(whenDate)}
-          onChange={(e) => {
-            const d = new Date(e.target.value);
-            if (!Number.isNaN(d.getTime())) setWhenDate(d);
-          }}
-          className="mt-2 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
-        />
+        {isEdit ? (
+          /* Single name="date" — submits whether shown or hidden. */
+          <input
+            type="datetime-local"
+            name="date"
+            hidden={!showExactTime}
+            aria-label="Meal date and time"
+            value={toDatetimeLocalValue(whenDate)}
+            onChange={(e) => {
+              const d = new Date(e.target.value);
+              if (!Number.isNaN(d.getTime())) setWhenDate(d);
+            }}
+            className="mt-2 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+          />
+        ) : (
+          /* Create mode (#293): the date+time control is visible by default —
+             no "exact time" disclosure to find first. The resolved label reads
+             as the control's own caption ("Today · 7:42 PM — date & time") so
+             it's unambiguous this sets the DATE too, not just the clock time. */
+          <label className="mt-2 flex flex-col gap-1">
+            <span className="text-xs font-medium text-[var(--foreground)]">
+              {formatResolvedWhen(whenDate)}
+              <span className="ml-1 font-normal text-[var(--muted)]">· date & time</span>
+            </span>
+            <input
+              type="datetime-local"
+              name="date"
+              data-testid="when-exact-control"
+              aria-label="Meal date and time"
+              value={toDatetimeLocalValue(whenDate)}
+              onChange={(e) => {
+                const d = new Date(e.target.value);
+                if (!Number.isNaN(d.getTime())) setWhenDate(d);
+              }}
+              className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+            />
+          </label>
+        )}
       </div>
 
       {/* ── Notes — unified single textarea for both modes ──────────────────── */}

@@ -362,15 +362,18 @@ export default async function DayDetail({
         <RenderJobPanel dateKey={dateKey} job={renderJob} />
       </CollapsibleCard>
 
-      {(r.nutritionPlan || r.loggedNutrition.length > 0) && (
-        <Card title="Nutrition">
-          <NutritionToday
-            logs={r.loggedNutrition}
-            plan={r.nutritionPlan}
-            showLogForm={false}
-          />
-        </Card>
-      )}
+      {/* Nutrition card — all days (backfill a past day or pre-plan a future
+          one, #294), same rationale as Footage above: always rendered, not
+          gated on already having a plan or logged meals, since an empty day is
+          exactly the case that needs a visible way to log into it. */}
+      <Card title="Nutrition">
+        <NutritionToday
+          logs={r.loggedNutrition}
+          plan={r.nutritionPlan}
+          showLogForm
+          defaultDate={dateKey}
+        />
+      </Card>
 
       {(r.nutritionText || r.mobilityText) && (
         <Card title="Custom guidance">

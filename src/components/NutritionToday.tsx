@@ -110,11 +110,20 @@ export function NutritionToday({
   plan,
   showLogForm = true,
   quickPickFoods,
+  defaultDate,
 }: {
   logs: NutritionTodayLog[];
   plan?: NutritionPlan | null;
   showLogForm?: boolean;
   quickPickFoods?: LibraryFood[];
+  /**
+   * Pre-seed the inline log form (when `showLogForm`) to this calendar day
+   * (dateKey "YYYY-MM-DD") instead of "now" — passed straight through to
+   * MealComposer via LogNutritionForm. Used by the day-detail page (#294) so a
+   * meal logged while viewing a past or future day lands on THAT day. Omit for
+   * "today"-scoped hosts (unchanged default behavior).
+   */
+  defaultDate?: string;
 }) {
   const byMeal = new Map<string, NutritionTodayLog[]>();
   for (const log of logs) {
@@ -162,7 +171,10 @@ export function NutritionToday({
   return (
     <div className="space-y-3">
       {rows.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">Nothing planned or logged today yet.</p>
+        // Date-neutral copy: this component renders for arbitrary days (the
+        // day-detail page, #294), not just "today" — "Nothing planned or
+        // logged today yet" reads wrong on a backfilled past day.
+        <p className="text-sm text-[var(--muted)]">Nothing planned or logged yet.</p>
       ) : (
         <>
           <ul className="space-y-2.5 text-sm">
@@ -287,7 +299,7 @@ export function NutritionToday({
       )}
       {showLogForm && (
         <div className="border-t border-[var(--border)] pt-3">
-          <LogNutritionForm />
+          <LogNutritionForm quickPickFoods={quickPickFoods} defaultDate={defaultDate} />
         </div>
       )}
     </div>
