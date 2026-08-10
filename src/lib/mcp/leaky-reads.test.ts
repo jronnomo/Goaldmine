@@ -118,14 +118,22 @@ vi.mock("@/lib/workout-core", () => ({
   updateWorkoutSetCore: vi.fn(),
   workoutOpsCore: vi.fn(),
   deleteWorkoutCore: vi.fn(),
+  deleteWorkoutsCore: vi.fn(),
   WorkoutOpSchema: { shape: {}, parse: vi.fn() },
 }));
-vi.mock("@/lib/hike-core", () => ({ logHikeCore: vi.fn(), updateHikeCore: vi.fn() }));
+vi.mock("@/lib/hike-core", () => ({
+  logHikeCore: vi.fn(),
+  updateHikeCore: vi.fn(),
+  deleteHikeCore: vi.fn(),
+}));
 vi.mock("@/lib/baseline-workout", () => ({
   appendBaselineToDayWorkout: vi.fn(),
-  removeBaselineFromDayWorkout: vi.fn(),
   syncBaselineUpdateToWorkout: vi.fn(),
 }));
+// #272 delete cores — mocked so tools.ts registration doesn't pull real ones.
+vi.mock("@/lib/measurement-core", () => ({ deleteMeasurementCore: vi.fn() }));
+vi.mock("@/lib/nutrition-core", () => ({ deleteNutritionCore: vi.fn() }));
+vi.mock("@/lib/baseline-core", () => ({ deleteBaselineCore: vi.fn() }));
 vi.mock("@/lib/override-integrity", () => ({ orphanedOverrideWarning: vi.fn().mockReturnValue(null) }));
 vi.mock("@/lib/goal-events", () => ({ getGoalEventsResult: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/goal-conflicts", () => ({ crossGoalConflicts: vi.fn().mockResolvedValue([]) }));

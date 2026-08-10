@@ -7,6 +7,7 @@
 import { prisma, getDb } from "@/lib/db";
 import { endOfDay, startOfDay } from "@/lib/calendar";
 import { metricKindFor, canonicalExerciseName } from "@/lib/records";
+import { deleteWorkoutCore } from "@/lib/workout-core";
 
 type SetData = {
   reps?: number;
@@ -181,8 +182,10 @@ export async function removeBaselineFromDayWorkout(args: {
     where: { workoutId: found.workout.id },
   });
   if (remaining === 0) {
-    const db = await getDb();
-    await db.workout.delete({ where: { id: found.workout.id } });
+    // Route the empty-mirror deletion through deleteWorkoutCore so the
+    // workout's ActivityGoalLink rows are cleaned in the same transaction
+    // (#272 — this inline delete was an uncounted orphan source).
+    await deleteWorkoutCore(found.workout.id);
   }
 }
 

@@ -28,8 +28,14 @@ vi.mock("@/lib/db", () => ({
   getDb: mockGetDb,
 }));
 
-const mockCreateWorkoutCore = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/workout-core", () => ({ createWorkoutCore: mockCreateWorkoutCore }));
+const { mockCreateWorkoutCore, mockDeleteWorkoutsCore } = vi.hoisted(() => ({
+  mockCreateWorkoutCore: vi.fn(),
+  mockDeleteWorkoutsCore: vi.fn(),
+}));
+vi.mock("@/lib/workout-core", () => ({
+  createWorkoutCore: mockCreateWorkoutCore,
+  deleteWorkoutsCore: mockDeleteWorkoutsCore,
+}));
 
 // Imported by day-log-actions.ts but not exercised by skipDay — stub so the
 // module import doesn't pull in the real hike-core dependency graph.

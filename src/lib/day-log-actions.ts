@@ -19,7 +19,7 @@ import {
   userTzWallClockToUTC,
   isDateWithinActivePlanWindow,
 } from "@/lib/calendar";
-import { createWorkoutCore, type ExerciseInput } from "@/lib/workout-core";
+import { createWorkoutCore, deleteWorkoutsCore, type ExerciseInput } from "@/lib/workout-core";
 import { logHikeCore, type LogHikeCoreInput } from "@/lib/hike-core";
 import { getDb } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
@@ -236,14 +236,19 @@ export async function unskipDay(dateKey: string): Promise<{ deleted: number }> {
   const dayEnd = endOfDay(parseDateKey(dateKey));
 
   // DA M4: deleteMany backstop — removes all skipped rows for this day.
-  // getDb() injects userId into deleteMany where → auto-scoped to current user's workouts.
+  // getDb() injects userId into the where → auto-scoped to current user's
+  // workouts. Ids are resolved first so the delete routes through
+  // deleteWorkoutsCore, which cleans ActivityGoalLink rows in the same
+  // transaction (#272 — this inline deleteMany was an uncounted orphan source).
   const db = await getDb();
-  const result = await db.workout.deleteMany({
+  const rows = await db.workout.findMany({
     where: {
       status: "skipped",
       startedAt: { gte: dayStart, lte: dayEnd },
     },
+    select: { id: true },
   });
+  const result = { count: (await deleteWorkoutsCore(rows.map((r) => r.id))).deleted };
 
   revalidatePath("/");
   revalidatePath("/calendar");

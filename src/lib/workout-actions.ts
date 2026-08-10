@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   appendBaselineToDayWorkout,
-  removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
+import { deleteBaselineCore } from "@/lib/baseline-core";
+import { deleteNutritionCore } from "@/lib/nutrition-core";
 import { getDb } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
@@ -178,16 +179,15 @@ export async function updateBaseline(id: string, form: FormData) {
 }
 
 export async function deleteBaselineRow(id: string) {
-  const db = await getDb();
-  const row = await db.baseline.findUniqueOrThrow({ where: { id } });
-  await db.baseline.delete({ where: { id } });
-  await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
+  // Core deletes the row + its ActivityGoalLink rows and syncs the day's
+  // mirrored baseline workout (#272).
+  const { testName } = await deleteBaselineCore(id);
   revalidatePath("/baselines");
-  revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
+  revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
   revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/");
-  redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);
+  redirect(`/baselines/test/${encodeURIComponent(testName)}`);
 }
 
 const MEAL_TYPES = new Set([
@@ -436,8 +436,9 @@ export type NutritionSnapshot = {
 // optimistic-delete/Undo flow (UXR-meal-edit-13) can restore it. Navigation for
 // the full-page fallback is handled by EditNutritionForm's onDeleted.
 export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
-  const db = await getDb();
-  const row = await db.nutritionLog.delete({ where: { id } });
+  // Core deletes the row + its ActivityGoalLink rows in one transaction and
+  // returns the deleted row for the Undo snapshot (#272).
+  const row = await deleteNutritionCore(id);
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
