@@ -12,10 +12,12 @@ import {
   deleteWorkoutCore,
   WorkoutOpSchema,
 } from "@/lib/workout-core";
-import { logHikeCore, updateHikeCore } from "@/lib/hike-core";
+import { logHikeCore, updateHikeCore, deleteHikeCore } from "@/lib/hike-core";
+import { deleteMeasurementCore } from "@/lib/measurement-core";
+import { deleteNutritionCore } from "@/lib/nutrition-core";
+import { deleteBaselineCore } from "@/lib/baseline-core";
 import {
   appendBaselineToDayWorkout,
-  removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
 import {
@@ -3406,8 +3408,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        await db.nutritionLog.delete({ where: { id } });
+        await deleteNutritionCore(id); // also cleans ActivityGoalLink rows (#272)
         return { id, message: "Nutrition deleted" };
       }),
   );
@@ -4296,8 +4297,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        await db.measurement.delete({ where: { id } });
+        await deleteMeasurementCore(id); // also cleans ActivityGoalLink rows (#272)
         return { id, message: "Measurement deleted" };
       }),
   );
@@ -4315,10 +4315,9 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        const row = await db.baseline.findUniqueOrThrow({ where: { id } });
-        await db.baseline.delete({ where: { id } });
-        await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
+        // Core deletes the row + its ActivityGoalLink rows and syncs the day's
+        // mirrored baseline workout (#272).
+        await deleteBaselineCore(id);
         return { id, message: "Baseline deleted (workout synced)" };
       }),
   );
@@ -4334,18 +4333,13 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        // Capture the date before deletion so we can check for a mirror override the delete
-        // would strand (object rows and their mirror overrides aren't linked — see
-        // override-integrity.ts).
-        const existing = await db.hike.findUnique({
-          where: { id },
-          select: { date: true },
-        });
-        await db.hike.delete({ where: { id } });
+        // Core captures the date before deletion (for the mirror-override
+        // check below) and cleans ActivityGoalLink rows in the same
+        // transaction as the row delete (#272).
+        const { date } = await deleteHikeCore(id);
         let message = "Hike deleted";
-        if (existing) {
-          const warn = await orphanedOverrideWarning(existing.date);
+        if (date) {
+          const warn = await orphanedOverrideWarning(date);
           if (warn) message += ` — ${warn}`;
         }
         return { id, message };

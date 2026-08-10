@@ -9,6 +9,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
 import { setFocusGoalCore } from "@/lib/goal-core";
+import { deleteLogEntryCore } from "@/lib/log-entry-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 import { getLogMetricSeries } from "@/lib/metric-series";
@@ -667,22 +668,12 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
-        const db = await getDb();
-
-        // Single-round-trip delete: use the returned row to confirm metric+value.
-        // No findUnique-first — capture deleted row from db.logEntry.delete().
-        let row: { id: string; metric: string; value: number | null };
-        try {
-          row = await db.logEntry.delete({
-            where: { id: input.id },
-            select: { id: true, metric: true, value: true },
-          });
-        } catch (e) {
-          if ((e as { code?: string }).code === "P2025") {
-            throw new Error(`Log entry not found: ${input.id}`);
-          }
-          throw e;
-        }
+        // Single-round-trip delete via the shared core (#272): the deleted
+        // row confirms metric+value, ActivityGoalLink rows are cleaned in the
+        // same transaction, and P2025 comes back as null for the friendly
+        // second-delete error below.
+        const row = await deleteLogEntryCore(input.id);
+        if (!row) throw new Error(`Log entry not found: ${input.id}`);
 
         return {
           id: row.id,

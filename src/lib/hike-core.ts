@@ -13,6 +13,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma, getDb } from "@/lib/db";
 import { startOfDay, endOfDay } from "@/lib/calendar";
+import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
 
 // ---------------------------------------------------------------------------
 // logHikeCore — verbatim lift of tools.ts:2404-2549 handler logic
@@ -290,4 +291,39 @@ export async function updateHikeCore(
     (f) => !updatedFields.includes(f),
   );
   return { ok: true, id: hike.id, updatedFields, preservedFields, hike };
+}
+
+// ---------------------------------------------------------------------------
+// deleteHikeCore (#272 delete-hook consolidation)
+// ---------------------------------------------------------------------------
+
+export interface DeleteHikeCoreResult {
+  id: string;
+  /** The deleted hike's date, captured before deletion so callers can check
+   *  for a mirror override the delete would strand (tools.ts pairs this with
+   *  orphanedOverrideWarning — object rows and their mirror overrides aren't
+   *  linked; see override-integrity.ts). Null only in the unreachable case
+   *  where the row vanished between the read and the delete. */
+  date: Date | null;
+}
+
+/**
+ * Delete one Hike row AND its ActivityGoalLink rows in the same transaction.
+ * A missing id throws P2025 from hike.delete, exactly as the previous inline
+ * delete did. Sequential top-level tx calls (never nested writes) so the
+ * getDb() tenant-scoping extension fires for both deletes.
+ */
+export async function deleteHikeCore(id: string): Promise<DeleteHikeCoreResult> {
+  const db = await getDb();
+  const existing = await db.hike.findUnique({
+    where: { id },
+    select: { date: true },
+  });
+  await db.$transaction(async (tx) => {
+    await tx.hike.delete({ where: { id } });
+    await tx.activityGoalLink.deleteMany({
+      where: { activityType: ACTIVITY_LINK_TYPE.hike, activityId: id },
+    });
+  });
+  return { id, date: existing?.date ?? null };
 }
