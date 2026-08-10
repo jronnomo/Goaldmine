@@ -14,6 +14,8 @@ import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 import { getLogMetricSeries } from "@/lib/metric-series";
 import type { GoalTarget } from "@/lib/metrics-registry";
+import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
+import { mirrorActivityGoalLink, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 export function registerProjectTools(server: McpServer): void {
   // --------------------------------------------------------------------------
@@ -538,6 +540,16 @@ export function registerProjectTools(server: McpServer): void {
               // payload omitted — not exposed in this tool
             },
           });
+
+          // #308 v1b: mirror LogEntry.goalId into the link table (the column
+          // stays authoritative). No-op without an active Program / when the
+          // goal isn't an active member; idempotent; best-effort.
+          await mirrorActivityGoalLink(db, {
+            activityType: ACTIVITY_LINK_TYPE.logEntry,
+            activityId: entry.id,
+            goalId: entry.goalId,
+            date: entry.date,
+          }).catch(swallowAutoLinkError("log_metric"));
 
           return {
             id: entry.id,

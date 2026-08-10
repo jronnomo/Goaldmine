@@ -1,12 +1,14 @@
 // src/lib/attribution-wiring.test.ts
 //
-// #307 — the activity WRITE CORES fire the auto-link hooks end-to-end:
-// real createWorkoutCore / appendBaselineToDayWorkout run
+// #307/#308 — the activity WRITE CORES fire the auto-link hooks end-to-end:
+// real createWorkoutCore / appendBaselineToDayWorkout / logHikeCore run
 // against a fake scoped client, with the REAL attribution-hooks + evaluators
 // underneath (only membership + records' recordsSetInWorkout are mocked).
 // Assertions land on the in-memory link store: rows exist (or don't), carry
 // the injected userId (top-level scoped-write convention), and re-runs are
-// no-ops. The hooks' own matrix lives in attribution-hooks.test.ts.
+// no-ops. The hooks' own matrix lives in attribution-hooks.test.ts; the MCP
+// handler routing for log_nutrition / log_metric lives in
+// src/lib/mcp/attribution-routing.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -28,6 +30,7 @@ vi.mock("@/lib/records", async () => {
 
 import { createWorkoutCore } from "@/lib/workout-core";
 import { appendBaselineToDayWorkout } from "@/lib/baseline-workout";
+import { logHikeCore } from "@/lib/hike-core";
 import { startOfDay } from "@/lib/calendar";
 
 // ── Fake scoped client ────────────────────────────────────────────────────────
@@ -280,5 +283,147 @@ describe("appendBaselineToDayWorkout auto-link wiring (#307)", () => {
 
     expect(db.workout.create).toHaveBeenCalledTimes(1);
     expect(links).toHaveLength(0);
+  });
+});
+
+// ── logHikeCore (v1b #308) ───────────────────────────────────────────────────
+
+describe("logHikeCore mirror-link wiring (#308)", () => {
+  const HIKE_INPUT = {
+    date: new Date("2026-08-15T15:00:00Z"),
+    route: "Mirror Lake",
+    distanceMi: 8,
+    elevationFt: 1800,
+    durationMin: 240,
+  };
+
+  it("create path mirrors the resolved goalId (explicit goalId)", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findUnique.mockResolvedValue({ id: "g-cut", active: true });
+
+    const res = await logHikeCore({ ...HIKE_INPUT, goalId: "g-cut" });
+
+    expect(res.id).toBe("h-created");
+    expect(links).toEqual([
+      {
+        activityType: "hike",
+        activityId: "h-created",
+        goalId: "g-cut",
+        source: "auto",
+        activityDate: startOfDay(HIKE_INPUT.date),
+        userId: "usr_test",
+      },
+    ]);
+  });
+
+  it("focus-fallback: goalId omitted mirrors the CURRENT focus goal when it is an active member", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" }); // focus goal
+
+    await logHikeCore(HIKE_INPUT);
+
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ goalId: "g-handstand", activityType: "hike" });
+  });
+
+  it("Hike.goalId stays authoritative — a NON-member goalId creates the hike but no link", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findUnique.mockResolvedValue({ id: "g-elsewhere", active: true });
+
+    const res = await logHikeCore({ ...HIKE_INPUT, goalId: "g-elsewhere" });
+
+    expect(res.id).toBe("h-created");
+    expect(db.hike.create).toHaveBeenCalledTimes(1);
+    expect(links).toHaveLength(0);
+  });
+
+  it("no active Program → hike logged, zero links", async () => {
+    mockGetMembership.mockResolvedValue(null);
+    const { db, links } = makeFakeDb();
+    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
+
+    await logHikeCore(HIKE_INPUT);
+
+    expect(db.hike.create).toHaveBeenCalledTimes(1);
+    expect(links).toHaveLength(0);
+  });
+
+  it("planned-dedup path (existing planned row updated in place) mirrors the row's goal", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
+    db.hike.findFirst.mockResolvedValue({ id: "h-planned", goalId: null, date: HIKE_INPUT.date });
+    db.hike.update.mockResolvedValue({
+      id: "h-planned",
+      goalId: null, // legacy null-attributed row — focus fallback applies
+      date: HIKE_INPUT.date,
+    });
+
+    const res = await logHikeCore({ ...HIKE_INPUT, status: "planned" });
+
+    expect(res.deduped).toBe(true);
+    expect(links).toEqual([
+      expect.objectContaining({
+        activityType: "hike",
+        activityId: "h-planned",
+        goalId: "g-handstand",
+        userId: "usr_test",
+      }),
+    ]);
+  });
+
+  it("finalize-in-place path (replacesPlannedHikeId) mirrors on completion", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findFirst.mockResolvedValue({ id: "g-focus-nonmember" });
+    db.hike.findUnique.mockResolvedValue({
+      id: "h-planned",
+      status: "planned",
+      goalId: "g-cut",
+      date: HIKE_INPUT.date,
+    });
+    db.hike.update.mockResolvedValue({
+      id: "h-planned",
+      status: "completed",
+      goalId: "g-cut",
+      date: HIKE_INPUT.date,
+    });
+
+    const res = await logHikeCore({ ...HIKE_INPUT, replacesPlannedHikeId: "h-planned" });
+
+    expect(res.finalized).toBe(true);
+    expect(links).toEqual([
+      expect.objectContaining({ activityId: "h-planned", goalId: "g-cut", userId: "usr_test" }),
+    ]);
+  });
+
+  it("mirror re-run is idempotent (finalizing an already-linked planned hike adds nothing)", async () => {
+    mockGetMembership.mockResolvedValue(MEMBERSHIP);
+    const { db, links } = makeFakeDb();
+    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
+
+    // First: plan it (creates h-created + link).
+    await logHikeCore({ ...HIKE_INPUT, status: "planned" });
+    expect(links).toHaveLength(1);
+
+    // Then: finalize the same row.
+    db.hike.findUnique.mockResolvedValue({
+      id: "h-created",
+      status: "planned",
+      goalId: "g-handstand",
+      date: HIKE_INPUT.date,
+    });
+    db.hike.update.mockResolvedValue({
+      id: "h-created",
+      status: "completed",
+      goalId: "g-handstand",
+      date: HIKE_INPUT.date,
+    });
+    await logHikeCore({ ...HIKE_INPUT, replacesPlannedHikeId: "h-created" });
+
+    expect(links).toHaveLength(1);
   });
 });
