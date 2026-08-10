@@ -10,6 +10,7 @@ import { getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
 import { setFocusGoalCore } from "@/lib/goal-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
+import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 import { getLogMetricSeries } from "@/lib/metric-series";
 import type { GoalTarget } from "@/lib/metrics-registry";
 
@@ -493,59 +494,61 @@ export function registerProjectTools(server: McpServer): void {
           .enum(["manual", "github", "claude"])
           .default("manual")
           .describe("Source of this metric entry. Default: manual."),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
+        return withWriteReceipt("log_metric", input.requestId, db, async () => {
+          // 1. value-or-text required guard — check FIRST before any DB call
+          if (input.value === undefined && input.text === undefined) {
+            throw new Error(
+              "Provide value and/or text — both cannot be omitted for a metric log entry.",
+            );
+          }
 
-        // 1. value-or-text required guard — check FIRST before any DB call
-        if (input.value === undefined && input.text === undefined) {
-          throw new Error(
-            "Provide value and/or text — both cannot be omitted for a metric log entry.",
-          );
-        }
+          // 2. Verify goal exists AND is a project goal (D-3: prevents silently writing
+          //    metric rows to fitness goals, which would corrupt goal-type semantics)
+          const goal = await db.goal.findUnique({
+            where: { id: input.goalId },
+            select: { id: true, kind: true },
+          });
+          if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
+          if (goal.kind !== "project") {
+            throw new Error(
+              `Goal ${input.goalId} is kind='${goal.kind}'. ` +
+              `log_metric is for project goals only — use log_measurement for body metrics ` +
+              `or log_baseline for benchmark tests.`,
+            );
+          }
 
-        // 2. Verify goal exists AND is a project goal (D-3: prevents silently writing
-        //    metric rows to fitness goals, which would corrupt goal-type semantics)
-        const goal = await db.goal.findUnique({
-          where: { id: input.goalId },
-          select: { id: true, kind: true },
+          // 3. date: current instant default, not midnight (per PRD §4.5)
+          const date = input.date ? parseDateInput(input.date) : new Date();
+
+          const entry = await db.logEntry.create({
+            data: {
+              goalId: input.goalId,
+              metric: input.metric,
+              value: input.value ?? null,
+              text: input.text ?? null,
+              date,
+              source: input.source,
+              // payload omitted — not exposed in this tool
+            },
+          });
+
+          return {
+            id: entry.id,
+            goalId: entry.goalId,
+            metric: entry.metric,
+            value: entry.value,
+            text: entry.text,
+            date: entry.date.toISOString(),        // ISO — per PRD §4.2
+            source: entry.source,
+            message: "Metric logged.",
+          };
         });
-        if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
-        if (goal.kind !== "project") {
-          throw new Error(
-            `Goal ${input.goalId} is kind='${goal.kind}'. ` +
-            `log_metric is for project goals only — use log_measurement for body metrics ` +
-            `or log_baseline for benchmark tests.`,
-          );
-        }
-
-        // 3. date: current instant default, not midnight (per PRD §4.5)
-        const date = input.date ? parseDateInput(input.date) : new Date();
-
-        const entry = await db.logEntry.create({
-          data: {
-            goalId: input.goalId,
-            metric: input.metric,
-            value: input.value ?? null,
-            text: input.text ?? null,
-            date,
-            source: input.source,
-            // payload omitted — not exposed in this tool
-          },
-        });
-
-        return {
-          id: entry.id,
-          goalId: entry.goalId,
-          metric: entry.metric,
-          value: entry.value,
-          text: entry.text,
-          date: entry.date.toISOString(),        // ISO — per PRD §4.2
-          source: entry.source,
-          message: "Metric logged.",
-        };
       }),
   );
 

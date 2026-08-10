@@ -15,6 +15,57 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — optional `requestId` idempotency key added to 13 write tools (#274)
+
+**Issue:** #274 (Sprint 16 — Additive schema, epic #258)
+
+**Why:** the MCP transport is stateless streamable HTTP; when a write's
+*response* is lost on the wire, the coach retries the call and lands a
+duplicate row. `requestId` gives every high-frequency write tool safe replay
+semantics: mint one UUID per logical write, reuse it on retry, and the retry
+gets the original stored result back instead of re-running the mutation.
+
+**Input-shape change (all 13 tools):** new **optional** param
+
+```
+requestId?: string (max 128)
+  "Idempotency key: same key ⇒ the original result is replayed, the write
+   runs once. Mint one UUID per logical write and REUSE it on retry."
+```
+
+Tools touched:
+
+- `log_workout`, `log_measurement`, `log_baseline`, `log_hike`, `log_note`,
+  `log_nutrition` (single-row writes)
+- `log_metric` (project pack, `src/lib/mcp/tools/project-tools.ts`)
+- `workout_ops`, `baseline_ops`, `nutrition_log_ops` (surgical-edit packs)
+- `batch_log_nutrition`, `batch_log_note` (batch writers — ONE requestId
+  covers the whole batch; the per-operation shapes are unchanged)
+- `apply_plan_revision`
+
+Omitting `requestId` preserves the previous non-idempotent behavior
+byte-for-byte.
+
+**Output-shape change:** none on first execution. A **replayed** call returns
+the stored original payload with one added field, `replayed: true`. Handled by
+`withWriteReceipt` in `src/lib/mcp/idempotency.ts`, backed by the `WriteReceipt`
+model (`@@unique([userId, requestId])`, per-user via the scoped client).
+For the transaction-shaped tools (`apply_plan_revision`, `baseline_ops`,
+`batch_log_nutrition`, `batch_log_note`) the receipt commits atomically with
+the mutation; the single-row tools store it immediately after the write (a
+crash in that window costs at most one legitimate-retry duplicate — the
+pre-#274 status quo).
+
+**Ops note:** receipts are pruned by `npx tsx scripts/gc-write-receipts.ts`
+(manual/cron; default 30-day cutoff, `--days N`, `--dry-run`).
+
+**Connector reconnect: YES** — 13 tool input schemas changed. Reconnect the
+claude.ai MCP connector after this deploys (Settings → Connectors → Goaldmine
+→ remove/re-add or "reconnect"), or the cached tool list keeps the old
+schemas and the coach can't pass `requestId`.
+
+---
+
 ## 2026-08-09 — M1 deploy note (no tool-shape change): `Program` → `LegacyProgram` rename + fallback deletion
 
 **Issues:** #267 / #268 / #269 (Sprint 15 — Legacy retirement, epic #257)

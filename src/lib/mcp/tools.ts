@@ -107,6 +107,7 @@ import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
 import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 
 const DateKeyShape = z
   .string()
@@ -2491,21 +2492,24 @@ function registerWriteTools(server: McpServer) {
         sourceUrl: z.string().optional(),
         notes: z.string().optional(),
         exercises: z.array(ExerciseInputShape),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
-      safe(async () => {
-        const { id, recordsSet } = await createWorkoutCore({
-          title: input.title,
-          startedAt: new Date(input.startedAt),
-          status: "completed",
-          source: input.source,
-          sourceUrl: input.sourceUrl,
-          notes: input.notes,
-          exercises: input.exercises,
-        });
-        return { id, message: "Workout logged", recordsSet };
-      }),
+      safe(async () =>
+        withWriteReceipt("log_workout", input.requestId, await getDb(), async () => {
+          const { id, recordsSet } = await createWorkoutCore({
+            title: input.title,
+            startedAt: new Date(input.startedAt),
+            status: "completed",
+            source: input.source,
+            sourceUrl: input.sourceUrl,
+            notes: input.notes,
+            exercises: input.exercises,
+          });
+          return { id, message: "Workout logged", recordsSet };
+        }),
+      ),
   );
 
   server.registerTool(
@@ -2530,50 +2534,53 @@ function registerWriteTools(server: McpServer) {
         bodyFatPct: z.number().min(0).max(100).optional(),
         notes: z.string().optional(),
         date: z.string().optional().describe("ISO datetime; default = now"),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
+        return withWriteReceipt("log_measurement", input.requestId, db, async () => {
+          const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
 
-        // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
-        let rhrRow: { id: string } | undefined;
-        if (input.restingHr !== undefined) {
-          rhrRow = await db.bodyMetric.create({
-            data: {
-              date,
+          // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
+          let rhrRow: { id: string } | undefined;
+          if (input.restingHr !== undefined) {
+            rhrRow = await db.bodyMetric.create({
+              data: {
+                date,
+                key: "rhr",
+                value: input.restingHr,
+                unit: "bpm",
+                source: "claude",
+              },
+            });
+          }
+
+          // Only write a Measurement row when weight or body-fat are provided.
+          if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
+            const m = await db.measurement.create({
+              data: {
+                date,
+                weightLb: input.weightLb ?? null,
+                bodyFatPct: input.bodyFatPct ?? null,
+                notes: input.notes ?? null,
+              },
+            });
+            return { id: m.id, message: "Measurement logged" };
+          }
+
+          // restingHr-only path: return the BodyMetric row id so the coach has a handle.
+          if (rhrRow) {
+            return {
+              id: rhrRow.id,
               key: "rhr",
-              value: input.restingHr,
-              unit: "bpm",
-              source: "claude",
-            },
-          });
-        }
+              message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
+            };
+          }
 
-        // Only write a Measurement row when weight or body-fat are provided.
-        if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
-          const m = await db.measurement.create({
-            data: {
-              date,
-              weightLb: input.weightLb ?? null,
-              bodyFatPct: input.bodyFatPct ?? null,
-              notes: input.notes ?? null,
-            },
-          });
-          return { id: m.id, message: "Measurement logged" };
-        }
-
-        // restingHr-only path: return the BodyMetric row id so the coach has a handle.
-        if (rhrRow) {
-          return {
-            id: rhrRow.id,
-            key: "rhr",
-            message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
-          };
-        }
-
-        return { message: "Measurement logged" };
+          return { message: "Measurement logged" };
+        });
       }),
   );
 
@@ -2662,79 +2669,82 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Permit value=0 to document a DNF / skipped / substituted test. Without this, value<=0 is rejected as a phantom completion.",
           ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // Reject phantom completions: a bare 0 reads as "logged but no real
-        // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
-        // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
-        // reach 6.5 cm short of the toes is -6.5). The linter surfaces value<=0
-        // as a non-blocking warning so signed/legacy values still get a look.
-        if (input.value === 0 && !input.allowZero) {
-          throw new Error(
-            `value=0 for "${input.testName}" looks like a phantom completion. Pass the real measured value, ` +
-              `or set allowZero=true to deliberately record a DNF / skipped / substituted test.`,
-          );
-        }
+        return withWriteReceipt("log_baseline", input.requestId, db, async () => {
+          // Reject phantom completions: a bare 0 reads as "logged but no real
+          // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
+          // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
+          // reach 6.5 cm short of the toes is -6.5). The linter surfaces value<=0
+          // as a non-blocking warning so signed/legacy values still get a look.
+          if (input.value === 0 && !input.allowZero) {
+            throw new Error(
+              `value=0 for "${input.testName}" looks like a phantom completion. Pass the real measured value, ` +
+                `or set allowZero=true to deliberately record a DNF / skipped / substituted test.`,
+            );
+          }
 
-        const date = input.date ? parseDateInput(input.date) : new Date();
+          const date = input.date ? parseDateInput(input.date) : new Date();
 
-        // Idempotency: one result per testName per calendar day. A repeat call
-        // updates the existing row in place (mirrors apply_day_override's upsert
-        // and log_hike's finalize-in-place) instead of stacking duplicates.
-        const existing = await db.baseline.findFirst({
-          where: {
-            testName: input.testName,
-            date: { gte: startOfDay(date), lte: endOfDay(date) },
-          },
-          orderBy: { date: "asc" },
-        });
+          // Idempotency: one result per testName per calendar day. A repeat call
+          // updates the existing row in place (mirrors apply_day_override's upsert
+          // and log_hike's finalize-in-place) instead of stacking duplicates.
+          const existing = await db.baseline.findFirst({
+            where: {
+              testName: input.testName,
+              date: { gte: startOfDay(date), lte: endOfDay(date) },
+            },
+            orderBy: { date: "asc" },
+          });
 
-        if (existing) {
-          const updated = await db.baseline.update({
-            where: { id: existing.id },
+          if (existing) {
+            const updated = await db.baseline.update({
+              where: { id: existing.id },
+              data: {
+                value: input.value,
+                units: input.units,
+                date,
+                notes: input.notes ?? null,
+              },
+            });
+            await syncBaselineUpdateToWorkout({
+              testName: input.testName,
+              oldDate: existing.date,
+              oldValue: existing.value,
+              newDate: date,
+              newValue: input.value,
+              newUnits: input.units,
+              newNotes: input.notes ?? null,
+            });
+            return {
+              id: updated.id,
+              deduped: true,
+              message: `Existing ${input.testName} result on this date updated in place (no duplicate created).`,
+            };
+          }
+
+          const b = await db.baseline.create({
             data: {
+              testName: input.testName,
               value: input.value,
               units: input.units,
               date,
               notes: input.notes ?? null,
             },
           });
-          await syncBaselineUpdateToWorkout({
-            testName: input.testName,
-            oldDate: existing.date,
-            oldValue: existing.value,
-            newDate: date,
-            newValue: input.value,
-            newUnits: input.units,
-            newNotes: input.notes ?? null,
-          });
-          return {
-            id: updated.id,
-            deduped: true,
-            message: `Existing ${input.testName} result on this date updated in place (no duplicate created).`,
-          };
-        }
-
-        const b = await db.baseline.create({
-          data: {
+          await appendBaselineToDayWorkout({
             testName: input.testName,
             value: input.value,
             units: input.units,
             date,
             notes: input.notes ?? null,
-          },
+          });
+          return { id: b.id, deduped: false, message: "Baseline logged (and appended to day's baseline workout)" };
         });
-        await appendBaselineToDayWorkout({
-          testName: input.testName,
-          value: input.value,
-          units: input.units,
-          date,
-          notes: input.notes ?? null,
-        });
-        return { id: b.id, deduped: false, message: "Baseline logged (and appended to day's baseline workout)" };
       }),
   );
 
@@ -2848,23 +2858,26 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Which goal this hike trains (use list_goals to find goal ids). Omit to attribute to the current focus goal. Stored permanently on the hike row — affects calendar markers and goal-level readiness.",
           ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () =>
-        logHikeCore({
-          date: parseDateInput(input.date),
-          route: input.route,
-          distanceMi: input.distanceMi,
-          elevationFt: input.elevationFt,
-          durationMin: input.durationMin,
-          packWeightLb: input.packWeightLb,
-          rpe: input.rpe,
-          status: input.status,
-          notes: input.notes,
-          goalId: input.goalId,
-          replacesPlannedHikeId: input.replacesPlannedHikeId,
-        }),
+        withWriteReceipt("log_hike", input.requestId, await getDb(), () =>
+          logHikeCore({
+            date: parseDateInput(input.date),
+            route: input.route,
+            distanceMi: input.distanceMi,
+            elevationFt: input.elevationFt,
+            durationMin: input.durationMin,
+            packWeightLb: input.packWeightLb,
+            rpe: input.rpe,
+            status: input.status,
+            notes: input.notes,
+            goalId: input.goalId,
+            replacesPlannedHikeId: input.replacesPlannedHikeId,
+          }),
+        ),
       ),
   );
 
@@ -2907,9 +2920,13 @@ function registerWriteTools(server: McpServer) {
       title: "Log a note",
       description:
         "Audible / journal / feedback / standing_rule / review. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note. For a structured first-class weekly review (surfaced by get_latest_review) use log_review.",
-      inputSchema: LogNoteShape,
+      inputSchema: { ...LogNoteShape, requestId: RequestIdShape },
     },
-    async (input) => safe(async () => logNoteCore(await getDb(), input)),
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("log_note", input.requestId, db, () => logNoteCore(db, input));
+      }),
   );
 
   server.registerTool(
@@ -3156,9 +3173,15 @@ function registerWriteTools(server: McpServer) {
       title: "Log a meal",
       description:
         "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
-      inputSchema: LogNutritionShape,
+      inputSchema: { ...LogNutritionShape, requestId: RequestIdShape },
     },
-    async (input) => safe(async () => logNutritionCore(await getDb(), input)),
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("log_nutrition", input.requestId, db, () =>
+          logNutritionCore(db, input),
+        );
+      }),
   );
 
   server.registerTool(
@@ -3228,54 +3251,57 @@ function registerWriteTools(server: McpServer) {
       inputSchema: {
         id: z.string().describe("NutritionLog.id"),
         ops: z.array(NutritionLogOpSchema).min(1).describe("Operations applied in order to the log's items array."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ id, ops }) =>
+    async ({ id, ops, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const log = await db.nutritionLog.findUniqueOrThrow({ where: { id } });
-        const items = parseStoredItems(log.items);
-        let next: ReturnType<typeof applyNutritionLogOps>;
-        try {
-          next = applyNutritionLogOps(items, ops);
-        } catch (e) {
-          throw new Error(
-            `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
+        return withWriteReceipt("nutrition_log_ops", requestId, db, async () => {
+          const log = await db.nutritionLog.findUniqueOrThrow({ where: { id } });
+          const items = parseStoredItems(log.items);
+          let next: ReturnType<typeof applyNutritionLogOps>;
+          try {
+            next = applyNutritionLogOps(items, ops);
+          } catch (e) {
+            throw new Error(
+              `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
+            );
+          }
+          await db.nutritionLog.update({
+            where: { id },
+            data: { items: next as unknown as Prisma.InputJsonValue },
+          });
+          // This tool only rewrites the items array; the stored macro columns are
+          // left untouched. Any op that changes food content or quantity desyncs
+          // the day's totals from the new item list — warn the caller and hand
+          // back the stale macros so they can reconcile via update_nutrition.
+          const macrosMayBeStale = ops.some(
+            (op) =>
+              op.op === "addItem" ||
+              op.op === "removeItem" ||
+              (op.op === "updateItem" && op.patch.qty !== undefined),
           );
-        }
-        await db.nutritionLog.update({
-          where: { id },
-          data: { items: next as unknown as Prisma.InputJsonValue },
+          const baseMessage = `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`;
+          if (!macrosMayBeStale) {
+            return { id, itemCount: next.length, opsApplied: ops.length, items: next, macrosMayBeStale, message: baseMessage };
+          }
+          const storedMacros = Object.fromEntries(
+            MACRO_KEYS.map((k) => [k, (log as Record<string, unknown>)[k] ?? null]),
+          );
+          return {
+            id,
+            itemCount: next.length,
+            opsApplied: ops.length,
+            items: next,
+            macrosMayBeStale,
+            storedMacros,
+            message:
+              baseMessage +
+              " ⚠️ This changed food content/quantity but the stored macros were NOT recomputed — the day's totals are now stale. " +
+              "Reconcile by calling update_nutrition with the corrected macros (current stored values returned as storedMacros).",
+          };
         });
-        // This tool only rewrites the items array; the stored macro columns are
-        // left untouched. Any op that changes food content or quantity desyncs
-        // the day's totals from the new item list — warn the caller and hand
-        // back the stale macros so they can reconcile via update_nutrition.
-        const macrosMayBeStale = ops.some(
-          (op) =>
-            op.op === "addItem" ||
-            op.op === "removeItem" ||
-            (op.op === "updateItem" && op.patch.qty !== undefined),
-        );
-        const baseMessage = `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`;
-        if (!macrosMayBeStale) {
-          return { id, itemCount: next.length, opsApplied: ops.length, items: next, macrosMayBeStale, message: baseMessage };
-        }
-        const storedMacros = Object.fromEntries(
-          MACRO_KEYS.map((k) => [k, (log as Record<string, unknown>)[k] ?? null]),
-        );
-        return {
-          id,
-          itemCount: next.length,
-          opsApplied: ops.length,
-          items: next,
-          macrosMayBeStale,
-          storedMacros,
-          message:
-            baseMessage +
-            " ⚠️ This changed food content/quantity but the stored macros were NOT recomputed — the day's totals are now stale. " +
-            "Reconcile by calling update_nutrition with the corrected macros (current stored values returned as storedMacros).",
-        };
       }),
   );
 
@@ -3324,120 +3350,126 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "When true and the snapshot's totalWeeks differs from Plan.weeks, also update Plan.weeks and Plan.endsOn (= startedOn + totalWeeks*7) in the same transaction, so the calendar's week counter and plan range stay in sync. Does not touch Goal.targetDate.",
           ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
-        // Auto-recover then validate structural shape.
-        let snapshot: unknown = input.snapshotJson;
-        if (typeof snapshot === "string") {
-          try {
-            snapshot = JSON.parse(snapshot);
-          } catch {
+        return withWriteReceipt("apply_plan_revision", input.requestId, db, async (storeReceipt) => {
+          // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
+          // Auto-recover then validate structural shape.
+          let snapshot: unknown = input.snapshotJson;
+          if (typeof snapshot === "string") {
+            try {
+              snapshot = JSON.parse(snapshot);
+            } catch {
+              throw new Error(
+                "snapshotJson was passed as a string but isn't valid JSON. Pass the ProgramTemplate as a plain object.",
+              );
+            }
+          }
+          assertValidProgramTemplate(snapshot);
+
+          const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
+          const template = snapshot as ProgramTemplate;
+
+          // Lint the proposed snapshot before writing. Structural errors block;
+          // warnings ride along in the response. goalTargetDate isn't used by the
+          // template-only rules, so the plan end stands in here.
+          const lintFindings: LintFinding[] = lintTemplate(template, {
+            weeks: plan.weeks,
+            endsOn: plan.endsOn,
+            startedOn: plan.startedOn,
+            goalTargetDate: plan.endsOn,
+          });
+          const lintErrors = lintFindings.filter((f) => f.severity === "error");
+          if (lintErrors.length > 0) {
             throw new Error(
-              "snapshotJson was passed as a string but isn't valid JSON. Pass the ProgramTemplate as a plain object.",
+              `Refusing to apply: the snapshot has ${lintErrors.length} structural error(s). ` +
+                lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+                " Fix the template and retry.",
             );
           }
-        }
-        assertValidProgramTemplate(snapshot);
+          const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+          // Note: "info" findings (e.g. multiple-hikes-one-week from lintActivePlan) are
+          // intentionally excluded here — lintTemplate never produces info findings, and
+          // advisory info items must not block revisions.
 
-        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
-        const template = snapshot as ProgramTemplate;
+          // Metadata drift / Phase-5 cascade.
+          const totalWeeks = template.totalWeeks;
+          const weeksChanged = totalWeeks !== plan.weeks;
+          const expectedEndsOn = startOfDay(addDays(plan.startedOn, totalWeeks * 7));
+          const willCascade = weeksChanged && input.cascadeMetadata === true;
 
-        // Lint the proposed snapshot before writing. Structural errors block;
-        // warnings ride along in the response. goalTargetDate isn't used by the
-        // template-only rules, so the plan end stands in here.
-        const lintFindings: LintFinding[] = lintTemplate(template, {
-          weeks: plan.weeks,
-          endsOn: plan.endsOn,
-          startedOn: plan.startedOn,
-          goalTargetDate: plan.endsOn,
-        });
-        const lintErrors = lintFindings.filter((f) => f.severity === "error");
-        if (lintErrors.length > 0) {
-          throw new Error(
-            `Refusing to apply: the snapshot has ${lintErrors.length} structural error(s). ` +
-              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
-              " Fix the template and retry.",
-          );
-        }
-        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
-        // Note: "info" findings (e.g. multiple-hikes-one-week from lintActivePlan) are
-        // intentionally excluded here — lintTemplate never produces info findings, and
-        // advisory info items must not block revisions.
+          // Surface drift so the two can't silently diverge even when the coach
+          // didn't opt into the cascade. Computed from pre-transaction values —
+          // hoisted above the transaction so the full response payload can be
+          // assembled inside it for the atomic receipt write.
+          const metadataDrift = weeksChanged
+            ? {
+                planWeeks: plan.weeks,
+                snapshotTotalWeeks: totalWeeks,
+                currentEndsOn: toDateKey(plan.endsOn),
+                expectedEndsOn: toDateKey(expectedEndsOn),
+                cascaded: willCascade,
+                ...(willCascade
+                  ? {}
+                  : { fix: "Call update_plan_metadata to sync Plan.weeks/endsOn (and Goal.targetDate if the goal date moved)." }),
+              }
+            : null;
 
-        // Metadata drift / Phase-5 cascade.
-        const totalWeeks = template.totalWeeks;
-        const weeksChanged = totalWeeks !== plan.weeks;
-        const expectedEndsOn = startOfDay(addDays(plan.startedOn, totalWeeks * 7));
-        const willCascade = weeksChanged && input.cascadeMetadata === true;
-
-        const resolveIds = [
-          ...new Set([
-            ...(input.resolvedNoteIds ?? []),
-            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
-          ]),
-        ];
-        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
-          const r = await tx.planRevision.create({
-            data: {
-              planId: plan.id,
-              triggerNoteId: input.triggerNoteId ?? null,
-              triggerSource: input.triggerSource,
-              summary: input.summary,
-              reasoning: input.reasoning,
-              snapshotJson: snapshot as Prisma.InputJsonValue,
-            },
-          });
-          await tx.plan.update({
-            where: { id: plan.id },
-            data: {
-              planJson: snapshot as Prisma.InputJsonValue,
-              ...(willCascade ? { weeks: totalWeeks, endsOn: expectedEndsOn } : {}),
-            },
-          });
-          let resolvedCount = 0;
-          if (resolveIds.length > 0) {
-            const update = await tx.note.updateMany({
-              where: { id: { in: resolveIds }, resolvedAt: null },
+          const resolveIds = [
+            ...new Set([
+              ...(input.resolvedNoteIds ?? []),
+              ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+            ]),
+          ];
+          return db.$transaction(async (tx) => {
+            const r = await tx.planRevision.create({
               data: {
-                resolvedAt: r.createdAt,
-                resolvedReason: `applied via revision ${r.id}`,
+                planId: plan.id,
+                triggerNoteId: input.triggerNoteId ?? null,
+                triggerSource: input.triggerSource,
+                summary: input.summary,
+                reasoning: input.reasoning,
+                snapshotJson: snapshot as Prisma.InputJsonValue,
               },
             });
-            resolvedCount = update.count;
-          }
-          return { rev: r, resolvedCount };
-        });
-
-        // Surface drift so the two can't silently diverge even when the coach
-        // didn't opt into the cascade.
-        const metadataDrift = weeksChanged
-          ? {
-              planWeeks: plan.weeks,
-              snapshotTotalWeeks: totalWeeks,
-              currentEndsOn: toDateKey(plan.endsOn),
-              expectedEndsOn: toDateKey(expectedEndsOn),
-              cascaded: willCascade,
-              ...(willCascade
-                ? {}
-                : { fix: "Call update_plan_metadata to sync Plan.weeks/endsOn (and Goal.targetDate if the goal date moved)." }),
+            await tx.plan.update({
+              where: { id: plan.id },
+              data: {
+                planJson: snapshot as Prisma.InputJsonValue,
+                ...(willCascade ? { weeks: totalWeeks, endsOn: expectedEndsOn } : {}),
+              },
+            });
+            let resolvedCount = 0;
+            if (resolveIds.length > 0) {
+              const update = await tx.note.updateMany({
+                where: { id: { in: resolveIds }, resolvedAt: null },
+                data: {
+                  resolvedAt: r.createdAt,
+                  resolvedReason: `applied via revision ${r.id}`,
+                },
+              });
+              resolvedCount = update.count;
             }
-          : null;
-
-        return {
-          revisionId: rev.id,
-          resolvedNoteCount: resolvedCount,
-          warnings: lintWarnings,
-          metadataDrift,
-          message:
-            `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}` +
-            (willCascade ? ` — Plan.weeks/endsOn synced to ${totalWeeks}w.` : "") +
-            (metadataDrift && !willCascade ? " — metadata drift detected (see metadataDrift); follow up with update_plan_metadata." : "") +
-            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
-        };
+            const payload = {
+              revisionId: r.id,
+              resolvedNoteCount: resolvedCount,
+              warnings: lintWarnings,
+              metadataDrift,
+              message:
+                `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}` +
+                (willCascade ? ` — Plan.weeks/endsOn synced to ${totalWeeks}w.` : "") +
+                (metadataDrift && !willCascade ? " — metadata drift detected (see metadataDrift); follow up with update_plan_metadata." : "") +
+                (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
+            };
+            // Last op in the tx: the receipt commits atomically with the revision.
+            await storeReceipt(tx, payload);
+            return payload;
+          });
+        });
       }),
   );
 
@@ -3532,89 +3564,93 @@ function registerWriteTools(server: McpServer) {
           .array(z.string())
           .optional()
           .describe("Notes addressed by this edit — marked resolved in the same transaction."),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        return withWriteReceipt("baseline_ops", input.requestId, db, async (storeReceipt) => {
+          const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
 
-        // The live snapshot should already be valid (apply_plan_revision gates
-        // every write), but assert before patching so a malformed planJson fails
-        // loudly here rather than producing a half-typed result.
-        const current: unknown = plan.planJson;
-        assertValidProgramTemplate(current);
-        const tpl = current as ProgramTemplate;
+          // The live snapshot should already be valid (apply_plan_revision gates
+          // every write), but assert before patching so a malformed planJson fails
+          // loudly here rather than producing a half-typed result.
+          const current: unknown = plan.planJson;
+          assertValidProgramTemplate(current);
+          const tpl = current as ProgramTemplate;
 
-        const { baselineWeek, changes } = applyBaselineOps(tpl.baselineWeek, input.ops);
-        const next: ProgramTemplate = { ...tpl, baselineWeek };
-        assertValidProgramTemplate(next);
+          const { baselineWeek, changes } = applyBaselineOps(tpl.baselineWeek, input.ops);
+          const next: ProgramTemplate = { ...tpl, baselineWeek };
+          assertValidProgramTemplate(next);
 
-        // Same lint gate as apply_plan_revision: errors block, warnings ride along.
-        const lintFindings: LintFinding[] = lintTemplate(next, {
-          weeks: plan.weeks,
-          endsOn: plan.endsOn,
-          startedOn: plan.startedOn,
-          goalTargetDate: plan.endsOn,
-        });
-        const lintErrors = lintFindings.filter((f) => f.severity === "error");
-        if (lintErrors.length > 0) {
-          throw new Error(
-            `Refusing to apply: the patched baseline has ${lintErrors.length} structural error(s). ` +
-              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
-              " Adjust the ops and retry.",
-          );
-        }
-        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
-
-        const summary = input.summary ?? summarizeBaselineChanges(changes);
-        const reasoning = input.reasoning ?? "Baseline test edit via baseline_ops.";
-        const resolveIds = [
-          ...new Set([
-            ...(input.resolvedNoteIds ?? []),
-            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
-          ]),
-        ];
-
-        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
-          const r = await tx.planRevision.create({
-            data: {
-              planId: plan.id,
-              triggerNoteId: input.triggerNoteId ?? null,
-              triggerSource: input.triggerSource,
-              summary,
-              reasoning,
-              snapshotJson: next as Prisma.InputJsonValue,
-            },
+          // Same lint gate as apply_plan_revision: errors block, warnings ride along.
+          const lintFindings: LintFinding[] = lintTemplate(next, {
+            weeks: plan.weeks,
+            endsOn: plan.endsOn,
+            startedOn: plan.startedOn,
+            goalTargetDate: plan.endsOn,
           });
-          await tx.plan.update({
-            where: { id: plan.id },
-            data: { planJson: next as Prisma.InputJsonValue },
-          });
-          let resolvedCount = 0;
-          if (resolveIds.length > 0) {
-            const update = await tx.note.updateMany({
-              where: { id: { in: resolveIds }, resolvedAt: null },
+          const lintErrors = lintFindings.filter((f) => f.severity === "error");
+          if (lintErrors.length > 0) {
+            throw new Error(
+              `Refusing to apply: the patched baseline has ${lintErrors.length} structural error(s). ` +
+                lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+                " Adjust the ops and retry.",
+            );
+          }
+          const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+
+          const summary = input.summary ?? summarizeBaselineChanges(changes);
+          const reasoning = input.reasoning ?? "Baseline test edit via baseline_ops.";
+          const resolveIds = [
+            ...new Set([
+              ...(input.resolvedNoteIds ?? []),
+              ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+            ]),
+          ];
+
+          return db.$transaction(async (tx) => {
+            const r = await tx.planRevision.create({
               data: {
-                resolvedAt: r.createdAt,
-                resolvedReason: `applied via revision ${r.id}`,
+                planId: plan.id,
+                triggerNoteId: input.triggerNoteId ?? null,
+                triggerSource: input.triggerSource,
+                summary,
+                reasoning,
+                snapshotJson: next as Prisma.InputJsonValue,
               },
             });
-            resolvedCount = update.count;
-          }
-          return { rev: r, resolvedCount };
+            await tx.plan.update({
+              where: { id: plan.id },
+              data: { planJson: next as Prisma.InputJsonValue },
+            });
+            let resolvedCount = 0;
+            if (resolveIds.length > 0) {
+              const update = await tx.note.updateMany({
+                where: { id: { in: resolveIds }, resolvedAt: null },
+                data: {
+                  resolvedAt: r.createdAt,
+                  resolvedReason: `applied via revision ${r.id}`,
+                },
+              });
+              resolvedCount = update.count;
+            }
+            const payload = {
+              revisionId: r.id,
+              changes,
+              resolvedNoteCount: resolvedCount,
+              warnings: lintWarnings,
+              message:
+                `${changes.length} baseline edit(s) applied via revision ${r.id}.` +
+                (resolvedCount > 0 ? ` Resolved ${resolvedCount} note(s).` : "") +
+                (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
+            };
+            // Last op in the tx: the receipt commits atomically with the revision.
+            await storeReceipt(tx, payload);
+            return payload;
+          });
         });
-
-        return {
-          revisionId: rev.id,
-          changes,
-          resolvedNoteCount: resolvedCount,
-          warnings: lintWarnings,
-          message:
-            `${changes.length} baseline edit(s) applied via revision ${rev.id}.` +
-            (resolvedCount > 0 ? ` Resolved ${resolvedCount} note(s).` : "") +
-            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
-        };
       }),
   );
 
@@ -4453,10 +4489,13 @@ function registerWriteTools(server: McpServer) {
         "Look up IDs via export_workout with format:'json' or 'markdown' (the default 'strong' format omits ids). For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
       inputSchema: {
         ops: z.array(WorkoutOpSchema).min(1).describe("Operations applied in order, atomically."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ ops }) =>
-      safe(async () => workoutOpsCore(ops)),
+    async ({ ops, requestId }) =>
+      safe(async () =>
+        withWriteReceipt("workout_ops", requestId, await getDb(), () => workoutOpsCore(ops)),
+      ),
   );
 
   server.registerTool(
@@ -4742,31 +4781,36 @@ function registerWriteTools(server: McpServer) {
           .min(1)
           .max(MAX_BATCH_SIZE)
           .describe("Array of log_nutrition inputs, applied sequentially in one txn."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ operations }) =>
+    async ({ operations, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const results = await db.$transaction(async (tx) => {
-          const out: { id: string; message: string }[] = [];
-          for (let i = 0; i < operations.length; i++) {
-            try {
-              out.push(await logNutritionCore(tx, operations[i]!));
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              throw new Error(
-                `batch_log_nutrition failed at operation [${i}]: ${msg}. ` +
-                  `Transaction rolled back; no meals were logged. Fix this op and retry.`,
-              );
+        return withWriteReceipt("batch_log_nutrition", requestId, db, (storeReceipt) =>
+          db.$transaction(async (tx) => {
+            const out: { id: string; message: string }[] = [];
+            for (let i = 0; i < operations.length; i++) {
+              try {
+                out.push(await logNutritionCore(tx, operations[i]!));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(
+                  `batch_log_nutrition failed at operation [${i}]: ${msg}. ` +
+                    `Transaction rolled back; no meals were logged. Fix this op and retry.`,
+                );
+              }
             }
-          }
-          return out;
-        });
-        return {
-          applied: results.length,
-          results,
-          message: `Batch logged ${results.length} meal${results.length === 1 ? "" : "s"} atomically.`,
-        };
+            const payload = {
+              applied: out.length,
+              results: out,
+              message: `Batch logged ${out.length} meal${out.length === 1 ? "" : "s"} atomically.`,
+            };
+            // Last op in the tx: the receipt commits atomically with the batch.
+            await storeReceipt(tx, payload);
+            return payload;
+          }),
+        );
       }),
   );
 
@@ -4785,31 +4829,36 @@ function registerWriteTools(server: McpServer) {
           .min(1)
           .max(MAX_BATCH_SIZE)
           .describe("Array of log_note inputs, applied sequentially in one txn."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ operations }) =>
+    async ({ operations, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const results = await db.$transaction(async (tx) => {
-          const out: { id: string; message: string }[] = [];
-          for (let i = 0; i < operations.length; i++) {
-            try {
-              out.push(await logNoteCore(tx, operations[i]!));
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              throw new Error(
-                `batch_log_note failed at operation [${i}]: ${msg}. ` +
-                  `Transaction rolled back; no notes were logged. Fix this op and retry.`,
-              );
+        return withWriteReceipt("batch_log_note", requestId, db, (storeReceipt) =>
+          db.$transaction(async (tx) => {
+            const out: { id: string; message: string }[] = [];
+            for (let i = 0; i < operations.length; i++) {
+              try {
+                out.push(await logNoteCore(tx, operations[i]!));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(
+                  `batch_log_note failed at operation [${i}]: ${msg}. ` +
+                    `Transaction rolled back; no notes were logged. Fix this op and retry.`,
+                );
+              }
             }
-          }
-          return out;
-        });
-        return {
-          applied: results.length,
-          results,
-          message: `Batch logged ${results.length} note${results.length === 1 ? "" : "s"} atomically.`,
-        };
+            const payload = {
+              applied: out.length,
+              results: out,
+              message: `Batch logged ${out.length} note${out.length === 1 ? "" : "s"} atomically.`,
+            };
+            // Last op in the tx: the receipt commits atomically with the batch.
+            await storeReceipt(tx, payload);
+            return payload;
+          }),
+        );
       }),
   );
 
