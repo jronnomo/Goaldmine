@@ -217,12 +217,16 @@ describe("MealComposer — SavedMeal quick-pick row (#296)", () => {
     expect(savedIdx).toBeLessThan(estimateIdx);
   });
 
-  it("empty list renders the coach note (creation is MCP-only), cleanly, no chips", () => {
+  it("empty list renders the self-serve note (Save as meal is the creation path now), cleanly, no chips", () => {
     const html = renderToStaticMarkup(
       createElement(MealComposer, { mode: "create", savedMeals: [] }),
     );
     expect(html).toContain('data-testid="saved-meal-empty"');
-    expect(html).toContain("saved meals are created by your coach");
+    // Copy updated with the composer's own "Save as meal" path — the old
+    // "created by your coach" (MCP-only) phrasing must be gone.
+    expect(html).toContain("Save as meal");
+    expect(html).toContain("your coach can save them too");
+    expect(html).not.toContain("saved meals are created by your coach");
     expect(html).not.toContain("saved-meal-chip-");
   });
 
@@ -295,5 +299,85 @@ describe("savedMealChipMacros — the chip's second line", () => {
     expect(savedMealChipMacros({ proteinG: 31 })).toBe("31P");
     expect(savedMealChipMacros(undefined)).toBeNull();
     expect(savedMealChipMacros({})).toBeNull();
+  });
+});
+
+// ── Food-linked bundles: composer credit + Save-as-meal affordance ───────────
+
+describe("expandSavedMealForComposer — creditMacros vs full macros", () => {
+  it("text-only meal: creditMacros IS the full scaled lump (unchanged pre-bundle behavior)", () => {
+    const { macros, creditMacros } = expandSavedMealForComposer(BOWL, 0.5);
+    expect(creditMacros).toEqual(macros);
+    expect(creditMacros).toEqual({ calories: 335, proteinG: 35.5, carbsG: 26, fatG: 11 });
+  });
+
+  it("fully food-linked bundle: NO lump credit — items self-compute via the composer's recompose math", () => {
+    const source = {
+      basis: "100g" as const,
+      perBasis: { calories: 130, proteinG: 21, carbsG: 0, fatG: 4.5, fiberG: 0, sodiumMg: 65 },
+      portions: [],
+      foodId: "food-beef",
+      brand: null,
+    };
+    const linked: SavedMealLite = {
+      id: "sm-linked",
+      name: "Beef bowl",
+      items: [
+        {
+          name: "97% Lean Beef",
+          qty: "200 g",
+          foodId: "food-beef",
+          amount: 200,
+          unit: "g",
+          itemMacros: { calories: 260, proteinG: 42 },
+          source,
+        },
+      ],
+      macros: { calories: 260, proteinG: 42, carbsG: 0, fatG: 9, fiberG: 0, sodiumMg: 130 },
+      defaultServings: 1,
+    };
+    const { items, macros, creditMacros } = expandSavedMealForComposer(linked, 2);
+    expect(creditMacros).toBeUndefined();
+    // Expanded row is the full structured item at the scaled amount.
+    expect(items[0]).toMatchObject({ name: "97% Lean Beef", amount: 400, unit: "g", qty: "400 g" });
+    expect(items[0]!.source).toEqual(source);
+    expect(items[0]!.itemMacros).toEqual({
+      calories: 520, proteinG: 84, carbsG: 0, fatG: 18, fiberG: 0, sodiumMg: 260,
+    });
+    // Sheet preview still gets the FULL scaled totals.
+    expect(macros).toEqual({
+      calories: 520, proteinG: 84, carbsG: 0, fatG: 18, fiberG: 0, sodiumMg: 260,
+    });
+  });
+});
+
+describe("MealComposer — 'Save as meal' affordance (bundle capture)", () => {
+  const EDIT_WITH_ITEMS: MealDefaults = {
+    mealType: "lunch",
+    items: [{ name: "97% beef", qty: "8 oz" }],
+    notes: "",
+    date: "2026-08-05T12:00",
+  };
+
+  it("edit mode with items: the header shows the Save-as-meal toggle (closed panel by default)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "edit", id: "meal-1", defaults: EDIT_WITH_ITEMS }),
+    );
+    expect(html).toContain('data-testid="save-as-meal-toggle"');
+    // Disclosure starts closed — no panel, no name input.
+    expect(html).not.toContain('data-testid="save-as-meal-panel"');
+  });
+
+  it("create mode with no items yet: no toggle (nothing to capture)", () => {
+    const html = renderToStaticMarkup(createElement(MealComposer, { mode: "create" }));
+    expect(html).not.toContain('data-testid="save-as-meal-toggle"');
+    expect(html).not.toContain('data-testid="save-as-meal-panel"');
+  });
+
+  it("edit mode with no items: no toggle either (both modes share the gate)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MealComposer, { mode: "edit", id: "meal-1", defaults: EDIT_DEFAULTS }),
+    );
+    expect(html).not.toContain('data-testid="save-as-meal-toggle"');
   });
 });

@@ -553,7 +553,12 @@ model WriteReceipt {
 model SavedMeal {
   id              String   @id @default(cuid())
   name            String
-  // Same shape as NutritionLog.items: Array<{ name: string, qty?: string, notes?: string }>
+  // Array<{ name, qty?, notes?, foodId?, amount?, unit?, itemMacros?, source? }>
+  // — legacy rows are the text-only { name, qty?, notes? } subset; food-linked
+  // bundle rows (2026-08) add the FoodLibrary link + the save-time macro
+  // snapshot (source = ItemFoodSnapshot, itemMacros = the item's own macros;
+  // §B.5 snapshot-off-at-save — later FoodLibrary edits never rewrite bundles).
+  // Parsing/expansion: src/lib/saved-meal.ts. Additive Json — no migration.
   items           Json
   // Optional structured macros for ONE defaultServings worth of the meal:
   // { calories?, proteinG?, carbsG?, fatG?, fiberG?, sodiumMg? }

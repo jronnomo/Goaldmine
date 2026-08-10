@@ -86,6 +86,17 @@ Builtin macros come from USDA FoodData Central reference data (curated in `src/l
 - `"builtin"` — resolved from the curated builtin table
 - `"usda"` — resolved from USDA FoodData Central
 
+**SavedMeal food-linked bundles snapshot off at SAVE time (2026-08).**
+A SavedMeal item with a `foodId` also stores the food's full `source`
+snapshot (ItemFoodSnapshot) + `itemMacros` captured when the meal was saved
+(web "Save as meal" / MCP `save_meal`). Expansion (`deriveSavedMealLog`)
+scales and recomputes FROM THAT SAVED SNAPSHOT — it never re-reads
+FoodLibrary, so a later FoodLibrary edit/re-scan does NOT silently rewrite
+the bundle (same doctrine as this section's chip-tap staleness). To refresh
+a bundle after a reformulation: re-save the meal. Legacy text-only items
+(`{name, qty?, notes?}`) stay valid forever — they scale by qty annotation +
+lump macros exactly as before.
+
 ### 6. Operating rules live in THREE places — change them together
 `docs/server-instructions/goaldmine-rules.md` ↔ `COACH_INSTRUCTIONS` in `src/app/api/mcp/[token]/route.ts` ↔ the deployed connector text. Edit all in the same PR or they drift.
 

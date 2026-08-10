@@ -5,16 +5,17 @@ import {
   sumPlanTargetMacros,
   sumLoggedDayMacrosWithPlanFallback,
   hasAnyMacros,
+  formatItemMacroLine,
   MEAL_LABELS,
 } from "@/lib/nutrition-macros";
-import { parseStoredItems } from "@/lib/nutrition-log-ops";
+import { parseStoredItems, type NutritionItem } from "@/lib/nutrition-log-ops";
 import type { ExistingMealStub } from "@/lib/nutrition-merge";
 import { dateKey } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
 
-type Item = { name: string; qty?: string; notes?: string };
+type Item = NutritionItem;
 
 export type NutritionTodayLog = {
   id: string;
@@ -83,6 +84,36 @@ function formatMacros(macros: NonNullable<PlannedMeal["macros"]>): string {
   if (macros.fiberG != null) parts.push(`${Math.round(macros.fiberG)}g fiber`);
   if (macros.sodiumMg != null) parts.push(`${Math.round(macros.sodiumMg)}mg Na`);
   return parts.join(" · ");
+}
+
+/**
+ * Per-item breakdown for a logged meal whose items carry itemMacros (food-
+ * linked composer adds / SavedMeal bundle expansions): each item on its own
+ * line with a compact, muted macro readout — the owner's "individual items
+ * logged with each of their macros" view. Meals without any itemMacros render
+ * the joined summary exactly as before.
+ */
+function ItemBreakdown({ items }: { items: Item[] }) {
+  return (
+    <span
+      data-testid="meal-item-breakdown"
+      className="inline-flex max-w-full flex-col gap-0.5 align-top"
+    >
+      {items.map((i, idx) => {
+        const line = formatItemMacroLine(i.itemMacros);
+        return (
+          <span key={idx} className="min-w-0">
+            {i.qty ? `${i.name} (${i.qty})` : i.name}
+            {line && (
+              <span className="ml-1.5 font-mono text-[11px] text-[var(--muted)]">
+                {line}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 function PlannedRow({ meal }: { meal: PlannedMeal }) {
@@ -195,20 +226,27 @@ export function NutritionToday({
                     // Logged: render each logged meal individually with its summary + Edit button.
                     <>
                       {meals.map((m) => {
-                        const mealSummary = summarize(asItems(m.items));
+                        const mealItems = asItems(m.items);
+                        const hasItemMacros = mealItems.some(
+                          (i) => formatItemMacroLine(i.itemMacros) != null,
+                        );
                         return (
                           <div key={m.id} className="flex items-baseline justify-between gap-2">
                             <span className="flex-1 min-w-0">
                               <span className="text-[var(--success)] mr-1" aria-hidden>
                                 ✓
                               </span>
-                              {mealSummary}
+                              {hasItemMacros ? (
+                                <ItemBreakdown items={mealItems} />
+                              ) : (
+                                summarize(mealItems)
+                              )}
                             </span>
                             <MealEditButton
                               meal={{
                                 id: m.id,
                                 mealType: m.mealType,
-                                items: asItems(m.items),
+                                items: mealItems,
                                 notes: m.notes,
                                 dateISO: m.date.toISOString(),
                                 macros: {

@@ -44,6 +44,10 @@ const {
   mockGoalFindMany,
   mockActivityLinkFindMany,
   mockScheduledItemFindMany,
+  mockFoodUsageFindFirst,
+  mockFoodUsageUpdate,
+  mockFoodUsageCreate,
+  mockFoodLibraryFindMany,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -103,6 +107,14 @@ const {
   // directly — that pre-#283 path keeps its own coverage below.)
   const mockScheduledItemFindMany = vi.fn().mockResolvedValue([]);
 
+  // Food-linked bundles — FoodUsage bump on saved-meal expansion (scoped
+  // client) + FoodLibrary snapshot resolution at save_meal time (RAW prisma —
+  // shared catalog, deliberately non-scoped).
+  const mockFoodUsageFindFirst = vi.fn().mockResolvedValue(null);
+  const mockFoodUsageUpdate = vi.fn().mockResolvedValue({});
+  const mockFoodUsageCreate = vi.fn().mockResolvedValue({});
+  const mockFoodLibraryFindMany = vi.fn().mockResolvedValue([]);
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
@@ -145,6 +157,11 @@ const {
       update: mockSavedMealUpdate,
       delete: mockSavedMealDelete,
     },
+    foodUsage: {
+      findFirst: mockFoodUsageFindFirst,
+      update: mockFoodUsageUpdate,
+      create: mockFoodUsageCreate,
+    },
   };
 
   // complete_goal's before/after game-state diff + goal-completion cores —
@@ -181,6 +198,10 @@ const {
     mockGoalFindMany,
     mockActivityLinkFindMany,
     mockScheduledItemFindMany,
+    mockFoodUsageFindFirst,
+    mockFoodUsageUpdate,
+    mockFoodUsageCreate,
+    mockFoodLibraryFindMany,
   };
 });
 
@@ -190,6 +211,8 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     planDayOverride: { findMany: vi.fn().mockResolvedValue([]) },
     oAuthAuthCode: {},
+    // save_meal foodId resolution — SHARED catalog read (deliberately raw).
+    foodLibrary: { findMany: mockFoodLibraryFindMany },
   },
   getDb: vi.fn().mockResolvedValue(mockDb),
   injectUserId: (_model: string, _op: string, args: unknown) => args,
@@ -326,12 +349,22 @@ vi.mock("@/lib/nutrition-plan", async () => {
     parseStoredNutritionPlan: vi.fn().mockReturnValue(null),
   };
 });
-vi.mock("@/lib/nutrition-log-ops", () => ({
-  NutritionLogOpSchema: { shape: {}, parse: vi.fn() },
-  applyNutritionLogOps: vi.fn(),
-  parseStoredItems: vi.fn().mockReturnValue([]),
-  stripItemSource: vi.fn().mockImplementation((items: unknown[]) => items ?? []),
-}));
+vi.mock("@/lib/nutrition-log-ops", async () => {
+  // Real parseStoredItems (pure, no DB): the saved-meal bundle path
+  // (saved-meal.ts → parseSavedMealItems) validates rows through it — a
+  // stubbed [] would empty every derived saved-meal expansion below (same
+  // rationale as the nutrition-plan MACRO_KEYS partial mock above). Only the
+  // behavior-bearing op machinery stays stubbed.
+  const actual = await vi.importActual<typeof import("@/lib/nutrition-log-ops")>(
+    "@/lib/nutrition-log-ops",
+  );
+  return {
+    ...actual,
+    NutritionLogOpSchema: { shape: {}, parse: vi.fn() },
+    applyNutritionLogOps: vi.fn(),
+    stripItemSource: vi.fn().mockImplementation((items: unknown[]) => items ?? []),
+  };
+});
 vi.mock("@/lib/baseline-ops", () => ({
   BaselineOpSchema: { shape: {}, parse: vi.fn() },
   applyBaselineOps: vi.fn(),
@@ -1294,6 +1327,197 @@ describe("log_nutrition + savedMealId (#275)", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("items is required when savedMealId is not provided");
     expect(mockNutritionLogCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ── Food-linked bundles — MCP parity (save_meal snapshot + expansion bumps) ──
+describe("save_meal + log_nutrition — food-linked bundles", () => {
+  const BEEF_ROW = {
+    id: "food-beef",
+    barcode: null,
+    name: "97% Lean Beef",
+    brand: null,
+    servingSize: null,
+    basis: "100g",
+    calories: 130,
+    proteinG: 21,
+    carbsG: 0,
+    fatG: 4.5,
+    fiberG: 0,
+    sodiumMg: 65,
+    source: "usda",
+    createdAt: new Date("2026-08-01"),
+    updatedAt: new Date("2026-08-01"),
+  };
+  const BEEF_SOURCE = {
+    basis: "100g",
+    perBasis: { calories: 130, proteinG: 21, carbsG: 0, fatG: 4.5, fiberG: 0, sodiumMg: 65 },
+    portions: [],
+    foodId: "food-beef",
+    brand: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("save_meal with a foodId item: snapshots the food from the SHARED catalog (raw prisma) at save time", async () => {
+    vi.mocked(mockSavedMealFindFirst).mockResolvedValue(null);
+    vi.mocked(mockSavedMealCreate).mockResolvedValue({ id: "sm-linked", name: "Beef Bowl" });
+    vi.mocked(mockFoodLibraryFindMany).mockResolvedValue([BEEF_ROW]);
+
+    const handler = fakeServer.getHandler("save_meal");
+    const result = (await handler({
+      name: "Beef Bowl",
+      items: [{ name: "97% Lean Beef", foodId: "food-beef", amount: 200, unit: "g" }],
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    // Shared-catalog read — the deliberately NON-scoped singleton.
+    expect(mockFoodLibraryFindMany).toHaveBeenCalledWith({
+      where: { id: { in: ["food-beef"] } },
+    });
+    const data = (vi.mocked(mockSavedMealCreate).mock.calls[0][0] as { data: { items: unknown[] } }).data;
+    // Stored row carries the §B.5 save-time snapshot + computed per-item state.
+    expect(data.items[0]).toEqual({
+      name: "97% Lean Beef",
+      qty: "200 g",
+      foodId: "food-beef",
+      amount: 200,
+      unit: "g",
+      itemMacros: { calories: 260, proteinG: 42, carbsG: 0, fatG: 9, fiberG: 0, sodiumMg: 130 },
+      source: BEEF_SOURCE,
+    });
+  });
+
+  it("save_meal with an unknown foodId: item stored text-only, message flags the unresolved id", async () => {
+    vi.mocked(mockSavedMealFindFirst).mockResolvedValue(null);
+    vi.mocked(mockSavedMealCreate).mockResolvedValue({ id: "sm-x", name: "Mystery" });
+    vi.mocked(mockFoodLibraryFindMany).mockResolvedValue([]);
+
+    const handler = fakeServer.getHandler("save_meal");
+    const result = (await handler({
+      name: "Mystery",
+      items: [{ name: "Ghost food", foodId: "food-ghost", amount: 1, unit: "serving" }],
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    const data = (vi.mocked(mockSavedMealCreate).mock.calls[0][0] as { data: { items: Array<Record<string, unknown>> } }).data;
+    expect(data.items[0]!.source).toBeUndefined();
+    expect(data.items[0]!.foodId).toBe("food-ghost"); // provenance kept
+    const payload = JSON.parse(result.content[0].text) as { message: string };
+    expect(payload.message).toContain("food-ghost");
+    expect(payload.message).toContain("text-only");
+  });
+
+  it("log_nutrition(savedMealId) on a linked bundle: rows expand structurally AND each linked food's FoodUsage bumps", async () => {
+    vi.mocked(mockSavedMealFindUnique).mockResolvedValue({
+      id: "sm-linked",
+      name: "Beef Bowl",
+      items: [
+        {
+          name: "97% Lean Beef",
+          qty: "200 g",
+          foodId: "food-beef",
+          amount: 200,
+          unit: "g",
+          itemMacros: { calories: 260, proteinG: 42, carbsG: 0, fatG: 9, fiberG: 0, sodiumMg: 130 },
+          source: BEEF_SOURCE,
+        },
+      ],
+      macros: { calories: 260, proteinG: 42, carbsG: 0, fatG: 9, fiberG: 0, sodiumMg: 130 },
+      defaultServings: 1,
+      createdAt: new Date("2026-08-01"),
+      updatedAt: new Date("2026-08-01"),
+    });
+    vi.mocked(mockNutritionLogCreate).mockResolvedValue({ id: "n-2" });
+    vi.mocked(mockFoodUsageFindFirst).mockResolvedValue(null);
+
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "dinner",
+      savedMealId: "sm-linked",
+      servings: 2,
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    const data = (vi.mocked(mockNutritionLogCreate).mock.calls[0][0] as { data: Record<string, unknown> }).data;
+    // Full per-item fidelity: scaled amount, re-rendered qty, recomputed
+    // itemMacros, save-time source — NO top-level foodId (hand-add parity).
+    expect(data.items).toEqual([
+      {
+        name: "97% Lean Beef",
+        qty: "400 g",
+        amount: 400,
+        unit: "g",
+        source: BEEF_SOURCE,
+        itemMacros: { calories: 520, proteinG: 84, carbsG: 0, fatG: 18, fiberG: 0, sodiumMg: 260 },
+      },
+    ]);
+    // Row totals via the composer's recompose math (all six keys).
+    expect(data.calories).toBe(520);
+    expect(data.proteinG).toBe(84);
+    expect(data.fatG).toBe(18);
+    expect(data.sodiumMg).toBe(260);
+    // FoodUsage counted exactly like an individual pick (first use → create,
+    // portion memory at the SCALED amount).
+    expect(mockFoodUsageFindFirst).toHaveBeenCalledWith({ where: { foodId: "food-beef" } });
+    expect(mockFoodUsageCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        foodId: "food-beef",
+        usageCount: 1,
+        lastAmount: 400,
+        lastUnit: "g",
+      }),
+    });
+  });
+
+  it("explicit items alongside savedMealId → NO FoodUsage bump (the derived expansion was not logged)", async () => {
+    vi.mocked(mockSavedMealFindUnique).mockResolvedValue({
+      id: "sm-linked",
+      name: "Beef Bowl",
+      items: [{ name: "97% Lean Beef", foodId: "food-beef", amount: 200, unit: "g", source: BEEF_SOURCE }],
+      macros: null,
+      defaultServings: 1,
+      createdAt: new Date("2026-08-01"),
+      updatedAt: new Date("2026-08-01"),
+    });
+    vi.mocked(mockNutritionLogCreate).mockResolvedValue({ id: "n-3" });
+
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "dinner",
+      savedMealId: "sm-linked",
+      items: [{ name: "Custom plate", qty: "1 plate" }],
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockFoodUsageFindFirst).not.toHaveBeenCalled();
+    expect(mockFoodUsageCreate).not.toHaveBeenCalled();
+  });
+
+  it("text-only saved meal → zero FoodUsage traffic (legacy path untouched)", async () => {
+    vi.mocked(mockSavedMealFindUnique).mockResolvedValue({
+      id: "sm-1",
+      name: "Protein Brookie",
+      items: [{ name: "Protein Brookie", qty: "1 brookie" }],
+      macros: { calories: 310 },
+      defaultServings: 1,
+      createdAt: new Date("2026-08-01"),
+      updatedAt: new Date("2026-08-01"),
+    });
+    vi.mocked(mockNutritionLogCreate).mockResolvedValue({ id: "n-4" });
+
+    const handler = fakeServer.getHandler("log_nutrition");
+    const result = (await handler({
+      mealType: "snack",
+      savedMealId: "sm-1",
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeFalsy();
+    expect(mockFoodUsageFindFirst).not.toHaveBeenCalled();
+    expect(mockFoodUsageCreate).not.toHaveBeenCalled();
+    expect(mockFoodUsageUpdate).not.toHaveBeenCalled();
   });
 });
 

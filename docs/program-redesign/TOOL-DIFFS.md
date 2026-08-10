@@ -15,6 +15,50 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — SavedMeal food-linked bundles: `save_meal` items gain `foodId`/`amount`/`unit`/`itemMacros`; `log_nutrition(savedMealId)` expands with per-item fidelity + FoodUsage bumps
+
+**What:** SavedMeal graduates from a text-item lump into a true food-linked
+bundle (owner request: "bundle foods into a meal + quick add, but I still
+want the individual items logged with each of their macros as usual").
+
+- **`save_meal` input** — `items[]` rows accept four NEW optional fields:
+  `foodId` (FoodLibrary link), `amount` + `unit` (structured portion),
+  `itemMacros` (explicit per-item macro override; normally computed).
+  At save time the server resolves each `foodId` against the SHARED
+  FoodLibrary catalog (raw prisma read — deliberately non-scoped) and stores
+  the food's full `source` snapshot (`ItemFoodSnapshot`) + computed
+  `itemMacros`/`qty` INSIDE the item row — §B.5 snapshot-off-at-save: later
+  FoodLibrary edits never rewrite a bundle; re-save to refresh. Unknown
+  foodIds degrade to text-only items and are flagged in the response
+  message. Legacy text-only items unchanged and forever valid. Json column —
+  NO migration.
+- **`log_nutrition(savedMealId)` output rows** — linked bundle items now
+  expand to FULL structured NutritionLog items: scaled `amount`, re-rendered
+  `qty`, recomputed `itemMacros` (from the save-time snapshot), and the
+  `source` snapshot itself — deep-equal to the user hand-picking the same
+  food in the web composer (unit-proven: bundle-log ⇄ hand-log row
+  equality in `saved-meal.test.ts`). Row macro totals for linked bundles use
+  the composer's own recompose math (all six keys, house rounding) instead
+  of the lump scaler; text-only meals keep byte-identical legacy lump
+  scaling. Each linked food's **FoodUsage** is bumped (usageCount +
+  lastUsedAt + last portion at the scaled amount) exactly like a chip pick —
+  skipped when explicit `items` override the derived expansion.
+- **`list_saved_meals`** — no shape change; stored items may now carry the
+  richer bundle fields (documented in the description).
+- **Read tools** (`recent_history` etc. via `stripItemSource`) — items now
+  pass `itemMacros` through (~60 bytes/item); `source` stays stripped.
+- **Web parity** (same seam, not a tool): composer "Save as meal" affordance
+  writes through `createSavedMealFromComposition` (scoped, upsert-by-name —
+  the exact `save_meal` contract); the #296 quick-pick sheet gained a
+  two-tap "Remove saved meal" (same delete core as `delete_saved_meal`).
+
+**Connector reconnect: YES** — `save_meal` input schema changed (new item
+fields) and `log_nutrition`/`save_meal`/`list_saved_meals` descriptions
+changed. Reconnect the claude.ai MCP connector after deploy or the coach
+keeps the cached schema and can't author food-linked bundles.
+
+---
+
 ## 2026-08-10 — `rolling:*` metric family: `GoalTargetSchema` gains optional `rolling` params (create_goal / update_goal_targets / promote_note_to_goal / preview_goal_feasibility)
 
 **What:** first readiness-engine metric-family extension since the redesign

@@ -7,6 +7,7 @@
 
 import { z } from "zod";
 import type { FoodMacros } from "@/lib/food-types";
+import { MACRO_KEYS } from "@/lib/food-types";
 
 /**
  * Per-food snapshot captured at add-time.  Stored inside NutritionItem.source
@@ -27,6 +28,15 @@ export type ItemFoodSnapshot = {
   brand?: string | null;
 };
 
+/**
+ * Per-item macro snapshot — the item's own contribution to the meal, captured
+ * when the item was composed (chip/scan/estimate add, or SavedMeal expansion).
+ * Present keys only; values follow house rounding (cal/sodium int, grams 1dp).
+ * Display + provenance data: the composer's macro TOTAL math still keys off
+ * `source` (recalcItemMacros), never off this snapshot.
+ */
+export type ItemMacros = Partial<Record<(typeof MACRO_KEYS)[number], number>>;
+
 export type NutritionItem = {
   name: string;
   qty?: string;    // display string — kept for freehand / legacy / back-compat
@@ -35,6 +45,7 @@ export type NutritionItem = {
   amount?: number;               // structured quantity
   unit?: string;                 // unit key: "g" | "oz" | "serving" | <portion key>
   source?: ItemFoodSnapshot;     // present only on food-resolved items
+  itemMacros?: ItemMacros;       // this item's macro contribution at add time
 };
 
 // Match by 0-based index or by case-insensitive substring against item name.
@@ -101,13 +112,30 @@ export function parseStoredItems(raw: unknown): NutritionItem[] {
       source: isValidItemFoodSnapshot(r.source)
                                                                     ? (r.source as ItemFoodSnapshot)
                                                                     : undefined,
+      itemMacros: sanitizeItemMacros(r.itemMacros),
     });
   }
   return out;
 }
 
+/**
+ * Defensive parse of a stored per-item macro snapshot: keep only finite
+ * numeric values under the six known macro keys; anything else is dropped.
+ * Returns undefined for a missing/empty/malformed snapshot.
+ */
+export function sanitizeItemMacros(raw: unknown): ItemMacros | undefined {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: ItemMacros = {};
+  for (const k of MACRO_KEYS) {
+    const v = r[k];
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Runtime guard — validates the minimum shape of a stored ItemFoodSnapshot. */
-function isValidItemFoodSnapshot(v: unknown): boolean {
+export function isValidItemFoodSnapshot(v: unknown): boolean {
   if (v == null || typeof v !== "object") return false;
   const r = v as Record<string, unknown>;
   return (r.basis === "100g" || r.basis === "serving")
@@ -129,17 +157,21 @@ function isValidItemFoodSnapshot(v: unknown): boolean {
  */
 export function stripItemSource(
   raw: unknown,
-): Array<{ name?: string; qty?: string; notes?: string; amount?: number; unit?: string }> {
+): Array<{ name?: string; qty?: string; notes?: string; amount?: number; unit?: string; itemMacros?: ItemMacros }> {
   if (!Array.isArray(raw)) return [];
   return (raw as unknown[]).map((v) => {
     if (v == null || typeof v !== "object") return {};
     const r = v as Record<string, unknown>;
+    const itemMacros = sanitizeItemMacros(r.itemMacros);
     return {
       ...(typeof r.name   === "string" ? { name:   r.name }   : {}),
       ...(typeof r.qty    === "string" ? { qty:    r.qty }    : {}),
       ...(typeof r.notes  === "string" ? { notes:  r.notes }  : {}),
       ...(typeof r.amount === "number" ? { amount: r.amount } : {}),
       ...(typeof r.unit   === "string" ? { unit:   r.unit }   : {}),
+      // itemMacros (~60 bytes) rides along — the coach SHOULD see per-item
+      // macros; it's the rendering payload (source, ~350 bytes) that's stripped.
+      ...(itemMacros ? { itemMacros } : {}),
       // source intentionally omitted
     };
   });
