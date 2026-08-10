@@ -20,6 +20,7 @@ import {
 import { normalizeMetricKey, BODY_METRIC_BY_KEY } from "@/lib/metrics-registry";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import { mergeMealDraft } from "@/lib/nutrition-merge";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
@@ -324,6 +325,94 @@ export async function updateNutrition(id: string, form: FormData) {
   revalidatePath("/nutrition");
   revalidatePath(`/days/${dateKey(date)}`); // #294 — see logNutrition
   return { ok: true as const };
+}
+
+// #295 (B4c): fold a just-composed meal INTO an existing NutritionLog row for
+// the same USER_TZ day + meal slot, instead of creating a duplicate row.
+//
+// This is deliberately the updateNutrition-style path (project gotcha:
+// "nutrition has two edit paths") — ONE full-row write carries items and the
+// macro columns together, so they can never desync the way the items[]-only
+// nutrition_log_ops path would.
+//
+// Merge rules live in the pure, unit-tested @/lib/nutrition-merge:
+//   items  — concatenated (existing row's first);
+//   macros — per-field: summed when BOTH sides recorded it, else null (once
+//            unrecorded items are folded in, any number would misstate the
+//            combined meal — honest unknown, mirroring parseMacros' empty⇒null);
+//   notes  — joined with a newline when both present.
+//
+// The existing row is re-read here (tenant-scoped) rather than trusted from
+// the client, so a stale threaded copy can never clobber edits made elsewhere
+// between render and submit.
+export async function appendNutrition(existingId: string, form: FormData) {
+  const mealType = String(form.get("mealType") ?? "").trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+  const dateStr = (form.get("date") as string | null)?.trim();
+
+  if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
+
+  // Same itemsJson-authoritative / text-fallback parse as logNutrition.
+  const itemsJsonRaw = form.get("itemsJson") as string | null;
+  let items: NutritionItem[];
+  if (itemsJsonRaw) {
+    try {
+      items = parseStoredItems(JSON.parse(itemsJsonRaw));
+    } catch {
+      items = parseItemsText(String(form.get("items") ?? ""));
+    }
+  } else {
+    items = parseItemsText(String(form.get("items") ?? ""));
+  }
+  // Same macros-only rule as logNutrition: empty items OK when macros present.
+  const macros = parseMacros(form);
+  if (items.length === 0 && !Object.values(macros).some((v) => v != null)) {
+    throw new Error("Add at least one item, or enter macros");
+  }
+
+  const date = parseUserTzDate(dateStr);
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  const db = await getDb();
+  // Tenant-scoped findUnique — resolves to null for another user's row.
+  const existing = await db.nutritionLog.findUnique({ where: { id: existingId } });
+  if (!existing) {
+    throw new Error("That meal no longer exists — log it as a separate entry");
+  }
+  // The choice UI matched on (day, slot); if either drifted between render and
+  // submit (row edited/moved elsewhere), appending would silently put food on
+  // the wrong meal — refuse instead of guessing.
+  if (existing.mealType !== mealType || dateKey(existing.date) !== dateKey(date)) {
+    throw new Error("That meal changed — log it as a separate entry");
+  }
+
+  const merged = mergeMealDraft(
+    {
+      items: parseStoredItems(existing.items),
+      macros: {
+        calories: existing.calories,
+        proteinG: existing.proteinG,
+        carbsG: existing.carbsG,
+        fatG: existing.fatG,
+        fiberG: existing.fiberG,
+        sodiumMg: existing.sodiumMg,
+      },
+      notes: existing.notes,
+    },
+    { items, macros, notes },
+  );
+
+  // date + mealType intentionally untouched: appending folds food into the
+  // existing meal — its slot and timestamp stay put.
+  await db.nutritionLog.update({
+    where: { id: existingId },
+    data: { items: merged.items, notes: merged.notes, ...merged.macros },
+  });
+
+  revalidatePath("/", "layout");
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(existing.date)}`); // #294 — see logNutrition
 }
 
 // Deleted-meal snapshot — everything restoreNutrition needs to re-create the row.
