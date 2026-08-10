@@ -1,10 +1,13 @@
 // src/lib/mcp/tools/program-tools.ts
-// Program-layer MCP tools (#310/#311, Sprint 17 seam flip) — the multi-domain
-// Program container: lifecycle CRUD + status (#310) and membership + overview
-// (#311). The Program is the umbrella for a season of coordinated goals
-// (fitness AND project) sharing one time window and one weekly rotation.
-// Cores live in src/lib/program-core.ts (dual-caller contract: the same
-// functions will back the /program dashboard and founder backfill later).
+// Program-layer MCP tools (#310/#311/#278, Sprint 17 seam flip) — the
+// multi-domain Program container: lifecycle CRUD + status (#310), membership
+// + overview (#311), and the manual activity-attribution valve (#278:
+// attribute_activity / list_activity_links). The Program is the umbrella for
+// a season of coordinated goals (fitness AND project) sharing one time
+// window and one weekly rotation.
+// Cores live in src/lib/program-core.ts and src/lib/attribution.ts
+// (dual-caller contract: the same functions will back the /program dashboard
+// and founder backfill later).
 
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,6 +28,30 @@ import {
   type ProgramRow,
   type UpdateProgramCorePatch,
 } from "@/lib/program-core";
+import { ACTIVITY_LINK_TYPES, type ActivityLinkType } from "@/lib/activity-links";
+import {
+  attributeActivityCore,
+  listActivityLinksCore,
+  LIST_ACTIVITY_LINKS_DEFAULT_LIMIT,
+  LIST_ACTIVITY_LINKS_MAX_LIMIT,
+  type ActivityLinkRow,
+} from "@/lib/attribution";
+
+/** Wire shape for an ActivityGoalLink row: activityDate as yyyy-mm-dd
+ *  (USER_TZ calendar date), instants as ISO. Never includes userId. */
+function serializeLink(l: ActivityLinkRow & { goalObjective?: string }) {
+  return {
+    id: l.id,
+    activityType: l.activityType,
+    activityId: l.activityId,
+    goalId: l.goalId,
+    ...(l.goalObjective !== undefined ? { goalObjective: l.goalObjective } : {}),
+    source: l.source,
+    note: l.note,
+    activityDate: toDateKey(l.activityDate),
+    createdAt: l.createdAt.toISOString(),
+  };
+}
 
 /** Wire shape for a Program row: calendar dates as yyyy-mm-dd (USER_TZ),
  *  instants as ISO. Never includes userId. */
@@ -344,6 +371,149 @@ export function registerProgramTools(server: McpServer): void {
           memberGoals: r.memberGoals,
           rotationPlan: r.rotationPlan,
           attributionRules: r.attributionRules,
+        };
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // attribute_activity (#278)
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "attribute_activity",
+    {
+      title: "Manually attribute a logged activity to a goal (or remove a mislinked one)",
+      description:
+        "The MANUAL override valve on top of the auto-link engine: explicitly link one logged activity (a workout, " +
+        "hike, meal, measurement, baseline, or metric reading) to a goal, or remove a link that is wrong. THE tool for " +
+        "'count that hike toward the handstand goal too', 'that workout wasn't for the cut', 'the rules missed this one'. " +
+        "action='add' creates a source='explicit' link; if an 'auto' link already exists for the same activity+goal it is " +
+        "UPGRADED to 'explicit' in place (explicit beats auto — never a duplicate row). The link's activityDate is taken " +
+        "from the ACTIVITY row's own date, never from today — retroactively attributing an old activity lands on the day " +
+        "it happened. action='remove' deletes the link REGARDLESS of source — remove always wins, whether the link was " +
+        "coach-added or rule-created; removing a link that doesn't exist is a friendly no-op. " +
+        "Do NOT call this after every log — auto-linking already runs at write time from the Program's attributionRules " +
+        "and each goal's attributionHints; use this only to correct or add what the rules missed. " +
+        "Do NOT use it to change which goal an activity 'belongs' to in its own table (hikes have goalId, metrics have " +
+        "goalId — edit those via update_hike / the metric tools); links are the cross-goal attribution layer on top.",
+      inputSchema: {
+        activityType: z
+          .enum(ACTIVITY_LINK_TYPES as [ActivityLinkType, ...ActivityLinkType[]])
+          .describe(
+            "Which table the activityId comes from: workout | hike | nutrition | measurement | baseline | log_entry.",
+          ),
+        activityId: z
+          .string()
+          .min(1)
+          .describe("Id of the activity row (from recent_history, list tools, or the log call's response)."),
+        goalId: z.string().min(1).describe("Goal to attribute the activity to. Use list_goals to discover ids."),
+        action: z
+          .enum(["add", "remove"])
+          .describe("add = create/upgrade an explicit link; remove = delete the link regardless of source."),
+        note: z
+          .string()
+          .optional()
+          .describe("Optional add-only annotation for WHY this activity counts (e.g. 'shoulder volume counts toward handstand')."),
+        requestId: RequestIdShape,
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("attribute_activity", input.requestId, db, async () => {
+          const r = await attributeActivityCore({
+            activityType: input.activityType,
+            activityId: input.activityId,
+            goalId: input.goalId,
+            action: input.action,
+            note: input.note,
+          });
+          if (r.action === "remove") {
+            return {
+              action: r.action,
+              changed: r.changed,
+              removedSource: r.removedSource,
+              message: r.changed
+                ? `Link removed (was source='${r.removedSource}') — remove always wins, regardless of who created the link.`
+                : "No link exists for that activity + goal — nothing to remove.",
+            };
+          }
+          return {
+            action: r.action,
+            changed: r.changed,
+            upgraded: r.upgraded,
+            goalObjective: r.goalObjective,
+            link: r.link ? serializeLink(r.link) : null,
+            message: !r.changed
+              ? `Already explicitly linked to "${r.goalObjective}" — no change.`
+              : r.upgraded
+                ? `Auto link upgraded to explicit for "${r.goalObjective}" (same row — no duplicate).`
+                : `Activity explicitly linked to "${r.goalObjective}".`,
+          };
+        });
+      }),
+  );
+
+  // --------------------------------------------------------------------------
+  // list_activity_links (#278) — READ tool (leaky-reads coverage in
+  // src/lib/mcp/leaky-reads.test.ts)
+  // --------------------------------------------------------------------------
+  server.registerTool(
+    "list_activity_links",
+    {
+      title: "List activity→goal attribution links (what auto-linking + explicit attribution recorded)",
+      description:
+        "THE read for the attribution layer — the only way to see what got auto-attributed and what was explicitly " +
+        "linked: 'what counted toward the handstand goal this week', 'which activities did the rules catch', 'audit the " +
+        "auto-links before I trust them'. Returns links {id, activityType, activityId, goalId, goalObjective, source " +
+        "(auto|explicit), note, activityDate, createdAt}, newest activity first. " +
+        "Omit goalId to scope to ALL member goals of the ACTIVE Program (friendly error when no Program is active — pass " +
+        "goalId then). from/to (yyyy-mm-dd, inclusive) filter on the link's activityDate — the day the ACTIVITY happened, " +
+        "NOT when the link was created, so retroactively-attributed old activities appear in their real week. " +
+        "truncated:true means more rows exist beyond limit (default 100) — narrow the window or raise limit. " +
+        "Do NOT infer attribution from get_goal.attributionHints or the Program's attributionRules — those are the " +
+        "matching CONFIG; the links returned here are what actually got recorded. " +
+        "Do NOT use this to list the activities themselves — recent_history / list tools return the underlying rows.",
+      inputSchema: {
+        goalId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Scope to one goal's links. Omit = all member goals of the active Program."),
+        activityType: z
+          .enum(ACTIVITY_LINK_TYPES as [ActivityLinkType, ...ActivityLinkType[]])
+          .optional()
+          .describe("Filter to one activity type (workout | hike | nutrition | measurement | baseline | log_entry)."),
+        from: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd inclusive lower bound on activityDate (the activity's own day, USER_TZ)."),
+        to: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd inclusive upper bound on activityDate."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(LIST_ACTIVITY_LINKS_MAX_LIMIT)
+          .optional()
+          .describe(`Max rows returned (default ${LIST_ACTIVITY_LINKS_DEFAULT_LIMIT}, cap ${LIST_ACTIVITY_LINKS_MAX_LIMIT}).`),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const r = await listActivityLinksCore({
+          goalId: input.goalId,
+          activityType: input.activityType,
+          from: input.from ? parseDateInput(input.from) : undefined,
+          to: input.to ? parseDateInput(input.to) : undefined,
+          limit: input.limit,
+        });
+        return {
+          scope: r.scope,
+          count: r.links.length,
+          truncated: r.truncated,
+          links: r.links.map((l) => serializeLink(l)),
         };
       }),
   );

@@ -15,6 +15,65 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — #278: `attribute_activity` / `list_activity_links` NEW — the manual attribution valve
+
+**Issue:** #278 (Sprint 17 — Seam flip, epic #259; depends on #270/#271/#307/#310)
+
+**Connector reconnect REQUIRED after deploy** — two brand-new tools; the
+claude.ai connector caches the old tool list until reconnected (Settings →
+Connectors → Goaldmine → reconnect).
+
+**New tools** (pack file `src/lib/mcp/tools/program-tools.ts`, cores in
+`src/lib/attribution.ts`):
+
+- `attribute_activity { activityType, activityId, goalId, action: 'add'|'remove',
+  note?, requestId? }` — the manual override valve on top of the auto-link
+  engine. `activityType ∈ workout | hike | nutrition | measurement | baseline
+  | log_entry` (the canonical `ACTIVITY_LINK_TYPES` set from
+  `src/lib/activity-links.ts`); unknown type or non-existent `activityId` is
+  a clean error.
+  - `add` → creates a `source='explicit'` ActivityGoalLink; an existing
+    `'auto'` row for the same (activityType, activityId, goalId) is
+    **upgraded to `'explicit'` in place** (explicit-beats-auto — never a
+    duplicate row against the unique constraint; `upgraded:true` reported).
+    `activityDate` is denormalized from the ACTIVITY row's own date column
+    (workout → `startedAt`, everything else → `date`), normalized to USER_TZ
+    midnight — never "now", so retroactive attribution lands on the day the
+    activity happened. Re-adding an identical explicit link is an idempotent
+    no-op (`changed:false`). `note` provided ⇒ replaces the stored note;
+    omitted ⇒ an upgraded auto link keeps its rule note.
+  - `remove` → deletes the link **regardless of source** ('remove always
+    wins', v1 semantics — stated verbatim in the tool description). Removing
+    a non-existent link is a no-op success; remove does NOT require the
+    underlying activity to still exist (doubles as the orphan-cleanup valve).
+  - Takes the optional `requestId` idempotency key (#274 `withWriteReceipt`).
+- `list_activity_links { goalId?, activityType?, from?, to?, limit? }` — READ
+  tool. `from`/`to` (yyyy-mm-dd, inclusive) filter on the link's
+  **`activityDate`** column, NOT `createdAt` (plan critique #9: a createdAt
+  filter would hide retroactive explicit attribution of an old activity).
+  Omitted `goalId` scopes to ALL member goals of the caller's ACTIVE Program
+  (friendly error when none is active; empty member list ⇒ empty result).
+  `limit` default 100, cap 500; `truncated:true` signals more rows exist
+  (limit+1 probe). Returns `scope {resolvedFrom, goalIds, programId?,
+  programName?}`, `count`, `truncated`, `links [{id, activityType,
+  activityId, goalId, goalObjective, source, note, activityDate
+  (yyyy-mm-dd), createdAt (ISO)}]` — explicit selects, never `userId`.
+  Leaky-reads coverage added in `src/lib/mcp/leaky-reads.test.ts`.
+
+Both descriptions follow the `list_planned_hikes` pattern (mental-model hook,
+verbatim phrasings, explicit do-nots — notably: **do NOT call
+attribute_activity after every log; auto-linking already runs at write time —
+use it to correct/add what the rules missed**).
+
+**Tests:** `src/lib/attribution.test.ts` (explicit-add upgrades an auto link
+in place without a second row; remove deletes explicit as readily as auto;
+no-op paths; unknown goal/activity errors; activityDate-not-createdAt
+filtering; active-Program scope resolution; truncation) and
+`src/lib/mcp/leaky-reads.test.ts` (`list_activity_links` select projections,
+zero Note reads, payload shape).
+
+---
+
 ## 2026-08-09 — #311: Program MCP pack part 2 — membership + overview NEW (`attach_goal_to_program` / `detach_goal_from_program` / `attach_plan_to_program` / `get_program_overview`)
 
 **Issue:** #311 (Sprint 17 — Seam flip, epic #259; depends on #310)
