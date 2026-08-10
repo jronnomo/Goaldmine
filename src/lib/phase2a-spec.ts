@@ -52,6 +52,19 @@
 //      the live planJson.baselineWeek (skip when identical), the 2026-08-09
 //      video-verified milestone Baseline data point, and the duplicate
 //      someday-Handstand goal resolution (abandon, never delete).
+//
+// ── ROLLING FLIP (2026-08-10, after the engine-native rolling:* family
+//    shipped — rolling-metrics.ts + the goal-targets.ts resolver) ──
+// The three handstand repeatability targets flipped from coach-computed
+// log:hs_* snapshots (log_workout + manual recompute + 3× log_metric per
+// session) to ENGINE-NATIVE rolling:hs_* trackers: same slugs, labels,
+// units, bars (0→4 / 0→4 / 0→1), weights, and gates — but the value is now
+// computed by the readiness engine directly from logged attempt sets (the
+// required RollingParams on each target carry the semantics), and the
+// per-session protocol collapses to ONE write: log_workout with every
+// attempt as its own duration set on the canonical exercise. log_metric
+// recomputation is RETIRED for these three; regression is engine-inherent
+// (window roll-out), not coach discipline.
 
 import type { GoalTarget } from "@/lib/metrics-registry";
 import type { AttributionRule } from "@/lib/attribution-rules";
@@ -106,29 +119,38 @@ export const PHASE2A_PROGRAM = {
  *  The max is retained but demoted to 0.12; three rolling measures carry
  *  0.43 (handstand cluster 0.35 → 0.55; accessories compressed). Still two
  *  gates, not three: the gate came off the max — you cannot hit 3× ≥20 s in
- *  a session without a 20 s max, so log:hs_triple20_of6 subsumes it; Wall
- *  HSPU keeps its gate as the independent second rung.
+ *  a session without a 20 s max, so the triple (now rolling:hs_triple20_of6
+ *  post-flip) subsumes it; Wall HSPU keeps its gate as the independent
+ *  second rung.
  *
- *  ⚠ The three log:hs_* rows are SNAPSHOTS — `cumulative` is OMITTED
- *  (= false). Spec §"These must be able to REGRESS" (lines 113–118), quoted:
- *    "`log:hs_sessions_10s_of6`, `log:hs_sessions_20s_of6`, and
- *     `log:hs_triple20_of6` are snapshot metrics — `cumulative: false`. Each
- *     is recomputed over the trailing 6 qualifying sessions and re-logged
- *     after every session. Do NOT implement any of them as cumulative
- *     counters. A counter cannot decrease, so 'sessions where I hit 20s'
- *     would climb to 4 and stay there through a six-week layoff — a trophy
- *     case, not a consistency measure. `log:hs_triple20_of6` is framed as
- *     'achieved in ≥1 of last 6' rather than 'ever achieved' for the same
- *     reason: it lights up on first success and goes dark if the capacity
- *     disappears. Contrast with Goal 3's `log:study_hours`, which IS
- *     `cumulative: true`. Do not copy that pattern here."
+ *  ⚠ The three rolling:hs_* rows MUST be able to REGRESS — and that
+ *  regression is now ENGINE-INHERENT (window roll-out), not coach
+ *  discipline: the readiness engine recomputes each value from the trailing
+ *  `window` qualifying sessions at every read (rolling-metrics.ts), so old
+ *  hit-sessions roll out of the window and the number DROPS by construction
+ *  — no re-logging involved. Spec §"These must be able to REGRESS" (design
+ *  rationale, retained): a cumulative counter cannot decrease, so "sessions
+ *  where I hit 20s" would climb to 4 and stay there through a six-week
+ *  layoff — a trophy case, not a consistency measure.
+ *  `rolling:hs_triple20_of6` stays framed as "achieved in ≥1 of last 6"
+ *  rather than "ever achieved" for the same reason: it lights up on first
+ *  success and goes dark if the capacity disappears. Contrast with Goal 3's
+ *  `log:study_hours`, which IS `cumulative: true`. Do not copy that pattern
+ *  here. (`cumulative` is now irrelevant on these rows — the rolling
+ *  resolver never reads it; the REQUIRED `rolling` params carry all
+ *  semantics, enforced by GoalTargetSchema's cross-field refinement.)
  *
- *  Rolling-measure parameters (approved): window = last 6 QUALIFYING
- *  sessions (~2 weeks at current cadence); "locked in" = 4 of 6 (67%); the
- *  triple's 3 qualifying ≥20 s holds must land within 5 attempts in the same
- *  block (rest between them unrestricted). Qualifying session = a dedicated
- *  skill block (wrist prep done, deliberate max-hold attempts, logged as a
- *  session) — incidental time upside down does NOT enter the denominator. */
+ *  Rolling-measure parameters (approved — now stored ON each target as its
+ *  RollingParams): window = last 6 QUALIFYING sessions (~2 weeks at current
+ *  cadence); "locked in" = 4 of 6 (67%); the triple's 3 qualifying ≥20 s
+ *  holds must land within a span of ≤5 consecutive attempts (attemptCap 5 —
+ *  non-qualifying attempts occupy slots; rest between them unrestricted).
+ *  Qualifying session = a completed workout with ≥1 timed set of
+ *  "Freestanding Handstand Hold" (canonicalExerciseName both sides). The
+ *  coach controls the denominator by what gets logged under that name
+ *  (gotchas §F.8): incidental time upside down must NEVER be logged as that
+ *  exercise, and EVERY deliberate attempt is its own duration set — the
+ *  attemptCap span needs the misses too. */
 const GOAL1_TARGETS: GoalTarget[] = [
     {
       metric: "baseline:Freestanding Handstand Hold",
@@ -139,36 +161,38 @@ const GOAL1_TARGETS: GoalTarget[] = [
       target: 20,
       weight: 0.12,
       rationale:
-        "Retained but demoted (v4 merge: was 0.35 + gate) — a single max can be satisfied by one good day; the rolling measures now carry the weight, and the gate moved to log:hs_triple20_of6 (which subsumes it — no 3× ≥20 s session without a 20 s max). Start 10, NOT 0, from the 2026-08-09 video-verified hold: 0 would assert he cannot hold a freestanding handstand at all, which is false. S1 confirms or RAISES it — it does not establish it from scratch. Do NOT let a fatigued S1 overwrite it (S1 is two days after a 12.69-mile Elbert descent — a sub-10 S1 is a fatigue reading, not a corrected baseline; the engine resolves current as most-recent-by-date, but this explicit start is never auto-overwritten). Begins at 50% of target while the skill is not repeatable at all — exactly why the max was demoted and the rolling measures carry 0.43.",
+        "Retained but demoted (v4 merge: was 0.35 + gate) — a single max can be satisfied by one good day; the rolling measures now carry the weight, and the gate moved to rolling:hs_triple20_of6 (which subsumes it — no 3× ≥20 s session without a 20 s max). Start 10, NOT 0, from the 2026-08-09 video-verified hold: 0 would assert he cannot hold a freestanding handstand at all, which is false. S1 confirms or RAISES it — it does not establish it from scratch. Do NOT let a fatigued S1 overwrite it (S1 is two days after a 12.69-mile Elbert descent — a sub-10 S1 is a fatigue reading, not a corrected baseline; the engine resolves current as most-recent-by-date, but this explicit start is never auto-overwritten). Begins at 50% of target while the skill is not repeatable at all — exactly why the max was demoted and the rolling measures carry 0.43.",
     },
     {
-      metric: "log:hs_sessions_10s_of6",
+      metric: "rolling:hs_sessions_10s_of6",
       label: "≥10s hold — sessions hit, last 6",
       units: "of 6",
       direction: "increase",
       start: 0,
       target: 4,
       weight: 0.08,
-      // cumulative OMITTED on purpose — SNAPSHOT that must be able to REGRESS
-      // (spec lines 113–118, quoted in the table doc comment above). Do NOT
-      // copy Goal 3's cumulative:true pattern here.
+      // ENGINE-NATIVE rolling tracker — params carry all semantics; the
+      // engine computes the value from logged attempt sets, and regression
+      // is window-inherent (see the table doc comment above).
+      rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6 },
       rationale:
-        "Rolling repeatability: sessions with a ≥10 s hold among the last 6 qualifying sessions; 'locked in' = 4 of 6. SNAPSHOT (cumulative omitted = false) — recomputed over the trailing 6 qualifying sessions and re-logged after every session; must be able to regress. Carries live signal for the months while the 20 s measures sit at zero — the intended function of a progression rubric, not dead weight.",
+        "Rolling repeatability: sessions with a ≥10 s hold among the last 6 qualifying sessions; 'locked in' = 4 of 6. ENGINE-COMPUTED from logged attempt sets (rolling:* family) — recomputed over the trailing 6 qualifying sessions at every read; regression is window-inherent (old hit-sessions roll out), never a re-logging step. Carries live signal for the months while the 20 s measures sit at zero — the intended function of a progression rubric, not dead weight.",
     },
     {
-      metric: "log:hs_sessions_20s_of6",
+      metric: "rolling:hs_sessions_20s_of6",
       label: "≥20s hold — sessions hit, last 6",
       units: "of 6",
       direction: "increase",
       start: 0,
       target: 4,
       weight: 0.15,
-      // cumulative OMITTED on purpose — SNAPSHOT that must be able to REGRESS.
+      // ENGINE-NATIVE rolling tracker — regression is window-inherent.
+      rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 1, window: 6 },
       rationale:
-        "Rolling repeatability at the rung-1 standard: sessions with a ≥20 s hold among the last 6 qualifying; target 4 of 6. SNAPSHOT (cumulative omitted = false) — a counter cannot decrease, so it would climb to 4 and stay there through a six-week layoff: a trophy case, not a consistency measure.",
+        "Rolling repeatability at the rung-1 standard: sessions with a ≥20 s hold among the last 6 qualifying; target 4 of 6. ENGINE-COMPUTED (rolling:* family) — a snapshot that regresses by construction as old hit-sessions roll out of the trailing window: a consistency measure, never a trophy case (a cumulative counter would climb to 4 and stay there through a six-week layoff).",
     },
     {
-      metric: "log:hs_triple20_of6",
+      metric: "rolling:hs_triple20_of6",
       label: "3× ≥20s in one session — sessions hit, last 6",
       units: "of 6",
       direction: "increase",
@@ -176,9 +200,11 @@ const GOAL1_TARGETS: GoalTarget[] = [
       target: 1,
       weight: 0.2,
       gating: true,
-      // cumulative OMITTED on purpose — SNAPSHOT that must be able to REGRESS.
+      // ENGINE-NATIVE rolling tracker — the attemptCap span is computed from
+      // the session's own set order; regression is window-inherent.
+      rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6 },
       rationale:
-        "The rung-1 gate (moved off the max in the v4 merge — this subsumes it: you cannot hit 3× ≥20 s in a session without a 20 s max). 3 qualifying ≥20 s holds in ONE session, within 5 attempts in the same block (rest between them unrestricted), achieved in ≥1 of the last 6 qualifying sessions — framed as 'in ≥1 of last 6' rather than 'ever achieved' so it lights up on first success and goes dark if the capacity disappears. SNAPSHOT (cumulative omitted = false).",
+        "The rung-1 gate (moved off the max in the v4 merge — this subsumes it: you cannot hit 3× ≥20 s in a session without a 20 s max). 3 qualifying ≥20 s holds in ONE session, within a span of ≤5 consecutive attempts (attemptCap 5 — non-qualifying attempts occupy slots; rest between them unrestricted), achieved in ≥1 of the last 6 qualifying sessions — framed as 'in ≥1 of last 6' rather than 'ever achieved' so it lights up on first success and goes dark if the capacity disappears. ENGINE-COMPUTED (rolling:* family); regression is window-inherent.",
     },
     {
       metric: "baseline:Wall Handstand Push-Up",
@@ -1454,13 +1480,22 @@ export const BASELINE_RESOLUTION_FACT =
 
 /** Spec ⚠ lines 130–133 ("Unverified before import" / expected import
  *  state) — VERIFIED as fact against the same modules: a log:* snapshot
- *  target with zero LogEntry rows resolves current=null → untested →
- *  progress 0 in the weighted sum while its weight stays in the denominator
- *  (computeReadiness: weighted uses progress ?? 0; totalWeight includes every
- *  target), and an untested gating target is an OPEN gate (cleared requires
- *  non-null progress ≥ 1) → ceiling 80. */
+ *  target with zero LogEntry rows resolves current=null, and a rolling:*
+ *  tracker with ZERO qualifying sessions ever (no completed workout carrying
+ *  a timed set of the tracker's exercise) also resolves current=null →
+ *  untested → progress 0 in the weighted sum while its weight stays in the
+ *  denominator (computeReadiness: weighted uses progress ?? 0; totalWeight
+ *  includes every target), and an untested gating target is an OPEN gate
+ *  (cleared requires non-null progress ≥ 1) → ceiling 80. */
 export const LOG_SNAPSHOT_IMPORT_STATE_FACT =
-  "VERIFIED (goal-targets.ts + readiness.ts): log:* snapshot targets with no rows read untested — 0 progress at full denominator weight — and the untested triple20 gate stays OPEN → ceiling 80 with a low raw score. That is the EXPECTED import state per spec line 133 (only the 8/9 session on record: max at 50%, rolling measures at/near 0) — correct and honest, not a bug. Run compute_readiness after import to confirm the weights land as intended.";
+  "VERIFIED (goal-targets.ts + readiness.ts): untested targets read 0 progress at full denominator weight — log:* snapshot targets with no rows resolve null, and the ENGINE-NATIVE rolling:hs_* trackers resolve null until the first qualifying session (a completed workout with ≥1 timed 'Freestanding Handstand Hold' set) exists — and the untested triple20 gate stays OPEN → ceiling 80 with a low raw score. That is the EXPECTED import state per spec line 133 (only the 8/9 session on record — a Baseline row, not a workout set, so it does NOT enter the rolling session universe: max at 50%, rolling measures untested). Correct and honest, not a bug. Run compute_readiness after import to confirm the weights land as intended.";
+
+/** ROLLING FLIP — the per-session logging protocol note (printed with the
+ *  other output-only notes). The old 4-write protocol (log_workout +
+ *  recompute + 3× log_metric) is RETIRED: rolling:* values are engine-
+ *  computed and never LogEntry rows. */
+export const ROLLING_PROTOCOL_NOTE =
+  "Per-session protocol (rolling flip): ONE write — log_workout with EVERY deliberate attempt as its own duration set on 'Freestanding Handstand Hold' (the canonical exercise), misses included (the triple's ≤5-attempt cap needs them). The engine computes rolling:hs_sessions_10s_of6 / rolling:hs_sessions_20s_of6 / rolling:hs_triple20_of6 natively from those sets — the recompute-and-log_metric step is RETIRED for these three (a log_metric write would create an orphan LogEntry the resolver never reads). Doctrine (gotchas §F.8): incidental holds (warmups, a wall hold between sets of something else) must NEVER be logged as 'Freestanding Handstand Hold' sets — the coach controls the qualifying-session denominator by what gets logged under that canonical name in a completed workout.";
 
 export const BODYFAT_VERIFY_NOTE =
   "Verify after creation: run compute_readiness on the 10%-body-fat goal — bodyFatPct engine support shipped as Amendment 5 (resolveMetricValue/resolveMetricStart read Measurement.bodyFatPct); the target stays untested (progress 0-weighted) until DEXA #1 logs a value, which also auto-captures the start.";

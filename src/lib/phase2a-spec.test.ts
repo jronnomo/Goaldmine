@@ -15,13 +15,16 @@
 //     workoutJson → never a calendar band), the Sep 15 cluster-decision item
 //     + disruption-cluster standing rule exist, and NO scheduled item or
 //     baseline retest week touches the Oct 2–8 exclusion
-//   • spec v4 delta (handstand repeatability merge): Goal 1 carries the
-//     9-row table verbatim (gates exactly {log:hs_triple20_of6, Wall HSPU};
-//     the three log:hs_* rows are NON-cumulative snapshots), the baseline
-//     battery is the S1/S2/S3 split (days 1/3/4, every test exactly once,
-//     retests keep the split), the chest-to-wall protocol carries the
-//     binding hand-distance/line/brush language, and the reconcile helpers
-//     (stableJson compare, snapshot builder, milestone + duplicate-goal
+//   • spec v4 delta (handstand repeatability merge) + the ROLLING FLIP:
+//     Goal 1 carries the 9-row table verbatim (gates exactly
+//     {rolling:hs_triple20_of6, Wall HSPU}; the three rolling:hs_* rows are
+//     ENGINE-NATIVE trackers whose RollingParams are pinned verbatim and
+//     validate through GoalTargetSchema — the cumulative flag is irrelevant
+//     on them), the baseline battery is the S1/S2/S3 split (days 1/3/4,
+//     every test exactly once, retests keep the split), the chest-to-wall
+//     protocol carries the binding hand-distance/line/brush language, and
+//     the reconcile helpers (stableJson compare — including the nested
+//     rolling params, snapshot builder, milestone + duplicate-goal
 //     constants) behave idempotently
 //
 // lintTemplate is imported from plan-lint (pure entry — no DB access in the
@@ -91,9 +94,12 @@ describe("phase2a-spec · goal targets", () => {
     expect(Math.abs(sum - 1)).toBeLessThanOrEqual(0.01);
   });
 
-  it("Goal 1 carries the spec v4 9-row table VERBATIM (metric/label/start/target/units/dir/weight/gating), in spec order", () => {
-    // The spec table (lines 63–73), row for row. rationale is free doc text
-    // and deliberately not pinned; everything the readiness engine reads is.
+  it("Goal 1 carries the spec v4 9-row table VERBATIM (metric/label/start/target/units/dir/weight/gating + rolling params), in spec order", () => {
+    // The spec table (lines 63–73) post-rolling-flip, row for row. rationale
+    // is free doc text and deliberately not pinned; everything the readiness
+    // engine reads is — INCLUDING the RollingParams the resolver computes
+    // from (toEqual treats `rolling: undefined` on non-rolling rows as
+    // absent, so the same projection pins all nine).
     expect(
       PHASE2A_GOAL1.targets.map((t) => ({
         metric: t.metric,
@@ -104,12 +110,13 @@ describe("phase2a-spec · goal targets", () => {
         direction: t.direction,
         weight: t.weight,
         gating: t.gating === true,
+        rolling: t.rolling,
       })),
     ).toEqual([
       { metric: "baseline:Freestanding Handstand Hold", label: "Max freestanding hold", start: 10, target: 20, units: "sec", direction: "increase", weight: 0.12, gating: false },
-      { metric: "log:hs_sessions_10s_of6", label: "≥10s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.08, gating: false },
-      { metric: "log:hs_sessions_20s_of6", label: "≥20s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.15, gating: false },
-      { metric: "log:hs_triple20_of6", label: "3× ≥20s in one session — sessions hit, last 6", start: 0, target: 1, units: "of 6", direction: "increase", weight: 0.2, gating: true },
+      { metric: "rolling:hs_sessions_10s_of6", label: "≥10s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.08, gating: false, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6 } },
+      { metric: "rolling:hs_sessions_20s_of6", label: "≥20s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.15, gating: false, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 1, window: 6 } },
+      { metric: "rolling:hs_triple20_of6", label: "3× ≥20s in one session — sessions hit, last 6", start: 0, target: 1, units: "of 6", direction: "increase", weight: 0.2, gating: true, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6 } },
       { metric: "baseline:Wall Handstand Push-Up", label: "Wall handstand push-up (full ROM)", start: 0, target: 5, units: "reps", direction: "increase", weight: 0.2, gating: true },
       { metric: "baseline:Chest-to-Wall Handstand Hold", label: "Chest-to-wall handstand hold", start: 30, target: 120, units: "sec", direction: "increase", weight: 0.08, gating: false },
       { metric: "baseline:Pull-Up Max Reps", label: "Pull-up max (lean-mass canary)", start: 25, target: 25, units: "reps", direction: "increase", weight: 0.07, gating: false },
@@ -118,11 +125,11 @@ describe("phase2a-spec · goal targets", () => {
     ]);
   });
 
-  it("Goal 1 gates are EXACTLY {log:hs_triple20_of6, baseline:Wall Handstand Push-Up} and weights sum to 1.00", () => {
+  it("Goal 1 gates are EXACTLY {rolling:hs_triple20_of6, baseline:Wall Handstand Push-Up} and weights sum to 1.00", () => {
     const gates = PHASE2A_GOAL1.targets.filter((t) => t.gating);
     expect(gates.map((t) => t.metric).sort()).toEqual([
       "baseline:Wall Handstand Push-Up",
-      "log:hs_triple20_of6",
+      "rolling:hs_triple20_of6",
     ]);
     // The gate came off the max in the v4 merge — triple20 subsumes it.
     expect(
@@ -132,19 +139,30 @@ describe("phase2a-spec · goal targets", () => {
     expect(sum).toBeCloseTo(1.0, 9);
   });
 
-  it("Goal 1's three log:hs_* rows are SNAPSHOTS — cumulative omitted/false (they must be able to REGRESS; not Goal 3's pattern)", () => {
-    const logMetrics = ["log:hs_sessions_10s_of6", "log:hs_sessions_20s_of6", "log:hs_triple20_of6"];
-    for (const metric of logMetrics) {
+  it("Goal 1's three rolling:hs_* rows are ENGINE-NATIVE trackers — params verbatim, validating through GoalTargetSchema (regression is window-inherent; cumulative is irrelevant)", () => {
+    const rollingMetrics = ["rolling:hs_sessions_10s_of6", "rolling:hs_sessions_20s_of6", "rolling:hs_triple20_of6"];
+    const expectedParams: Record<string, unknown> = {
+      "rolling:hs_sessions_10s_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6 },
+      "rolling:hs_sessions_20s_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 1, window: 6 },
+      "rolling:hs_triple20_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6 },
+    };
+    for (const metric of rollingMetrics) {
       const t = PHASE2A_GOAL1.targets.find((x) => x.metric === metric)!;
       expect(t, metric).toBeDefined();
-      // Spec §"These must be able to REGRESS": a cumulative counter cannot
-      // decrease — it would climb to 4 and stay there through a layoff, a
-      // trophy case, not a consistency measure. OMITTED-or-false, never true.
-      expect(t.cumulative, metric).not.toBe(true);
-      expect(t.cumulative ?? false, metric).toBe(false);
+      // The params ARE the semantics (the slug is opaque) — pin them verbatim.
+      expect(t.rolling, metric).toEqual(expectedParams[metric]);
+      // GoalTargetSchema's cross-field refinement: rolling params + the
+      // rolling: prefix travel together — these rows must parse clean.
+      const parsed = GoalTargetSchema.safeParse(t);
+      expect(parsed.success, `${metric}: ${JSON.stringify(parsed.success ? null : parsed.error.issues)}`).toBe(true);
+      // Regression is ENGINE-INHERENT now (window roll-out) — the cumulative
+      // flag is irrelevant to the rolling resolver and stays off the rows.
+      expect(t.cumulative, metric).toBeUndefined();
     }
-    // Exactly these three log:* metrics on Goal 1 — no strays.
-    expect(PHASE2A_GOAL1.targets.filter((t) => t.metric.startsWith("log:")).map((t) => t.metric)).toEqual(logMetrics);
+    // Exactly these three rolling:* metrics on Goal 1 — and the flip left no
+    // log:* strays behind (the old coach-computed keys are fully retired).
+    expect(PHASE2A_GOAL1.targets.filter((t) => t.metric.startsWith("rolling:")).map((t) => t.metric)).toEqual(rollingMetrics);
+    expect(PHASE2A_GOAL1.targets.some((t) => t.metric.startsWith("log:"))).toBe(false);
   });
 
   it("Goal 1 start values carry the spec's corrections (max starts at 10 from the video-verified hold, NOT 0)", () => {
@@ -637,6 +655,26 @@ describe("phase2a-spec · v4 reconcile helpers (baselineWeek revision, milestone
     expect(stableJson({ a: 1 })).not.toBe(stableJson({ a: 2 }));
     expect(stableJson([1, 2])).not.toBe(stableJson([2, 1])); // arrays keep order
     expect(stableJson({ a: 1, b: undefined })).toBe(stableJson({ a: 1 })); // undefined keys dropped, like JSON.stringify
+  });
+
+  it("the import's targets deep-compare handles the NESTED rolling params: jsonb key-reorder → identical; a param edit → different (step-3b idempotency)", () => {
+    // The step-3b skip check is stableJson(goal1.targets) === stableJson(desired).
+    // Goal 1's targets now carry a nested RollingParams object two levels
+    // down (targets[] → target → rolling) — a jsonb round-trip reorders keys
+    // at EVERY depth, so the compare must recurse. Reordered copy → equal:
+    const roundTripped = reorderKeysDeep(JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)));
+    expect(stableJson(roundTripped)).toBe(stableJson(PHASE2A_GOAL1.targets));
+    // ...and a change INSIDE the nested params must register as different —
+    // otherwise a future param edit (e.g. loosening the triple's attempt cap)
+    // would silently [skip] on re-import:
+    const tweaked = JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)) as typeof PHASE2A_GOAL1.targets;
+    const triple = tweaked.find((t) => t.metric === "rolling:hs_triple20_of6")!;
+    triple.rolling!.attemptCap = 6;
+    expect(stableJson(tweaked)).not.toBe(stableJson(PHASE2A_GOAL1.targets));
+    // Dropping the params object entirely also registers (never re-skips).
+    const dropped = JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)) as typeof PHASE2A_GOAL1.targets;
+    delete dropped.find((t) => t.metric === "rolling:hs_sessions_10s_of6")!.rolling;
+    expect(stableJson(dropped)).not.toBe(stableJson(PHASE2A_GOAL1.targets));
   });
 
   it("baselineWeekNeedsReconcile: false on identical AND on a jsonb-style key-reordered copy; true against the old single-session battery", () => {

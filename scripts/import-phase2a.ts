@@ -16,8 +16,9 @@
 //   3.  Goal 1 (Handstand, cmsmi9k20000004laub50psio) — MUST already exist
 //       (identity matters; never re-created): re-parent under the Program,
 //       replace targets with the spec v4 9-row repeatability table (gates:
-//       log:hs_triple20_of6 + Wall HSPU; the three log:hs_* rows are
-//       SNAPSHOTS — cumulative omitted, they must be able to regress), set
+//       rolling:hs_triple20_of6 + Wall HSPU; the three rolling:hs_* rows are
+//       ENGINE-NATIVE trackers — RollingParams on each target, value
+//       computed from logged attempt sets, regression window-inherent), set
 //       attributionHints / legend / targetDate, and set its auto-scaffolded
 //       plan(s) inactive.
 //   3b. Duplicate-goal resolution (spec v4 header ⚠): the old someday
@@ -141,6 +142,7 @@ import {
   PHASE2A_SCHEDULED_ITEMS,
   PHASE2A_WEIGHIN_RULE,
   PULLUP_CORRECTION_NOTE,
+  ROLLING_PROTOCOL_NOTE,
   stableJson,
   standingRuleKey,
   type Phase2aScheduledItem,
@@ -348,20 +350,22 @@ async function main(): Promise<void> {
       }
 
       // 3b. targets — the spec v4 9-row repeatability table, exactly (full
-      // replace; the deep-compare correctly sees prod's 6-row table as
-      // different). The three log:hs_* rows are SNAPSHOTS (cumulative
-      // omitted — spec: they must be able to REGRESS).
+      // replace; the deep-compare correctly sees prod's log:hs_* table as
+      // different — stableJson recurses into the nested RollingParams, so
+      // the rolling flip and any future param edit both register). The three
+      // rolling:hs_* rows are ENGINE-NATIVE trackers: params on the target,
+      // value computed from attempt sets, regression window-inherent.
       const desiredTargets = PHASE2A_GOAL1.targets;
       if (sameJson(goal1.targets, desiredTargets)) {
-        say(`  [skip] targets already match the spec v4 9-row table`);
+        say(`  [skip] targets already match the spec v4 9-row table (rolling:hs_* engine-native)`);
       } else if (apply) {
         await db.goal.update({
           where: { id: goal1.id },
           data: { targets: desiredTargets as unknown as Prisma.InputJsonValue },
         });
-        say(`  ✓ targets ← spec v4 9-row table (max demoted to 0.12; rolling log:hs_* snapshots carry 0.43; gates: triple20-of-6 + wall HSPU; chest-to-wall → 120 s; weights sum 1.00)`);
+        say(`  ✓ targets ← spec v4 9-row table (max demoted to 0.12; ENGINE-NATIVE rolling:hs_* trackers carry 0.43 — params on-target, values computed from attempt sets; gates: rolling:hs_triple20_of6 + wall HSPU; chest-to-wall → 120 s; weights sum 1.00)`);
       } else {
-        say(`  [dry-run] would replace targets with the spec v4 9-row table (was ${Array.isArray(goal1.targets) ? (goal1.targets as unknown[]).length : 0} rows): max demoted to 0.12, three log:hs_* rolling SNAPSHOTS (cumulative omitted — must regress), gates triple20-of-6 + wall HSPU, chest-to-wall 30→120 s, canary 0.07; weights sum 1.00`);
+        say(`  [dry-run] would replace targets with the spec v4 9-row table (was ${Array.isArray(goal1.targets) ? (goal1.targets as unknown[]).length : 0} rows): max demoted to 0.12; three ENGINE-NATIVE rolling:hs_* trackers (rolling:hs_sessions_10s_of6 {min 10 s, 1 hit, window 6} 0→4 w0.08 · rolling:hs_sessions_20s_of6 {min 20 s, 1 hit, window 6} 0→4 w0.15 · rolling:hs_triple20_of6 {min 20 s, 3 hits, attemptCap 5, window 6} 0→1 w0.20 GATE — engine computes from attempt sets, regression window-inherent); gates rolling:hs_triple20_of6 + wall HSPU, chest-to-wall 30→120 s, canary 0.07; weights sum 1.00`);
       }
 
       // 3c. attributionHints (canonicalized on write, same as update_goal)
@@ -989,6 +993,7 @@ async function main(): Promise<void> {
     say("");
     say("  ── NOTES (printed, never written) ──────────────────────────────");
     say(`  • ${PULLUP_CORRECTION_NOTE}`);
+    say(`  • ${ROLLING_PROTOCOL_NOTE}`);
     say(`  • ${BODYFAT_VERIFY_NOTE}`);
     // Spec v4 ⚠ verification answers — stated as FACTS (verified against
     // src/lib/goal-targets.ts resolveMetricValue/resolveMetricStart and
