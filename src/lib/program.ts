@@ -45,14 +45,12 @@ export type ActiveProgramMembership = {
   memberGoals: { id: string; objective: string; kind: string; status: string }[];
 };
 
-export type TodayContext = {
-  program: ActiveProgramSnapshot;
-  daysSinceStart: number;
-  weekIndex: number; // 1-based, capped at totalWeeks
-  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-  phase: Phase | null;
-  day: DayTemplate | null;
-};
+// #285: TodayContext + getTodayContext were DELETED here. getTodayContext was
+// a third, independent day-resolver (Math.round day math, weekIndex clamping,
+// override-blind) duplicating what resolveDay already computes — the RFC's
+// "three duplicate resolvers" cleanup. Callers read resolveDay's
+// weekIndex/rotationDay and use the pure template lookups below for the
+// phase / split-day equivalents.
 
 /**
  * The seam (#277 / plan §4.2 — frozen external contract). Same signature and
@@ -222,45 +220,52 @@ export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | nu
   };
 }
 
-export function getTodayContext(
-  program: ActiveProgramSnapshot,
-  now: Date = new Date(),
-): TodayContext {
-  // Day boundaries in USER_TZ — the user's phone clock owns "today", not the
-  // server's UTC. dayMs uses 86400 because daysSinceStart is the wall-clock
-  // day count; DST transitions are absorbed by startOfDay's TZ correction.
-  const startMidnight = startOfDay(program.startedOn);
-  const today = startOfDay(now);
-
-  const dayMs = 1000 * 60 * 60 * 24;
-  const daysSinceStart = Math.max(
-    0,
-    Math.round((today.getTime() - startMidnight.getTime()) / dayMs),
-  );
-  const weekIndex = Math.min(program.template.totalWeeks, Math.floor(daysSinceStart / 7) + 1);
-
-  // Plan-relative rotation. Day 1 of the program lands on plan.startedOn,
-  // regardless of which calendar weekday that is. After 7 days the rotation
-  // cycles. The template's `weeklySplit[].dayOfWeek` is the rotation index
-  // (1..7), NOT a calendar weekday.
-  const dayOfWeek = ((daysSinceStart % 7) + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
-
+/**
+ * #285: pure TEMPLATE lookup — which phase does a (resolveDay-computed)
+ * weekIndex fall in? No date math, no IO; the day-resolution itself lives
+ * exclusively in resolveDay now.
+ *
+ * Fallback semantics preserved from the deleted getTodayContext for in-plan
+ * dates: a malformed template (non-array phases) yields null; a weekIndex no
+ * phase claims falls back to the first phase. A null weekIndex (out-of-plan
+ * date) yields null — the old function's clamped phantom phase on
+ * out-of-plan dates is deliberately gone.
+ */
+export function phaseForWeekIndex(
+  template: ProgramTemplate,
+  weekIndex: number | null,
+): Phase | null {
+  if (weekIndex === null) return null;
   // Defensive: a malformed snapshot (e.g., a stringified template that
   // accidentally got persisted as a character-indexed object) shouldn't take
-  // the page down. Treat phases / weeklySplit as optional.
-  const phasesArr = Array.isArray(program.template?.phases) ? program.template.phases : [];
-  const weeklySplitArr = Array.isArray(program.template?.weeklySplit)
-    ? program.template.weeklySplit
-    : [];
-
-  const phase =
+  // the page down. Treat phases as optional.
+  const phasesArr = Array.isArray(template?.phases) ? template.phases : [];
+  return (
     phasesArr.find((p) => Array.isArray(p?.weeks) && p.weeks.includes(weekIndex)) ??
     phasesArr[0] ??
-    null;
+    null
+  );
+}
 
-  const day = weeklySplitArr.find((d) => d?.dayOfWeek === dayOfWeek) ?? weeklySplitArr[0] ?? null;
-
-  return { program, daysSinceStart, weekIndex, dayOfWeek, phase, day };
+/**
+ * #285: pure TEMPLATE lookup — the weeklySplit entry for a
+ * (resolveDay-computed) rotation day. Same contract notes as
+ * phaseForWeekIndex above: no date math, getTodayContext's in-plan fallback
+ * (?? first split day) preserved, null rotationDay (out-of-plan) → null.
+ * The template's `weeklySplit[].dayOfWeek` is the rotation index (1..7),
+ * NOT a calendar weekday.
+ *
+ * Distinct from calendar.ts's templateForRotationDay(program, date), which
+ * takes a DATE and re-derives the rotation index; this one takes the already
+ * resolved index — use it when you hold a ResolvedDay.
+ */
+export function splitDayForRotationDay(
+  template: ProgramTemplate,
+  rotationDay: number | null,
+): DayTemplate | null {
+  if (rotationDay === null) return null;
+  const weeklySplitArr = Array.isArray(template?.weeklySplit) ? template.weeklySplit : [];
+  return weeklySplitArr.find((d) => d?.dayOfWeek === rotationDay) ?? weeklySplitArr[0] ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -320,8 +325,9 @@ function coversDayKey(
  * Contract (D1 + S3 + S4, binding):
  *  1. If `activeProgram` covers `dayKey` → return it as {source:"active"}.
  *     This is the Today-page contract: whenever this branch hits, the result
- *     is byte-identical to what getActiveProgram()/getTodayContext produce —
- *     applies to past, today, and future dates alike.
+ *     is byte-identical to what getActiveProgram() (and resolveDay's Today
+ *     path on top of it) produce — applies to past, today, and future dates
+ *     alike.
  *  2. Otherwise, ONLY when `dayKey < todayKey` (strictly past, USER_TZ dateKey
  *     string compare — never raw Date comparison): search `candidates` for
  *     ones whose window covers `dayKey` (S4-clamped per candidate). Among
