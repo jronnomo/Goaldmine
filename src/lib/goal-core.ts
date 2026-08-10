@@ -21,6 +21,7 @@ import type { GoalTarget } from "@/lib/goal-targets";
 import type { Legend } from "@/lib/legend";
 import { dateKey } from "@/lib/calendar";
 import { scaffoldPlanFromTemplate, weeksBetween } from "@/lib/plan";
+import { setProgramStatusCore } from "@/lib/program-core";
 import type { RarityTier } from "@/lib/rarity-core";
 import { canonicalExerciseName } from "@/lib/records";
 
@@ -462,4 +463,144 @@ export async function setFocusGoalCore(id: string): Promise<SetFocusGoalCoreResu
   });
 
   return { previousFocusGoalId: oldFocus?.id ?? null, goal };
+}
+
+// ---------------------------------------------------------------------------
+// setFocusGoalProgramAwareCore (#280 — the set_active_goal compat shim)
+// ---------------------------------------------------------------------------
+// Program-aware wrapper around setFocusGoalCore for the one-active-Program
+// world (Sprint 17 seam flip). The blast radius that motivates it: with an
+// active Program, focusing a goal in a DIFFERENT Program is not a narrow
+// isFocus flip anymore — the whole current Program (its rotation and every
+// member goal's daily surface) stops driving Today. That must never happen
+// as a silent side effect of "switch focus".
+//
+// Decision matrix (issue #280 ACs):
+//   - ZERO Program rows for the user (pre-Program tenant) → pure legacy
+//     setFocusGoalCore, byte-identical behavior. Program rows exist but NONE
+//     active (retired-Program user) → same: nothing to deactivate, focus
+//     switches, Program state untouched (a mere focus switch must not
+//     resurrect a retired Program).
+//   - Active Program + target IS a member → focus switches, Program
+//     untouched (same-Program switches are the normal in-season move).
+//   - Active Program + target has NO Program → focus switches, Program
+//     untouched — but the result carries a WARNING: the active Program still
+//     owns the day's rotation (Program-first resolution ignores isFocus), so
+//     the focus change alone does not hand Today to this goal.
+//   - Active Program + target in a DIFFERENT Program → REFUSED unless
+//     confirmProgramSwitch=true (friendly error NAMING both Programs). With
+//     confirmation: the current Program is deactivated via
+//     setProgramStatusCore(current, "archived") — the same mechanism
+//     set_program_status uses, reused not duplicated — then the target's
+//     Program is activated, then focus switches.
+//
+// NOT one transaction: setProgramStatusCore opens its own $transaction, so
+// the archive → activate → focus sequence is sequential. The target is
+// pre-validated (exists, not achieved) before any Program write, so the
+// remaining failure window is concurrent-write races — and the DB-level
+// one-active index keeps even those consistent (worst case: Programs
+// switched, focus unchanged — re-run the call).
+// ---------------------------------------------------------------------------
+
+export interface SetFocusGoalProgramAwareResult extends SetFocusGoalCoreResult {
+  program: {
+    /** "none" = Program state untouched; "switched" = the previous active
+     *  Program was archived and the target's Program activated. */
+    action: "none" | "switched";
+    previousProgram?: { id: string; name: string; status: string };
+    activatedProgram?: { id: string; name: string };
+    /** Present when focus moved to a Program-less goal while a Program is
+     *  active — the rotation still belongs to the Program. */
+    warning?: string;
+  };
+}
+
+export async function setFocusGoalProgramAwareCore(
+  id: string,
+  opts: { confirmProgramSwitch?: boolean } = {},
+): Promise<SetFocusGoalProgramAwareResult> {
+  const db = await getDb();
+
+  const activeProgram = await db.program.findFirst({
+    where: { status: "active" },
+    select: { id: true, name: true },
+  });
+
+  if (!activeProgram) {
+    // Zero Program rows (legacy tenant) or rows-but-none-active (retired
+    // Program): either way there is nothing to deactivate — legacy path,
+    // Program state untouched.
+    const focus = await setFocusGoalCore(id);
+    return { ...focus, program: { action: "none" } };
+  }
+
+  const target = await db.goal.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      objective: true,
+      status: true,
+      programId: true,
+      program: { select: { id: true, name: true } },
+    },
+  });
+  if (!target) throw new Error(`Goal not found: ${id}`);
+  // Pre-check the achieved guard HERE (setFocusGoalCore enforces it too) so a
+  // cross-Program switch can never archive the current Program and THEN
+  // discover the target is un-focusable.
+  if (target.status === "achieved") {
+    throw new Error("This goal is completed — reopen it first (reopen_goal).");
+  }
+
+  // Same Program: the normal in-season switch — Program untouched.
+  if (target.programId === activeProgram.id) {
+    const focus = await setFocusGoalCore(id);
+    return { ...focus, program: { action: "none" } };
+  }
+
+  // Program-less target: focus moves, Program untouched — warn that the
+  // rotation still belongs to the active Program.
+  if (target.programId === null) {
+    const focus = await setFocusGoalCore(id);
+    return {
+      ...focus,
+      program: {
+        action: "none",
+        warning:
+          `"${target.objective}" is not a member of the active Program "${activeProgram.name}" — the Program ` +
+          `still owns the day's rotation, so Today keeps resolving from it. Attach the goal ` +
+          `(attach_goal_to_program) or archive the Program (set_program_status) if you meant to hand Today over.`,
+      },
+    };
+  }
+
+  // Cross-Program switch: gated on explicit confirmation. programId is
+  // non-null here and the FK guarantees the row — the fallback is pure
+  // defense against data corruption.
+  const targetProgram = target.program ?? { id: target.programId, name: "(unknown Program)" };
+  if (!opts.confirmProgramSwitch) {
+    throw new Error(
+      `Goal "${target.objective}" belongs to Program "${targetProgram.name}", but Program ` +
+        `"${activeProgram.name}" is currently active. Focusing it DEACTIVATES the entire current Program — ` +
+        `"${activeProgram.name}" is archived (every member goal stops driving Today), and ` +
+        `"${targetProgram.name}" becomes the active Program. If that is really the intent, confirm with the ` +
+        `user first, then retry with confirmProgramSwitch: true.`,
+    );
+  }
+
+  // Reuse set_program_status's mechanism — archive the current, activate the
+  // target's. Order matters: the one-active-per-user index forbids
+  // activate-before-archive.
+  await setProgramStatusCore(activeProgram.id, "archived");
+  await setProgramStatusCore(targetProgram.id, "active");
+  const focus = await setFocusGoalCore(id);
+
+  return {
+    ...focus,
+    program: {
+      action: "switched",
+      previousProgram: { id: activeProgram.id, name: activeProgram.name, status: "archived" },
+      activatedProgram: { id: targetProgram.id, name: targetProgram.name },
+    },
+  };
 }

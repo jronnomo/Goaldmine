@@ -15,6 +15,74 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — #280: `set_active_goal` Program-aware shim + `confirmProgramSwitch` — cross-Program blast radius
+
+**Issue:** #280 (Sprint 17 — Seam flip, epic #259; depends on #277/#310)
+
+**Connector reconnect REQUIRED after deploy** — `set_active_goal`'s input
+shape changed (new optional `confirmProgramSwitch`) and FOUR tool
+descriptions changed (`set_active_goal`, `set_goal_tracked`,
+`set_plan_active`, `create_goal`); the claude.ai connector caches the old
+schemas/descriptions until reconnected (Settings → Connectors → Goaldmine →
+reconnect). `COACH_INSTRUCTIONS` also changed — re-paste
+`docs/server-instructions/goaldmine-rules.md`'s covenant into the deployed
+connector text (three-places rule, gotcha §B.6).
+
+**Input-shape change:**
+
+- `set_active_goal { goalId }` → `set_active_goal { goalId,
+  confirmProgramSwitch? }`. The new boolean is required (`true`) ONLY for a
+  cross-Program switch; all other calls are unchanged.
+
+**Semantic change** (core: `setFocusGoalProgramAwareCore` in
+`src/lib/goal-core.ts`, wrapping the untouched `setFocusGoalCore`):
+
+- **No Program rows / no ACTIVE Program** (pre-Program tenants, retired
+  Programs) → legacy focus switch, byte-identical; Program state never
+  touched.
+- **Target inside the active Program** → focus switches; Program untouched
+  (the normal in-season move).
+- **Target in a DIFFERENT Program** → REFUSED without
+  `confirmProgramSwitch:true` (friendly error naming BOTH Programs). With
+  it: the current Program is **archived** and the target's Program
+  **activated** — both via `setProgramStatusCore` (set_program_status's
+  mechanism, reused not duplicated; archive-before-activate because of the
+  one-active-per-user index) — then focus switches.
+- **Target in NO Program while a Program is active** → focus switches,
+  Program untouched, and the result carries a `warning`: the Program still
+  owns the day's rotation (Program-first resolution ignores isFocus), so the
+  focus change alone does not hand Today to this goal.
+- Achieved targets are pre-checked BEFORE any Program write (a cross-Program
+  call can never archive the current Program and then discover the target is
+  un-focusable).
+
+**Output-shape change (additive):** result gains `program {action:
+'none'|'switched', previousProgram?, activatedProgram?, warning?}`, and
+`message` narrates the archive/activate when it happened.
+
+**Stale-description fixes (in passing, per the plan's scope note):**
+`set_goal_tracked` + `set_plan_active` no longer claim "(focus-switching is
+app-UI only — no MCP tool exists)"; `create_goal` no longer points at "use
+setFocusGoal from the app UI" — all three now point at the `set_active_goal`
+MCP tool and its cross-Program blast radius.
+
+**Three-places rule (§B.6):** the set_active_goal covenant in
+`src/lib/mcp/instructions.ts` gained the PROGRAM BLAST RADIUS clause, and
+`docs/server-instructions/goaldmine-rules.md` gained the mirrored
+"set_active_goal covenant" section (drift-repair: the covenant had never
+been mirrored there) — both in this same commit. The deployed connector text
+is the third copy — update it at deploy time.
+
+**Tests:** `src/lib/goal-core.test.ts` — no-active-Program legacy path
+(Program state untouched, `setProgramStatusCore` never called),
+same-Program switch leaves Program.status alone, Program-less target warns,
+cross-Program refusal without confirm (error names both Programs, zero
+writes), confirmed cross-Program switch calls `setProgramStatusCore`
+archive-then-activate in order, achieved-target pre-check, unknown-goal
+error.
+
+---
+
 ## 2026-08-09 — #278: `attribute_activity` / `list_activity_links` NEW — the manual attribution valve
 
 **Issue:** #278 (Sprint 17 — Seam flip, epic #259; depends on #270/#271/#307/#310)

@@ -4792,7 +4792,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Create a new goal (with optional legend, targets, and attribution hints)",
       description:
-        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use setFocusGoal from the app UI to explicitly switch focus. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use the set_active_goal MCP tool to explicitly switch focus (propose-before-switching covenant applies). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape.optional().describe(
@@ -5862,7 +5862,7 @@ function registerWriteTools(server: McpServer) {
         "tracked=false: goal is silenced from the calendar and Today strip. " +
         "Guard: the focus goal cannot be untracked — switch focus to another goal first (error text passes through from the guard). " +
         "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately). " +
-        "(focus-switching is app-UI only — no MCP tool exists)",
+        "(To switch focus, use the set_active_goal MCP tool — mind its cross-Program blast radius.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         tracked: z.boolean().describe("true = track the goal; false = untrack it"),
@@ -5891,7 +5891,7 @@ function registerWriteTools(server: McpServer) {
         "Resume re-activates the most recent plan. " +
         "Guard: the focus goal's plan cannot be paused — switch focus to another goal first (error text passes through from the guard). " +
         "Defensive no-op when resuming a goal that has no plan. " +
-        "(focus-switching is app-UI only — no MCP tool exists)",
+        "(To switch focus, use the set_active_goal MCP tool — mind its cross-Program blast radius.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         active: z
