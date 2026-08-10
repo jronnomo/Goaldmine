@@ -742,7 +742,10 @@ describe("getActiveProgramMembership (#277)", () => {
     expect(result && "userId" in result).toBe(false);
     expect(goalFindMany).toHaveBeenCalledWith({
       where: { programId: "prog-1" },
-      orderBy: { createdAt: "asc" },
+      // #288: id secondary makes the order TOTAL — goal-identity.ts derives
+      // mark slots from this order, so same-second createdAt ties must not
+      // swap between renders (UXR-PV-04).
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: { id: true, objective: true, kind: true, status: true },
     });
   });

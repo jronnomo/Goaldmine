@@ -17,10 +17,16 @@ export function OtherGoalsStrip({
   events,
   conflicts,
   todayKey,
+  suppressTodayBlock = false,
 }: {
   events: GoalEvent[];
   conflicts: CrossGoalConflict[];
   todayKey: string;
+  /** UXR-PV-91 (approved): Program users' Unified Today timeline already
+   *  carries today's claims in the mark lane, so the "Also today" block is
+   *  redundant there — suppress it, keep the 7-day lookahead + conflict rows.
+   *  Default false → zero-Program render is byte-identical to before. */
+  suppressTodayBlock?: boolean;
 }) {
   // Only non-focus events appear in the strip.
   const nonFocusEvents = events.filter((e) => !e.isFocusGoal);
@@ -29,7 +35,9 @@ export function OtherGoalsStrip({
   // Lookahead window: today through +6 days (7 days total).
   const weekEndKey = dateKey(addDays(todayDate, 6));
 
-  const todayEvents = nonFocusEvents.filter((e) => e.dateKey === todayKey);
+  const todayEvents = suppressTodayBlock
+    ? []
+    : nonFocusEvents.filter((e) => e.dateKey === todayKey);
   const weekAheadEvents = nonFocusEvents.filter(
     (e) => e.dateKey > todayKey && e.dateKey <= weekEndKey,
   );
