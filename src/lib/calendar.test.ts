@@ -73,6 +73,13 @@ function mkDb(overrides: Record<string, any> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    // #277: getActiveProgram() is Program-first — default models a
+    // ZERO-Program-rows tenant (legacy path), which is the world every
+    // fixture in this suite describes; behavior is byte-identical there.
+    program: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
+    },
     workout: { findMany: vi.fn().mockResolvedValue([]) },
     note: { findMany: vi.fn().mockResolvedValue([]) },
     goal: { findFirst: vi.fn().mockResolvedValue(null) },
