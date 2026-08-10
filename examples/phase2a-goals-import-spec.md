@@ -63,10 +63,12 @@ Two gating rungs; ceiling capped at 80 until BOTH clear (mastery-before-done). R
 | metric | label | start | target | units | dir | weight | gate |
 |---|---|---|---|---|---|---|---|
 | baseline:Freestanding Handstand Hold | Max freestanding hold | 10 | 20 | sec | inc | 0.12 | |
-| log:hs_sessions_10s_of6 | ≥10s hold — sessions hit, last 6 | 0 | 4 | of 6 | inc | 0.08 | |
-| log:hs_sessions_20s_of6 | ≥20s hold — sessions hit, last 6 | 0 | 4 | of 6 | inc | 0.15 | |
-| log:hs_triple20_of6 | **3× ≥20s in one session** — sessions hit, last 6 | 0 | 1 | of 6 | inc | 0.20 | ✅ |
+| rolling:hs_sessions_10s_of6 | ≥10s hold — sessions hit, last 6 | 0 | 4 | of 6 | inc | 0.08 | |
+| rolling:hs_sessions_20s_of6 | ≥20s hold — sessions hit, last 6 | 0 | 4 | of 6 | inc | 0.15 | |
+| rolling:hs_triple20_of6 | **3× ≥20s in one session** — sessions hit, last 6 | 0 | 1 | of 6 | inc | 0.20 | ✅ |
 | baseline:Wall Handstand Push-Up | Wall handstand push-up (full ROM) | 0 | 5 | reps | inc | 0.20 | ✅ |
+
+The three `rolling:hs_*` rows are engine-native: the readiness engine computes them directly from the attempt sets logged on `Freestanding Handstand Hold` (params: 10s → `{exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6}` · 20s → `{…, minSeconds: 20, hitsPerSession: 1, window: 6}` · triple → `{…, minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6}`).
 | baseline:Chest-to-Wall Handstand Hold | Chest-to-wall handstand hold | 30 | 120 | sec | inc | 0.08 | |
 | baseline:Pull-Up Max Reps | Pull-up max (lean-mass canary) | 25 | 25 | reps | inc | 0.07 | |
 | baseline:Floating Pike Push-Up | Floating pike push-up | 5 | 10 | reps | inc | 0.05 | |
@@ -111,18 +113,14 @@ The number depends almost entirely on **hand distance from the wall**. Hands 6" 
 - **Qualifying session** = a dedicated skill block: wrist prep done, deliberate max-hold attempts, logged as a session. Incidental time upside down (warmups, a wall hold between sets of something else) does **NOT** enter the denominator — diluting it makes the rate read artificially low.
 
 ### ⚠️ These must be able to REGRESS
-`log:hs_sessions_10s_of6`, `log:hs_sessions_20s_of6`, and `log:hs_triple20_of6` are **snapshot metrics — `cumulative: false`.** Each is recomputed over the trailing 6 qualifying sessions and re-logged after every session.
+`rolling:hs_sessions_10s_of6`, `rolling:hs_sessions_20s_of6`, and `rolling:hs_triple20_of6` are **snapshot metrics.** Each is recomputed over the trailing 6 qualifying sessions. Regression is engine-inherent via window roll-out: the engine recomputes each value from the trailing window at every read, so old hit-sessions roll out and the number drops by construction — no re-logging discipline involved.
 
-**Do NOT implement any of them as cumulative counters.** A counter cannot decrease, so "sessions where I hit 20s" would climb to 4 and stay there through a six-week layoff — a trophy case, not a consistency measure. `log:hs_triple20_of6` is framed as "achieved in ≥1 of last 6" rather than "ever achieved" for the same reason: it lights up on first success and goes dark if the capacity disappears.
+**Do NOT implement any of them as cumulative counters.** A counter cannot decrease, so "sessions where I hit 20s" would climb to 4 and stay there through a six-week layoff — a trophy case, not a consistency measure. `rolling:hs_triple20_of6` is framed as "achieved in ≥1 of last 6" rather than "ever achieved" for the same reason: it lights up on first success and goes dark if the capacity disappears.
 
 Contrast with Goal 3's `log:study_hours`, which IS `cumulative: true`. Do not copy that pattern here.
 
 ### Per-session logging protocol
-1. `log_workout` — each attempt as its own set on `Freestanding Handstand Hold`, duration in seconds. **Log every attempt, not just the best** — the rolling targets need attempt counts for the ≤5-attempt cap.
-2. Recompute the three rolling values over the trailing 6 qualifying sessions.
-3. `log_metric` × 3 for `hs_sessions_10s_of6`, `hs_sessions_20s_of6`, `hs_triple20_of6`.
-
-Four writes per session. Build a helper if it gets tedious.
+ONE write: `log_workout` — each attempt as its own set on `Freestanding Handstand Hold`, duration in seconds. **Log every attempt, not just the best** — the rolling targets need attempt counts for the ≤5-attempt cap. The engine computes the three rolling values from the logged sets; there is no recompute step and no `log_metric` writes for these.
 
 ### Milestone on record (import as a data point, NOT completion)
 **2026-08-09 — ~10s freestanding hold, video-verified.** Frame analysis at 24fps: stacked and vertical ~27.5s, first visible break ~38.25s, controlled pike-out bail, no wall contact, no finger-save. Conservative floor 10.0s; frame estimate 10.7s. Jerry confirms 10s. Second occurrence ever, first in many months.

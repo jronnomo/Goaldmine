@@ -30,7 +30,11 @@
 //   (3) compute_readiness on each goal moves from the same day's logs —
 //       cut via weightLb/bodyFatPct Measurements, handstand via a logged
 //       baseline, AWS via the study-hours cumulative sum (computeReadiness
-//       called directly against the fixture db);
+//       called directly against the fixture db) — PLUS the rolling-flip
+//       extension of the honest-regression case: one logged skill session
+//       with attempt sets [12 s, 8 s] makes the ENGINE-NATIVE rolling:hs_*
+//       trackers read 1 / 0 / 0 straight from the workout rows (no
+//       log_metric writes anywhere), triple20 gate open, ceiling 80;
 //   (4) the chewgether-shape guard at the payload level: an active Program
 //       with no rotation plan + an unrelated DORMANT active:true Plan outside
 //       the Program → out_of_plan payload, NO cross-goal plan leak
@@ -382,6 +386,13 @@ function mkPhase2aDb(world: World) {
       count: vi.fn(async () => world.programs.length),
     },
     goal: {
+      // The rolling:* resolver reads the goal's own stored targets for the
+      // RollingParams (goal-targets.ts: findUnique({where:{id}, select:{targets}})).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      findUnique: vi.fn(async (args: any) => {
+        const row = world.goals.find((g) => g.id === args?.where?.id) ?? null;
+        return row ? project(row, args?.select) : null;
+      }),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       findFirst: vi.fn(async (args: any) => {
         let rows = world.goals;
@@ -410,10 +421,25 @@ function mkPhase2aDb(world: World) {
       findMany: vi.fn(async () => world.plans),
     },
     workout: {
+      // Routing-faithful: honors the day-range read (resolveDay) AND the
+      // rolling resolver's query (status filter, startedAt-DESC/id-DESC
+      // ordering, nested exercises→sets select projection).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      findMany: vi.fn(async (args: any) =>
-        world.workouts.filter((w) => inDateRange(w.startedAt as Date, args?.where?.startedAt)),
-      ),
+      findMany: vi.fn(async (args: any) => {
+        let rows = world.workouts.filter((w) =>
+          inDateRange(w.startedAt as Date, args?.where?.startedAt),
+        );
+        if (args?.where?.status !== undefined) {
+          rows = rows.filter((w) => w.status === args.where.status);
+        }
+        if (Array.isArray(args?.orderBy)) {
+          // The rolling resolver's [{startedAt:"desc"},{id:"desc"}] contract.
+          rows = [...rows].sort(
+            (a, b) => b.startedAt.getTime() - a.startedAt.getTime() || b.id.localeCompare(a.id),
+          );
+        }
+        return rows.map((w) => project(w, args?.select));
+      }),
     },
     scheduledItem: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -753,7 +779,7 @@ describe("#287 (3) — compute_readiness moves independently for all three goals
     const g1Before = await computeReadiness(PHASE2A_GOAL1.targets, before, PHASE2A_GOAL1_ID);
     const g1After = await computeReadiness(PHASE2A_GOAL1.targets, after, PHASE2A_GOAL1_ID);
     expect(g1Before.score).toBe(0);
-    expect(g1After.score).toBe(7); // 0.12·0 + 0.07·1 → raw 7 (log:hs_* rows untested → 0 at full denominator weight)
+    expect(g1After.score).toBe(7); // 0.12·0 + 0.07·1 → raw 7 (rolling:hs_* trackers untested — no workout carries a timed HS set → null — 0 at full denominator weight)
     expect(g1After.ceiling).toBe(80); // both v4 gates open: triple20-of-6 untested + wall HSPU untested
     expect(g1After.coverage).toEqual({ tested: 2, total: 9 });
     const holdAfter = g1After.breakdown.find(
@@ -790,6 +816,64 @@ describe("#287 (3) — compute_readiness moves independently for all three goals
     ] as const) {
       expect(a).toBeGreaterThan(b);
     }
+  });
+
+  it("rolling flip — one skill session with attempt sets [12s, 8s] drives the ENGINE-NATIVE rolling:hs_* trackers end-to-end: 10s tracker 1, 20s trackers 0, triple20 gate open, ceiling 80", async () => {
+    // The one-write protocol: log_workout with EVERY attempt as its own
+    // duration set on the canonical exercise. No log_metric writes exist
+    // anywhere in this world for hs_* — the values below can only come from
+    // the engine reading the workout rows (goal-targets.ts rolling branch →
+    // rolling-metrics.ts window math → computeReadiness as plain numerics).
+    const world = buildWorld();
+    world.workouts.push({
+      id: "w-skill",
+      title: "PM Skill — Session A · Balance",
+      status: "completed",
+      source: "manual",
+      startedAt: new Date("2026-08-17T23:30:00.000Z"), // Monday 17:30 MDT — the PM skill block
+      notes: null,
+      exercises: [
+        {
+          id: "we-hs",
+          name: "Freestanding Handstand Hold",
+          sets: [
+            { weightLb: null, reps: null, durationSec: 12, distanceMi: null }, // attempt 1 — ≥10 s hit
+            { weightLb: null, reps: null, durationSec: 8, distanceMi: null }, // attempt 2 — miss (still occupies an attemptCap slot)
+          ],
+        },
+      ],
+    });
+    mockGetDb.mockResolvedValue(mkPhase2aDb(world));
+
+    const snap = await computeReadiness(PHASE2A_GOAL1.targets, parseDateKey(MONDAY_KEY), PHASE2A_GOAL1_ID);
+    const row = (metric: string) =>
+      snap.breakdown.find((b) => b.target.metric === metric)!;
+
+    // ONE qualifying session in the window; 12 ≥ 10 → the 10s tracker hits.
+    expect(row("rolling:hs_sessions_10s_of6").current).toBe(1);
+    expect(row("rolling:hs_sessions_10s_of6").start).toBe(0);
+    expect(row("rolling:hs_sessions_10s_of6").progress).toBeCloseTo(0.25); // 1 of 4
+    // Neither attempt reaches 20 s — TESTED (a session exists) at 0 hits,
+    // which is the honest-regression shape: these values can now DROP as
+    // sessions roll out of the window, by engine construction.
+    expect(row("rolling:hs_sessions_20s_of6").current).toBe(0);
+    expect(row("rolling:hs_sessions_20s_of6").progress).toBe(0);
+    // No 3× ≥20 s span → the rung-1 gate is TESTED-and-open (0, not null).
+    expect(row("rolling:hs_triple20_of6").current).toBe(0);
+    expect(row("rolling:hs_triple20_of6").progress).toBe(0);
+    const triple20Gate = snap.gates.find(
+      (g) => g.label === "3× ≥20s in one session — sessions hit, last 6",
+    )!;
+    expect(triple20Gate.cleared).toBe(false);
+    expect(snap.openGateCount).toBe(2); // triple20 open + wall HSPU untested
+    expect(snap.ceiling).toBe(80);
+
+    // Coverage moves 2 → 5: all three rolling trackers are tested by the
+    // single session (the max hold + canary were already tested).
+    expect(snap.coverage).toEqual({ tested: 5, total: 9 });
+    // Score: 0.08·0.25 (10s tracker) + 0.07·1 (canary) → raw 9, under the cap.
+    expect(snap.rawScore).toBe(9);
+    expect(snap.score).toBe(9);
   });
 });
 
