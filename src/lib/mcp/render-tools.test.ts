@@ -17,7 +17,10 @@ const { mockGetDb, mockGetRotationOwnerGoal } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ prisma: {}, getDb: mockGetDb }));
-vi.mock("@/lib/program", () => ({ getRotationOwnerGoal: mockGetRotationOwnerGoal }));
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
+  getRotationOwnerGoal: mockGetRotationOwnerGoal,
+}));
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";

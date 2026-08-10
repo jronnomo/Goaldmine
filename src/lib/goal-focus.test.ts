@@ -4,11 +4,15 @@
 //   clause alongside active:true — belt-and-braces against a legacy achieved
 //   row (predating completeGoalCore's active:false write) still showing up on
 //   Today/Calendar with an overdue chip / target-date events.
-// - #297 (isFocus sweep): getRotationOwnerGoal is THE shared "current goal"
-//   accessor — its four tenant branches mirror getActiveProgram()'s seam:
-//   zero-Program-rows → legacy isFocus compat query (byte-identical where/
-//   orderBy), active Program + rotation → the Plan-owning goal (no isFocus),
-//   active Program with no rotation → null, retired-Program tenant → null.
+// - #297/#298 (isFocus sweep, suites merged at consolidation):
+//   getRotationOwnerGoal is THE shared "current goal" accessor — its tenant
+//   branches mirror getActiveProgram()'s seam: zero-Program-rows → legacy
+//   isFocus compat query (byte-identical where/orderBy) in mode "legacy",
+//   active Program + rotation → the Plan-owning goal (no isFocus) in mode
+//   "program", active Program with no rotation → ownerless "program",
+//   retired-Program tenant → ownerless "program" (never a silent regression
+//   to the focus fallback). The resolution envelope carries the full goal
+//   row plus the derived goalId/goalKind/planId flats.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -40,7 +44,7 @@ describe("getActiveGoalsWithPlans", () => {
   });
 });
 
-describe("getRotationOwnerGoal (#297)", () => {
+describe("getRotationOwnerGoal (#297/#298, consolidated)", () => {
   const OWNER_ROW = {
     id: "g-owner",
     objective: "Freestanding handstand",
@@ -74,14 +78,20 @@ describe("getRotationOwnerGoal (#297)", () => {
     };
   }
 
-  it("zero Program rows → the legacy isFocus compat query (same where/orderBy as getFocusGoal)", async () => {
+  it("zero Program rows → legacy mode via the isFocus compat query (same where/orderBy as getFocusGoal), full row + derived flats", async () => {
     const goalFindFirst = vi.fn().mockResolvedValue(FOCUS_ROW);
     const d = db({ goal: { findFirst: goalFindFirst } });
     mockGetDb.mockResolvedValue(d);
 
-    const row = await getRotationOwnerGoal();
+    const result = await getRotationOwnerGoal();
 
-    expect(row?.id).toBe("g-focus");
+    expect(result).toEqual({
+      mode: "legacy",
+      goalId: "g-focus",
+      goalKind: "fitness",
+      planId: null,
+      goal: FOCUS_ROW,
+    });
     expect(goalFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { isFocus: true },
@@ -92,7 +102,20 @@ describe("getRotationOwnerGoal (#297)", () => {
     expect((d.plan as { findFirst: ReturnType<typeof vi.fn> }).findFirst).not.toHaveBeenCalled();
   });
 
-  it("active Program with a rotation → the Plan-owning goal via the plans relation; isFocus never consulted", async () => {
+  it("zero Program rows and no focus goal → legacy mode, ownerless (all nulls)", async () => {
+    const d = db(); // goal.findFirst resolves null
+    mockGetDb.mockResolvedValue(d);
+
+    expect(await getRotationOwnerGoal()).toEqual({
+      mode: "legacy",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+      goal: null,
+    });
+  });
+
+  it("active Program with a rotation → program mode, the Plan-owning goal via the plans relation (planId carried); isFocus never consulted", async () => {
     const goalFindFirst = vi.fn().mockResolvedValue(OWNER_ROW);
     const d = db({
       program: {
@@ -104,15 +127,21 @@ describe("getRotationOwnerGoal (#297)", () => {
     });
     mockGetDb.mockResolvedValue(d);
 
-    const row = await getRotationOwnerGoal();
+    const result = await getRotationOwnerGoal();
 
-    expect(row?.id).toBe("g-owner");
+    expect(result).toEqual({
+      mode: "program",
+      goalId: "g-owner",
+      goalKind: "fitness",
+      planId: "plan-rot",
+      goal: OWNER_ROW,
+    });
     const args = goalFindFirst.mock.calls[0]![0];
     expect(args.where).toEqual({ plans: { some: { id: "plan-rot" } } });
     expect(JSON.stringify(args.where)).not.toContain("isFocus");
   });
 
-  it("active Program with NO rotation plan → null (never regresses to the isFocus query)", async () => {
+  it("active Program with NO rotation plan → ownerless program mode (never regresses to the isFocus query)", async () => {
     const goalFindFirst = vi.fn();
     const d = db({
       program: {
@@ -124,11 +153,17 @@ describe("getRotationOwnerGoal (#297)", () => {
     });
     mockGetDb.mockResolvedValue(d);
 
-    expect(await getRotationOwnerGoal()).toBeNull();
+    expect(await getRotationOwnerGoal()).toEqual({
+      mode: "program",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+      goal: null,
+    });
     expect(goalFindFirst).not.toHaveBeenCalled();
   });
 
-  it("retired-Program tenant (rows exist, none active) → null, not the focus fallback", async () => {
+  it("retired-Program tenant (rows exist, none active) → ownerless program mode, not the focus fallback", async () => {
     const goalFindFirst = vi.fn().mockResolvedValue(FOCUS_ROW);
     const d = db({
       program: {
@@ -139,7 +174,13 @@ describe("getRotationOwnerGoal (#297)", () => {
     });
     mockGetDb.mockResolvedValue(d);
 
-    expect(await getRotationOwnerGoal()).toBeNull();
+    expect(await getRotationOwnerGoal()).toEqual({
+      mode: "program",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+      goal: null,
+    });
     expect(goalFindFirst).not.toHaveBeenCalled();
   });
 });

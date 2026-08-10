@@ -9,9 +9,9 @@
 import { getDb, prisma } from "@/lib/db";
 import {
   getActiveProgramMembership,
-  getRotationOwnerGoal,
   orderMembersFirst,
 } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGameState } from "@/lib/game/engine";
 import { levelFromXp, OVERALL_LEVEL_BASE } from "@/lib/game/rules";

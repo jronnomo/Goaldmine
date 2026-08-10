@@ -4,7 +4,7 @@
 import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
 import { prisma, getDb } from "@/lib/db";
 import { canonicalExerciseName } from "@/lib/exercise-canonical";
-import { getRotationOwnerGoal } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
 
 export type CheckpointStatus = "upcoming" | "due" | "overdue" | "done";

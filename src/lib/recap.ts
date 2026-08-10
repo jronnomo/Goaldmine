@@ -24,7 +24,8 @@ import {
   DEFAULT_PRESENTATION,
   type StatSlot,
 } from "@/lib/goal-presentation";
-import { getActiveProgram, getRotationOwnerGoal } from "@/lib/program";
+import { getActiveProgram } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeReadiness } from "@/lib/readiness";
 import type { TargetProgress } from "@/lib/readiness";
 import { getExerciseSummaries } from "@/lib/records";

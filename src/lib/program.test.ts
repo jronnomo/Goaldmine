@@ -31,7 +31,6 @@ import {
   getActiveProgramMembership,
   getMostRecentProgram,
   getProgramForDate,
-  getRotationOwnerGoal,
   orderMembersFirst,
   pickProgramForDate,
   phaseForWeekIndex,
@@ -772,137 +771,9 @@ describe("getActiveProgramMembership (#277)", () => {
   });
 });
 
-// ─── #298/#301: getRotationOwnerGoal ─────────────────────────────────────────
-
-describe("getRotationOwnerGoal (#298/#301 isFocus sweep)", () => {
-  it("active Program + attached active Plan → program mode with the plan's goal (kind carried), via a programId-scoped query", async () => {
-    const planFindFirst = vi.fn().mockResolvedValue({
-      id: "plan-rot",
-      goalId: "goal-owner",
-      goal: { kind: "fitness" },
-    });
-    const programCount = vi.fn().mockResolvedValue(1);
-    const goalFindFirst = vi.fn();
-    mockGetDb.mockResolvedValue(
-      mkScopedDb({
-        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
-        program: { findFirst: vi.fn().mockResolvedValue(programDbRow()), count: programCount },
-        goal: { findFirst: goalFindFirst },
-      }),
-    );
-
-    const result = await getRotationOwnerGoal();
-
-    expect(result).toEqual({
-      mode: "program",
-      goalId: "goal-owner",
-      goalKind: "fitness",
-      planId: "plan-rot",
-    });
-    // Same selection as getActiveProgram branch 1 — programId-scoped,
-    // updatedAt desc, never an unscoped fall-through.
-    expect(planFindFirst).toHaveBeenCalledTimes(1);
-    expect(planFindFirst).toHaveBeenCalledWith({
-      where: { active: true, programId: "prog-1" },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, goalId: true, goal: { select: { kind: true } } },
-    });
-    // Program mode NEVER touches the legacy focus query or the rows gate.
-    expect(goalFindFirst).not.toHaveBeenCalled();
-    expect(programCount).not.toHaveBeenCalled();
-  });
-
-  it("active Program with NO attached active Plan → program mode, null owner ('no rotation owner') — no legacy fallback", async () => {
-    const goalFindFirst = vi.fn();
-    mockGetDb.mockResolvedValue(
-      mkScopedDb({
-        plan: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn() },
-        program: {
-          findFirst: vi.fn().mockResolvedValue(programDbRow()),
-          count: vi.fn().mockResolvedValue(1),
-        },
-        goal: { findFirst: goalFindFirst },
-      }),
-    );
-
-    const result = await getRotationOwnerGoal();
-
-    expect(result).toEqual({ mode: "program", goalId: null, goalKind: null, planId: null });
-    expect(goalFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("Program rows exist but none active (retired) → program mode, null owner; plan and goal tables never queried", async () => {
-    const planFindFirst = vi.fn();
-    const goalFindFirst = vi.fn();
-    mockGetDb.mockResolvedValue(
-      mkScopedDb({
-        plan: { findFirst: planFindFirst, findMany: vi.fn() },
-        program: {
-          findFirst: vi.fn().mockResolvedValue(null),
-          count: vi.fn().mockResolvedValue(2),
-        },
-        goal: { findFirst: goalFindFirst },
-      }),
-    );
-
-    const result = await getRotationOwnerGoal();
-
-    // A retired-Program user must NOT silently regress to the legacy focus
-    // resolution — same subtlety as getActiveProgram branch 3.
-    expect(result).toEqual({ mode: "program", goalId: null, goalKind: null, planId: null });
-    expect(planFindFirst).not.toHaveBeenCalled();
-    expect(goalFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("zero Program rows → legacy mode with the deterministic focus winner (updatedAt desc); plan table never queried", async () => {
-    const planFindFirst = vi.fn();
-    const goalFindFirst = vi
-      .fn()
-      .mockResolvedValue({ id: "goal-focus", kind: "fitness" });
-    mockGetDb.mockResolvedValue(
-      mkScopedDb({
-        plan: { findFirst: planFindFirst, findMany: vi.fn() },
-        program: {
-          findFirst: vi.fn().mockResolvedValue(null),
-          count: vi.fn().mockResolvedValue(0),
-        },
-        goal: { findFirst: goalFindFirst },
-      }),
-    );
-
-    const result = await getRotationOwnerGoal();
-
-    expect(result).toEqual({
-      mode: "legacy",
-      goalId: "goal-focus",
-      goalKind: "fitness",
-      planId: null,
-    });
-    // goal-focus.ts's documented deterministic-winner idiom, centralized here.
-    expect(goalFindFirst).toHaveBeenCalledWith({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, kind: true },
-    });
-    expect(planFindFirst).not.toHaveBeenCalled();
-  });
-
-  it("zero Program rows and no focus goal → legacy mode, null goalId", async () => {
-    mockGetDb.mockResolvedValue(
-      mkScopedDb({
-        program: {
-          findFirst: vi.fn().mockResolvedValue(null),
-          count: vi.fn().mockResolvedValue(0),
-        },
-        goal: { findFirst: vi.fn().mockResolvedValue(null) },
-      }),
-    );
-
-    const result = await getRotationOwnerGoal();
-
-    expect(result).toEqual({ mode: "legacy", goalId: null, goalKind: null, planId: null });
-  });
-});
+// ─── #298/#301: getRotationOwnerGoal — MOVED ─────────────────────────────────
+// The twin accessor was consolidated into src/lib/goal-focus.ts; its merged
+// suite (mode envelope + branch behavior) lives in goal-focus.test.ts.
 
 // ─── #298/#301: orderMembersFirst (pure) ─────────────────────────────────────
 

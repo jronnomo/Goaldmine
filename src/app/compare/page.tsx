@@ -25,6 +25,7 @@ import {
 import { addDays, dateKey } from "@/lib/calendar-core";
 import { getDb } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 
 export const dynamic = "force-dynamic";
 
@@ -223,12 +224,14 @@ export default async function ComparePage({
   // message while a healthy computeComparison result gets discarded. All
   // three promises still start together (no waterfall regression); only the
   // await/catch placement differs.
-  const focusGoalPromise = db.goal
-    .findFirst({ where: { active: true, isFocus: true }, orderBy: { createdAt: "asc" } })
-    .then(
-      async (fg) =>
-        fg ?? (await db.goal.findFirst({ where: { active: true }, orderBy: { createdAt: "asc" } })),
-    );
+  // #303 (isFocus retirement): the "Goal created" chip anchors on the
+  // day-driving goal via the shared accessor (rotation owner under a Program;
+  // legacy focus winner for zero-Program tenants) — no direct isFocus filter.
+  // Ownerless states keep the oldest-active fallback the chip always had.
+  const focusGoalPromise = getRotationOwnerGoal().then(
+    async ({ goal }) =>
+      goal ?? (await db.goal.findFirst({ where: { active: true }, orderBy: { createdAt: "asc" } })),
+  );
   const activeProgramPromise = getActiveProgram();
 
   let result: ComparisonResult | null = null;

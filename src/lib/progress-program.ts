@@ -20,10 +20,8 @@
 
 import { dateKey, endOfDay, startOfDay } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
-import {
-  getActiveProgramMembership,
-  type RotationOwnerResolution,
-} from "@/lib/program";
+import { getActiveProgramMembership } from "@/lib/program";
+import type { RotationOwnerResolution } from "@/lib/goal-focus";
 import { parseCompletionSnapshot } from "@/lib/goal-completion-core";
 import {
   computeReadiness,

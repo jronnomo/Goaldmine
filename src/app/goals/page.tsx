@@ -8,9 +8,9 @@ import { getDb } from "@/lib/db";
 import { USER_TZ, parseDateKey } from "@/lib/calendar";
 import {
   getActiveProgramMembership,
-  getRotationOwnerGoal,
   orderMembersFirst,
 } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 import { computeStackRarity } from "@/lib/rarity";

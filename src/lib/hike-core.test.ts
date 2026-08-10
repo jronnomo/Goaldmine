@@ -31,10 +31,12 @@ const { mockGetDb, mockGetRotationOwnerGoal, mockGetMembership, mockGetFocusGoal
 
 vi.mock("@/lib/db", () => ({ prisma: {}, getDb: mockGetDb }));
 vi.mock("@/lib/program", () => ({
-  getRotationOwnerGoal: mockGetRotationOwnerGoal,
   getActiveProgramMembership: mockGetMembership,
 }));
-vi.mock("@/lib/goal-focus", () => ({ getFocusGoal: mockGetFocusGoal }));
+vi.mock("@/lib/goal-focus", () => ({
+  getFocusGoal: mockGetFocusGoal,
+  getRotationOwnerGoal: mockGetRotationOwnerGoal,
+}));
 vi.mock("@/lib/attribution-hooks", () => ({
   mirrorActivityGoalLink: mockMirror,
   swallowAutoLinkError: () => () => undefined,
