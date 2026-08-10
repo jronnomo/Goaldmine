@@ -55,3 +55,44 @@ export function parseAttributionRules(raw: unknown): AttributionRule[] | null {
   const result = AttributionRulesSchema.safeParse(raw);
   return result.success ? result.data : null;
 }
+
+// ---------------------------------------------------------------------------
+// Authoring schema (#307 consolidation — moved here from program-core.ts's
+// local copy, guards intact). WRITE-side validation for update_program /
+// updateProgramCore: stricter than the read-side trust boundary above.
+//
+// Two schemas on purpose:
+//   - AttributionRulesSchema (above)          — READ boundary. Lenient: an
+//     empty `match: {}` or empty `goalIds` is shape-valid (the engine treats
+//     both as no-ops); rejecting one degenerate rule would nullify a whole
+//     stored ruleset, which is worse.
+//   - AttributionRulesAuthoringSchema (below) — WRITE boundary. Refuses to
+//     STORE those degenerate rules in the first place: each rule needs at
+//     least one match criterion (an empty match would otherwise read as
+//     "match every activity" to a human even though the engine matches
+//     nothing) and at least one goalId (a rule that links nothing is an
+//     authoring mistake, not intent).
+// ---------------------------------------------------------------------------
+
+export const AttributionRuleAuthoringSchema = z.object({
+  match: z
+    .object({
+      titleContains: z.array(z.string().min(1)).optional(),
+      exerciseContains: z.array(z.string().min(1)).optional(),
+      source: z.string().min(1).optional(),
+    })
+    .refine(
+      (m) =>
+        (m.titleContains?.length ?? 0) > 0 ||
+        (m.exerciseContains?.length ?? 0) > 0 ||
+        !!m.source,
+      {
+        message:
+          "each rule's match needs at least one of titleContains, exerciseContains, source — an empty match would match every activity",
+      },
+    ),
+  goalIds: z.array(z.string().min(1)).min(1, "each rule needs at least one goalId"),
+  note: z.string().optional(),
+});
+
+export const AttributionRulesAuthoringSchema = z.array(AttributionRuleAuthoringSchema);

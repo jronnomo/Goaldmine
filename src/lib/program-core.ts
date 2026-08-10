@@ -22,9 +22,12 @@
 // above `model Program`). setProgramStatusCore pre-checks for a friendly
 // error AND catches the P2002 a concurrent activate race produces.
 
-import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
+import {
+  AttributionRulesAuthoringSchema,
+  type AttributionRule,
+} from "@/lib/attribution-rules";
 
 // ---------------------------------------------------------------------------
 // Status enum
@@ -34,39 +37,18 @@ export const PROGRAM_STATUSES = ["draft", "active", "completed", "archived"] as 
 export type ProgramStatus = (typeof PROGRAM_STATUSES)[number];
 
 // ---------------------------------------------------------------------------
-// Attribution rules schema
-//
-// TODO(consolidate): src/lib/attribution-rules.ts is being built in a sibling
-// worktree (auto-link engine). Once it lands, replace this local schema with
-// an import from there — keeping the two extra authoring guards below
-// (≥1 match criterion, ≥1 goalId). Shape mirrors the Program.attributionRules
-// doc comment in prisma/schema.prisma (design amendment 1,
-// docs/program-redesign/03-run-amendments.md).
+// Attribution rules schema — consolidated (#307). The schema now lives in
+// src/lib/attribution-rules.ts alongside the lenient read-side parser
+// (parseAttributionRules); the two authoring guards (≥1 match criterion,
+// ≥1 goalId) moved there intact as *AuthoringSchema. Re-exported under the
+// original names so existing importers (program-tools.ts) are unchanged.
 // ---------------------------------------------------------------------------
 
-export const AttributionRuleSchema = z.object({
-  match: z
-    .object({
-      titleContains: z.array(z.string().min(1)).optional(),
-      exerciseContains: z.array(z.string().min(1)).optional(),
-      source: z.string().min(1).optional(),
-    })
-    .refine(
-      (m) =>
-        (m.titleContains?.length ?? 0) > 0 ||
-        (m.exerciseContains?.length ?? 0) > 0 ||
-        !!m.source,
-      {
-        message:
-          "each rule's match needs at least one of titleContains, exerciseContains, source — an empty match would match every activity",
-      },
-    ),
-  goalIds: z.array(z.string().min(1)).min(1, "each rule needs at least one goalId"),
-  note: z.string().optional(),
-});
-
-export const AttributionRulesSchema = z.array(AttributionRuleSchema);
-export type AttributionRule = z.infer<typeof AttributionRuleSchema>;
+export {
+  AttributionRuleAuthoringSchema as AttributionRuleSchema,
+  AttributionRulesAuthoringSchema as AttributionRulesSchema,
+} from "@/lib/attribution-rules";
+export type { AttributionRule } from "@/lib/attribution-rules";
 
 // ---------------------------------------------------------------------------
 // Shared row projection (never selects userId — leaky-reads discipline)
@@ -216,7 +198,7 @@ export async function updateProgramCore(
     if (patch.attributionRules === null) {
       data.attributionRules = Prisma.JsonNull;
     } else {
-      const parsed = AttributionRulesSchema.safeParse(patch.attributionRules);
+      const parsed = AttributionRulesAuthoringSchema.safeParse(patch.attributionRules);
       if (!parsed.success) {
         const first = parsed.error.issues[0];
         throw new Error(

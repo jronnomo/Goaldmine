@@ -8,6 +8,7 @@ import { prisma, getDb } from "@/lib/db";
 import { endOfDay, startOfDay } from "@/lib/calendar";
 import { metricKindFor, canonicalExerciseName } from "@/lib/records";
 import { deleteWorkoutCore } from "@/lib/workout-core";
+import { autoLinkWorkout, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 type SetData = {
   reps?: number;
@@ -109,8 +110,15 @@ export async function appendBaselineToDayWorkout(args: {
     distanceMi: setData.distanceMi ?? null,
   };
 
+  // #307: this helper creates/extends Workout rows WITHOUT going through
+  // createWorkoutCore (gotcha §E.2 — the baseline mirror bypasses the core),
+  // so the auto-link hook fires here too. On the create branch the new
+  // workout is evaluated with its one exercise; on the append branch only the
+  // NEWLY appended test name is evaluated (earlier exercises were evaluated
+  // when they landed, and skipDuplicates makes re-evaluation harmless either
+  // way). Best-effort — mirror rows must never fail baseline logging.
   if (!existing) {
-    return db.workout.create({
+    const created = await db.workout.create({
       data: {
         title: "Baseline tests",
         startedAt: args.date,
@@ -129,6 +137,15 @@ export async function appendBaselineToDayWorkout(args: {
         },
       },
     });
+    await autoLinkWorkout(db, {
+      workoutId: created.id,
+      title: "Baseline tests",
+      source: "baseline",
+      status: "completed",
+      startedAt: args.date,
+      exerciseNames: [args.testName],
+    }).catch(swallowAutoLinkError("appendBaselineToDayWorkout:create"));
+    return created;
   }
 
   await prisma.workoutExercise.create({
@@ -140,6 +157,14 @@ export async function appendBaselineToDayWorkout(args: {
       sets: { create: [setCreate] },
     },
   });
+  await autoLinkWorkout(db, {
+    workoutId: existing.id,
+    title: "Baseline tests",
+    source: "baseline",
+    status: "completed",
+    startedAt: args.date,
+    exerciseNames: [args.testName],
+  }).catch(swallowAutoLinkError("appendBaselineToDayWorkout:append"));
   return existing;
 }
 
