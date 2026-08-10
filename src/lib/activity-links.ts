@@ -48,6 +48,9 @@ export interface ActivityLinkRecord {
   activityType: string;
   activityId: string;
   goalId: string;
+  /** auto | explicit | removed. Carried for REPORTING only — orphan
+   *  classification deliberately ignores it (see computeOrphanLinks). */
+  source: string;
   userId: string | null;
   activityDate: Date;
   createdAt: Date;
@@ -67,6 +70,13 @@ export interface OrphanLinkReport {
  * `existingIdsByType` maps an activityType to the Set of activity row ids that
  * exist for the ids referenced by `links` (the caller batch-probes each table).
  * A missing map entry is treated as "no rows exist for this type".
+ *
+ * SOURCE-BLIND by design (UXR-PV-89): a source='removed' TOMBSTONE whose
+ * activity row is gone is still an orphan. The tombstone's only job is to
+ * block re-linking of an activity that EXISTS; once the activity row is
+ * deleted there is nothing left to block and the row is garbage — the
+ * delete-hooks should already have hard-deleted it, so a surviving tombstone
+ * orphan is exactly the drift this verifier exists to catch.
  */
 export function computeOrphanLinks(
   links: readonly ActivityLinkRecord[],

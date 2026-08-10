@@ -387,10 +387,13 @@ export function registerProgramTools(server: McpServer): void {
         "hike, meal, measurement, baseline, or metric reading) to a goal, or remove a link that is wrong. THE tool for " +
         "'count that hike toward the handstand goal too', 'that workout wasn't for the cut', 'the rules missed this one'. " +
         "action='add' creates a source='explicit' link; if an 'auto' link already exists for the same activity+goal it is " +
-        "UPGRADED to 'explicit' in place (explicit beats auto — never a duplicate row). The link's activityDate is taken " +
+        "UPGRADED to 'explicit' in place (explicit beats auto — never a duplicate row), and adding over a previously " +
+        "REMOVED link REVIVES it to 'explicit'. The link's activityDate is taken " +
         "from the ACTIVITY row's own date, never from today — retroactively attributing an old activity lands on the day " +
-        "it happened. action='remove' deletes the link REGARDLESS of source — remove always wins, whether the link was " +
-        "coach-added or rule-created; removing a link that doesn't exist is a friendly no-op. " +
+        "it happened. action='remove' TOMBSTONES the link REGARDLESS of source (the row flips to source='removed' and is " +
+        "kept) — remove always wins AND stays removed: auto-linking and backfills can never resurrect a removed link; " +
+        "only an explicit re-add revives it. Removed links disappear from list_activity_links unless includeRemoved is " +
+        "passed. Removing a link that doesn't exist (or is already removed) is a friendly no-op. " +
         "Do NOT call this after every log — auto-linking already runs at write time from the Program's attributionRules " +
         "and each goal's attributionHints; use this only to correct or add what the rules missed. " +
         "Do NOT use it to change which goal an activity 'belongs' to in its own table (hikes have goalId, metrics have " +
@@ -408,7 +411,9 @@ export function registerProgramTools(server: McpServer): void {
         goalId: z.string().min(1).describe("Goal to attribute the activity to. Use list_goals to discover ids."),
         action: z
           .enum(["add", "remove"])
-          .describe("add = create/upgrade an explicit link; remove = delete the link regardless of source."),
+          .describe(
+            "add = create/upgrade/revive an explicit link; remove = tombstone the link regardless of source (kept as source='removed'; nothing can auto-resurrect it).",
+          ),
         note: z
           .string()
           .optional()
@@ -433,21 +438,24 @@ export function registerProgramTools(server: McpServer): void {
               changed: r.changed,
               removedSource: r.removedSource,
               message: r.changed
-                ? `Link removed (was source='${r.removedSource}') — remove always wins, regardless of who created the link.`
-                : "No link exists for that activity + goal — nothing to remove.",
+                ? `Link removed (was source='${r.removedSource}') — tombstoned as source='removed', so auto-linking and backfills can never bring it back. Re-add explicitly to revive.`
+                : "No live link exists for that activity + goal — nothing to remove.",
             };
           }
           return {
             action: r.action,
             changed: r.changed,
             upgraded: r.upgraded,
+            revived: r.revived,
             goalObjective: r.goalObjective,
             link: r.link ? serializeLink(r.link) : null,
             message: !r.changed
               ? `Already explicitly linked to "${r.goalObjective}" — no change.`
-              : r.upgraded
-                ? `Auto link upgraded to explicit for "${r.goalObjective}" (same row — no duplicate).`
-                : `Activity explicitly linked to "${r.goalObjective}".`,
+              : r.revived
+                ? `Removed link revived to explicit for "${r.goalObjective}" (same row — the tombstone is lifted).`
+                : r.upgraded
+                  ? `Auto link upgraded to explicit for "${r.goalObjective}" (same row — no duplicate).`
+                  : `Activity explicitly linked to "${r.goalObjective}".`,
           };
         });
       }),
@@ -465,7 +473,8 @@ export function registerProgramTools(server: McpServer): void {
         "THE read for the attribution layer — the only way to see what got auto-attributed and what was explicitly " +
         "linked: 'what counted toward the handstand goal this week', 'which activities did the rules catch', 'audit the " +
         "auto-links before I trust them'. Returns links {id, activityType, activityId, goalId, goalObjective, source " +
-        "(auto|explicit), note, activityDate, createdAt}, newest activity first. " +
+        "(auto|explicit), note, activityDate, createdAt}, newest activity first. Links removed via attribute_activity " +
+        "are TOMBSTONED (source='removed') and hidden here by default — pass includeRemoved:true to audit them. " +
         "Omit goalId to scope to ALL member goals of the ACTIVE Program (friendly error when no Program is active — pass " +
         "goalId then). from/to (yyyy-mm-dd, inclusive) filter on the link's activityDate — the day the ACTIVITY happened, " +
         "NOT when the link was created, so retroactively-attributed old activities appear in their real week. " +
@@ -498,6 +507,12 @@ export function registerProgramTools(server: McpServer): void {
           .max(LIST_ACTIVITY_LINKS_MAX_LIMIT)
           .optional()
           .describe(`Max rows returned (default ${LIST_ACTIVITY_LINKS_DEFAULT_LIMIT}, cap ${LIST_ACTIVITY_LINKS_MAX_LIMIT}).`),
+        includeRemoved: z
+          .boolean()
+          .optional()
+          .describe(
+            "Include source='removed' tombstones (links explicitly removed via attribute_activity). Default false — the audit view only.",
+          ),
       },
     },
     async (input) =>
@@ -508,6 +523,7 @@ export function registerProgramTools(server: McpServer): void {
           from: input.from ? parseDateInput(input.from) : undefined,
           to: input.to ? parseDateInput(input.to) : undefined,
           limit: input.limit,
+          includeRemoved: input.includeRemoved,
         });
         return {
           scope: r.scope,

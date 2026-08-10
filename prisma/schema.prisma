@@ -504,13 +504,17 @@ model Program {
 // metric, baseline, measurement) fans out to multiple goals. No FK to the
 // underlying activity row (it's polymorphic): delete-hook consolidation (this
 // sprint) plus the nightly orphan verifier compensate for the missing
-// referential integrity. Append-only in effect (v1 no-retraction policy).
+// referential integrity. Auto-links are append-only; explicit removal is a
+// TOMBSTONE (source='removed', row kept — UXR-PV-89) so the unique key
+// permanently blocks the auto-engine/backfill upsert from resurrecting a
+// coach-removed link. Activity delete-hooks hard-delete ALL rows including
+// tombstones. See src/lib/attribution-manual.ts.
 model ActivityGoalLink {
   id           String   @id @default(cuid())
   activityType String // e.g. workout | hike | nutrition | measurement | metric | baseline
   activityId   String
   goalId       String
-  source       String   @default("auto") // auto | explicit
+  source       String   @default("auto") // auto | explicit | removed (tombstone — hidden from default reads)
   note         String?
   // Denormalized activity date (USER_TZ midnight, via parseDateInput). Range
   // queries MUST filter on this, never on link createdAt — links can be

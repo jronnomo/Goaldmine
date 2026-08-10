@@ -15,12 +15,16 @@
 //     membership probe, zero writes. Pre-Program tenants are untouched.
 //   - Only ACTIVE member goals are ever linked (the pure evaluators enforce
 //     this; see attribution.ts).
-//   - IDEMPOTENT + EXPLICIT-SAFE by construction: links are written with ONE
-//     top-level `createMany({ skipDuplicates: true })` — Postgres
-//     ON CONFLICT DO NOTHING against @@unique([activityType, activityId,
-//     goalId]). A pre-existing row — INCLUDING a source:"explicit" one — is
-//     never updated, downgraded, or deleted; there is no update path in this
-//     module at all (v1 append-only).
+//   - IDEMPOTENT + EXPLICIT-SAFE + TOMBSTONE-SAFE by construction: links are
+//     written with ONE top-level `createMany({ skipDuplicates: true })` —
+//     Postgres ON CONFLICT DO NOTHING against @@unique([activityType,
+//     activityId, goalId]). A pre-existing row — INCLUDING a
+//     source:"explicit" one AND a source:"removed" TOMBSTONE (UXR-PV-89) —
+//     is never updated, downgraded, or deleted; there is no update path in
+//     this module at all (append-only). The tombstone occupies the unique
+//     key, so an explicitly-removed link can never be resurrected by these
+//     hooks or by scripts/backfill-attribution.ts. Coverage:
+//     attribution-manual.test.ts ("auto-engine cannot resurrect …").
 //   - TOP-LEVEL SCOPED WRITES ONLY (gotcha §B.10): the createMany is a direct
 //     model call on a getDb()-derived client (or its $transaction tx client),
 //     so the $extends extension injects userId into every row. NEVER a

@@ -41,7 +41,7 @@ import { deleteLogEntryCore } from "@/lib/log-entry-core";
 
 // ── Fake scoped client with an in-memory ActivityGoalLink store ──────────────
 
-type LinkRow = { id: string; activityType: string; activityId: string };
+type LinkRow = { id: string; activityType: string; activityId: string; source?: string };
 
 function p2025(): Error {
   return Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
@@ -147,6 +147,25 @@ describe("deleteWorkoutCore", () => {
 
     await expect(deleteWorkoutCore("nope")).rejects.toMatchObject({ code: "P2025" });
     expect(tx.activityGoalLink.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("hard-deletes TOMBSTONES too — cleanup filters on (type, id) only, never on source (UXR-PV-89)", async () => {
+    // A removed-source tombstone's job ends with its activity: once the
+    // activity row is gone there is nothing left to block, so the delete
+    // hook must not leave tombstone rows behind as permanent garbage.
+    const { tx, links } = makeFake([
+      { id: "l1", activityType: "workout", activityId: "w1", source: "auto" },
+      { id: "l2", activityType: "workout", activityId: "w1", source: "removed" }, // tombstone
+      { id: "l3", activityType: "workout", activityId: "w2", source: "removed" }, // other activity — survives
+    ]);
+
+    await deleteWorkoutCore("w1");
+
+    const where = tx.activityGoalLink.deleteMany.mock.calls[0]![0]!
+      .where as Record<string, unknown>;
+    expect(where).toEqual({ activityType: "workout", activityId: "w1" });
+    expect(where.source).toBeUndefined(); // no source filter — tombstones included
+    expect(links.map((l) => l.id)).toEqual(["l3"]);
   });
 });
 

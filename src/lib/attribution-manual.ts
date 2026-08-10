@@ -14,19 +14,35 @@
 // the activity table (see src/lib/activity-links.ts for the canonical type
 // strings and the delete-hook/orphan-verifier compensation story).
 //
-// Semantics (issue #278 ACs):
+// Semantics (issue #278 ACs, remove re-specced by UXR-PV-89):
 //   add    → create a source='explicit' link, or UPGRADE an existing 'auto'
 //            row to 'explicit' IN PLACE (explicit-beats-auto; the unique
 //            constraint on (activityType, activityId, goalId) is never asked
-//            to absorb a duplicate). activityDate is denormalized from the
-//            ACTIVITY row's own date column at write time — never "now" —
-//            so retroactive attribution of an old activity lands on the day
-//            the activity happened.
-//   remove → delete the link regardless of source ('remove always wins', the
-//            v1 no-appeals rule). Removing a link that does not exist is an
-//            idempotent no-op success, and remove deliberately does NOT
-//            require the underlying activity to still exist (it is also the
-//            cleanup valve for orphaned links).
+//            to absorb a duplicate). Adding over a source='removed' TOMBSTONE
+//            REVIVES it to 'explicit' — the same in-place update path, so
+//            "the coach changed their mind" needs no delete+recreate.
+//            activityDate is denormalized from the ACTIVITY row's own date
+//            column at write time — never "now" — so retroactive attribution
+//            of an old activity lands on the day the activity happened.
+//   remove → TOMBSTONE, not delete (UXR-PV-89): the row is UPDATED to
+//            source='removed' and kept, so the unique key keeps occupying the
+//            (activityType, activityId, goalId) slot and the auto-link
+//            engine's `createMany({ skipDuplicates: true })` (ON CONFLICT DO
+//            NOTHING) can never resurrect the link — not at log time, not
+//            from scripts/backfill-attribution.ts. 'Remove always wins' is
+//            now DURABLE, which a hard delete never was: delete the row,
+//            re-run the rules over that activity (a backfill, say) and the
+//            link returned. Removing a link that does not exist — or one
+//            already tombstoned — is an idempotent no-op success, and remove
+//            deliberately does NOT require the underlying activity to still
+//            exist. Tombstones whose activity row is later deleted are still
+//            garbage: the activity delete-hooks hard-delete ALL of the
+//            activity's link rows including tombstones (the tombstone's job
+//            is done — nothing can re-link a nonexistent activity), and the
+//            orphan verifier (scripts/verify-activity-links.ts) still flags
+//            any tombstone that outlives its activity row.
+//            Default reads exclude tombstones: listActivityLinksCore filters
+//            source='removed' out unless includeRemoved is passed (audit).
 //
 // Scoping: every DB access goes through getDb() (ActivityGoalLink, Goal and
 // all six activity models are SCOPED_MODELS) — userId is injected into reads
@@ -151,17 +167,21 @@ export interface AttributeActivityCoreInput {
 export interface AttributeActivityCoreResult {
   action: "add" | "remove";
   /** false = idempotent no-op (link already explicit and identical / nothing
-   *  to remove). */
+   *  to remove / already tombstoned). */
   changed: boolean;
   /** add only: an existing source='auto' row was upgraded to 'explicit' in
    *  place (no second row was created). */
   upgraded: boolean;
+  /** add only: an existing source='removed' TOMBSTONE was revived to
+   *  'explicit' in place (UXR-PV-89 — the coach changed their mind). */
+  revived: boolean;
   /** add only. */
   goalObjective: string | null;
   /** add only: the resulting link row. */
   link: ActivityLinkRow | null;
-  /** remove only: the source of the link that was deleted (null when there
-   *  was nothing to remove). Remove always wins regardless of this value. */
+  /** remove only: the source of the link that was tombstoned (null when
+   *  there was nothing to remove, or it was already a tombstone). Remove
+   *  always wins regardless of this value. */
   removedSource: string | null;
 }
 
@@ -189,19 +209,24 @@ export async function attributeActivityCore(
         },
         select: { id: true, source: true },
       });
-      if (!existing) {
+      if (!existing || existing.source === "removed") {
+        // Nothing to remove, or already tombstoned — idempotent no-op.
         return {
           action: "remove" as const,
           changed: false,
           upgraded: false,
+          revived: false,
           goalObjective: null,
           link: null,
           removedSource: null,
         };
       }
-      // Remove always wins — explicit and auto links delete identically, and
-      // the underlying activity is NOT required to still exist.
-      await tx.activityGoalLink.delete({
+      // Remove always wins — explicit and auto links tombstone identically,
+      // and the underlying activity is NOT required to still exist. The row
+      // is UPDATED to source='removed', never deleted (UXR-PV-89): the kept
+      // row's unique key is what blocks the auto-engine/backfill upsert from
+      // resurrecting the link.
+      await tx.activityGoalLink.update({
         where: {
           activityType_activityId_goalId: {
             activityType: input.activityType,
@@ -209,12 +234,14 @@ export async function attributeActivityCore(
             goalId: input.goalId,
           },
         },
+        data: { source: "removed" },
         select: { id: true },
       });
       return {
         action: "remove" as const,
         changed: true,
         upgraded: false,
+        revived: false,
         goalObjective: null,
         link: null,
         removedSource: existing.source,
@@ -270,16 +297,17 @@ export async function attributeActivityCore(
         action: "add" as const,
         changed: true,
         upgraded: false,
+        revived: false,
         goalObjective: goal.objective,
         link,
         removedSource: null,
       };
     }
 
-    // Existing row: upgrade auto → explicit in place (explicit-beats-auto;
-    // never a second row), refresh the denormalized activityDate if the
-    // activity's own date drifted, and replace the note only when one was
-    // provided.
+    // Existing row: upgrade auto → explicit (explicit-beats-auto) or REVIVE
+    // a removed tombstone → explicit (UXR-PV-89) — both IN PLACE, never a
+    // second row. Refresh the denormalized activityDate if the activity's
+    // own date drifted, and replace the note only when one was provided.
     const sourceChanges = existing.source !== "explicit";
     const dateChanges = existing.activityDate.getTime() !== activityDate.getTime();
     const noteChanges =
@@ -290,6 +318,7 @@ export async function attributeActivityCore(
         action: "add" as const,
         changed: false,
         upgraded: false,
+        revived: false,
         goalObjective: goal.objective,
         link: existing,
         removedSource: null,
@@ -314,7 +343,8 @@ export async function attributeActivityCore(
     return {
       action: "add" as const,
       changed: true,
-      upgraded: sourceChanges,
+      upgraded: existing.source === "auto",
+      revived: existing.source === "removed",
       goalObjective: goal.objective,
       link,
       removedSource: null,
@@ -334,6 +364,10 @@ export async function attributeActivityCore(
 // ACTIVE Program (the "what got attributed this block" read). No active
 // Program and no goalId is a friendly error, not an empty success — an
 // ambiguous scope should be visible, not silently zero.
+//
+// UXR-PV-89: source='removed' TOMBSTONES are excluded by default — a removed
+// link must read as removed everywhere counts/marks/lists are derived. Pass
+// includeRemoved: true for the audit view ("what did I remove?").
 // ---------------------------------------------------------------------------
 
 export const LIST_ACTIVITY_LINKS_DEFAULT_LIMIT = 100;
@@ -347,6 +381,9 @@ export interface ListActivityLinksCoreInput {
   from?: Date;
   to?: Date;
   limit?: number;
+  /** Include source='removed' tombstones (default false — removed links are
+   *  hidden from every default read; this is the audit valve). */
+  includeRemoved?: boolean;
 }
 
 export interface ListActivityLinksCoreResult {
@@ -417,6 +454,8 @@ export async function listActivityLinksCore(
       goalId: scope.goalIds.length === 1 ? scope.goalIds[0] : { in: scope.goalIds },
       ...(input.activityType ? { activityType: input.activityType } : {}),
       ...(activityDate.gte || activityDate.lte ? { activityDate } : {}),
+      // UXR-PV-89: tombstones stay out of the default read.
+      ...(input.includeRemoved ? {} : { source: { not: "removed" } }),
     },
     orderBy: [{ activityDate: "desc" }, { createdAt: "desc" }],
     take: limit + 1, // one extra row = cheap truncation signal

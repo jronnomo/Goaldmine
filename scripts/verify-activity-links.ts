@@ -40,11 +40,17 @@ import {
 
 const BATCH = 500;
 
+// `source` rides along for REPORTING (an orphaned tombstone prints as such);
+// orphan CLASSIFICATION stays source-blind — a source='removed' tombstone
+// whose activity row is gone is still an orphan (UXR-PV-89: the tombstone
+// only exists to block re-linking of a LIVE activity; the delete-hooks
+// hard-delete all link rows including tombstones, so any survivor is drift).
 const LINK_SELECT = {
   id: true,
   activityType: true,
   activityId: true,
   goalId: true,
+  source: true,
   userId: true,
   activityDate: true,
   createdAt: true,
@@ -102,7 +108,7 @@ function ageDays(from: Date, now: Date): number {
 function printFinding(label: string, link: ActivityLinkRecord, now: Date): void {
   console.log(
     `  ${label}  link=${link.id}  type=${link.activityType}  activityId=${link.activityId}  ` +
-      `goalId=${link.goalId}  userId=${link.userId ?? "(null)"}  ` +
+      `goalId=${link.goalId}  source=${link.source}  userId=${link.userId ?? "(null)"}  ` +
       `activityDate=${link.activityDate.toISOString().slice(0, 10)}  ` +
       `age=${ageDays(link.createdAt, now)}d`,
   );
