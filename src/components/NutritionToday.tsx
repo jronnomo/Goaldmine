@@ -4,6 +4,8 @@ import { Bullseye } from "@/components/Bullseye";
 import { MEAL_SLOTS, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
 import { sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
+import { dateKey } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
@@ -131,6 +133,17 @@ export function NutritionToday({
     arr.push(log);
     byMeal.set(log.mealType, arr);
   }
+
+  // #295: compact stubs of the already-fetched logs → the composer's
+  // append-vs-separate choice. Derived here (server side on RSC hosts) so the
+  // composer never needs its own fetch to know a slot already has an entry.
+  const existingMeals: ExistingMealStub[] = logs.map((l) => ({
+    id: l.id,
+    dateKey: dateKey(l.date),
+    mealType: l.mealType,
+    itemCount: asItems(l.items).length,
+    dateISO: l.date.toISOString(),
+  }));
 
   // Build one row per slot, then drop slots that are neither planned nor
   // logged (no more bare "—" rows for unused meal times).
@@ -299,7 +312,11 @@ export function NutritionToday({
       )}
       {showLogForm && (
         <div className="border-t border-[var(--border)] pt-3">
-          <LogNutritionForm quickPickFoods={quickPickFoods} defaultDate={defaultDate} />
+          <LogNutritionForm
+            quickPickFoods={quickPickFoods}
+            defaultDate={defaultDate}
+            existingMeals={existingMeals}
+          />
         </div>
       )}
     </div>

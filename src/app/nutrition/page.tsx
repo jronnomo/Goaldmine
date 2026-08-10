@@ -19,6 +19,7 @@ import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
 import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,10 @@ export default async function NutritionPage() {
   // Group logs by USER_TZ day, building serialized rows for the client island.
   const groupMap = new Map<string, NutritionRowData[]>();
   const order: string[] = [];
+  // #295: every fetched row (last 30 days) as an append-choice stub, so the
+  // choice also fires when the user backdates the composer's date control
+  // (#293) to a day that already has that slot logged.
+  const existingMeals: ExistingMealStub[] = [];
   for (const log of logs) {
     const k = dateKey(log.date);
     if (!groupMap.has(k)) {
@@ -77,6 +82,13 @@ export default async function NutritionPage() {
       order.push(k);
     }
     const items = asItems(log.items);
+    existingMeals.push({
+      id: log.id,
+      dateKey: k,
+      mealType: log.mealType,
+      itemCount: items.length,
+      dateISO: new Date(log.date).toISOString(),
+    });
     const datetimeLocal = toDatetimeLocalValue(new Date(log.date));
     // Planned calorie target — today only, when a plan slot carries calories.
     const slot = todayPlan ? todayPlan[log.mealType as MealSlot] : null;
@@ -145,6 +157,7 @@ export default async function NutritionPage() {
           libraryFoods={libraryFoods}
           trackedSoFar={trackedTodayMacros}
           dayTarget={dayTargetMacros}
+          existingMeals={existingMeals}
         />
       </Card>
 

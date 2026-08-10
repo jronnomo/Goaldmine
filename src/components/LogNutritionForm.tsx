@@ -3,6 +3,7 @@
 import { MealComposer } from "@/components/MealComposer";
 import type { LibraryFood } from "@/lib/food-types";
 import type { DayMacros } from "@/lib/nutrition-macros";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
 import {
   mergeFoodIntoForm,
   mergeEstimateIntoForm,
@@ -25,6 +26,7 @@ export function LogNutritionForm({
   dayTarget,
   onLogged,
   defaultDate,
+  existingMeals,
 }: {
   quickPickFoods?: LibraryFood[];
   libraryFoods?: LibraryFood[];
@@ -37,6 +39,9 @@ export function LogNutritionForm({
   /** Pre-seed the composer's date/time control to this dateKey ("YYYY-MM-DD")
    *  instead of "now" — see MealComposer's `defaultDate` (#294). */
   defaultDate?: string;
+  /** Already-logged meal stubs for the append-vs-separate choice (#295) —
+   *  see MealComposer's `existingMeals`. */
+  existingMeals?: ExistingMealStub[];
 }) {
   return (
     <MealComposer
@@ -47,6 +52,7 @@ export function LogNutritionForm({
       dayTarget={dayTarget}
       onLogged={onLogged}
       defaultDate={defaultDate}
+      existingMeals={existingMeals}
     />
   );
 }
