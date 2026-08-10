@@ -14,7 +14,7 @@ import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getGoalCount } from "@/lib/goal-count";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
-import { getActiveProgram, phaseForWeekIndex, splitDayForRotationDay } from "@/lib/program";
+import { getActiveProgram, getActiveProgramMembership, phaseForWeekIndex, splitDayForRotationDay } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
@@ -147,15 +147,34 @@ export default async function HomePage() {
     );
   }
 
-  // AC-A: project focus goal wins over any lingering fitness Program rows.
-  // CharacterHeader/gameState are skipped on this path (no computeGameState call below).
+  // #289: project-focus routing is Program-aware. A project-focus user who is
+  // a member of an active multi-domain Program renders the SAME unified Today
+  // as every other Program tenant (one timeline, per-item goal marks —
+  // RFC §7); ProjectTodayView survives ONLY as the zero-Program legacy
+  // fallback (single-goal project tenants that predate the Program model).
+  // The membership probe runs on project-focus renders only — fitness-focus
+  // and zero-goal paths never pay it (resolveDay makes its own lookup later
+  // either way).
   if (focusGoal?.kind === "project") {
-    return <ProjectTodayView goal={focusGoal} />;
+    const projectMembership = await getActiveProgramMembership();
+    const hasActiveProgramMembers =
+      projectMembership !== null &&
+      projectMembership.memberGoals.some((g) => g.status === "active");
+    if (!hasActiveProgramMembers) {
+      // Legacy tenant: no active Program → the original project view,
+      // unchanged (CharacterHeader/gameState skipped inside it, as before).
+      return <ProjectTodayView goal={focusGoal} />;
+    }
+    // Program member → fall through to the unified path. NOTE: `program`
+    // (the ROTATION plan snapshot) may legitimately be null on this path.
   }
 
-  // [v2] program is guaranteed non-null at this point:
-  // if it were null, one of the two guards above would have returned.
-  // Truth table: (null + project) → early return; (null + fitness/null) → NoActiveProgram.
+  // [v2 → #289] `program` (rotation snapshot) nullability truth table:
+  //   (null + fitness/null focus)          → get-started card above;
+  //   (null + project focus + no Program)  → ProjectTodayView above;
+  //   (null + project focus + Program)     → falls through to HERE — every
+  //   `program` use below is null-guarded; resolveDay resolves the day as
+  //   out_of_plan and the timeline carries the Program's real asks.
   // #285: getTodayContext deleted — resolveDay (below) is the single
   // day-resolver; week/phase/split-day derive from its output further down.
   // now/todayStart/todayEnd/todayDateKey are computed above, before the
@@ -181,7 +200,9 @@ export default async function HomePage() {
       getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
       getQuickPickFoods(),
       // GoalLike fields for computeGoalFeasibility — guarded because focusGoal can be null.
-      // The project early-return above already fired so focusGoal is fitness or null here.
+      // #289: focusGoal may be fitness, null, OR a project goal (a project-focus
+      // Program member falls through to this path); computeGoalFeasibility is
+      // kind-aware — ProjectTodayView called it for the same goal before.
       // A null focusGoal → goalForFeas resolves null → feasibility = null → no card rendered.
       focusGoal
         ? db.goal.findUnique({
@@ -301,8 +322,12 @@ export default async function HomePage() {
   // Out-of-plan dates (before startedOn / past totalWeeks) now render honestly:
   // weekIndex/phase/split-day are null, so the header shows "Off plan" instead
   // of the old function's clamped phantom rotation copy.
-  const todayPhase = phaseForWeekIndex(program!.template, resolved.weekIndex);
-  const rotationDayTemplate = splitDayForRotationDay(program!.template, resolved.rotationDay);
+  // #289: null-guarded — a project-focus Program tenant may have no rotation
+  // plan; both derive to null and the hero renders its Program-aware fallback.
+  const todayPhase = program ? phaseForWeekIndex(program.template, resolved.weekIndex) : null;
+  const rotationDayTemplate = program
+    ? splitDayForRotationDay(program.template, resolved.rotationDay)
+    : null;
 
   const baselinesDue = resolved.baselinesDue;
   // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask):
@@ -426,18 +451,32 @@ export default async function HomePage() {
         className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
         aria-label="Today's workout"
       >
-        {/* Eyeline: week / phase */}
+        {/* Eyeline: week / phase. #289: a Program tenant outside any rotation
+            window (or with no rotation plan at all — the project-focus case)
+            reads the Program's own name instead of a bare "Off plan"; the
+            zero-Program render is unchanged. */}
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
             {resolved.weekIndex !== null
               ? `Week ${resolved.weekIndex}${todayPhase ? ` · Phase ${todayPhase.index} · ${todayPhase.name}` : ""}`
-              : "Off plan"}
+              : isProgramUser && resolved.program
+                ? resolved.program.name
+                : "Off plan"}
           </p>
         </div>
 
-        {/* Title */}
+        {/* Title. #289: for a Program tenant an out-of-rotation day is still a
+            real day (the timeline below carries the asks) — "Today", not the
+            alarming "Off plan". Zero-Program render unchanged. */}
         <h1 className="text-2xl font-semibold tracking-tight">
-          {workoutTitle ?? (isRestDay ? "Rest / Active Recovery" : isOutOfPlan ? "Off plan" : "Today")}
+          {workoutTitle ??
+            (isRestDay
+              ? "Rest / Active Recovery"
+              : isOutOfPlan
+                ? isProgramUser
+                  ? "Today"
+                  : "Off plan"
+                : "Today")}
         </h1>
 
         {/* Date + summary */}
