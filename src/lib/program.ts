@@ -151,10 +151,13 @@ export async function getActiveProgramMembership(): Promise<ActiveProgramMembers
   if (!program) return null;
 
   // All attached goals, any status, explicit select (never leaks userId).
-  // createdAt asc = stable, attachment-ordered listing.
+  // createdAt asc = stable, attachment-ordered listing. The id tiebreak makes
+  // the order TOTAL — two goals seeded in the same second must not swap
+  // positions between renders, because goal-identity.ts derives each goal's
+  // mark slot (● ■ ▲) from this order (UXR-PV-04).
   const memberGoals = await db.goal.findMany({
     where: { programId: program.id },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { id: true, objective: true, kind: true, status: true },
   });
 

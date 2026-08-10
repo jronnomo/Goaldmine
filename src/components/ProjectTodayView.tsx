@@ -1,11 +1,24 @@
 // src/components/ProjectTodayView.tsx
 // Server component — no "use client".
+//
+// ⚠ LEGACY-TENANT SCOPE (#289): this view survives ONLY as the zero-Program
+// project-focus fallback — a tenant whose focus goal is kind:"project" and
+// who has NO active multi-domain Program (or none with an active member).
+// Every Program member — project-focused or not — renders the Unified Today
+// timeline in src/app/page.tsx instead (one timeline, per-item goal marks;
+// RFC §7). Do not add new call sites; when the last zero-Program project
+// tenant is migrated onto a Program, this file becomes unreachable and can
+// be deleted outright (its remaining local pieces — UrgencyChip,
+// MILESTONE_WARNING_DAYS — are used nowhere else; TypeBadge was already
+// lifted to src/components/TypeBadge.tsx, UXR-PV-84).
+//
 // REQ-002: QuestCard Hero layout for project focus goals.
 // One Promise.all: today's items, latest MRR entry, next milestone, goal targets.
 // Does NOT call computeGameState() — CharacterHeader is omitted on the project path.
 
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { TypeBadge } from "@/components/TypeBadge";
 import { TodayCelebration } from "@/components/TodayCelebration";
 import { getDb } from "@/lib/db";
 import { startOfDay, endOfDay, dateKey, addDays, USER_TZ } from "@/lib/calendar";
@@ -334,27 +347,8 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-function TypeBadge({ type }: { type: string }) {
-  const cls = typeBadgeClass(type);
-  return (
-    <span className={`shrink-0 text-xs rounded-full px-2 py-0.5 border ${cls}`}>
-      {type}
-    </span>
-  );
-}
-
-function typeBadgeClass(type: string): string {
-  // UXR-s4-10: task/review neutral; milestone accent; launch-step warning.
-  switch (type) {
-    case "milestone":
-      return "border-[var(--accent)]/40 bg-[var(--accent-soft)] text-[var(--accent)]";
-    case "launch-step":
-      return "border-[var(--warning)]/40 bg-[var(--warning)]/10 text-[var(--warning)]";
-    default: // task, review, and unknown types
-      return "border-[var(--border)] text-[var(--muted)]";
-  }
-}
+// TypeBadge/typeBadgeClass moved to src/components/TypeBadge.tsx (UXR-PV-84) —
+// shared with the Unified Today timeline's scheduled-item rows.
 
 function UrgencyChip({ days }: { days: number }) {
   // UXR-s4-13: ≤14d → warning; overdue (< 0) → danger; >14d → no chip.

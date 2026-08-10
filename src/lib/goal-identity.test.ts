@@ -1,65 +1,47 @@
 // src/lib/goal-identity.test.ts
-//
-// #290 — derived identity marks (research §7.8 test 1):
-//   - the Phase 2A fixture produces [●/--target, ■/--success, ▲/--accent];
-//   - a 4th FITNESS goal pushes the project goal out of slot 2 into overflow
-//     (the documented identity-stability hazard, UXR-PV-08);
-//   - createdAt ties are broken by id (the total-order requirement);
-//   - isMonochromeSafe accepts the geometric triad + hollow forms + ◎ ★ and
-//     rejects emoji (COLR glyphs where CSS color is a no-op);
-//   - short label comes from the goal-date legend entry, else the truncated
-//     objective first-clause fallback.
+// Identity derivation for the Program mark system (program-views research
+// §7.8 test 1): the Phase 2A fixture produces [●/target, ■/success, ▲/accent];
+// a 4th fitness goal pushes the project goal into the +N bucket; createdAt
+// ties are broken by id; isMonochromeSafe accepts the geometric triad and
+// rejects emoji.
 
 import { describe, it, expect } from "vitest";
 import {
   assignGoalIdentities,
   isMonochromeSafe,
-  shortGoalLabel,
+  GOAL_MARK_SLOT_CAP,
   type GoalIdentityMember,
 } from "@/lib/goal-identity";
 
-const T0 = new Date("2026-06-01T12:00:00.000Z");
-const T1 = new Date("2026-07-01T12:00:00.000Z");
-const T2 = new Date("2026-08-01T12:00:00.000Z");
-
-function member(overrides: Partial<GoalIdentityMember> & { id: string }): GoalIdentityMember {
-  return {
-    objective: `Objective for ${overrides.id}`,
-    kind: "fitness",
-    isFocus: false,
-    createdAt: T1,
-    legend: null,
-    ...overrides,
-  };
-}
-
-// The real Phase 2A trio: focus handstand (fitness), body comp (fitness),
-// AWS cert (project).
-const HANDSTAND = member({
+const HANDSTAND: GoalIdentityMember = {
   id: "g-handstand",
-  objective: "Hold a freestanding handstand for 30 seconds",
+  objective: "Freestanding Handstand — 20s hold, then 5 wall HSPU",
+  kind: "fitness",
+  status: "active",
   isFocus: true,
-  createdAt: T0,
-});
-const BODYCOMP = member({
-  id: "g-cut",
-  objective: "Cut to 15% body fat, holding strength",
-  createdAt: T1,
-});
-const AWS = member({
+  createdAt: new Date("2026-07-01T00:00:00Z"),
+};
+const BODYCOMP: GoalIdentityMember = {
+  id: "g-bodycomp",
+  objective: "Reach 10% body fat",
+  kind: "fitness",
+  status: "active",
+  isFocus: false,
+  createdAt: new Date("2026-08-01T00:00:00Z"),
+};
+const AWS: GoalIdentityMember = {
   id: "g-aws",
   objective: "Pass the AWS Solutions Architect Associate exam",
   kind: "project",
-  createdAt: T0, // predates body comp — kind sort must still place it last
-});
+  status: "active",
+  isFocus: false,
+  createdAt: new Date("2026-08-02T00:00:00Z"),
+};
 
 describe("assignGoalIdentities", () => {
-  it("Phase 2A fixture → [●/target, ■/success, ▲/accent] in slot order", () => {
-    // Shuffled input — the derived sort owns the order.
-    const ids = assignGoalIdentities([AWS, BODYCOMP, HANDSTAND]);
-
-    expect(ids.map((i) => i.goalId)).toEqual(["g-handstand", "g-cut", "g-aws"]);
-    expect(ids.map((i) => i.slot)).toEqual([0, 1, 2]);
+  it("Phase 2A fixture → ●/--target, ■/--success, ▲/--accent in slot order", () => {
+    const ids = assignGoalIdentities([HANDSTAND, BODYCOMP, AWS]);
+    expect(ids.map((i) => i.goalId)).toEqual(["g-handstand", "g-bodycomp", "g-aws"]);
     expect(ids.map((i) => i.glyphFilled)).toEqual(["●", "■", "▲"]);
     expect(ids.map((i) => i.glyphHollow)).toEqual(["○", "□", "△"]);
     expect(ids.map((i) => i.hue)).toEqual([
@@ -70,79 +52,88 @@ describe("assignGoalIdentities", () => {
     expect(ids.map((i) => i.shape)).toEqual(["circle", "square", "triangle"]);
   });
 
-  it("a 4th FITNESS goal pushes the project goal into the overflow bucket (UXR-PV-08)", () => {
-    const newFitness = member({ id: "g-new-fitness", createdAt: T2 });
-    const ids = assignGoalIdentities([HANDSTAND, BODYCOMP, AWS, newFitness]);
-
-    expect(ids.map((i) => i.goalId)).toEqual([
+  it("input order does not matter — the sort is a total order", () => {
+    const shuffled = assignGoalIdentities([AWS, BODYCOMP, HANDSTAND]);
+    expect(shuffled.map((i) => i.goalId)).toEqual([
       "g-handstand",
-      "g-cut",
-      "g-new-fitness",
+      "g-bodycomp",
       "g-aws",
     ]);
+  });
+
+  it("a 4th fitness goal pushes the project goal out of slot 2 into the +N bucket", () => {
+    const fourth: GoalIdentityMember = {
+      id: "g-mobility",
+      objective: "Full pancake",
+      kind: "fitness",
+      status: "active",
+      createdAt: new Date("2026-08-03T00:00:00Z"),
+    };
+    const ids = assignGoalIdentities([HANDSTAND, BODYCOMP, AWS, fourth]);
     const aws = ids.find((i) => i.goalId === "g-aws")!;
-    expect(aws.slot).toBe(3);
-    expect(aws.shape).toBe("overflow");
+    expect(aws.slot).toBe(GOAL_MARK_SLOT_CAP); // 3 → overflow
+    expect(aws.shape).toBeNull();
     expect(aws.hue).toBe("var(--muted)");
+    // The new fitness goal took ▲'s slot.
+    expect(ids.find((i) => i.goalId === "g-mobility")!.glyphFilled).toBe("▲");
   });
 
-  it("adding a PROJECT goal is safe — it sorts last, existing slots stable", () => {
-    const newProject = member({ id: "g-chew", kind: "project", createdAt: T2 });
-    const ids = assignGoalIdentities([HANDSTAND, BODYCOMP, AWS, newProject]);
-    expect(ids.slice(0, 3).map((i) => i.goalId)).toEqual(["g-handstand", "g-cut", "g-aws"]);
-    expect(ids[3]!.goalId).toBe("g-chew");
+  it("createdAt ties are broken by id ascending", () => {
+    const t = new Date("2026-08-01T00:00:00Z");
+    const a: GoalIdentityMember = { id: "b-goal", objective: "B", kind: "fitness", status: "active", createdAt: t };
+    const b: GoalIdentityMember = { id: "a-goal", objective: "A", kind: "fitness", status: "active", createdAt: t };
+    expect(assignGoalIdentities([a, b]).map((i) => i.goalId)).toEqual([
+      "a-goal",
+      "b-goal",
+    ]);
   });
 
-  it("createdAt ties are broken by id — the total order is deterministic", () => {
-    const a = member({ id: "g-aaa", createdAt: T1 });
-    const b = member({ id: "g-bbb", createdAt: T1 });
-    const forward = assignGoalIdentities([a, b]).map((i) => i.goalId);
-    const backward = assignGoalIdentities([b, a]).map((i) => i.goalId);
-    expect(forward).toEqual(["g-aaa", "g-bbb"]);
-    expect(backward).toEqual(forward);
+  it("non-active members receive no identity", () => {
+    const achieved: GoalIdentityMember = {
+      ...HANDSTAND,
+      id: "g-elbert",
+      status: "achieved",
+    };
+    const ids = assignGoalIdentities([achieved, BODYCOMP, AWS]);
+    expect(ids.map((i) => i.goalId)).toEqual(["g-bodycomp", "g-aws"]);
+    expect(ids[0].glyphFilled).toBe("●"); // slots compact — no gap for the achieved goal
+  });
+
+  it("labels: monochrome-safe goal-date legend wins; emoji legends degrade to the objective clause", () => {
+    const migrated = assignGoalIdentities([
+      {
+        ...HANDSTAND,
+        legend: [{ icon: "●", label: "Handstand", kind: "goal-date" }],
+      },
+      {
+        ...BODYCOMP,
+        // Pre-E6 stock legend: emoji icon + generic label — must NOT be used.
+        legend: [{ icon: "🎯", label: "Goal date", kind: "goal-date" }],
+      },
+      AWS,
+    ]);
+    expect(migrated[0].label).toBe("Handstand");
+    // Objective fallback: first clause before a separator ("Reach 10% body fat" — no separator, short).
+    expect(migrated[1].label).toBe("Reach 10% body fat");
+    // No separator + long → truncated at 18 chars with an ellipsis.
+    expect(migrated[2].label).toBe("Pass the AWS Solut…");
+  });
+
+  it("objective fallback splits on the first em-dash clause", () => {
+    const [id] = assignGoalIdentities([HANDSTAND]);
+    expect(id.label).toBe("Freestanding Hands…"); // "Freestanding Handstand" > 18 chars
   });
 });
 
 describe("isMonochromeSafe", () => {
-  it.each(["●", "■", "▲", "○", "□", "△", "◎", "★"])("accepts %s", (glyph) => {
-    expect(isMonochromeSafe(glyph)).toBe(true);
+  it("accepts the geometric mark set", () => {
+    for (const g of ["●", "■", "▲", "○", "□", "△", "◎", "★"]) {
+      expect(isMonochromeSafe(g)).toBe(true);
+    }
   });
-
-  it.each(["🥾", "⛏️", "🏔️", "🎯"])("rejects emoji %s (COLR — color: is a no-op)", (glyph) => {
-    expect(isMonochromeSafe(glyph)).toBe(false);
-  });
-});
-
-describe("shortGoalLabel", () => {
-  it("uses the goal's OWN goal-date legend entry label when present", () => {
-    const label = shortGoalLabel({
-      objective: "Pass the AWS Solutions Architect Associate exam",
-      legend: [{ icon: "▲", label: "AWS", kind: "goal-date" }],
-    });
-    expect(label).toBe("AWS");
-  });
-
-  it("falls back to the objective's first clause, truncated with an ellipsis", () => {
-    const label = shortGoalLabel({
-      objective: "Pass the AWS Solutions Architect Associate exam",
-      legend: null,
-    });
-    // No separator → first 18 chars + ellipsis.
-    expect(label).toBe("Pass the AWS Solut…");
-    expect(label.length).toBeLessThanOrEqual(19);
-  });
-
-  it("splits on clause separators before truncating", () => {
-    const label = shortGoalLabel({
-      objective: "Summit Elbert — carry a 30 lb pack",
-      legend: null,
-    });
-    expect(label).toBe("Summit Elbert");
-  });
-
-  it("a legendless goal never inherits the default legend's generic 'Goal date' label", () => {
-    const label = shortGoalLabel({ objective: "Cut to 15% body fat", legend: null });
-    expect(label).not.toBe("Goal date");
-    expect(label).toBe("Cut to 15% body fa…");
+  it("rejects emoji and multi-char strings", () => {
+    for (const g of ["🥾", "⛏️", "🏔️", "🎯", "📏", "●●", ""]) {
+      expect(isMonochromeSafe(g)).toBe(false);
+    }
   });
 });

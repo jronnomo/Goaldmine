@@ -1,62 +1,73 @@
 // src/lib/goal-identity.ts
 //
-// Derived per-goal identity marks for the Program surfaces (#290, UX research
-// docs/ux-research/program-views.md §7.0 / rules R1–R4).
+// Per-goal visual identity for the Program surfaces (Unified Today, /program,
+// cross-goal calendar) — the "Marked Lane" direction of
+// docs/ux-research/program-views.md (§7.0, UXR-PV-02/03/04).
 //
-// Identity is carried by SHAPE, never hue: the palette is iso-luminant (every
-// chromatic token pair measures 1.00–1.35:1 against each other — research
-// finding F1), so hue is a recognition accelerator layered on top, and a
-// grayscale screenshot must lose nothing. The triad is ● ■ ▲ (hollow ○ □ △) —
-// deliberately NOT ◆, which MarkerIcon hardcodes as the scheduled-item marker
-// (F3 / UXR-PV-03).
+// Identity is a MONOCHROME GEOMETRIC MARK derived from a slot, never a schema
+// column and never a hue alone: the palette is iso-luminant (research F1 — every
+// chromatic token pair lands 1.00–1.35:1 in grayscale), so SHAPE carries the
+// identity and the hue token is reinforcement only. `▲` (not `◆`) because `◆`
+// is already the hardcoded scheduled-item marker (UXR-PV-03).
 //
-// The slot is DERIVED, never a schema column (UXR-PV-04): sort key
-// `isFocus DESC, (kind === 'project') ASC, createdAt ASC, id ASC`. The final
-// `id` tiebreak is not optional — without a total order, two goals seeded in
-// the same second could swap ● and ■ between renders. Known accepted hazards:
-// a new FITNESS member goal sorts ahead of an existing PROJECT member and can
-// push it into the overflow bucket (UXR-PV-08), and archiving a member
-// re-flows the remaining slots (UXR-PV-93 — signed off: rare, user-initiated,
-// not worth a persisted slot column).
+// Slot sort (UXR-PV-04, binding): isFocus DESC, (kind === "project") ASC,
+// createdAt ASC, id ASC. The final `id` tiebreak is NOT optional — without a
+// total order, two goals seeded in the same second would swap ● and ■ between
+// renders. Callers that only have `ResolvedDay.program.memberGoals` (no
+// isFocus/createdAt) still get a deterministic order: missing isFocus compares
+// as false, missing createdAt compares as equal, and `id` settles it.
 //
-// Pure + client-safe: no Prisma, no IO.
+// ⚠ Identity-stability hazard (UXR-PV-08): a NEW fitness member goal sorts
+// ahead of an existing project member goal, pushing the project goal's mark
+// down a slot (e.g. AWS ▲ → the +N bucket at 4+ fitness goals). Adding a
+// project goal is safe (projects sort last). Slot re-flow on archive is
+// accepted (UXR-PV-93) rather than persisting a slot column.
+//
+// Pure + client-safe: no Prisma imports, no IO.
 
-import { LegendSchema } from "@/lib/legend";
+import { resolveLegend, findLegendEntry } from "@/lib/legend";
 
-/** Slots 0–2 carry the triad; 3+ overflow into a muted dot (`+N` on lanes). */
-export type GoalIdentityShape = "circle" | "square" | "triangle" | "overflow";
+export type GoalIdentityShape = "circle" | "square" | "triangle";
 
 export type GoalIdentity = {
   goalId: string;
-  /** 0-based derived slot in the sorted member list. */
+  /** 0-based slot after the identity sort. Slots ≥ GOAL_MARK_SLOT_CAP have no
+   *  shape of their own and render inside the lane's `+N` bucket. */
   slot: number;
-  shape: GoalIdentityShape;
-  /** Filled mark — logged/identity glyph (● ■ ▲, overflow ·). */
+  /** null → overflow (+N bucket); the goal has no dedicated glyph. */
+  shape: GoalIdentityShape | null;
+  /** Filled glyph — logged/completed state (● ■ ▲). Empty string on overflow. */
   glyphFilled: string;
-  /** Hollow mark — claimed-not-logged glyph (○ □ △, overflow ·). */
+  /** Hollow glyph — claimed-but-not-yet-logged state (○ □ △). */
   glyphHollow: string;
-  /** CSS custom-property reference. Reinforcement only — never the channel. */
+  /** CSS custom-property reference, e.g. "var(--target)". Decoration only —
+   *  identity must survive a grayscale screenshot (UXR-PV-05). */
   hue: string;
-  /** Short display label — legend `goal-date` entry, else truncated objective. */
+  /** Short human label for legend strips / aria text. */
   label: string;
 };
 
-/** The minimal member-goal shape identity derivation needs. */
-export type GoalIdentityMember = {
-  id: string;
-  objective: string;
-  kind: string;
-  isFocus: boolean;
-  createdAt: Date;
-  /** Goal.legend Json — passed through resolveLegend for the short label. */
-  legend?: unknown;
-};
+/** Marks per lane before the `+N` bucket (research R3: "3 slots + +N"). */
+export const GOAL_MARK_SLOT_CAP = 3;
+
+/** Slot ladder: slot 0 ●/--target · slot 1 ■/--success · slot 2 ▲/--accent.
+ *  Overflow renders as `+N` in --muted (see MarkLane). */
+const SLOT_GLYPHS: readonly {
+  shape: GoalIdentityShape;
+  filled: string;
+  hollow: string;
+  hue: string;
+}[] = [
+  { shape: "circle", filled: "●", hollow: "○", hue: "var(--target)" },
+  { shape: "square", filled: "■", hollow: "□", hue: "var(--success)" },
+  { shape: "triangle", filled: "▲", hollow: "△", hue: "var(--accent)" },
+];
 
 /**
- * Monochrome-safe glyph test (research §7.0): the Geometric Shapes block
- * (■ U+25A0 … ◿ U+25FF — includes ● ○ □ △ ▲ ◎) plus ★. Emoji legend glyphs
- * (🥾 ⛏️ 🏔️ …) are COLR/CBDT color fonts on which CSS `color:` is a silent
- * no-op — they must never be hue-tinted or used as identity marks.
+ * Geometric-shapes range (U+25A0–U+25FF) plus ★ (U+2605) — glyphs that a CSS
+ * `color:` actually tints. Emoji legends are COLR glyphs where `color:` is a
+ * silent no-op (research F3), so anything outside this set must DEGRADE
+ * (fall back) rather than fail invisibly (UXR-PV-07).
  */
 export const MONOCHROME_SAFE = /^[■-◿★]$/u;
 
@@ -64,76 +75,96 @@ export function isMonochromeSafe(icon: string): boolean {
   return MONOCHROME_SAFE.test(icon);
 }
 
-const SLOT_MARKS: ReadonlyArray<{
-  shape: GoalIdentityShape;
-  glyphFilled: string;
-  glyphHollow: string;
-  hue: string;
-}> = [
-  { shape: "circle", glyphFilled: "●", glyphHollow: "○", hue: "var(--target)" },
-  { shape: "square", glyphFilled: "■", glyphHollow: "□", hue: "var(--success)" },
-  { shape: "triangle", glyphFilled: "▲", glyphHollow: "△", hue: "var(--accent)" },
-];
+/** Fallback short-label truncation length (research ⚠[14–22], default 18). */
+const SHORT_LABEL_MAX = 18;
 
-const OVERFLOW_MARK = {
-  shape: "overflow" as const,
-  glyphFilled: "·",
-  glyphHollow: "·",
-  hue: "var(--muted)",
+export type GoalIdentityMember = {
+  id: string;
+  objective: string;
+  kind: string;
+  status: string;
+  /** Optional fidelity fields — pass when available (one member-detail
+   *  findMany); absent values degrade to the documented defaults. */
+  isFocus?: boolean;
+  createdAt?: Date | string | null;
+  /** Raw Goal.legend Json — used only for the short label (see below). */
+  legend?: unknown;
 };
 
-/** Short-label truncation cap (research ⚠[14–22], chosen 18). */
-const LABEL_MAX = 18;
-
 /**
- * Short label resolution (research §7.0): the goal's OWN `goal-date` legend
- * entry label when one exists — that is what the `update_goal_legend`
- * migration buys — else the objective's first clause (`—`, `–`, `,`, `:`,
- * `(` separators), truncated to LABEL_MAX with an ellipsis.
- *
- * Deliberately does NOT route through resolveLegend: its default-legend
- * fallback carries a generic "Goal date" entry that would hijack the label
- * for every legendless goal. Only a stored, valid legend counts here.
+ * Short label for legend strips: the goal's own `goal-date` legend label WHEN
+ * the coach has migrated that entry to a monochrome-safe glyph (the E6
+ * `update_goal_legend` migration — icon "●", label "Handstand"). Pre-migration
+ * legends carry stock labels ("Goal date") behind emoji icons, which are
+ * useless as goal names — the isMonochromeSafe(icon) guard makes those degrade
+ * to the objective-derived fallback instead of rendering "Goal date" ×3.
  */
-export function shortGoalLabel(member: Pick<GoalIdentityMember, "objective" | "legend">): string {
+function shortLabel(member: GoalIdentityMember): string {
   if (member.legend != null) {
-    const parsed = LegendSchema.safeParse(member.legend);
-    const fromLegend = parsed.success
-      ? parsed.data.find((e) => e.kind === "goal-date")?.label?.trim()
-      : undefined;
-    if (fromLegend) return fromLegend;
+    const entry = findLegendEntry(
+      resolveLegend({ legend: member.legend, kind: member.kind }),
+      "goal-date",
+    );
+    if (entry && entry.label.trim() !== "" && isMonochromeSafe(entry.icon)) {
+      return entry.label;
+    }
   }
-  const clause = (member.objective.split(/[—–,:(]/)[0] ?? member.objective).trim();
-  if (clause.length <= LABEL_MAX) return clause;
-  return `${clause.slice(0, LABEL_MAX).trimEnd()}…`;
+  // Objective fallback: first clause before a separator, truncated.
+  // "Pass the AWS Solutions Architect Associate exam" has no separator and
+  // truncates — that is the accepted degradation until E6 runs.
+  const clause = member.objective.split(/[—–,:(]/)[0]?.trim() ?? member.objective;
+  if (clause.length <= SHORT_LABEL_MAX) return clause;
+  return `${clause.slice(0, SHORT_LABEL_MAX).trimEnd()}…`;
+}
+
+function createdAtMs(v: Date | string | null | undefined): number | null {
+  if (v == null) return null;
+  const ms = new Date(v).getTime();
+  return Number.isNaN(ms) ? null : ms;
 }
 
 /**
- * Assign derived identity marks to a Program's member goals. Returns one
- * GoalIdentity per member, in slot order (the stable, learnable order every
- * Program surface renders in).
+ * Assign identities to the ACTIVE member goals of a Program.
+ *
+ * Non-active members (paused/achieved/abandoned) get no identity — their
+ * day-level claims are already [] (see ResolvedDay.goalMarks), so nothing in
+ * a mark lane can reference them. Input order is preserved as the sort's
+ * stable base (getActiveProgramMembership returns createdAt ASC, id ASC).
  */
-export function assignGoalIdentities(members: readonly GoalIdentityMember[]): GoalIdentity[] {
-  const sorted = [...members].sort((a, b) => {
-    if (a.isFocus !== b.isFocus) return a.isFocus ? -1 : 1;
-    const aProject = a.kind === "project";
-    const bProject = b.kind === "project";
-    if (aProject !== bProject) return aProject ? 1 : -1;
-    const dt = a.createdAt.getTime() - b.createdAt.getTime();
-    if (dt !== 0) return dt;
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  });
+export function assignGoalIdentities(
+  members: readonly GoalIdentityMember[],
+): GoalIdentity[] {
+  const active = members.filter((m) => m.status === "active");
 
-  return sorted.map((m, slot) => {
-    const mark = SLOT_MARKS[slot] ?? OVERFLOW_MARK;
+  const sorted = active
+    .map((m, index) => ({ m, index }))
+    .sort((a, b) => {
+      // isFocus DESC (missing → false)
+      const focus = Number(b.m.isFocus ?? false) - Number(a.m.isFocus ?? false);
+      if (focus !== 0) return focus;
+      // (kind === "project") ASC — fitness (and any non-project kind) first
+      const kind =
+        Number(a.m.kind === "project") - Number(b.m.kind === "project");
+      if (kind !== 0) return kind;
+      // createdAt ASC when both known
+      const aMs = createdAtMs(a.m.createdAt);
+      const bMs = createdAtMs(b.m.createdAt);
+      if (aMs !== null && bMs !== null && aMs !== bMs) return aMs - bMs;
+      // id ASC — the mandatory total-order tiebreak
+      if (a.m.id !== b.m.id) return a.m.id < b.m.id ? -1 : 1;
+      return a.index - b.index;
+    });
+
+  return sorted.map(({ m }, slot) => {
+    const glyph = slot < GOAL_MARK_SLOT_CAP ? SLOT_GLYPHS[slot] : null;
     return {
       goalId: m.id,
       slot,
-      shape: mark.shape,
-      glyphFilled: mark.glyphFilled,
-      glyphHollow: mark.glyphHollow,
-      hue: mark.hue,
-      label: shortGoalLabel(m),
+      shape: glyph?.shape ?? null,
+      glyphFilled: glyph?.filled ?? "",
+      glyphHollow: glyph?.hollow ?? "",
+      hue: glyph?.hue ?? "var(--muted)",
+      label: shortLabel(m),
     };
   });
 }
