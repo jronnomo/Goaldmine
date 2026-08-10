@@ -378,3 +378,84 @@ describe("getCalendarMonth — mixed month (archived plan covers the head, activ
     );
   });
 });
+
+// ─── resolveDay — orphanedOverride (bug #266) ────────────────────────────────
+//
+// Prior to the fix, orphanedOverride was `isOverride && plannedHikeToday === null &&
+// isMirrorOverride(workoutTemplate)`. reconcileLongEffort unconditionally nulls
+// plannedHikeToday whenever isOverride is true (it's suppressed, not "no backing hike"),
+// so the expression algebraically reduced to `isOverride && isMirrorOverride(workoutTemplate)`
+// — every summit-day (long-endurance mirror) override was flagged as orphaned/phantom
+// regardless of whether a real Hike row backed it. The fix reuses
+// override-integrity.ts's OVERRIDE_MIRROR_KINDS registry (matchingMirrorKind +
+// kind.backingDateKeys()) to do a real any-status "does a Hike row exist on this date"
+// check — the same definition the lint_plan path already uses.
+describe("resolveDay — orphanedOverride (bug #266: any-status backing check, not plannedHikeToday)", () => {
+  const PROGRAM: ProgramForDate = {
+    id: "plan-1",
+    name: "Plan",
+    startedOn: parseDateKey("2026-01-01"),
+    confirmedThroughDate: null,
+    source: "active",
+    template: template({
+      weeklySplit: [{ dayOfWeek: 1, title: "Lower A", category: "lower", summary: "", blocks: [] }],
+      totalWeeks: 12,
+    }),
+  };
+  // Rotation day 1, week 1 relative to PROGRAM.startedOn — value is otherwise
+  // irrelevant since the override below fully replaces the rotation template.
+  const DAY = parseDateKey("2026-01-01");
+
+  const MIRROR_OVERRIDE = {
+    id: "override-1",
+    workoutJson: {
+      dayOfWeek: 1,
+      title: "Longs Peak — Dress Rehearsal",
+      category: "long-endurance", // matches OVERRIDE_MIRROR_KINDS' hike-mirror heuristic
+      summary: "",
+      blocks: [],
+    },
+    baselineTestNames: null,
+    nutritionText: null,
+    nutritionPlan: null,
+    mobilityText: null,
+    notes: null,
+  };
+
+  it("true positive: override day, mirror-kind (long-endurance) template, NO backing Hike row of any status on the date -> orphanedOverride true", async () => {
+    mockFindUnique.mockResolvedValue(MIRROR_OVERRIDE);
+    mockGetDb.mockResolvedValue(mkDb({ hike: { findMany: vi.fn().mockResolvedValue([]) } }));
+
+    const r = await resolveDay(DAY, { goalEvents: [], focusGoalId: null, program: PROGRAM });
+
+    expect(r.isOverride).toBe(true);
+    expect(r.orphanedOverride).toBe(true);
+  });
+
+  it.each(["completed", "skipped"] as const)(
+    "false-positive regression: override day, mirror-kind template, a backing Hike row with status '%s' on the date -> orphanedOverride false",
+    async (status) => {
+      mockFindUnique.mockResolvedValue(MIRROR_OVERRIDE);
+      mockGetDb.mockResolvedValue(
+        mkDb({
+          hike: { findMany: vi.fn().mockResolvedValue([{ id: "hike-1", date: DAY, status }]) },
+        }),
+      );
+
+      const r = await resolveDay(DAY, { goalEvents: [], focusGoalId: null, program: PROGRAM });
+
+      expect(r.isOverride).toBe(true);
+      expect(r.orphanedOverride).toBe(false);
+    },
+  );
+
+  it("non-override day (no PlanDayOverride row at all) -> orphanedOverride false regardless of hike presence", async () => {
+    mockFindUnique.mockResolvedValue(null);
+    mockGetDb.mockResolvedValue(mkDb({ hike: { findMany: vi.fn().mockResolvedValue([]) } }));
+
+    const r = await resolveDay(DAY, { goalEvents: [], focusGoalId: null, program: PROGRAM });
+
+    expect(r.isOverride).toBe(false);
+    expect(r.orphanedOverride).toBe(false);
+  });
+});

@@ -2,7 +2,7 @@
 // completed workouts, baselines due, and goal markers.
 
 import { prisma, getDb } from "@/lib/db";
-import { isMirrorOverride } from "@/lib/override-integrity";
+import { matchingMirrorKind } from "@/lib/override-integrity";
 import {
   getActiveProgram,
   getProgramForDate,
@@ -754,13 +754,16 @@ export type ResolvedDay = {
   // Flag C — orphaned mirror-override guard (general; see src/lib/override-integrity.ts).
   // True when this date's session comes from an override whose workoutJson MIRRORS a
   // first-class scheduled object (today only a hike: category "long-endurance") but no
-  // backing object is present for the date — a phantom session left behind when the object
-  // was removed/rescheduled (only its own row is cleaned up, not the mirror override).
-  // Surfaces the get_day vs object-tool disagreement instead of hiding it. The classifier
-  // (isMirrorOverride) is registry-driven and kind-agnostic; the backing-absent signal in
-  // this hot path is currently hike-specific (plannedHikeToday === null). A new mirror kind
-  // adds its registry entry AND its per-day backing signal here. Lint + the removal warning
-  // are already fully generic via the registry. Heuristic — treat as a soft signal.
+  // backing object (ANY status — not just "planned") is present for the date — a phantom
+  // session left behind when the object was removed/rescheduled (only its own row is
+  // cleaned up, not the mirror override). Surfaces the get_day vs object-tool disagreement
+  // instead of hiding it. Both the classifier (matchingMirrorKind) AND the backing-presence
+  // check (kind.backingDateKeys()) are registry-driven and kind-agnostic — this is the same
+  // any-status "does a real Hike row exist on this date" definition the lint_plan path uses,
+  // not plannedHikeToday (which reconcileLongEffort unconditionally nulls on override days,
+  // and which only ever considered status:"planned" hikes within the rotation week — both
+  // wrong signals for this check). A new mirror kind only needs its registry entry; nothing
+  // here is hike-specific anymore.
   orphanedOverride: boolean;
   nutritionText: string | null;
   nutritionPlan: NutritionPlan | null;
@@ -1221,11 +1224,19 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   });
 
   // Flag C: a mirror-override (today: hike-flavored) with no backing object on the date is
-  // a phantom session (see ResolvedDay.orphanedOverride). plannedHikeToday is null exactly
-  // when no planned Hike row sits on this date — the hike kind's free, query-free backing
-  // signal — so this surfaces the get_day vs list_planned_hikes disagreement.
-  const orphanedOverride =
-    isOverride && plannedHikeToday === null && isMirrorOverride(workoutTemplate);
+  // a phantom session (see ResolvedDay.orphanedOverride). Bug fix (#266): this USED to gate
+  // on `plannedHikeToday === null`, but reconcileLongEffort (above) unconditionally nulls
+  // plannedHikeToday whenever isOverride is true, and even when it wasn't null it only ever
+  // reflected status:"planned" hikes in the rotation week — so the old expression algebraically
+  // reduced to `isOverride && isMirrorOverride(workoutTemplate)` and flagged every summit-day
+  // override as orphaned regardless of whether a real Hike row backed it. Fixed by reusing the
+  // registry's own any-status backing check (src/lib/override-integrity.ts), the same
+  // definition the lint_plan path uses — gated on isOverride+mirror-match first so the DB
+  // lookup only runs on the rare mirror-override day, not every resolveDay call.
+  const overrideMirrorKind = isOverride ? matchingMirrorKind(workoutTemplate) : null;
+  const orphanedOverride = overrideMirrorKind
+    ? !(await overrideMirrorKind.backingDateKeys()).has(dateKey(date))
+    : false;
 
   // REQ-003: additive — which plan this date resolved against, if any.
   const resolvedPlan: ResolvedDay["resolvedPlan"] = program
