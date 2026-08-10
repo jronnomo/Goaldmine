@@ -10,6 +10,8 @@
 import { getDb } from "@/lib/db";
 import { startOfDay, endOfDay, resolveDay } from "@/lib/calendar";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { listSavedMealsLite } from "@/lib/saved-meal-actions";
+import type { SavedMealLite } from "@/lib/saved-meal";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
 import {
   sumLoggedDayMacros,
@@ -41,6 +43,8 @@ export type LogSheetData = {
   todaysMeals: TodayMealLite[];
   quickPickFoods: LibraryFood[];
   libraryFoods: LibraryFood[];
+  /** #296: SavedMeal quick-pick list for the composer's saved-meals row. */
+  savedMeals: SavedMealLite[];
   trackedSoFar: DayMacros;
   dayTarget: DayMacros | null;
 };
@@ -63,7 +67,7 @@ function toNutritionItems(raw: unknown): NutritionItem[] {
  */
 export async function getLogSheetData(now: Date = new Date()): Promise<LogSheetData> {
   const db = await getDb();
-  const [rawMeals, quickPickFoods, libraryFoods, today] = await Promise.all([
+  const [rawMeals, quickPickFoods, libraryFoods, savedMeals, today] = await Promise.all([
     db.nutritionLog.findMany({
       where: { date: { gte: startOfDay(now), lte: endOfDay(now) } },
       orderBy: { date: "asc" },
@@ -83,6 +87,7 @@ export async function getLogSheetData(now: Date = new Date()): Promise<LogSheetD
     }),
     getQuickPickFoods(),
     listLibraryFoods(),
+    listSavedMealsLite(),
     // Override-aware resolved day — the only source of today's per-slot
     // nutrition-plan target. Mirrors /nutrition/page.tsx exactly.
     resolveDay(now),
@@ -110,5 +115,5 @@ export async function getLogSheetData(now: Date = new Date()): Promise<LogSheetD
   const planTarget = sumPlanTargetMacros(today.nutritionPlan);
   const dayTarget: DayMacros | null = hasAnyMacros(planTarget) ? planTarget : null;
 
-  return { todaysMeals, quickPickFoods, libraryFoods, trackedSoFar, dayTarget };
+  return { todaysMeals, quickPickFoods, libraryFoods, savedMeals, trackedSoFar, dayTarget };
 }

@@ -79,6 +79,16 @@ const CompareIcon = () => (
   </svg>
 );
 
+// Program icon — proportional block band (three segments of unequal width),
+// 20px / stroke 1.5, house style. Echoes the /program block band (#290).
+const ProgramIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <rect x="2.5" y="7" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="10.5" y="7" width="4" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="16.5" y="7" width="1" height="6" rx="0.5" stroke="currentColor" strokeWidth="1" />
+  </svg>
+);
+
 // Character icon — bust silhouette (head + shoulders), 20px / stroke 1.5, house style.
 // Reads as "RPG character sheet" at a glance alongside the other line icons.
 const CharacterIcon = () => (
@@ -107,6 +117,16 @@ const navRows: NavRow[] = [
     label: "Goals",
     sub: "View goals or create a new one",
     icon: <GoalsIcon />,
+  },
+  {
+    // #290: the Program dashboard — reachable from More until the Plan-tab
+    // href flip (UXR-PV-56) lands as its own follow-up. Adding a row here
+    // requires mirroring the route into BottomNav's MORE_ROUTES (see the
+    // comment there).
+    href: "/program",
+    label: "Program",
+    sub: "Your active program — blocks, member goals, readiness",
+    icon: <ProgramIcon />,
   },
   {
     href: "/coach",

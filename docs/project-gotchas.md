@@ -194,6 +194,31 @@ The alias map in `src/lib/records.ts` → `EXERCISE_ALIAS_GROUPS` canonicalizes 
 
 ---
 
+## F. Program model (2026-08)
+
+### 1. `getActiveProgram()`'s `.id` is a Plan id — and the legacy fallback fires ONLY on zero Program rows
+The seam's frozen contract (#277): `ActiveProgramSnapshot.id` is ALWAYS a **Plan** id, never a Program id — every PlanDayOverride lookup, calendar.ts, and override-integrity.ts key off it. Program-shaped context (the Program's own id, membership) lives in the separate `getActiveProgramMembership()`. Selection is Program-first: an active Program resolves ONLY through its attached active Plan (no unscoped `plan.findFirst({active:true})` fall-through — that's the founding cross-goal leak). The legacy isFocus-tiebreak path fires **only for tenants with ZERO Program rows**; "Program rows exist but none active" (retired) deliberately resolves to null, not legacy. **Rollback lever:** archive the Program row → safe "no rotation today"; delete the Program rows entirely → full legacy restore.
+
+### 2. `ActivityGoalLink` has NO FK to activities — delete-hooks + `db:verify-links` are the only integrity
+`activityType`+`activityId` are plain strings (workout | hike | nutrition | …) — Postgres can't enforce them. Deleting an activity without its `#272` delete-hook (`deleteNutritionCore`, `deleteBaselineCore`, workout-core's tx, etc.) strands orphan links; `npm run db:verify-links` is the audit. **Tombstones:** an explicitly-removed link is kept as a `source:"removed"` row that occupies the `@@unique([activityType, activityId, goalId])` key so the append-only auto-linker can never resurrect it — never delete tombstone rows by hand. Range queries filter on the denormalized `activityDate`, never link `createdAt` (links can be backfilled long after the activity).
+
+### 3. Nutrition auto-links are fitness-member-only and append-only (v1)
+`evaluateNutritionLinks` links a meal to every ACTIVE **fitness** member goal of the active Program — project members are never linked, Program `attributionRules` deliberately do NOT reach nutrition (they're workout-shaped; letting them match meals would permanently attach every future meal — owner decision, #309), and there is no link retraction in v1. Don't "fix" a meal's goal badge by editing the evaluator — remove the link explicitly (tombstone) instead.
+
+### 4. WriteReceipt idempotency is opt-in per-tool via `requestId`
+Idempotent replay (#274) only exists for tools that declare `requestId` in their input schema (`src/lib/mcp/idempotency.ts`). A retried call with the same requestId returns the **stored `resultJson` verbatim** — it does NOT re-execute, so the replayed payload can be stale relative to later writes. No `requestId` → fully non-idempotent, exactly as before. Receipt uniqueness is `@@unique([userId, requestId])`; a FAILED call stores no receipt (retry re-executes, by design).
+
+### 5. `Goal.isFocus` is legacy/display-only — run `npm run verify:isfocus` before touching
+Outside goal-focus.ts's documented compat branches (zero-Program legacy resolution, `getFocusGoal`, the focus-lifecycle writes in goal-core/goal-completion, and the #299/#300 tracked-exception fallbacks), isFocus is a display/pass-through field only. "The current goal" is ALWAYS `getRotationOwnerGoal()` (src/lib/goal-focus.ts) — never a fresh `where: { isFocus: true }`. `npm run verify:isfocus` (scripts/verify-isfocus-retirement.ts) enforces the allowlist and must exit 0 before any commit that mentions the flag; the column drop is tracked in Backlog issue #312.
+
+### 6. Rotation math lives ONLY in `src/lib/rotation-core.ts` — never re-derive
+`daysDelta` / `weekIndex` / `rotationDay` / `rotationWeekWindow` / `templateForRotationDay` / `mergeDayOverride` are the single source of rotation arithmetic. The June 2026 deferral-flag bug class (day tasks re-derived inline from `workoutTemplate` + the deprecated `workoutDeferredFor*` flags, drifting from resolveDay's answer) died with B4 — re-deriving any of these with inline `Math.round` day math or template indexing reintroduces it. Consumers read `resolveDay`'s resolved payload (`todayTask`/`activeWorkout`/`deferredWorkout`) or call rotation-core's pure helpers.
+
+### 7. Calendar windows are classified by override TITLE PREFIX — writer and classifier move together
+`classifyOverrideWindowKind` (src/lib/calendar-windows.ts) keys off `workoutJson.title` string prefixes: `"Deload"` → deload band, `"Mirror Lake"` → observance band. The prefixes are written by the override writers (buildPhase2aOverrides / the import's day swaps). Renaming a title on either side — the override author stops writing "Deload #N — …", or the classifier's prefix list changes — silently kills the calendar's window bands with no error anywhere. Change both together, and grep for the prefix before "tidying" override titles.
+
+---
+
 ## C. Deploy & the claude.ai connector cache
 
 - **Deploy** = push to `main` on `github.com/jronnomo/goaldmine`; Vercel auto-builds (no `vercel.json`, no CLI). Run `npm run build` locally first. Prod endpoint: `https://workout-planner-gold-three.vercel.app/api/mcp`.

@@ -148,9 +148,106 @@ function ProgressBar({ tok, pct }: { tok: TemplateTokens; pct: number | null }) 
 // ─── HighlightBand ────────────────────────────────────────────────────────────
 
 /**
+ * Inline SVG mark for a highlight's icon id (#264) — same treatment as
+ * completion-card.tsx's check/circle marks. Satori renders SVG natively via
+ * resvg; it does NOT fetch emoji glyphs (no twemoji CDN, no emoji font), so a
+ * bare emoji character rendered as a tofu box (▯) on Vercel. One flat color
+ * per glyph, sized to `size` (tok.highlightIconSize) — each of the five kinds
+ * gets a distinct, recognizable shape.
+ */
+function HighlightIcon({
+  icon,
+  size,
+  color,
+}: {
+  icon: RecapHighlight["icon"];
+  size: number;
+  color: string;
+}) {
+  switch (icon) {
+    case "trophy":
+      // Cup + handles + stem + base — new PR.
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24">
+          <path d="M7 3h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5V3z" fill={color} />
+          <path
+            d="M7 4.5H4.5A2.5 2.5 0 0 0 7 8.5"
+            fill="none"
+            stroke={color}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
+          <path
+            d="M17 4.5h2.5A2.5 2.5 0 0 1 17 8.5"
+            fill="none"
+            stroke={color}
+            strokeWidth={1.6}
+            strokeLinecap="round"
+          />
+          <rect x={10.5} y={12} width={3} height={4} fill={color} />
+          <rect x={6.5} y={18.5} width={11} height={2.2} rx={1.1} fill={color} />
+          <path d="M8.5 16.2h7l1.2 2.3h-9.4l1.2-2.3z" fill={color} />
+        </svg>
+      );
+    case "ruler":
+      // Diagonal tape-measure bar with alternating tick marks — baseline test.
+      // Same rotate-transform idiom as ProgressRing's dasharray sweep above —
+      // satori/resvg render SVG transforms natively.
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24">
+          <rect
+            x={2}
+            y={9.5}
+            width={20}
+            height={5}
+            rx={1}
+            fill="none"
+            stroke={color}
+            strokeWidth={1.6}
+            transform="rotate(-28 12 12)"
+          />
+          <line x1={6} y1={9.5} x2={6} y2={12.3} stroke={color} strokeWidth={1.4} transform="rotate(-28 12 12)" />
+          <line x1={10} y1={9.5} x2={10} y2={14.5} stroke={color} strokeWidth={1.4} transform="rotate(-28 12 12)" />
+          <line x1={14} y1={9.5} x2={14} y2={12.3} stroke={color} strokeWidth={1.4} transform="rotate(-28 12 12)" />
+          <line x1={18} y1={9.5} x2={18} y2={14.5} stroke={color} strokeWidth={1.4} transform="rotate(-28 12 12)" />
+        </svg>
+      );
+    case "mountain":
+      // Twin-peak silhouette — hike.
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24">
+          <path d="M2 19.5L8.5 7l3.2 5.6 2-3 8.3 10.9H2z" fill={color} />
+        </svg>
+      );
+    case "medal":
+      // Rosette: ring + center boss + two notched ribbon tails — badge unlock.
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24">
+          <path d="M8.5 13.8h3v6.5l-1.5-1-1.5 1v-6.5z" fill={color} />
+          <path d="M12.5 13.8h3v6.5l-1.5-1-1.5 1v-6.5z" fill={color} />
+          <circle cx={12} cy={9} r={6} fill="none" stroke={color} strokeWidth={2.2} />
+          <circle cx={12} cy={9} r={2.1} fill={color} />
+        </svg>
+      );
+    case "star":
+    default:
+      // 5-point star — custom highlight.
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24">
+          <path
+            d="M12 2.5l2.85 6.17 6.8.9-5 4.63 1.32 6.8L12 17.77l-6 3.23 1.33-6.8-5-4.63 6.8-.9L12 2.5z"
+            fill={color}
+          />
+        </svg>
+      );
+  }
+}
+
+/**
  * Hero-weight featured-highlight callout band.
  * Placed AFTER the goal block hairline, BEFORE the streak band.
- * Satori-safe: flex only, inline styles, no SVG/img, every multi-child div has display:"flex".
+ * Satori-safe: flex only, inline styles; the icon is inline SVG (HighlightIcon
+ * above, same pattern as ProgressRing) — every multi-child div has display:"flex".
  * The gold left-edge accent (8px) stretches full height via default alignItems:"stretch".
  * The `sub` (e.g. "new PR") renders as a gold pill badge to make it unmissable.
  */
@@ -202,16 +299,16 @@ function HighlightBand({
           paddingRight: 28,
         }}
       >
-        {/* Emoji icon — larger for hero weight */}
+        {/* Icon mark — larger for hero weight; inline SVG, see HighlightIcon */}
         <div
           style={{
             display: "flex",
-            fontSize: tok.highlightIconSize,
             flexShrink: 0,
-            lineHeight: 1,
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          {highlight.icon}
+          <HighlightIcon icon={highlight.icon} size={tok.highlightIconSize} color={tok.barFillBg} />
         </div>
         {/* Name + stat sub-line + optional gold pill sub */}
         <div

@@ -13,10 +13,39 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/readiness", () => ({ computeReadiness: vi.fn() }));
 vi.mock("@/lib/game/engine", () => ({ computeGameState: vi.fn() }));
+// #298: the goal-list ordering goes through the rotation-owner seam. Partial
+// mocks — orderMembersFirst stays REAL (it's the subject composing the final
+// order); factory defaults model a zero-Program tenant with no focus goal,
+// which reproduces the pre-#298 order for every earlier test in this file
+// (no lift, DB order preserved). The #298 describe at the bottom overrides
+// per-test. (getRotationOwnerGoal lives in @/lib/goal-focus since the
+// consolidation.)
+vi.mock("@/lib/program", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/program")>();
+  return {
+    ...actual,
+    getActiveProgramMembership: vi.fn().mockResolvedValue(null),
+  };
+});
+vi.mock("@/lib/goal-focus", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/goal-focus")>();
+  return {
+    ...actual,
+    getRotationOwnerGoal: vi.fn().mockResolvedValue({
+      mode: "legacy",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+      goal: null,
+    }),
+  };
+});
 
 import { prisma, getDb } from "@/lib/db";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGameState } from "@/lib/game/engine";
+import { getActiveProgramMembership } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeComparison } from "@/lib/compare";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -377,5 +406,114 @@ describe("computeComparison", () => {
     // capture the 00:30Z row (bucketed to 06-14, the prior Denver day).
     const result = await computeComparison("2026-01-01", "2026-06-14");
     expect(result.nutrition.daysLoggedB).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #298: goal-list ordering — Program-membership-first (multi-goal LIST
+// context), legacy focus-lift for zero-Program tenants. The R9 exemption and
+// achieved-after-active tiebreak are untouched: status desc still orders
+// within tiers (it now comes purely from the DB orderBy + stable sort).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("computeComparison — #298 membership-first goal ordering", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetRotationOwnerGoal = getRotationOwnerGoal as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetMembership = getActiveProgramMembership as any;
+
+  // No targets → every goal renders the simple readiness:null section, so
+  // computeReadiness is never called and section order IS input goal order.
+  const goalRow = (id: string, status = "active", completedAt: Date | null = null) => ({
+    id,
+    objective: id,
+    kind: "fitness",
+    createdAt: new Date("2026-01-01"),
+    targets: [],
+    status,
+    completedAt,
+  });
+
+  const membershipFixture = (ids: string[]) => ({
+    id: "prog-1",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: new Date("2026-05-01"),
+    endsOn: null,
+    notes: null,
+    attributionRules: null,
+    memberGoals: ids.map((id) => ({ id, objective: id, kind: "fitness", status: "active" })),
+  });
+
+  function wire(goals: ReturnType<typeof goalRow>[]) {
+    const goalFindMany = vi.fn().mockResolvedValue(goals);
+    mockGetDb.mockResolvedValue(mkScopedDb({ goal: { findMany: goalFindMany } }));
+    mockComputeGameState.mockResolvedValue(EMPTY_GAME_STATE_FIXTURE);
+    mockFindManyWorkoutExercise.mockResolvedValue([]);
+    return goalFindMany;
+  }
+
+  it("Program tenant: rotation owner first, members next (achieved-after-active preserved within the tier), non-members last — and the DB query carries no focus orderBy", async () => {
+    // DB returns [status desc, targetDate] order: actives before achieved.
+    const goalFindMany = wire([
+      goalRow("g-nonmember"),
+      goalRow("g-member-active"),
+      goalRow("g-owner"),
+      goalRow("g-member-achieved", "achieved", new Date("2026-07-01")),
+    ]);
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "program",
+      goalId: "g-owner",
+      goalKind: "fitness",
+      planId: "plan-rot",
+    });
+    mockGetMembership.mockResolvedValue(
+      membershipFixture(["g-member-active", "g-owner", "g-member-achieved"]),
+    );
+
+    const result = await computeComparison("2026-06-01", "2026-08-01");
+
+    expect(result.goals.map((g) => g.goalId)).toEqual([
+      "g-owner",
+      "g-member-active", // members keep incoming (status desc) order
+      "g-member-achieved",
+      "g-nonmember",
+    ]);
+    expect(goalFindMany).toHaveBeenCalledWith({
+      where: { OR: [{ active: true }, { status: "achieved" }] },
+      orderBy: [{ status: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
+    });
+  });
+
+  it("zero-Program tenant: the legacy focus winner is lifted to the front — same order the old focus-desc orderBy produced", async () => {
+    wire([goalRow("g-a"), goalRow("g-focus"), goalRow("g-b")]);
+    mockGetMembership.mockClear(); // this file has no global clear hook
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "legacy",
+      goalId: "g-focus",
+      goalKind: "fitness",
+      planId: null,
+    });
+    mockGetMembership.mockResolvedValue(null);
+
+    const result = await computeComparison("2026-06-01", "2026-08-01");
+
+    expect(result.goals.map((g) => g.goalId)).toEqual(["g-focus", "g-a", "g-b"]);
+    // Legacy mode never probes membership.
+    expect(mockGetMembership).not.toHaveBeenCalled();
+  });
+
+  it("zero-Program tenant with no focus goal: DB order passes through untouched (byte-identical no-focus shape)", async () => {
+    wire([goalRow("g-a"), goalRow("g-b")]);
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "legacy",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+    });
+
+    const result = await computeComparison("2026-06-01", "2026-08-01");
+
+    expect(result.goals.map((g) => g.goalId)).toEqual(["g-a", "g-b"]);
   });
 });

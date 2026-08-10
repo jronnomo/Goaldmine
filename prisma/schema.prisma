@@ -30,13 +30,20 @@ model User {
   nutritionLogs    NutritionLog[]
   mobilityCheckins MobilityCheckin[]
   goals            Goal[]
-  programs         Program[]
+  legacyPrograms   LegacyProgram[]
   gameBonusXps     GameBonusXp[]
   bodyMetrics      BodyMetric[]
   scheduledItems   ScheduledItem[]
   logEntries       LogEntry[]
   plans            Plan[]
   dayRenderJobs    DayRenderJob[]
+
+  // M2 (#270/#271/#274/#275) — program-redesign additive models. Distinct
+  // relation name from `legacyPrograms` (the M1-renamed legacy table).
+  programs          Program[]
+  activityGoalLinks ActivityGoalLink[]
+  writeReceipts     WriteReceipt[]
+  savedMeals        SavedMeal[]
 
   // Auth.js adapter relations (A-1) — not in SCOPED_MODELS; auth infra is cross-user
   accounts         Account[]
@@ -150,6 +157,10 @@ model Baseline {
   units            String
   notes            String?
   retestTargetDate DateTime?
+  // M2 (#276): equipment-ceiling marker — the value hit a fixed load cap
+  // (e.g. 65 lb dumbbell max), so a plateau reading is expected and not a
+  // stall. Display annotation only — never fed into PR/readiness math.
+  capped           Boolean   @default(false)
   userId           String?
   createdAt        DateTime  @default(now())
 
@@ -288,16 +299,21 @@ model Goal {
   completedAt         DateTime? // set by completeGoalCore; null while active
   completionSnapshot  Json?     // GoalCompletionSnapshot v1 — see src/lib/goal-completion-core.ts
   retrospective       Json?     // GoalRetrospective v1 — post-goal reflection, survives reopen
+  // M2 (#270): membership in the multi-domain Program (nullable — goals may
+  // live outside any program). Read by nothing until the Sprint-4 seam flip.
+  programId           String?
   userId              String?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
-  plans          Plan[]
-  scheduledItems ScheduledItem[]
-  logEntries     LogEntry[]
-  hikes          Hike[]
-  dayRenderJobs  DayRenderJob[]
-  user           User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plans             Plan[]
+  scheduledItems    ScheduledItem[]
+  logEntries        LogEntry[]
+  hikes             Hike[]
+  dayRenderJobs     DayRenderJob[]
+  activityGoalLinks ActivityGoalLink[]
+  program           Program? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([active])
   @@index([targetDate])
@@ -306,6 +322,7 @@ model Goal {
   @@index([userId, isFocus])
   @@index([userId, active])
   @@index([userId, status])
+  @@index([programId])
 }
 
 model ScheduledItem {
@@ -373,17 +390,23 @@ model Plan {
   // specific entity (omit for singleton rules like goal-date-vs-plan-end),
   // `note` is a human-readable reason, and `at` is an ISO timestamp.
   lintAcknowledgements  Json?
+  // M2 (#270): membership in the multi-domain Program (nullable). Read by
+  // nothing until the Sprint-4 seam flip. Backfill MUST set Plan.programId,
+  // not just Goal.programId (see docs/roadmap/program-redesign-plan.md §4.1).
+  programId             String?
   userId                String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   revisions PlanRevision[]
   overrides PlanDayOverride[]
+  program   Program? @relation(fields: [programId], references: [id], onDelete: SetNull)
   user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([goalId])
   @@index([active])
   @@index([userId, active])
+  @@index([programId])
 }
 
 // Per-date override for a specific day in a plan. The base rotation comes from
@@ -439,7 +462,115 @@ model PlanRevision {
   @@index([triggerNoteId])
 }
 
+// M2 (#270): the multi-domain Program — owns a time window and a set of member
+// Goals/Plans. Additive only this sprint; nothing reads it until the Sprint-4
+// seam flip (M3).
+//
+// One-active-per-user invariant: enforced at the DB level by a raw-SQL partial
+// unique index in the M2 migration (Prisma cannot express partial indexes):
+//   CREATE UNIQUE INDEX "program_one_active_per_user"
+//     ON "Program"("userId") WHERE status = 'active';
+// This is the DB-enforced constraint Goal.isFocus never had (blockers B3/G1).
 model Program {
+  id        String    @id @default(cuid())
+  name      String
+  status    String    @default("draft") // draft | active | completed | archived
+  startedOn DateTime
+  endsOn    DateTime?
+  notes     String?
+  // Design amendment 1 (docs/program-redesign/03-run-amendments.md): coach-authored
+  // per-Program attribution rules, applied by the auto-link engine ALONGSIDE
+  // Goal.attributionHints matching. Shape:
+  //   Array<{
+  //     match: { titleContains?: string[]; exerciseContains?: string[]; source?: string },
+  //     goalIds: string[],
+  //     note?: string
+  //   }>
+  // Rules are append-only in effect (v1 no-retraction policy).
+  attributionRules Json?
+  userId    String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  goals Goal[]
+  plans Plan[]
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([userId, startedOn])
+}
+
+// M2 (#271): polymorphic join — one logged activity (workout, hike, meal,
+// metric, baseline, measurement) fans out to multiple goals. No FK to the
+// underlying activity row (it's polymorphic): delete-hook consolidation (this
+// sprint) plus the nightly orphan verifier compensate for the missing
+// referential integrity. Auto-links are append-only; explicit removal is a
+// TOMBSTONE (source='removed', row kept — UXR-PV-89) so the unique key
+// permanently blocks the auto-engine/backfill upsert from resurrecting a
+// coach-removed link. Activity delete-hooks hard-delete ALL rows including
+// tombstones. See src/lib/attribution-manual.ts.
+model ActivityGoalLink {
+  id           String   @id @default(cuid())
+  activityType String // e.g. workout | hike | nutrition | measurement | metric | baseline
+  activityId   String
+  goalId       String
+  source       String   @default("auto") // auto | explicit | removed (tombstone — hidden from default reads)
+  note         String?
+  // Denormalized activity date (USER_TZ midnight, via parseDateInput). Range
+  // queries MUST filter on this, never on link createdAt — links can be
+  // backfilled long after the activity happened.
+  activityDate DateTime
+  userId       String?
+  createdAt    DateTime @default(now())
+
+  goal Goal  @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([activityType, activityId, goalId])
+  @@index([userId, goalId, activityDate])
+  @@index([activityType, activityId])
+}
+
+// M2 (#274): idempotent-replay receipt for write tools. A tool call that
+// passes a requestId stores its result here; a retry with the same requestId
+// returns the stored resultJson without re-executing the write.
+model WriteReceipt {
+  id         String   @id @default(cuid())
+  requestId  String
+  toolName   String
+  resultJson Json
+  userId     String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, requestId])
+  @@index([userId, toolName, createdAt]) // GC index — future receipt garbage collection scans by tool + age
+}
+
+// M2 (#275): a reusable meal the user/coach saves once and re-logs by
+// reference (log_nutrition savedMealId + servings, scaled by defaultServings).
+model SavedMeal {
+  id              String   @id @default(cuid())
+  name            String
+  // Same shape as NutritionLog.items: Array<{ name: string, qty?: string, notes?: string }>
+  items           Json
+  // Optional structured macros for ONE defaultServings worth of the meal:
+  // { calories?, proteinG?, carbsG?, fatG?, fiberG?, sodiumMg? }
+  macros          Json?
+  defaultServings Float    @default(1)
+  userId          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, name])
+}
+
+// M1 (#268): renamed from `Program` — retired legacy table, superseded by Plan.
+// The `Program` name is reserved for the Sprint-16 multi-domain model.
+model LegacyProgram {
   id        String   @id @default(cuid())
   name      String
   startedOn DateTime

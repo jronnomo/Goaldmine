@@ -96,6 +96,16 @@ export const METRICS: MetricSpec[] = [
     description: "Latest logged body weight from /measurements.",
   },
   {
+    // Amendment 5 (docs/program-redesign/03-run-amendments.md): backs the
+    // Phase 2A cut goal's primary target (10% body fat). Resolved from
+    // Measurement.bodyFatPct in goal-targets.ts, mirroring weightLb.
+    id: "bodyFatPct",
+    label: "Body fat %",
+    units: "%",
+    direction: "decrease",
+    description: "Latest logged body fat percentage from /measurements (DEXA or scale estimate).",
+  },
+  {
     id: "baseline:1.5 Mile Run",
     label: "1.5-mile run time",
     units: "sec",

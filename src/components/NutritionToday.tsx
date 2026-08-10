@@ -4,6 +4,8 @@ import { Bullseye } from "@/components/Bullseye";
 import { MEAL_SLOTS, type NutritionPlan, type PlannedMeal } from "@/lib/nutrition-plan";
 import { sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
+import { dateKey } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 
 export const MEAL_ORDER = MEAL_SLOTS;
@@ -110,11 +112,20 @@ export function NutritionToday({
   plan,
   showLogForm = true,
   quickPickFoods,
+  defaultDate,
 }: {
   logs: NutritionTodayLog[];
   plan?: NutritionPlan | null;
   showLogForm?: boolean;
   quickPickFoods?: LibraryFood[];
+  /**
+   * Pre-seed the inline log form (when `showLogForm`) to this calendar day
+   * (dateKey "YYYY-MM-DD") instead of "now" — passed straight through to
+   * MealComposer via LogNutritionForm. Used by the day-detail page (#294) so a
+   * meal logged while viewing a past or future day lands on THAT day. Omit for
+   * "today"-scoped hosts (unchanged default behavior).
+   */
+  defaultDate?: string;
 }) {
   const byMeal = new Map<string, NutritionTodayLog[]>();
   for (const log of logs) {
@@ -122,6 +133,17 @@ export function NutritionToday({
     arr.push(log);
     byMeal.set(log.mealType, arr);
   }
+
+  // #295: compact stubs of the already-fetched logs → the composer's
+  // append-vs-separate choice. Derived here (server side on RSC hosts) so the
+  // composer never needs its own fetch to know a slot already has an entry.
+  const existingMeals: ExistingMealStub[] = logs.map((l) => ({
+    id: l.id,
+    dateKey: dateKey(l.date),
+    mealType: l.mealType,
+    itemCount: asItems(l.items).length,
+    dateISO: l.date.toISOString(),
+  }));
 
   // Build one row per slot, then drop slots that are neither planned nor
   // logged (no more bare "—" rows for unused meal times).
@@ -162,7 +184,10 @@ export function NutritionToday({
   return (
     <div className="space-y-3">
       {rows.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">Nothing planned or logged today yet.</p>
+        // Date-neutral copy: this component renders for arbitrary days (the
+        // day-detail page, #294), not just "today" — "Nothing planned or
+        // logged today yet" reads wrong on a backfilled past day.
+        <p className="text-sm text-[var(--muted)]">Nothing planned or logged yet.</p>
       ) : (
         <>
           <ul className="space-y-2.5 text-sm">
@@ -287,7 +312,11 @@ export function NutritionToday({
       )}
       {showLogForm && (
         <div className="border-t border-[var(--border)] pt-3">
-          <LogNutritionForm />
+          <LogNutritionForm
+            quickPickFoods={quickPickFoods}
+            defaultDate={defaultDate}
+            existingMeals={existingMeals}
+          />
         </div>
       )}
     </div>

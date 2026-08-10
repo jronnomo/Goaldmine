@@ -17,4 +17,5 @@ export function formatWorkout(w: FormattableWorkout, format: ExportFormat): stri
   }
 }
 
-export type { ExportFormat, FormattableWorkout } from "./types";
+export { toFormattableWorkout } from "./types";
+export type { ExportFormat, FormattableWorkout, WorkoutExportSource } from "./types";

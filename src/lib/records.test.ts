@@ -14,6 +14,15 @@ vi.mock("@/lib/db", () => ({
   getDb: vi.fn(),
 }));
 
+// #298: getBaselineSchedule resolves its plan through the rotation-owner seam.
+// Partial mock — only getRotationOwnerGoal is stubbed (its own contract lives
+// in goal-focus.test.ts since the consolidation); everything else in
+// @/lib/goal-focus stays real for the transitive importers (game/engine).
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
+  getRotationOwnerGoal: vi.fn(),
+}));
+
 import {
   metricKindFor,
   isBetter,
@@ -21,7 +30,11 @@ import {
   recordsSetInWorkout,
   canonicalExerciseName,
   getBaselineHistory,
+  getBaselineSummaries,
+  getBaselineSchedule,
+  getBaselineScheduleForPlan,
 } from "@/lib/records";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 
 import { mapBaselineToSet } from "@/lib/baseline-workout";
 import { computeGameStateFromData } from "@/lib/game/engine";
@@ -839,5 +852,221 @@ describe("getBaselineHistory — query passes omit: { userId: true }", () => {
     expect(baselineFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { testName: "Pull-up Max Reps" } }),
     );
+  });
+});
+
+// ── Group: #276 Baseline.capped carried through the read payloads ────────────
+// capped is a display-only equipment-ceiling marker. These tests pin that the
+// records read surfaces (get_records_summary → getBaselineSummaries,
+// get_baseline_schedule → getBaselineScheduleForPlan) forward it — while the
+// PR/readiness math stays untouched (nothing here feeds bestSetSummary or
+// computeReadiness).
+
+describe("#276 capped — getBaselineSummaries carries latest.capped", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+  const groupBy = vi.fn();
+  const findFirst = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({ baseline: { groupBy, findFirst } });
+    groupBy.mockResolvedValue([{ testName: "8-Rep DB Press", _count: { _all: 2 } }]);
+    const earliest = {
+      id: "b-0",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-06-01"),
+      value: 55,
+      units: "lb",
+      capped: false,
+    };
+    const latest = {
+      id: "b-1",
+      testName: "8-Rep DB Press",
+      date: new Date("2026-08-01"),
+      value: 65,
+      units: "lb",
+      capped: true,
+    };
+    findFirst.mockImplementation(({ orderBy }: { orderBy: { date: "asc" | "desc" } }) =>
+      Promise.resolve(orderBy.date === "asc" ? earliest : latest),
+    );
+  });
+
+  it("latest.capped = true flows into the summary row (delta math unchanged)", async () => {
+    const out = await getBaselineSummaries();
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.latest).toEqual({ date: new Date("2026-08-01"), value: 65, capped: true });
+    expect(out[0]!.earliest).toEqual({ date: new Date("2026-06-01"), value: 55 });
+    expect(out[0]!.delta).toBe(10);
+  });
+});
+
+describe("#276 capped — getBaselineScheduleForPlan carries capped on latestResult + unscheduledExtras", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+  const findMany = vi.fn();
+
+  const startedOn = new Date("2026-06-01T06:00:00.000Z");
+  const plan = {
+    startedOn,
+    weeks: 12,
+    planJson: {
+      baselineWeek: [
+        {
+          dayOfWeek: 1,
+          tests: [
+            { testName: "8-Rep DB Press", units: "lb", protocol: "8RM", retestWeeks: [6] },
+          ],
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({ baseline: { findMany } });
+    findMany.mockResolvedValue([
+      {
+        id: "b-1",
+        testName: "8-Rep DB Press",
+        date: new Date("2026-06-08"),
+        value: 65,
+        units: "lb",
+        capped: true,
+      },
+      {
+        id: "b-2",
+        testName: "Off-Template Row",
+        date: new Date("2026-06-09"),
+        value: 100,
+        units: "sec",
+        capped: true,
+      },
+    ]);
+  });
+
+  it("scheduled latestResult.capped and unscheduledExtras.latest.capped are forwarded", async () => {
+    const out = await getBaselineScheduleForPlan(plan, { now: new Date("2026-06-15") });
+
+    expect(out.scheduled).toHaveLength(1);
+    expect(out.scheduled[0]!.latestResult).toEqual({
+      date: new Date("2026-06-08"),
+      value: 65,
+      units: "lb",
+      capped: true,
+    });
+
+    expect(out.unscheduledExtras).toHaveLength(1);
+    expect(out.unscheduledExtras[0]!.latest).toEqual({
+      date: new Date("2026-06-09"),
+      value: 100,
+      capped: true,
+    });
+  });
+});
+
+// ── Group: #298 getBaselineSchedule — rotation-owner plan resolution ──────────
+// The schedule follows the ROTATION-OWNING goal's plan under a Program (its
+// baselineWeek is the live schedule); a Program with no rotation owner gets
+// the empty shape (never another goal's schedule — DC-6/CRIT-2's rationale);
+// zero-Program tenants keep the pre-sweep focus-strict behavior byte-identical.
+
+describe("#298 getBaselineSchedule — rotation-owner / legacy-focus plan pick", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetDbLocal = getDb as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetRotationOwnerGoal = getRotationOwnerGoal as any;
+  const planFindFirst = vi.fn();
+  const baselineFindMany = vi.fn();
+
+  const startedOn = new Date("2026-06-01T06:00:00.000Z");
+  const rotationPlan = {
+    id: "plan-rot",
+    startedOn,
+    weeks: 12,
+    planJson: {
+      baselineWeek: [
+        {
+          dayOfWeek: 1,
+          tests: [{ testName: "8-Rep DB Press", units: "lb", protocol: "8RM", retestWeeks: [6] }],
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetDbLocal.mockResolvedValue({
+      plan: { findFirst: planFindFirst },
+      baseline: { findMany: baselineFindMany },
+    });
+    baselineFindMany.mockResolvedValue([]);
+  });
+
+  it("Program tenant: fetches the rotation-owning Plan BY ID and builds the schedule from it", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "program",
+      goalId: "goal-owner",
+      goalKind: "fitness",
+      planId: "plan-rot",
+    });
+    planFindFirst.mockResolvedValue(rotationPlan);
+
+    const out = await getBaselineSchedule({ now: new Date("2026-06-15") });
+
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    expect(planFindFirst).toHaveBeenCalledWith({ where: { id: "plan-rot" } });
+    expect(out.startedOn).toEqual(startedOn);
+    expect(out.totalWeeks).toBe(12);
+    expect(out.scheduled).toHaveLength(1);
+    expect(out.scheduled[0]!.testName).toBe("8-Rep DB Press");
+  });
+
+  it("Program tenant with NO rotation owner: empty shape, and the plan table is never queried", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "program",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+    });
+
+    const out = await getBaselineSchedule();
+
+    expect(out).toEqual({ startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] });
+    expect(planFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("zero-Program tenant: the legacy focus goal's most-recently-updated active plan (byte-identical focus-strict behavior)", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "legacy",
+      goalId: "goal-focus",
+      goalKind: "fitness",
+      planId: null,
+    });
+    planFindFirst.mockResolvedValue(rotationPlan);
+
+    const out = await getBaselineSchedule({ now: new Date("2026-06-15") });
+
+    expect(planFindFirst).toHaveBeenCalledWith({
+      where: { active: true, goalId: "goal-focus" },
+      orderBy: { updatedAt: "desc" },
+    });
+    expect(out.totalWeeks).toBe(12);
+  });
+
+  it("zero-Program tenant with no focus goal: empty shape (focus-strict — never another goal's schedule)", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "legacy",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+    });
+
+    const out = await getBaselineSchedule();
+
+    expect(out).toEqual({ startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] });
+    expect(planFindFirst).not.toHaveBeenCalled();
   });
 });

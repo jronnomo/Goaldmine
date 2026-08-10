@@ -10,6 +10,7 @@
 // captions, but it can never let an over-limit caption through.
 
 import type { WeeklyRecap, RecapHighlight, ResolvedStatSlot } from "@/lib/recap";
+import { HIGHLIGHT_ICON_EMOJI } from "@/lib/recap-icons";
 
 // Hashtag map — extend here for new goal kinds; no other file changes needed.
 // Partial<Record> makes the value type string | undefined so the ?? fallback
@@ -63,9 +64,14 @@ function buildOpener(recap: WeeklyRecap): string {
  * Build the highlight callout line.
  * Template: "${icon} ${label}${meta ? ` — ${meta}` : ""}${sub ? ` — ${sub}` : ""}"
  * (label is the name; meta carries the stats since the card split them onto two lines)
+ *
+ * h.icon is a discriminated id (#264), not a literal emoji — this is plain
+ * caption text (Instagram renders emoji fine), so map it back via
+ * HIGHLIGHT_ICON_EMOJI rather than printing the id itself.
  */
 function buildHighlight(h: RecapHighlight): string {
-  const head = h.meta !== null ? `${h.icon} ${h.label} — ${h.meta}` : `${h.icon} ${h.label}`;
+  const icon = HIGHLIGHT_ICON_EMOJI[h.icon];
+  const head = h.meta !== null ? `${icon} ${h.label} — ${h.meta}` : `${icon} ${h.label}`;
   return h.sub !== null ? `${head} — ${h.sub}` : head;
 }
 

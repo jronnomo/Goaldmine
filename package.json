@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsx scripts/check-migration-status.ts && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
@@ -14,6 +14,8 @@
     "db:push": "tsx scripts/db-guard.ts --assert && prisma db push",
     "db:verify-owned": "tsx scripts/verify-no-null-userid.ts",
     "db:verify-isolation": "tsx scripts/verify-tenant-isolation-full.ts",
+    "db:verify-links": "tsx scripts/verify-activity-links.ts",
+    "verify:isfocus": "tsx scripts/verify-isfocus-retirement.ts",
     "icons": "tsx scripts/render-icons.ts",
     "postinstall": "prisma generate && node scripts/copy-zxing-wasm.mjs"
   },

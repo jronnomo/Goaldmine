@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Card } from "@/components/Card";
+import { CappedMarker } from "@/components/CappedMarker";
 import { StatusPill } from "@/components/StatusPill";
 import { countByStatus, formatBest, statusTextClass } from "@/lib/baseline-format";
 import { getBaselineSchedule, getExerciseSummaries, checkpointLabel, type ScheduledBaseline } from "@/lib/records";
@@ -72,7 +73,8 @@ export default async function BaselinesPage() {
                   <div className="min-w-0">
                     <p className="font-medium truncate">{e.testName}</p>
                     <p className="text-xs text-[var(--muted)]">
-                      latest {formatNum(e.latest.value)} {e.units} ·{" "}
+                      latest {formatNum(e.latest.value)} {e.units}
+                      {e.latest.capped && <CappedMarker />} ·{" "}
                       {new Date(e.latest.date).toLocaleDateString()}
                     </p>
                   </div>
@@ -142,9 +144,15 @@ function ScheduledRow({ s }: { s: ScheduledBaseline }) {
       <div className="min-w-0">
         <p className="font-medium truncate">{s.testName}</p>
         <p className="text-xs text-[var(--muted)]">
-          {s.latestResult
-            ? `latest ${formatNum(s.latestResult.value)} ${s.units} · ${new Date(s.latestResult.date).toLocaleDateString()}`
-            : "no results yet"}
+          {s.latestResult ? (
+            <>
+              latest {formatNum(s.latestResult.value)} {s.units}
+              {s.latestResult.capped && <CappedMarker />} ·{" "}
+              {new Date(s.latestResult.date).toLocaleDateString()}
+            </>
+          ) : (
+            "no results yet"
+          )}
         </p>
         <p className="text-xs">
           <span className={statusTextClass(next.status)}>

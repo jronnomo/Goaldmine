@@ -6,12 +6,20 @@ import { MacroInputs, type MacroDefaults, type MacroValues } from "@/components/
 import { Bullseye } from "@/components/Bullseye";
 import { useFoodComposer } from "@/components/useFoodComposer";
 import { useFormFeedback } from "@/lib/use-form-feedback";
-import { logNutrition, updateNutrition } from "@/lib/workout-actions";
+import { appendNutrition, logNutrition, updateNutrition } from "@/lib/workout-actions";
 import { estimateMealMacros, type MealMacroEstimate } from "@/lib/food-actions";
 import { parseItemsText, serializeItems } from "@/lib/items-text";
-import { dateKey, shiftWallClock, toDatetimeLocalValue } from "@/lib/calendar-core";
+import {
+  dateKey,
+  dateKeyAtCurrentTime,
+  shiftWallClock,
+  toDatetimeLocalValue,
+} from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import type { NutritionMacros } from "@/lib/nutrition-plan";
+import type { SavedMealLite } from "@/lib/saved-meal";
+import { findAppendTarget, type ExistingMealStub } from "@/lib/nutrition-merge";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { MEAL_LABELS } from "@/lib/nutrition-macros";
 import { MEAL_SLOTS, type MealSlot } from "@/lib/nutrition-plan";
@@ -73,6 +81,12 @@ type DayContextProps = {
   dayTarget?: DayMacros | null;
   /** Pre-loaded library foods for the Browse-library picker. Passed to useFoodComposer. */
   libraryFoods?: LibraryFood[];
+  /**
+   * #296: server-fetched SavedMeal list for the composer quick-pick row.
+   * Passed to useFoodComposer; omit and the hook lazy-fetches on mount
+   * (mirrors the quickPickFoods pattern).
+   */
+  savedMeals?: SavedMealLite[];
 };
 
 export type MealComposerProps =
@@ -84,6 +98,24 @@ export type MealComposerProps =
       /** Called after a successful log (post-revalidatePath, form already
        *  reset) — lets the host refetch a list it owns. See LogNutritionForm. */
       onLogged?: () => void;
+      /**
+       * Pre-seed the date/time control to this calendar day (dateKey
+       * "YYYY-MM-DD") instead of "now" — e.g. the day-detail page backfilling a
+       * past date or pre-planning a future one (#294). Time-of-day still
+       * defaults to "now" (mirrors the Yesterday/-2h nudges below); the visible
+       * date/time control (#293) lets the user adjust further. Ignored/absent
+       * for hosts with no day context (e.g. the global Log sheet), which keep
+       * seeding "now" exactly as before.
+       */
+      defaultDate?: string;
+      /**
+       * Compact stubs of already-logged meals for the day(s) the host has in
+       * view (#295) — powers the append-vs-separate choice when the resolved
+       * (day, slot) already has a NutritionLog row. Server-derived by the host
+       * (the day's logs are already fetched there); omit where the host has no
+       * log context, and create behaves exactly as before (no choice UI).
+       */
+      existingMeals?: ExistingMealStub[];
     } & DayContextProps)
   | ({
       mode: "edit";
@@ -97,6 +129,17 @@ export type MealComposerProps =
     } & DayContextProps);
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Create-mode initial/reset `whenDate`: "now" unless a host-provided
+ * `defaultDate` (dateKey) pins the composer to a specific day (#294 — the
+ * day-detail page backfilling a past day or pre-planning a future one), in
+ * which case the target day's wall-clock time-of-day matches "now" (see
+ * dateKeyAtCurrentTime) rather than snapping to midnight.
+ */
+function createModeSeedDate(defaultDate: string | undefined): Date {
+  return defaultDate ? dateKeyAtCurrentTime(defaultDate, new Date()) : new Date();
+}
 
 function defaultMeal(): MealType {
   const h = new Date().getHours();
@@ -182,6 +225,11 @@ export function MealComposer(props: MealComposerProps) {
   const trackedSoFar  = props.trackedSoFar;
   const dayTarget     = props.dayTarget;
   const libraryFoods  = props.libraryFoods;
+  const savedMeals    = props.savedMeals;
+  // Direct discriminant check (not the `isEdit` alias) so TS narrows `props`
+  // to the create member here regardless of where this constant is read.
+  const createDefaultDate = props.mode === "create" ? props.defaultDate : undefined;
+  const existingMeals = props.mode === "create" ? props.existingMeals : undefined;
 
   // ── Canonical state ────────────────────────────────────────────────────────
   const seedItems = isEdit ? props.defaults.items : [];
@@ -191,7 +239,9 @@ export function MealComposer(props: MealComposerProps) {
   );
   const [notes, setNotes] = useState(isEdit ? props.defaults.notes : "");
   const [whenDate, setWhenDate] = useState<Date>(() =>
-    isEdit && props.defaults.date ? new Date(props.defaults.date) : new Date(),
+    isEdit && props.defaults.date
+      ? new Date(props.defaults.date)
+      : createModeSeedDate(createDefaultDate),
   );
   // Heal-on-seed: a fully food-resolved meal (every item carries `source`) derives
   // its total from the items, so trust the items over the stored macro columns —
@@ -212,6 +262,25 @@ export function MealComposer(props: MealComposerProps) {
           sodiumMg: isEdit ? props.defaults.macros?.sodiumMg ?? null : null,
         },
   );
+
+  // ── Append-vs-separate choice (#295) ───────────────────────────────────────
+  // The wall-clock day the server will store this meal under: the date part of
+  // the exact string submitted as name="date" (NOT dateKey(whenDate), which
+  // re-interprets the instant in USER_TZ and can disagree with the wall clock
+  // on a device outside USER_TZ). The server parses that same string back with
+  // parseDatetimeLocalValue and groups by dateKey — so this IS the stored day.
+  const composedDayKey = toDatetimeLocalValue(whenDate).slice(0, 10);
+  // Re-derived every render from (day, slot): flipping either recomputes the
+  // target; no match ⇒ no choice UI and the plain create path runs.
+  const appendTarget = isEdit
+    ? null
+    : findAppendTarget(existingMeals, composedDayKey, mealType);
+  // Default is ALWAYS "separate" (non-destructive). The selection is stored as
+  // the chosen TARGET ROW's id, so changing day/slot re-derives a different (or
+  // no) target and the stale choice silently falls back to separate — no
+  // effect/reset wiring needed.
+  const [appendChosenId, setAppendChosenId] = useState<string | null>(null);
+  const appendSelected = appendTarget != null && appendChosenId === appendTarget.id;
 
   // Raw-paste escape hatch
   const [rawMode, setRawMode] = useState(false);
@@ -323,32 +392,60 @@ export function MealComposer(props: MealComposerProps) {
   // B-2: compute `next`/`newMacros` OUTSIDE all setters; call setters sequentially.
   // B-3: this is the ONLY add path for food-resolved items; setItemsText is NEVER
   //       called from food-resolved add paths.
-  function addItemToComposer(item: NutritionItem): void {
+  // #296 widening: accepts an ARRAY for the SavedMeal expansion (N sequential
+  // single-item calls would each read the same stale `items` closure and drop
+  // all but the last), plus opts.macros — the saved meal's KNOWN scaled totals,
+  // credited here because freehand items carry no per-item macros and the
+  // recompute-from-items estimator must not overwrite authoritative numbers.
+  // Single-item calls (every pre-existing path) behave byte-identically.
+  function addItemToComposer(
+    itemOrItems: NutritionItem | NutritionItem[],
+    opts?: { macros?: NutritionMacros },
+  ): void {
+    const added = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
+    const knownMacros = opts?.macros;
+    if (added.length === 0 && !knownMacros) return;
     if (rawMode) {
       // rawMode: append text only; snapshotHash is NOT reset (rawMode is always
       // considered stale — intentional; user hits Recompute to reconcile). Items are
-      // freehand text here (not structured), so bump the total by the item's own
+      // freehand text here (not structured), so bump the total by the items' own
       // contribution rather than re-summing structured items. recalcItemMacros is
-      // null for a freehand "Add anyway" item → leave macros untouched.
-      const line = item.qty ? `${item.name} | ${item.qty}` : item.name;
-      setRawText((prev) => prev + (prev.trim() ? "\n" : "") + line);
-      const added = recalcItemMacros(item);
-      if (added) {
-        const newMacros = addMacroValues(macros, added);
+      // null for a freehand "Add anyway" item → contributes nothing.
+      if (added.length > 0) {
+        const lines = added
+          .map((it) => (it.qty ? `${it.name} | ${it.qty}` : it.name))
+          .join("\n");
+        setRawText((prev) => prev + (prev.trim() ? "\n" : "") + lines);
+      }
+      let bump: MacroValues | null = null;
+      for (const it of added) {
+        const m = recalcItemMacros(it);
+        if (m) bump = bump ? addMacroValues(bump, m) : { ...m };
+      }
+      if (knownMacros) bump = bump ? addMacroValues(bump, knownMacros) : { ...knownMacros };
+      if (bump) {
+        const newMacros = addMacroValues(macros, bump);
         handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
         setMacros(newMacros);
       }
       return;
     }
     // B-2: next/newMacros computed outside any setter; sequential calls below.
-    const next = [...items, item];
+    const next = [...items, ...added];
     setItems(next);
     setSnapshotHash(hashItems(next));
-    // Structured item → recompute the total from items, preserving the freehand
-    // residual. Freehand item (no source, e.g. "Add anyway") contributes nothing to
-    // the structured sum, so the total is unchanged — matches prior behavior.
-    if (item.source) {
-      const newMacros = recomposeWithResidual(macros, items, next);
+    // Structured item(s) → recompute the total from items, preserving the freehand
+    // residual. Freehand items (no source, e.g. "Add anyway" / SavedMeal rows)
+    // contribute nothing to the structured sum — their macro credit arrives via
+    // opts.macros (SavedMeal) or not at all (matches prior behavior).
+    let newMacros: MacroValues | null = null;
+    if (added.some((it) => it.source)) {
+      newMacros = recomposeWithResidual(macros, items, next);
+    }
+    if (knownMacros) {
+      newMacros = addMacroValues(newMacros ?? macros, knownMacros);
+    }
+    if (newMacros) {
       handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
       setMacros(newMacros);
     }
@@ -382,6 +479,7 @@ export function MealComposer(props: MealComposerProps) {
     addItem: addItemToComposer,
     quickPickFoods,
     libraryFoods,
+    savedMeals,
   });
 
   // ── Item ops ───────────────────────────────────────────────────────────────
@@ -481,7 +579,10 @@ export function MealComposer(props: MealComposerProps) {
     setRawText("");
     setMealType(defaultMeal());
     setNotes("");
-    setWhenDate(new Date());
+    // Re-seed the SAME target day (not "now") so logging several meals in a row
+    // for a backfilled/pre-planned day (#294) keeps landing on that day instead
+    // of snapping back to today after the first save.
+    setWhenDate(createModeSeedDate(createDefaultDate));
     setMacros({
       calories: null,
       proteinG: null,
@@ -496,6 +597,7 @@ export function MealComposer(props: MealComposerProps) {
     setRemovingIndex(null);
     setBumpState(null);
     setFlashMacros(null);
+    setAppendChosenId(null); // #295 — next compose starts back at "separate"
   }
 
   // Flash macro numerals on the food-add path (UXR-lib-16).
@@ -1003,6 +1105,55 @@ export function MealComposer(props: MealComposerProps) {
         </div>
       </div>
 
+      {/* ── Append-vs-separate choice (#295) ─────────────────────────────────
+          Create mode only, and only when the resolved (day, slot) already has
+          a logged row. Renders NOTHING otherwise — zero reserved space, so the
+          common first-log-of-a-slot path has no layout change at all. Sits
+          under the Meal chips (the selection it reacts to); the When control
+          below re-derives it live too. */}
+      {!isEdit && appendTarget && (
+        <div
+          data-testid="append-choice"
+          className="rounded-xl border border-[var(--border)] px-3 py-2.5"
+        >
+          <p className="text-xs text-[var(--muted)]">
+            {MEAL_LABELS[mealType]} already has an entry for this day
+          </p>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <button
+              type="button"
+              data-testid="append-choice-append"
+              aria-pressed={appendSelected}
+              onClick={() => setAppendChosenId(appendTarget.id)}
+              className={`w-full min-h-[44px] rounded-lg border px-3 py-2 text-left text-[13px] ${
+                appendSelected
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                  : "border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              Add to existing {MEAL_LABELS[mealType]} (
+              {appendTarget.itemCount > 0
+                ? `${appendTarget.itemCount} item${appendTarget.itemCount === 1 ? "" : "s"}`
+                : "custom entry"}
+              )
+            </button>
+            <button
+              type="button"
+              data-testid="append-choice-separate"
+              aria-pressed={!appendSelected}
+              onClick={() => setAppendChosenId(null)}
+              className={`w-full min-h-[44px] rounded-lg border px-3 py-2 text-left text-[13px] ${
+                !appendSelected
+                  ? "border-[var(--accent)] bg-[var(--accent-soft)] font-semibold text-[var(--accent)]"
+                  : "border-[var(--border)] text-[var(--muted)]"
+              }`}
+            >
+              Log as separate entry
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── When nudges ─────────────────────────────────────────────────────── */}
       <div>
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
@@ -1033,29 +1184,61 @@ export function MealComposer(props: MealComposerProps) {
           >
             Now
           </button>
-          <span className="ml-1 text-xs text-[var(--muted)]">
-            {formatResolvedWhen(whenDate)}
-          </span>
-          <button
-            type="button"
-            onClick={() => setShowExactTime((s) => !s)}
-            className="text-xs text-[var(--accent)]"
-          >
-            {showExactTime ? "hide" : "exact time"}
-          </button>
+          {/* Edit mode (UNCHANGED, #293 AC4): resolved label + "exact time"
+              disclosure toggle, hidden by default. */}
+          {isEdit && (
+            <>
+              <span className="ml-1 text-xs text-[var(--muted)]">
+                {formatResolvedWhen(whenDate)}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowExactTime((s) => !s)}
+                className="text-xs text-[var(--accent)]"
+              >
+                {showExactTime ? "hide" : "exact time"}
+              </button>
+            </>
+          )}
         </div>
-        {/* Single name="date" — submits whether shown or hidden. */}
-        <input
-          type="datetime-local"
-          name="date"
-          hidden={!showExactTime}
-          value={toDatetimeLocalValue(whenDate)}
-          onChange={(e) => {
-            const d = new Date(e.target.value);
-            if (!Number.isNaN(d.getTime())) setWhenDate(d);
-          }}
-          className="mt-2 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
-        />
+        {isEdit ? (
+          /* Single name="date" — submits whether shown or hidden. */
+          <input
+            type="datetime-local"
+            name="date"
+            hidden={!showExactTime}
+            aria-label="Meal date and time"
+            value={toDatetimeLocalValue(whenDate)}
+            onChange={(e) => {
+              const d = new Date(e.target.value);
+              if (!Number.isNaN(d.getTime())) setWhenDate(d);
+            }}
+            className="mt-2 rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+          />
+        ) : (
+          /* Create mode (#293): the date+time control is visible by default —
+             no "exact time" disclosure to find first. The resolved label reads
+             as the control's own caption ("Today · 7:42 PM — date & time") so
+             it's unambiguous this sets the DATE too, not just the clock time. */
+          <label className="mt-2 flex flex-col gap-1">
+            <span className="text-xs font-medium text-[var(--foreground)]">
+              {formatResolvedWhen(whenDate)}
+              <span className="ml-1 font-normal text-[var(--muted)]">· date & time</span>
+            </span>
+            <input
+              type="datetime-local"
+              name="date"
+              data-testid="when-exact-control"
+              aria-label="Meal date and time"
+              value={toDatetimeLocalValue(whenDate)}
+              onChange={(e) => {
+                const d = new Date(e.target.value);
+                if (!Number.isNaN(d.getTime())) setWhenDate(d);
+              }}
+              className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base"
+            />
+          </label>
+        )}
       </div>
 
       {/* ── Notes — unified single textarea for both modes ──────────────────── */}
@@ -1184,13 +1367,24 @@ export function MealComposer(props: MealComposerProps) {
             return;
           }
           setClientError(null);
-          createSubmit(logNutrition, {
-            successMsg: "✓ Meal logged",
-            onSuccess: () => {
-              resetCreate();
-              props.onLogged?.();
+          // #295: append folds the draft into the matched existing row — the
+          // merge itself runs SERVER-side (appendNutrition re-reads the row and
+          // re-validates day+slot), so a stale client copy can't clobber it.
+          // Capture the target now; appendSelected is only true while a live
+          // target matches the chosen id.
+          const target = appendSelected ? appendTarget : null;
+          createSubmit(
+            target ? (fd: FormData) => appendNutrition(target.id, fd) : logNutrition,
+            {
+              successMsg: target
+                ? `✓ Added to ${MEAL_LABELS[mealType]}`
+                : "✓ Meal logged",
+              onSuccess: () => {
+                resetCreate();
+                props.onLogged?.();
+              },
             },
-          });
+          );
         }}
         className="flex flex-col gap-3"
       >
@@ -1211,7 +1405,11 @@ export function MealComposer(props: MealComposerProps) {
           disabled={createPending}
           className="rounded-lg bg-[var(--accent)] px-4 py-2 font-medium text-[var(--accent-fg)] disabled:opacity-50"
         >
-          {createPending ? "Saving…" : "Log meal"}
+          {createPending
+            ? "Saving…"
+            : appendSelected
+              ? `Add to ${MEAL_LABELS[mealType]}`
+              : "Log meal"}
         </button>
       </form>
       {sheet}

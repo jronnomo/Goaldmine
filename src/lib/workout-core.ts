@@ -16,6 +16,8 @@
 import { z } from "zod";
 import { prisma, getDb } from "@/lib/db";
 import { recordsSetInWorkout, type RecordSet } from "@/lib/records";
+import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
+import { autoLinkWorkout, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 // ---------------------------------------------------------------------------
 // Input types (mirrors SetInputShape / ExerciseInputShape in tools.ts)
@@ -154,6 +156,21 @@ export async function createWorkoutCore(
     status === "completed" && input.exercises.length > 0
       ? await recordsSetInWorkout(created.id)
       : [];
+
+  // #307 auto-link engine v1a: hint/rule-matched ActivityGoalLink rows for the
+  // new workout. No-op without an active Program; skipped for non-completed
+  // rows (skipDay placeholders); idempotent; writes are top-level scoped calls
+  // through the same client that created the workout. Best-effort — the
+  // workout is committed, so a link failure must not fail (and retry-dupe)
+  // the log call; backfill-attribution.ts repairs gaps.
+  await autoLinkWorkout(db, {
+    workoutId: created.id,
+    title: input.title ?? null,
+    source: input.source ?? null,
+    status,
+    startedAt: input.startedAt,
+    exerciseNames: input.exercises.map((ex) => ex.name),
+  }).catch(swallowAutoLinkError("createWorkoutCore"));
 
   return { id: created.id, recordsSet };
 }
@@ -328,8 +345,45 @@ export async function workoutOpsCore(
 // deleteWorkoutCore
 // ---------------------------------------------------------------------------
 
+/**
+ * Delete one Workout row AND its ActivityGoalLink rows in the same
+ * transaction (#272 delete-hook consolidation).
+ *
+ * - WorkoutExercise/Set rows go via FK cascade on the workout delete; links
+ *   attach to the workout id only, so one deleteMany covers them.
+ * - Sequential top-level calls on the tx client (never nested writes) so the
+ *   getDb() tenant-scoping extension fires for BOTH deletes.
+ * - A missing id throws P2025 from workout.delete exactly as the bare delete
+ *   did — the link cleanup runs after it and cannot mask that error.
+ */
 export async function deleteWorkoutCore(id: string): Promise<{ id: string }> {
   const db = await getDb();
-  await db.workout.delete({ where: { id } });
+  await db.$transaction(async (tx) => {
+    await tx.workout.delete({ where: { id } });
+    await tx.activityGoalLink.deleteMany({
+      where: { activityType: ACTIVITY_LINK_TYPE.workout, activityId: id },
+    });
+  });
   return { id };
+}
+
+/**
+ * Batch variant for filter-driven deletes (unskipDay's deleteMany backstop).
+ * Unlike deleteWorkoutCore, missing ids do NOT throw — deleteMany semantics
+ * (the caller resolved ids from a filter, so "already gone" is not an error).
+ * Link cleanup rides the same transaction, matching deleteWorkoutCore.
+ */
+export async function deleteWorkoutsCore(
+  ids: string[],
+): Promise<{ deleted: number }> {
+  if (ids.length === 0) return { deleted: 0 };
+  const db = await getDb();
+  const deleted = await db.$transaction(async (tx) => {
+    const res = await tx.workout.deleteMany({ where: { id: { in: ids } } });
+    await tx.activityGoalLink.deleteMany({
+      where: { activityType: ACTIVITY_LINK_TYPE.workout, activityId: { in: ids } },
+    });
+    return res.count;
+  });
+  return { deleted };
 }

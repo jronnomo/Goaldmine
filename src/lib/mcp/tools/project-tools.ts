@@ -8,10 +8,14 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
-import { setFocusGoalCore } from "@/lib/goal-core";
+import { setFocusGoalProgramAwareCore } from "@/lib/goal-core";
+import { deleteLogEntryCore } from "@/lib/log-entry-core";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
+import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 import { getLogMetricSeries } from "@/lib/metric-series";
 import type { GoalTarget } from "@/lib/metrics-registry";
+import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
+import { mirrorActivityGoalLink, swallowAutoLinkError } from "@/lib/attribution-hooks";
 
 export function registerProjectTools(server: McpServer): void {
   // --------------------------------------------------------------------------
@@ -493,59 +497,71 @@ export function registerProjectTools(server: McpServer): void {
           .enum(["manual", "github", "claude"])
           .default("manual")
           .describe("Source of this metric entry. Default: manual."),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
+        return withWriteReceipt("log_metric", input.requestId, db, async () => {
+          // 1. value-or-text required guard — check FIRST before any DB call
+          if (input.value === undefined && input.text === undefined) {
+            throw new Error(
+              "Provide value and/or text — both cannot be omitted for a metric log entry.",
+            );
+          }
 
-        // 1. value-or-text required guard — check FIRST before any DB call
-        if (input.value === undefined && input.text === undefined) {
-          throw new Error(
-            "Provide value and/or text — both cannot be omitted for a metric log entry.",
-          );
-        }
+          // 2. Verify goal exists AND is a project goal (D-3: prevents silently writing
+          //    metric rows to fitness goals, which would corrupt goal-type semantics)
+          const goal = await db.goal.findUnique({
+            where: { id: input.goalId },
+            select: { id: true, kind: true },
+          });
+          if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
+          if (goal.kind !== "project") {
+            throw new Error(
+              `Goal ${input.goalId} is kind='${goal.kind}'. ` +
+              `log_metric is for project goals only — use log_measurement for body metrics ` +
+              `or log_baseline for benchmark tests.`,
+            );
+          }
 
-        // 2. Verify goal exists AND is a project goal (D-3: prevents silently writing
-        //    metric rows to fitness goals, which would corrupt goal-type semantics)
-        const goal = await db.goal.findUnique({
-          where: { id: input.goalId },
-          select: { id: true, kind: true },
+          // 3. date: current instant default, not midnight (per PRD §4.5)
+          const date = input.date ? parseDateInput(input.date) : new Date();
+
+          const entry = await db.logEntry.create({
+            data: {
+              goalId: input.goalId,
+              metric: input.metric,
+              value: input.value ?? null,
+              text: input.text ?? null,
+              date,
+              source: input.source,
+              // payload omitted — not exposed in this tool
+            },
+          });
+
+          // #308 v1b: mirror LogEntry.goalId into the link table (the column
+          // stays authoritative). No-op without an active Program / when the
+          // goal isn't an active member; idempotent; best-effort.
+          await mirrorActivityGoalLink(db, {
+            activityType: ACTIVITY_LINK_TYPE.logEntry,
+            activityId: entry.id,
+            goalId: entry.goalId,
+            date: entry.date,
+          }).catch(swallowAutoLinkError("log_metric"));
+
+          return {
+            id: entry.id,
+            goalId: entry.goalId,
+            metric: entry.metric,
+            value: entry.value,
+            text: entry.text,
+            date: entry.date.toISOString(),        // ISO — per PRD §4.2
+            source: entry.source,
+            message: "Metric logged.",
+          };
         });
-        if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
-        if (goal.kind !== "project") {
-          throw new Error(
-            `Goal ${input.goalId} is kind='${goal.kind}'. ` +
-            `log_metric is for project goals only — use log_measurement for body metrics ` +
-            `or log_baseline for benchmark tests.`,
-          );
-        }
-
-        // 3. date: current instant default, not midnight (per PRD §4.5)
-        const date = input.date ? parseDateInput(input.date) : new Date();
-
-        const entry = await db.logEntry.create({
-          data: {
-            goalId: input.goalId,
-            metric: input.metric,
-            value: input.value ?? null,
-            text: input.text ?? null,
-            date,
-            source: input.source,
-            // payload omitted — not exposed in this tool
-          },
-        });
-
-        return {
-          id: entry.id,
-          goalId: entry.goalId,
-          metric: entry.metric,
-          value: entry.value,
-          text: entry.text,
-          date: entry.date.toISOString(),        // ISO — per PRD §4.2
-          source: entry.source,
-          message: "Metric logged.",
-        };
       }),
   );
 
@@ -664,22 +680,12 @@ export function registerProjectTools(server: McpServer): void {
     },
     async (input) =>
       safe(async () => {
-        const db = await getDb();
-
-        // Single-round-trip delete: use the returned row to confirm metric+value.
-        // No findUnique-first — capture deleted row from db.logEntry.delete().
-        let row: { id: string; metric: string; value: number | null };
-        try {
-          row = await db.logEntry.delete({
-            where: { id: input.id },
-            select: { id: true, metric: true, value: true },
-          });
-        } catch (e) {
-          if ((e as { code?: string }).code === "P2025") {
-            throw new Error(`Log entry not found: ${input.id}`);
-          }
-          throw e;
-        }
+        // Single-round-trip delete via the shared core (#272): the deleted
+        // row confirms metric+value, ActivityGoalLink rows are cleaned in the
+        // same transaction, and P2025 comes back as null for the friendly
+        // second-delete error below.
+        const row = await deleteLogEntryCore(input.id);
+        if (!row) throw new Error(`Log entry not found: ${input.id}`);
 
         return {
           id: row.id,
@@ -766,16 +772,25 @@ export function registerProjectTools(server: McpServer): void {
   server.registerTool(
     "set_active_goal",
     {
-      title: "Switch which goal drives Today/Calendar (focus goal)",
+      title: "Switch which goal drives Today/Calendar (focus goal) — Program-aware",
       description:
         "Set the focus goal — the goal whose plan drives get_today_plan, the Today page, and the calendar. " +
         "Exactly one goal holds focus at a time; this clears focus from ALL other goals (they stay tracked, " +
         "their plans and events remain visible — only the daily-prescription driver changes). " +
         "Focusing a goal also re-activates its most recent plan if it was paused, and re-tracks an untracked goal. " +
         "Works for any goal kind — switch between a fitness goal and a project goal (e.g. a side project) and back. " +
+        "PROGRAM BLAST RADIUS (one active Program per user): when an active Program exists, focusing a goal in a " +
+        "DIFFERENT Program deactivates the ENTIRE current Program — it is archived (every member goal stops driving " +
+        "Today) and the target's Program becomes active. That cross-Program switch is REFUSED unless you pass " +
+        "confirmProgramSwitch:true — never pass it without first naming both Programs to the user and getting " +
+        "explicit approval. Switching WITHIN the active Program, or when the user has no Program at all, never " +
+        "touches Program state (byte-identical to the pre-Program behavior). Focusing a goal OUTSIDE any Program " +
+        "while a Program is active leaves the Program in charge of the day's rotation — the response carries a " +
+        "warning; attach the goal (attach_goal_to_program) or archive the Program if you meant to hand Today over. " +
         "If the user is mid-program on a fitness goal, confirm before switching: per operating rules, propose the " +
         "switch, use list_goals to show their goals, and get explicit approval first. " +
-        "Returns the new focus goal (id, kind, objective) and the previous focus goal id. " +
+        "Returns the new focus goal (id, kind, objective), the previous focus goal id, and program " +
+        "{action: 'none'|'switched', previousProgram?, activatedProgram?, warning?}. " +
         "After this call, get_today_plan reflects the new focus goal (focusGoal.kind, todayItems for project goals).",
       inputSchema: {
         goalId: z
@@ -784,18 +799,35 @@ export function registerProjectTools(server: McpServer): void {
             "The goal to focus. All other goals lose focus (but stay tracked). " +
               "Use list_goals to discover goal ids.",
           ),
+        confirmProgramSwitch: z
+          .boolean()
+          .optional()
+          .describe(
+            "Required (true) ONLY for a cross-Program switch: confirms the user explicitly approved archiving " +
+              "the current active Program and activating the target goal's Program. Without it, cross-Program " +
+              "switches fail with an error naming both Programs.",
+          ),
       },
     },
     async (input) =>
       safe(async () => {
-        const { previousFocusGoalId, goal } = await setFocusGoalCore(input.goalId);
+        const { previousFocusGoalId, goal, program } = await setFocusGoalProgramAwareCore(
+          input.goalId,
+          { confirmProgramSwitch: input.confirmProgramSwitch },
+        );
         return {
           focusGoalId: goal.id,
           kind: goal.kind,
           objective: goal.objective,
           previousFocusGoalId,
+          program,
           message:
             `Focus switched to "${goal.objective}" (kind=${goal.kind}). ` +
+            (program.action === "switched"
+              ? `Program "${program.previousProgram?.name}" was ARCHIVED and Program ` +
+                `"${program.activatedProgram?.name}" is now active. `
+              : "") +
+            (program.warning ? `WARNING: ${program.warning} ` : "") +
             "get_today_plan now reflects this goal.",
         };
       }),

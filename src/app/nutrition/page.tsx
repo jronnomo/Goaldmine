@@ -16,9 +16,11 @@ import {
 } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { listSavedMealsLite } from "@/lib/saved-meal-actions";
 import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +52,7 @@ export default async function NutritionPage() {
   const since = startOfDay(addDays(new Date(), -30));
 
   const db = await getDb();
-  const [logs, quickPickFoods, libraryFoods, today] = await Promise.all([
+  const [logs, quickPickFoods, libraryFoods, savedMeals, today] = await Promise.all([
     db.nutritionLog.findMany({
       where: { date: { gte: since } },
       orderBy: { date: "desc" },
@@ -58,6 +60,7 @@ export default async function NutritionPage() {
     }),
     getQuickPickFoods(),
     listLibraryFoods(),
+    listSavedMealsLite(),
     // Today's resolved day — only source of a planned per-slot calorie target
     // (it lives in a per-day nutrition-plan override). Lights the Bullseye meter
     // for today's meals (UXR-meal-edit-26); other days have no target → hollow.
@@ -70,6 +73,10 @@ export default async function NutritionPage() {
   // Group logs by USER_TZ day, building serialized rows for the client island.
   const groupMap = new Map<string, NutritionRowData[]>();
   const order: string[] = [];
+  // #295: every fetched row (last 30 days) as an append-choice stub, so the
+  // choice also fires when the user backdates the composer's date control
+  // (#293) to a day that already has that slot logged.
+  const existingMeals: ExistingMealStub[] = [];
   for (const log of logs) {
     const k = dateKey(log.date);
     if (!groupMap.has(k)) {
@@ -77,6 +84,13 @@ export default async function NutritionPage() {
       order.push(k);
     }
     const items = asItems(log.items);
+    existingMeals.push({
+      id: log.id,
+      dateKey: k,
+      mealType: log.mealType,
+      itemCount: items.length,
+      dateISO: new Date(log.date).toISOString(),
+    });
     const datetimeLocal = toDatetimeLocalValue(new Date(log.date));
     // Planned calorie target — today only, when a plan slot carries calories.
     const slot = todayPlan ? todayPlan[log.mealType as MealSlot] : null;
@@ -143,8 +157,10 @@ export default async function NutritionPage() {
         <LogNutritionForm
           quickPickFoods={quickPickFoods}
           libraryFoods={libraryFoods}
+          savedMeals={savedMeals}
           trackedSoFar={trackedTodayMacros}
           dayTarget={dayTargetMacros}
+          existingMeals={existingMeals}
         />
       </Card>
 

@@ -25,12 +25,14 @@ import {
   type StatSlot,
 } from "@/lib/goal-presentation";
 import { getActiveProgram } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeReadiness } from "@/lib/readiness";
 import type { TargetProgress } from "@/lib/readiness";
 import { getExerciseSummaries } from "@/lib/records";
 import { computeGameState } from "@/lib/game/engine";
 import type { GoalTarget } from "@/lib/goal-targets";
 import type { ExerciseSummary } from "@/lib/records";
+import type { RecapHighlightIconId } from "@/lib/recap-icons";
 
 // ─── Template ────────────────────────────────────────────────────────────────
 
@@ -61,7 +63,13 @@ export type RecapGoalState = "no-goal" | "no-targets" | "all-missing" | "has-dat
 export type RecapHighlight = {
   id: string;       // stable: "pr:<name>" | "baseline:<testName>" | "hike:<hikeId>" | "badge:<id>" | "custom:<text>"
   kind: "pr" | "baseline" | "hike" | "badge" | "custom";
-  icon: string;     // emoji: pr "🏆", baseline "📏", hike "⛰️", badge "🎖️", custom "⭐"
+  // Discriminated icon id — NOT a literal emoji character (#264). recap.ts is
+  // the pure/shared layer and must not import JSX, so rendering is deferred:
+  // recap-card.tsx (Satori) switches on this id to draw an inline SVG mark;
+  // recap-caption.ts / RecapClient.tsx map it back to an emoji glyph for
+  // plain-text contexts via HIGHLIGHT_ICON_EMOJI (src/lib/recap-icons.ts).
+  // pr "trophy", baseline "ruler", hike "mountain", badge "medal", custom "star"
+  icon: RecapHighlightIconId;
   label: string;    // headline NAME only e.g. "Goblet Squat" / "Bear Peak Trail #1474"
   meta: string | null; // stat sub-line e.g. "65 lb" / "8.2 mi · 3,768 ft"; null → no stat line
   sub: string | null; // optional gold pill badge e.g. "new PR" / "new best"
@@ -304,15 +312,22 @@ export async function computeWeeklyRecap(
     const sunday = endOfWeekSunday(monday);
 
     // ── 2. Goal-first fetch ────────────────────────────────────────────────
+    // #298: the no-goalId default is the ROTATION-OWNING goal under a Program
+    // (null when the Program has no rotation — the recap then renders its
+    // existing null-goal shape); zero-Program tenants keep the legacy
+    // focus-goal default, resolved inside getRotationOwnerGoal's legacy
+    // branch (same deterministic winner, byte-identical for healthy tenants).
+    // Multi-goal weekly recap — recapping ALL Program member goals in one
+    // card — is an explicit NON-GOAL of this sprint, tracked separately;
+    // this stays a single-goal resolution.
     const db = await getDb();
-    const goal = await (
-      opts?.goalId
-        ? db.goal.findFirst({ where: { id: opts.goalId } })
-        : db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-          })
-    );
+    const goal = await (async () => {
+      if (opts?.goalId) return db.goal.findFirst({ where: { id: opts.goalId } });
+      const resolution = await getRotationOwnerGoal();
+      return resolution.goalId
+        ? db.goal.findFirst({ where: { id: resolution.goalId } })
+        : null;
+    })();
 
     // ── 3. Presentation + slot keys ────────────────────────────────────────
     // presentation is still needed for headerStyle (step 10); the slot ARRAY
@@ -577,7 +592,7 @@ export async function computeWeeklyRecap(
         .map((pr) => ({
           id: `pr:${pr.name}`,
           kind: "pr" as const,
-          icon: "🏆",
+          icon: "trophy",
           label: pr.name,
           meta: prMeta(pr),
           sub: "new PR",
@@ -595,7 +610,7 @@ export async function computeWeeklyRecap(
         .map((b) => ({
           id: `badge:${b.def.id}`,
           kind: "badge" as const,
-          icon: "🎖️",
+          icon: "medal",
           label: b.def.name,
           meta: null,
           sub: null,
@@ -605,7 +620,7 @@ export async function computeWeeklyRecap(
       const hikeHighlights: RecapHighlight[] = hikes.map((h) => ({
         id: `hike:${h.id}`,
         kind: "hike" as const,
-        icon: "⛰️",
+        icon: "mountain",
         label: h.route,
         meta: `${h.distanceMi.toFixed(1)} mi · ${new Intl.NumberFormat("en-US").format(h.elevationFt)} ft`,
         sub: null,
@@ -646,7 +661,7 @@ export async function computeWeeklyRecap(
         return {
           id: `baseline:${row.testName}`,
           kind: "baseline" as const,
-          icon: "📏",
+          icon: "ruler",
           label: row.testName,
           meta: `${row.value} ${row.units}`,
           sub: isNewBest ? "new best" : null,
@@ -739,7 +754,7 @@ export async function computeWeeklyRecap(
  *
  * - null / undefined / "none" / ""  → null (no callout band)
  * - "auto"                          → recap.highlights[0] ?? null (top candidate)
- * - "custom:<text>"                 → {kind:"custom", icon:"⭐", label:text, ...}
+ * - "custom:<text>"                 → {kind:"custom", icon:"star", label:text, ...}
  *                                     (empty text after "custom:" → null)
  * - any other string                → match by id in recap.highlights; unmatched → null
  */
@@ -755,7 +770,7 @@ export function resolveHighlight(
     return {
       id: param,
       kind: "custom",
-      icon: "⭐",
+      icon: "star",
       label: text,
       meta: null,
       sub: null,

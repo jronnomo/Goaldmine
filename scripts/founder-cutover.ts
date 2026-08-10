@@ -74,7 +74,7 @@ async function countTenantRows(userId: string): Promise<number> {
     prisma.nutritionLog.count({ where: { userId } }),
     prisma.mobilityCheckin.count({ where: { userId } }),
     prisma.goal.count({ where: { userId } }),
-    prisma.program.count({ where: { userId } }),
+    prisma.legacyProgram.count({ where: { userId } }),
     prisma.gameBonusXp.count({ where: { userId } }),
     prisma.bodyMetric.count({ where: { userId } }),
     prisma.scheduledItem.count({ where: { userId } }),

@@ -9,6 +9,8 @@ import { LogNoteForm } from "@/components/LogNoteForm";
 import { MealEditButton } from "@/components/MealEditButton";
 import type { TodayMealLite, LogSheetData } from "@/lib/log-sheet-data";
 import { formatDayMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
+import type { ExistingMealStub } from "@/lib/nutrition-merge";
+import { dateKey } from "@/lib/calendar-core";
 import type { MealSlot } from "@/lib/nutrition-plan";
 
 function mealSummary(items: TodayMealLite["items"]): string {
@@ -188,6 +190,20 @@ export function LogLauncher({
   const mealSoFar = data?.trackedSoFar ?? null;
   const showMealSoFar = mealSoFar !== null && hasAnyMacros(mealSoFar);
 
+  // #295: today's already-logged meals as append-choice stubs for the inline
+  // composer. Self-fetched, so they refresh on every sheet open AND after each
+  // log (onLogged → fetchData) — a second sandwich into an already-logged
+  // lunch gets the append-vs-separate choice right here in the sheet.
+  const existingMeals: ExistingMealStub[] | undefined = data?.todaysMeals.map(
+    (m) => ({
+      id: m.id,
+      dateKey: dateKey(new Date(m.dateISO)),
+      mealType: m.mealType,
+      itemCount: m.items.length,
+      dateISO: m.dateISO,
+    }),
+  );
+
   return (
     <div className="py-2">
       {rows.map(({ key, label, sub, icon }) => {
@@ -279,9 +295,11 @@ export function LogLauncher({
                         <LogNutritionForm
                           quickPickFoods={data?.quickPickFoods}
                           libraryFoods={data?.libraryFoods}
+                          savedMeals={data?.savedMeals}
                           trackedSoFar={data?.trackedSoFar}
                           dayTarget={data?.dayTarget}
                           onLogged={fetchData}
+                          existingMeals={existingMeals}
                         />
                       </>
                     )}

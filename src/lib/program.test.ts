@@ -27,8 +27,14 @@ vi.mock("@/lib/db", () => ({
 
 import { getDb } from "@/lib/db";
 import {
+  getActiveProgram,
+  getActiveProgramMembership,
+  getMostRecentProgram,
   getProgramForDate,
+  orderMembersFirst,
   pickProgramForDate,
+  phaseForWeekIndex,
+  splitDayForRotationDay,
   type ActiveProgramSnapshot,
   type PlanWindowCandidate,
 } from "@/lib/program";
@@ -68,6 +74,15 @@ function candidate(overrides: Partial<PlanWindowCandidate> = {}): PlanWindowCand
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mkScopedDb(overrides: Record<string, any> = {}) {
+  // M1/#269: no legacyProgram accessor here on purpose — program.ts must
+  // never touch the LegacyProgram table anymore; if a regression reintroduces
+  // a read, these mocks throw (undefined accessor) instead of masking it.
+  //
+  // #277: getActiveProgram() is Program-first now, so a `program` accessor is
+  // required. The default models a ZERO-Program-rows tenant (findFirst active
+  // → null, count → 0) — the exact pre-Program legacy shape every test in
+  // this file predating #277 was written against, whose behavior the seam
+  // flip guarantees byte-identical.
   return {
     plan: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -75,8 +90,49 @@ function mkScopedDb(overrides: Record<string, any> = {}) {
     },
     program: {
       findFirst: vi.fn().mockResolvedValue(null),
+      count: vi.fn().mockResolvedValue(0),
     },
     ...overrides,
+  };
+}
+
+// A realistic Program DB row for the #277 seam tests. `userId` is present on
+// the raw row exactly as in production — the membership tests assert it never
+// leaks into the returned shape.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function programDbRow(overrides: Record<string, any> = {}) {
+  return {
+    id: "prog-1",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: parseDateKey("2026-01-01"),
+    endsOn: null,
+    notes: null,
+    attributionRules: null,
+    userId: "usr_founder",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+// A realistic LegacyProgram DB row for the #269 regression tests — seeded
+// into an explicit `legacyProgram` mock to prove the row is IGNORED (the
+// accessor is never even called), not merely out-ranked.
+function legacyProgramDbRow() {
+  return {
+    id: "legacy-program-row",
+    name: "Legacy Seeded Program",
+    startedOn: parseDateKey("2026-01-01"),
+    phase: 1,
+    week: 1,
+    day: 1,
+    version: 1,
+    active: true,
+    planJson: template(4),
+    userId: "usr_founder",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
   };
 }
 
@@ -296,46 +352,44 @@ describe("pickProgramForDate (pure)", () => {
     expect(resultWithActive).toEqual({ ...stillActive, source: "active" });
   });
 
-  // ─── SMOKE-1: legacy Program-table fallback vs. a covering real Plan ──────
+  // ─── Simplified contract after M1/#269 (SMOKE-1 branch deleted) ───────────
   //
-  // getActiveProgram() falls back to the legacy `Program` table only when the
-  // user has zero active `Plan` rows (e.g. right after completing their only
-  // goal). That legacy row's id can never appear in `candidates` — see the
-  // pickProgramForDate doc comment. These pin down the new precedence: a
-  // covering real-Plan candidate beats the legacy row on past dates only.
+  // getActiveProgram() no longer reads the LegacyProgram table, so
+  // `activeProgram` is always a real Plan snapshot (or null) — the old
+  // SMOKE-1 special case (id-membership check demoting a legacy-fallback
+  // active row on past dates) is gone. These pin the restored single-path
+  // contract: a covering activeProgram wins step 1 unconditionally; candidate
+  // id-membership is never consulted.
 
-  it("SMOKE-1: past date + legacy-fallback active + covering (inactive) Plan candidate → the candidate wins, source archived", () => {
-    const legacyActive = snapshot({ id: "program-legacy" }); // id absent from candidates → legacy signal
-    const realPlan = candidate({ id: "plan-real", active: false }); // inactive: the user's completed-goal Plan
-    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-02-01", legacyActive);
-    expect(result).toEqual({
-      id: "plan-real",
-      name: realPlan.name,
-      startedOn: realPlan.startedOn,
-      template: realPlan.template,
-      confirmedThroughDate: realPlan.confirmedThroughDate,
-      source: "archived",
-    });
+  it("a covering activeProgram wins a past date as source:active even when its id is absent from candidates (no id-membership check — one resolution path)", () => {
+    // Pre-#269, this exact input (id ∉ candidates + covering candidate) was
+    // the legacy-fallback signal and the candidate won. Post-#269 the
+    // activeProgram can only be a real Plan, so step 1 wins unconditionally —
+    // callers that pass partial candidate lists get the Today contract back.
+    const active = snapshot({ id: "plan-not-in-candidates" });
+    const other = candidate({ id: "plan-other", active: false });
+    const result = pickProgramForDate([other], "2026-01-15", "2026-02-01", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1: same setup but the date is TODAY → legacy-fallback active still wins (unchanged)", () => {
-    const legacyActive = snapshot({ id: "program-legacy" });
+  it("TODAY covered by the activeProgram → active wins over a covering candidate (unchanged)", () => {
+    const active = snapshot({ id: "plan-today-active" });
     const realPlan = candidate({ id: "plan-real", active: false });
-    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-01-15", legacyActive);
-    expect(result).toEqual({ ...legacyActive, source: "active" });
+    const result = pickProgramForDate([realPlan], "2026-01-15", "2026-01-15", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1: past date + legacy-fallback active + NO covering candidate → legacy active still wins (legacy-only user unchanged)", () => {
-    const legacyActive = snapshot({ id: "program-legacy" });
-    // No candidates at all — a legacy-only user with zero Plan rows ever.
-    const result = pickProgramForDate([], "2026-01-15", "2026-02-01", legacyActive);
-    expect(result).toEqual({ ...legacyActive, source: "active" });
+  it("past date + activeProgram + NO covering candidate → active fall-through still wins (unchanged)", () => {
+    const active = snapshot({ id: "plan-solo-active" });
+    // No candidates at all — e.g. a caller that fetched none.
+    const result = pickProgramForDate([], "2026-01-15", "2026-02-01", active);
+    expect(result).toEqual({ ...active, source: "active" });
   });
 
-  it("SMOKE-1 unaffected case: past date covered by a REAL active Plan (id present in candidates) → active still wins (pre-fix step 1, unchanged)", () => {
+  it("realistic wiring: past date covered by the active Plan, which also appears among candidates → active wins as source:active", () => {
     const realActive = snapshot({ id: "plan-real-active" });
-    // The active Plan itself always appears among candidates (getPlanWindowCandidates
-    // fetches every Plan row, active or not) — so isLegacyFallback is false here.
+    // The active Plan always appears among candidates in production
+    // (getPlanWindowCandidates fetches every Plan row, active or not).
     const asCandidate = candidate({
       id: "plan-real-active",
       startedOn: realActive.startedOn,
@@ -367,13 +421,11 @@ describe("getProgramForDate (db-integrated)", () => {
     expect(planFindMany).not.toHaveBeenCalled();
   });
 
-  it("SMOKE-1: a real active Plan covering a PAST date still wins as source:active, even though the candidate query now runs unconditionally for past dates", async () => {
-    // Before SMOKE-1, this query was skipped whenever the active program
-    // already covered the date. That optimization no longer holds for past
-    // dates — pickProgramForDate needs the full candidate list to tell a
-    // legacy Program-table fallback apart from a real active Plan (see its
-    // doc comment) — so the query now runs, but since `active` here is a real
-    // Plan (present among candidates), the outcome is unchanged.
+  it("a real active Plan covering a PAST date wins as source:active AND skips the candidate query (M1/#269 restored the covered-past-date skip)", async () => {
+    // The unconditional past-date candidate fetch existed only so the deleted
+    // SMOKE-1 legacy check could run its id-membership test. With the legacy
+    // fallback gone, a past date the active plan covers is decided by step 1
+    // before candidates could ever matter — so the query is skipped again.
     const active = snapshot();
     const planFindFirst = vi.fn().mockResolvedValue(planDbRow(active, { active: true }));
     const planFindMany = vi.fn().mockResolvedValue([planDbRow(active, { active: true })]);
@@ -384,7 +436,7 @@ describe("getProgramForDate (db-integrated)", () => {
     const result = await getProgramForDate(parseDateKey("2026-01-15"), parseDateKey("2026-01-20"));
 
     expect(result).toEqual({ ...active, source: "active" });
-    expect(planFindMany).toHaveBeenCalled();
+    expect(planFindMany).not.toHaveBeenCalled();
   });
 
   it("no plans at all → null", async () => {
@@ -448,5 +500,402 @@ describe("getProgramForDate (db-integrated)", () => {
 
     expect(result).toBeNull();
     expect(planFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── M1/#269: LegacyProgram fallback deletion regressions ───────────────────
+//
+// getActiveProgram()/getMostRecentProgram() must NEVER read the LegacyProgram
+// table anymore — a stale active legacy row shadowing Plan resolution was a
+// live bug class (override-invisibility; analysis §2.2.3). Each test seeds an
+// explicit `legacyProgram` mock returning an ACTIVE legacy row and asserts
+// both the null/Plan outcome AND that the accessor was never called.
+
+describe("getActiveProgram / getMostRecentProgram — legacy fallback deleted (M1/#269)", () => {
+  it("active LegacyProgram row + zero active Plans → getActiveProgram returns null and never queries the legacy table", async () => {
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({ legacyProgram: { findFirst: legacyFindFirst } }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("active LegacyProgram row + an active Plan → the Plan wins (legacy table untouched)", async () => {
+    const active = snapshot({ id: "plan-wins" });
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: {
+          findFirst: vi.fn().mockResolvedValue(planDbRow(active, { active: true })),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        legacyProgram: { findFirst: legacyFindFirst },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toEqual(active);
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("getMostRecentProgram: zero Plan rows → null even with an active LegacyProgram row present (legacy table untouched)", async () => {
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({ legacyProgram: { findFirst: legacyFindFirst } }),
+    );
+
+    const result = await getMostRecentProgram();
+
+    expect(result).toBeNull();
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("getMostRecentProgram: an inactive Plan still wins over an active LegacyProgram row", async () => {
+    const inactivePlan = snapshot({ id: "plan-inactive-recent" });
+    const legacyFindFirst = vi.fn().mockResolvedValue(legacyProgramDbRow());
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: {
+          findFirst: vi.fn().mockResolvedValue(planDbRow(inactivePlan, { active: false })),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+        legacyProgram: { findFirst: legacyFindFirst },
+      }),
+    );
+
+    const result = await getMostRecentProgram();
+
+    expect(result).toEqual(inactivePlan);
+    expect(legacyFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #277: Program-first getActiveProgram (the seam) ────────────────────────
+//
+// The frozen contract: same signature, ActiveProgramSnapshot | null, `.id`
+// ALWAYS a Plan id. These pin the three selection branches AND the exact
+// query shapes — the legacy branch's args must stay byte-identical to the
+// pre-#277 query, and the Program branch must never issue an unscoped
+// `where: { active: true }` plan query (plan-critique Critical #1).
+
+describe("getActiveProgram — Program-first selection (#277)", () => {
+  it("active Program + attached active Plan → that Plan's snapshot, via a programId-scoped query (updatedAt desc)", async () => {
+    const attached = snapshot({ id: "plan-attached" });
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(attached, { active: true }));
+    const programFindFirst = vi.fn().mockResolvedValue(programDbRow());
+    const programCount = vi.fn().mockResolvedValue(1);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: { findFirst: programFindFirst, count: programCount },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    // .id is the PLAN's id — never prog-1.
+    expect(result).toEqual(attached);
+    expect(programFindFirst).toHaveBeenCalledWith({ where: { status: "active" } });
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    expect(planFindFirst).toHaveBeenCalledWith({
+      where: { active: true, programId: "prog-1" },
+      orderBy: { updatedAt: "desc" },
+    });
+    // The zero-rows gate is never consulted once an active Program exists.
+    expect(programCount).not.toHaveBeenCalled();
+  });
+
+  it("active Program with NO attached active Plan → null ('no rotation'), and no unscoped plan query ever fires", async () => {
+    // The founding-bug shape (plan-critique Critical #1): an UNSCOPED
+    // `where: { active: true }` query would find this dormant plan belonging
+    // to a goal outside the Program. The mock returns it ONLY for a query
+    // lacking a programId filter — so a fall-through regression surfaces as
+    // a non-null result here, not silently.
+    const dormant = snapshot({ id: "plan-dormant-other-goal" });
+    const planFindFirst = vi.fn().mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async (args: any) =>
+        args?.where?.programId !== undefined ? null : planDbRow(dormant, { active: true }),
+    );
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: {
+          findFirst: vi.fn().mockResolvedValue(programDbRow()),
+          count: vi.fn().mockResolvedValue(1),
+        },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    // Every plan query carried the programId scope.
+    for (const call of planFindFirst.mock.calls) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((call[0] as any).where.programId).toBe("prog-1");
+    }
+  });
+
+  it("zero Program rows → legacy isFocus-desc tiebreak query, byte-identical to pre-#277 (the per-tenant rollout gate)", async () => {
+    const focusPlan = snapshot({ id: "plan-focus" });
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(focusPlan, { active: true }));
+    const programCount = vi.fn().mockResolvedValue(0);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: { findFirst: vi.fn().mockResolvedValue(null), count: programCount },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toEqual(focusPlan);
+    expect(programCount).toHaveBeenCalledTimes(1);
+    expect(planFindFirst).toHaveBeenCalledTimes(1);
+    // EXACT legacy args — the pre-Program tenant contract.
+    expect(planFindFirst).toHaveBeenCalledWith({
+      where: { active: true },
+      orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
+    });
+  });
+
+  it("Program rows exist but none active (retired Program) → null via the Program-aware path; the plan table is never queried", async () => {
+    // Subtlety pinned: an archived-Program user must NOT regress to
+    // isFocus-tiebreak behavior — retiring a Program means "no rotation",
+    // not "back to the old day resolution".
+    const planFindFirst = vi.fn().mockResolvedValue(planDbRow(snapshot(), { active: true }));
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        plan: { findFirst: planFindFirst, findMany: vi.fn().mockResolvedValue([]) },
+        program: {
+          findFirst: vi.fn().mockResolvedValue(null),
+          count: vi.fn().mockResolvedValue(2), // e.g. one archived + one completed
+        },
+      }),
+    );
+
+    const result = await getActiveProgram();
+
+    expect(result).toBeNull();
+    expect(planFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ─── #277: getActiveProgramMembership ───────────────────────────────────────
+
+describe("getActiveProgramMembership (#277)", () => {
+  it("no active Program row → null (zero-rows and retired users alike); goals never queried", async () => {
+    const goalFindMany = vi.fn().mockResolvedValue([]);
+    mockGetDb.mockResolvedValue(mkScopedDb({ goal: { findMany: goalFindMany } }));
+
+    const result = await getActiveProgramMembership();
+
+    expect(result).toBeNull();
+    expect(goalFindMany).not.toHaveBeenCalled();
+  });
+
+  it("active Program → Program's OWN id + full shape + member goals (any status), userId never leaked", async () => {
+    const rules = [
+      { match: { titleContains: ["walk"] }, goalIds: ["goal-cut", "goal-aws"], note: "Z2 walks count" },
+    ];
+    const goalFindMany = vi.fn().mockResolvedValue([
+      { id: "goal-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+      { id: "goal-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+      { id: "goal-aws", objective: "AWS SAA cert", kind: "project", status: "paused" },
+    ]);
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        program: {
+          findFirst: vi.fn().mockResolvedValue(
+            programDbRow({ attributionRules: rules, notes: "Q3 block", endsOn: parseDateKey("2026-12-28") }),
+          ),
+          count: vi.fn().mockResolvedValue(1),
+        },
+        goal: { findMany: goalFindMany },
+      }),
+    );
+
+    const result = await getActiveProgramMembership();
+
+    expect(result).toEqual({
+      id: "prog-1", // the Program's own id — lives ONLY here, never in ActiveProgramSnapshot.id
+      name: "Phase 2A",
+      status: "active",
+      startedOn: parseDateKey("2026-01-01"),
+      endsOn: parseDateKey("2026-12-28"),
+      notes: "Q3 block",
+      attributionRules: rules,
+      memberGoals: [
+        { id: "goal-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+        { id: "goal-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+        { id: "goal-aws", objective: "AWS SAA cert", kind: "project", status: "paused" },
+      ],
+    });
+    // toEqual above already proves no extra keys (userId) on the top level;
+    // the goal query's select shape is the guard for memberGoals.
+    expect(result && "userId" in result).toBe(false);
+    expect(goalFindMany).toHaveBeenCalledWith({
+      where: { programId: "prog-1" },
+      // #288: id secondary makes the order TOTAL — goal-identity.ts derives
+      // mark slots from this order, so same-second createdAt ties must not
+      // swap between renders (UXR-PV-04).
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, objective: true, kind: true, status: true },
+    });
+  });
+
+  it("malformed attributionRules Json → attributionRules: null, no throw", async () => {
+    mockGetDb.mockResolvedValue(
+      mkScopedDb({
+        program: {
+          findFirst: vi.fn().mockResolvedValue(
+            programDbRow({ attributionRules: { not: "an array" } }),
+          ),
+          count: vi.fn().mockResolvedValue(1),
+        },
+        goal: { findMany: vi.fn().mockResolvedValue([]) },
+      }),
+    );
+
+    const result = await getActiveProgramMembership();
+
+    expect(result?.attributionRules).toBeNull();
+    expect(result?.memberGoals).toEqual([]);
+  });
+});
+
+// ─── #298/#301: getRotationOwnerGoal — MOVED ─────────────────────────────────
+// The twin accessor was consolidated into src/lib/goal-focus.ts; its merged
+// suite (mode envelope + branch behavior) lives in goal-focus.test.ts.
+
+// ─── #298/#301: orderMembersFirst (pure) ─────────────────────────────────────
+
+describe("orderMembersFirst (#298/#301 — membership-first list ordering)", () => {
+  const rows = [
+    { id: "g-non-1" },
+    { id: "g-member-b" },
+    { id: "g-owner" },
+    { id: "g-non-2" },
+    { id: "g-member-a" },
+  ];
+
+  it("rotation owner first, then members, then non-members — stable within tiers", () => {
+    const out = orderMembersFirst(
+      rows,
+      new Set(["g-member-a", "g-member-b", "g-owner"]),
+      "g-owner",
+    );
+    expect(out.map((r) => r.id)).toEqual([
+      "g-owner",
+      "g-member-b", // members keep incoming order (stable sort)
+      "g-member-a",
+      "g-non-1", // non-members keep incoming order too
+      "g-non-2",
+    ]);
+  });
+
+  it("null owner: members still lead, incoming order preserved within tiers", () => {
+    const out = orderMembersFirst(rows, new Set(["g-member-a", "g-member-b"]), null);
+    expect(out.map((r) => r.id)).toEqual([
+      "g-member-b",
+      "g-member-a",
+      "g-non-1",
+      "g-owner",
+      "g-non-2",
+    ]);
+  });
+
+  it("empty membership + owner id = the legacy single-goal lift (one row to the front, rest untouched)", () => {
+    const out = orderMembersFirst(rows, new Set<string>(), "g-member-b");
+    expect(out.map((r) => r.id)).toEqual([
+      "g-member-b",
+      "g-non-1",
+      "g-owner",
+      "g-non-2",
+      "g-member-a",
+    ]);
+  });
+
+  it("empty membership + null owner → a copy in the original order (zero-Program no-focus shape)", () => {
+    const out = orderMembersFirst(rows, new Set<string>(), null);
+    expect(out.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+    expect(out).not.toBe(rows); // pure: never mutates/returns the input array
+  });
+
+  it("an owner that is not in the membership set still sorts first (defensive: plan attached, goal not)", () => {
+    const out = orderMembersFirst(rows, new Set(["g-member-a"]), "g-non-2");
+    expect(out.map((r) => r.id)).toEqual([
+      "g-non-2",
+      "g-member-a",
+      "g-non-1",
+      "g-member-b",
+      "g-owner",
+    ]);
+  });
+});
+
+// ─── #285: phaseForWeekIndex / splitDayForRotationDay (pure) ─────────────────
+//
+// The getTodayContext replacement check (issue #285 AC): for an IN-PLAN
+// fixture date, the deleted function's phase/day outputs are reproduced
+// byte-identically by resolveDay's weekIndex/rotationDay + these pure
+// template lookups. Field mapping (Today page, src/app/page.tsx):
+//   ctx.weekIndex → resolved.weekIndex
+//   ctx.phase     → phaseForWeekIndex(template, resolved.weekIndex)
+//   ctx.day       → splitDayForRotationDay(template, resolved.rotationDay)
+describe("phaseForWeekIndex / splitDayForRotationDay (#285 — getTodayContext strict-subset check)", () => {
+  const RICH_TEMPLATE = {
+    totalWeeks: 12,
+    phases: [
+      { index: 1, name: "Foundation", weeks: [1, 2, 3, 4] },
+      { index: 2, name: "Strength + Capacity", weeks: [5, 6, 7, 8] },
+      { index: 3, name: "Performance", weeks: [9, 10, 11, 12] },
+    ],
+    weeklySplit: [
+      { dayOfWeek: 1, title: "Lower A", category: "lower", summary: "Squat focus", blocks: [] },
+      { dayOfWeek: 3, title: "Upper A", category: "upper", summary: "Press focus", blocks: [] },
+      { dayOfWeek: 6, title: "Long Effort", category: "long-endurance", summary: "Zone 2", blocks: [] },
+    ],
+  } as unknown as ProgramTemplate;
+
+  it("in-plan equivalence: reproduces the deleted getTodayContext's phase/day for a mid-plan date", () => {
+    // Fixture: plan started 2026-05-25; "today" = 2026-06-10 → 16 days since
+    // start. The old getTodayContext computed:
+    //   daysSinceStart = max(0, round(16)) = 16
+    //   weekIndex      = min(12, floor(16/7)+1) = 3
+    //   dayOfWeek      = (16 % 7) + 1 = 3
+    //   phase          = the phase whose weeks include 3 → Foundation
+    //   day            = weeklySplit entry with dayOfWeek 3 → Upper A
+    // resolveDay's floor-based math yields the SAME weekIndex 3 / rotationDay 3
+    // for this in-plan date — feed those through the lookups:
+    const phase = phaseForWeekIndex(RICH_TEMPLATE, 3);
+    const day = splitDayForRotationDay(RICH_TEMPLATE, 3);
+
+    expect(phase).toEqual({ index: 1, name: "Foundation", weeks: [1, 2, 3, 4] });
+    expect(day).toMatchObject({ dayOfWeek: 3, title: "Upper A", summary: "Press focus" });
+  });
+
+  it("fallbacks preserved: unmatched weekIndex → first phase; unmatched rotationDay → first split day (getTodayContext's ?? [0] semantics)", () => {
+    expect(phaseForWeekIndex(RICH_TEMPLATE, 99)?.name).toBe("Foundation");
+    // rotationDay 2 has no split entry (rest day gap) → first split day.
+    expect(splitDayForRotationDay(RICH_TEMPLATE, 2)?.title).toBe("Lower A");
+  });
+
+  it("out-of-plan (null weekIndex/rotationDay) → null: the clamped phantom rotation copy is gone", () => {
+    expect(phaseForWeekIndex(RICH_TEMPLATE, null)).toBeNull();
+    expect(splitDayForRotationDay(RICH_TEMPLATE, null)).toBeNull();
+  });
+
+  it("malformed template (non-array phases/weeklySplit) → null, page never crashes", () => {
+    const malformed = { totalWeeks: 12, phases: "oops", weeklySplit: undefined } as unknown as ProgramTemplate;
+    expect(phaseForWeekIndex(malformed, 3)).toBeNull();
+    expect(splitDayForRotationDay(malformed, 3)).toBeNull();
   });
 });

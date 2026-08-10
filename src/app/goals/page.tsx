@@ -6,6 +6,11 @@ import { ReachMeter } from "@/components/ReachMeter";
 import { StackReachCard } from "@/components/StackReachCard";
 import { getDb } from "@/lib/db";
 import { USER_TZ, parseDateKey } from "@/lib/calendar";
+import {
+  getActiveProgramMembership,
+  orderMembersFirst,
+} from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { lastTrainedForGoals, relativeTrainedLabel, parseAttributionHints } from "@/lib/goal-attribution";
 import { setFocusGoal, setGoalTracked } from "@/lib/goal-actions";
 import { computeStackRarity } from "@/lib/rarity";
@@ -35,20 +40,34 @@ export default async function GoalsPage({
   const { objective: rawObjective } = await searchParams;
   const defaultObjective = rawObjective ? rawObjective.slice(0, 200) : undefined;
 
-  // Focus goal first (isFocus=true), then tracked (active=true), then by target date
-  // (nulls last = someday goals at the bottom), then most-recently-updated.
+  // #301 ordering: Program tenants list member goals first (rotation owner
+  // first among them), then non-members — each tier keeping the existing
+  // tracked (active=true) / target date (nulls last = someday at the bottom)
+  // / most-recently-updated tiebreaks via the stable in-memory sort.
+  // Zero-Program tenants keep the legacy focus-first query byte-identical.
   // Include most-recent plan per goal (regardless of active status) to detect paused state.
   // One computeStackRarity per request — no re-computation per row (UXR-63-08, PRD §4).
   // attributionHints is a scalar field — included by default in findMany (no explicit select needed).
+  const resolution = await getRotationOwnerGoal();
+  const programMode = resolution.mode === "program";
+  const membership = programMode ? await getActiveProgramMembership() : null;
+  const memberIds = new Set((membership?.memberGoals ?? []).map((m) => m.id));
+
   const db = await getDb();
-  const [goals, stack] = await Promise.all([
+  const [fetchedGoals, stack] = await Promise.all([
     db.goal.findMany({
-      orderBy: [
-        { isFocus: "desc" },
-        { active: "desc" },
-        { targetDate: { sort: "asc", nulls: "last" } },
-        { updatedAt: "desc" },
-      ],
+      orderBy: programMode
+        ? [
+            { active: "desc" },
+            { targetDate: { sort: "asc", nulls: "last" } },
+            { updatedAt: "desc" },
+          ]
+        : [
+            { isFocus: "desc" },
+            { active: "desc" },
+            { targetDate: { sort: "asc", nulls: "last" } },
+            { updatedAt: "desc" },
+          ],
       include: {
         plans: {
           orderBy: { createdAt: "desc" },
@@ -59,9 +78,17 @@ export default async function GoalsPage({
     }),
     computeStackRarity(),
   ]);
+  const goals = programMode
+    ? orderMembersFirst(fetchedGoals, memberIds, resolution.goalId)
+    : fetchedGoals;
   // UXR-64-07/09: ONE batched query over all hint variants; runs after goals (depends on hints).
   const trainedMap = await lastTrainedForGoals(goals);
-  const focusedId = goals.find((g) => g.isFocus)?.id ?? null;
+  // #301 highlight: under a Program the chip means "in the active Program" —
+  // SEVERAL rows can carry it (the copy below no longer implies
+  // single-select). Zero-Program tenants keep the single legacy Focus row.
+  const legacyFocusedId = programMode ? null : (goals.find((g) => g.isFocus)?.id ?? null);
+  const isHighlighted = (id: string) =>
+    programMode ? memberIds.has(id) : id === legacyFocusedId;
 
   // R5 (binding, architecture-blueprint-v2.md): bucket ONLY on status==="achieved" —
   // never on !active. A manually-untracked active-status goal stays in "All goals"
@@ -118,7 +145,9 @@ export default async function GoalsPage({
                   ? Math.ceil((new Date(g.targetDate).getTime() - now) / (1000 * 60 * 60 * 24))
                   : null;
                 const pct = goalProgress(g, now);
-                const isFocused = g.id === focusedId;
+                // #301: "highlighted" = Program member under a Program; the
+                // legacy focus row otherwise (see isHighlighted above).
+                const isFocused = isHighlighted(g.id);
                 const setFocus = setFocusGoal.bind(null, g.id);
                 const trackAction = setGoalTracked.bind(null, g.id, true);
                 const untrackAction = setGoalTracked.bind(null, g.id, false);
@@ -149,14 +178,21 @@ export default async function GoalsPage({
                       <p className={`font-medium truncate${!g.active && !isFocused ? " text-[var(--muted)]" : ""}`}>
                         {g.objective}
                         {isFocused && (
-                          // [UXR-62-11] filled Bullseye size=14 (component min for red center ring) + Focus label
+                          // [UXR-62-11] filled Bullseye size=14 (component min for red center ring) + label
                           // UXR-62B-10: title= for desktop hover hint
+                          // #301: under a Program the chip reads "Program" —
+                          // membership, not single-select focus; several rows
+                          // can carry it, so the copy must not claim "only one".
                           <span
                             className="ml-2 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5 align-middle"
-                            title="Drives your daily Today plan. Only one goal holds focus at a time."
+                            title={
+                              programMode
+                                ? "In your active Program. Member goals shape your daily Today view."
+                                : "Drives your daily Today plan. Only one goal holds focus at a time."
+                            }
                           >
                             <Bullseye size={14} progress={1} aria-hidden={true} />
-                            Focus
+                            {programMode ? "Program" : "Focus"}
                           </span>
                         )}
                       </p>
@@ -274,19 +310,28 @@ export default async function GoalsPage({
                 What do these states mean?
               </summary>
               <ul className="mt-2 divide-y divide-[var(--border)]">
-                {/* Focus */}
+                {/* Focus / Program — #301: the glossary row mirrors whichever
+                    chip the rows above actually render for this tenant. */}
                 <li className="flex items-start gap-3 py-2">
                   <span className="shrink-0 flex items-center pt-0.5">
-                    {/* UXR-62B-07: real Focus badge markup from the goal rows above */}
+                    {/* UXR-62B-07: real badge markup from the goal rows above */}
                     <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-[var(--accent)] text-[var(--accent)] px-1.5 py-0.5">
                       <Bullseye size={14} progress={1} aria-hidden={true} />
-                      Focus
+                      {programMode ? "Program" : "Focus"}
                     </span>
                   </span>
-                  <p className="text-xs text-[var(--muted)]">
-                    <strong className="font-medium text-[var(--foreground)]">Focus</strong>
-                    {" — "}Drives your daily Today plan. Only one goal holds focus at a time.
-                  </p>
+                  {programMode ? (
+                    <p className="text-xs text-[var(--muted)]">
+                      <strong className="font-medium text-[var(--foreground)]">Program</strong>
+                      {" — "}In your active Program. Member goals shape your daily Today view;
+                      several goals can carry this at once.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-[var(--muted)]">
+                      <strong className="font-medium text-[var(--foreground)]">Focus</strong>
+                      {" — "}Drives your daily Today plan. Only one goal holds focus at a time.
+                    </p>
+                  )}
                 </li>
                 {/* Tracked */}
                 <li className="flex items-start gap-3 py-2">

@@ -4,6 +4,10 @@
 // CRITICAL RULES (enforced here, never relax):
 // - Only status === "completed" workouts/hikes earn XP.
 // - NEVER call resolveDay() in a loop — override data fetched in bulk.
+//   (A3/B4: the ledger's per-day DECISIONS — rotation position and
+//   override→template/baseline resolution — come from @/lib/rotation-core,
+//   the same shared code resolveDay and buildCell consume. Only the batched
+//   fetch strategy is engine-specific; the decision SHAPE exists once.)
 // - NEVER use raw Date methods (setHours/getDate/getMonth/getFullYear).
 //   All date math goes through @/lib/calendar.
 // - addDays from @/lib/calendar (start-of-day). NOT the private records.ts addDays
@@ -17,7 +21,16 @@
 import { cache } from "react";
 import { prisma, getDb } from "@/lib/db";
 import { getActiveProgram, getMostRecentProgram, type ActiveProgramSnapshot } from "@/lib/program";
+// #299: the shared rotation-owner accessor (see the goal fetch in
+// _computeGameState for the tracked single-ledger fallback semantics).
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { dateKey, parseDateKey, startOfDay, endOfDay, addDays } from "@/lib/calendar";
+import {
+  rotationDay as rotationDayOf,
+  weekIndex as weekIndexOf,
+  lastPlanDayStart,
+  mergeDayOverride,
+} from "@/lib/rotation-core";
 import { canonicalExerciseName, bestSetSummary, isBetter, type MetricKind, type MetricDirection } from "@/lib/records";
 import { parseCompletionSnapshot } from "@/lib/goal-completion-core";
 import {
@@ -141,9 +154,20 @@ function emptyState(): GameState {
 
 // ── buildDayLedger ────────────────────────────────────────────────────────────
 // Produces DayLedgerEntry[] for every in-plan calendar day up to today (inclusive).
-// Never calls resolveDay — replicates its override/rotation logic in memory.
+// A3/B4 consolidation: never calls resolveDay (bulk-fetched data, no N+1), but
+// the per-day DECISIONS — rotation position + override→template precedence +
+// the scheduled-baseline set — come from @/lib/rotation-core (rotationDay/
+// weekIndex/mergeDayOverride), the SAME code resolveDay and buildCell consume.
+// The day index `d` IS the daysDelta for addDays(programStart, d) (the ledger
+// walks wall-clock days), so the index-based rotationDay/weekIndex calls here
+// are the same formulas resolveDay applies to its date-based delta.
+// scripts/diff-xp-ledger.ts holds a frozen copy of the pre-consolidation logic
+// and proves the ledger/XP output is unchanged over the founder's full history.
+//
+// Exported for the diff script + tests — production consumers go through
+// computeGameState(); do not call this directly in app code.
 
-function buildDayLedger(
+export function buildDayLedger(
   program: ActiveProgramSnapshot,
   workoutsByDay: Map<string, WorkoutWithSets[]>,
   hikesByDay: Map<string, HikeRow[]>,
@@ -164,53 +188,19 @@ function buildDayLedger(
     // falsely break streaks / generate empty adherence entries).
     if (dk > todayDk) break;
 
-    // Step 2 — rotation math
-    const rotationDay = ((d % 7) + 7) % 7 + 1; // 1..7
-    const weekIndex = Math.floor(d / 7) + 1;     // 1..totalWeeks
-
-    // Step 3 — override lookup
+    // Steps 2-5 — rotation math + override→template + baseline-set resolution,
+    // all from the shared rotation-core decision code.
+    const rotationDay = rotationDayOf(d); // 1..7
+    const weekIndex = weekIndexOf(d);     // 1..totalWeeks
     const override = overridesByKey.get(dk) ?? null;
+    const core = mergeDayOverride(program.template, rotationDay, weekIndex, override);
+    const workoutTemplate = core.workoutTemplate;
+    const isOverride = core.isOverride;
+    const dueBaselineNames = core.baselineTests.map((t) => t.test.testName);
 
-    // Step 4 — workout template resolution
-    // workoutJson != null → use override (strict null check; null = explicit clear)
-    let workoutTemplate: { category?: string | null; title?: string | null } | null = null;
-    let isOverride = false;
-
-    if (override?.workoutJson != null) {
-      workoutTemplate = override.workoutJson as { category?: string | null; title?: string | null };
-      isOverride = true;
-    } else {
-      const tpl = program.template.weeklySplit?.find((t) => t.dayOfWeek === rotationDay) ?? null;
-      workoutTemplate = tpl;
-    }
-
-    // Step 5 — baseline names resolution
-    const overrideNames = Array.isArray(override?.baselineTestNames)
-      ? (override!.baselineTestNames as string[])
-      : null;
-
-    let dueBaselineNames: string[] = [];
-    if (overrideNames !== null) {
-      // Override list takes precedence — weekIndex filter bypassed
-      dueBaselineNames = overrideNames;
-    } else {
-      const baselineDay = program.template.baselineWeek?.find(
-        (bd) => bd.dayOfWeek === rotationDay,
-      );
-      if (baselineDay) {
-        for (const test of baselineDay.tests) {
-          const initialWeek = test.initialWeek ?? 1;
-          if (
-            weekIndex === initialWeek ||
-            (weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex))
-          ) {
-            dueBaselineNames.push(test.testName);
-          }
-        }
-      }
-    }
-
-    // Step 6 — workoutDeferredForBaseline (advisory)
+    // Step 6 — workoutDeferredForBaseline (advisory). Engine-specific formula
+    // kept verbatim: the ledger flag does NOT apply resolveDay's
+    // hasUnloggedBaseline refinement (XP semantics unchanged — A3).
     const workoutDeferredForBaseline =
       dueBaselineNames.length > 0 &&
       !isOverride &&
@@ -1013,9 +1003,7 @@ async function _computeGameState(): Promise<GameState> {
   if (!program) return emptyState();
 
   const planStart = startOfDay(program.startedOn);
-  const planEnd = endOfDay(
-    addDays(program.startedOn, program.template.totalWeeks * 7 - 1),
-  );
+  const planEnd = endOfDay(lastPlanDayStart(program.startedOn, program.template.totalWeeks));
 
   // ── Step 2: fan out the remaining 10 queries ──────────────────────────────
   const db = await getDb();
@@ -1031,12 +1019,35 @@ async function _computeGameState(): Promise<GameState> {
     bonusRaw,
     completedGoalsRaw,
   ] = await Promise.all([
-    // 1. Focus goal (isFocus=true drives the daily prescription + XP attribute pack)
-    db.goal.findFirst({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, kind: true },
-    }),
+    // 1. The goal whose KIND gates the attribute pack (#299, isFocus sweep).
+    //    Primary path: the rotation-owning goal via the shared #297 helper —
+    //    same resolution as calendar/Today/plan-lint, so the pack can never
+    //    disagree with the day the ledger is scoring. Equivalence across the
+    //    founder-history coverage set (proven by scripts/
+    //    diff-engine-goal-context.ts pre/post snapshots, zero delta):
+    //      • zero-Program rows → the helper IS the legacy isFocus query
+    //        (byte-identical where/orderBy) — same goal, same kind, same XP.
+    //      • active Program with rotation → the owner goal; for the founder
+    //        the owner and the focus goal coincide (S4 backfill), and even
+    //        when they diverge only goal.kind feeds XP — same kind = same
+    //        ledger.
+    //    TRACKED EXCEPTION (single-ledger v1 semantics, A3/Q3 — the M4c
+    //    non-goal): when the helper yields null but the tenant still has a
+    //    focus goal (active Program with NO rotation plan, or a retired
+    //    Program), fall back to the legacy isFocus lookup instead of
+    //    defaulting the pack to "fitness". The ledger keeps ONE goal context
+    //    (no per-goal XP in v1); wiping the pack just because the rotation
+    //    paused would silently re-gate attributes. Revisit when single-ledger
+    //    v1 gains multi-goal awareness (Backlog: engine multi-goal ledger).
+    (async () => {
+      const { goal: owner } = await getRotationOwnerGoal();
+      if (owner) return { id: owner.id, kind: owner.kind };
+      return db.goal.findFirst({
+        where: { isFocus: true },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, kind: true },
+      });
+    })(),
 
     // 2. Workouts: ALL TIME — pure nested select (CRIT-2: no select+include mix)
     //    Ordered (startedAt ASC, id ASC) for deterministic PR replay.

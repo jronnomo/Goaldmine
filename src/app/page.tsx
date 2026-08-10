@@ -14,10 +14,16 @@ import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getGoalCount } from "@/lib/goal-count";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
-import { getActiveProgram, getTodayContext } from "@/lib/program";
+import {
+  getActiveProgram,
+  getActiveProgramMembership,
+  orderMembersFirst,
+  phaseForWeekIndex,
+  splitDayForRotationDay,
+} from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
-import { getFocusGoal } from "@/lib/goal-focus";
+import { getFocusGoal, getRotationOwnerGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
 import { getQuickPickFoods } from "@/lib/food-actions";
@@ -25,6 +31,11 @@ import { presentationForGoal } from "@/lib/goal-presentation";
 import { computeGoalFeasibility } from "@/lib/rarity";
 import { parseCoachFeasibility } from "@/lib/rarity-core";
 import { FeasibilityReadout } from "@/components/FeasibilityReadout";
+import { TodayTimeline } from "@/components/today/TodayTimeline";
+import { assignGoalIdentities } from "@/lib/goal-identity";
+import { buildTodayTimeline } from "@/lib/day-rhythm";
+import { parseAttributionRules } from "@/lib/attribution-rules";
+import { parseAttributionHints } from "@/lib/goal-attribution";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +84,17 @@ export default async function HomePage() {
   // case — keeps falling through to its original (unchanged) behavior.
   if (!program && focusGoal === null) {
     const betweenGoalsDb = await getDb();
+    // #301: this feeds a goal-chip LIST ("choose your next focus"), so under
+    // an active Program the member goals sort first (this branch is reachable
+    // for a Program tenant with no rotation plan and no legacy focus flag —
+    // there is no rotation owner here by construction, since `program` is
+    // null). Zero-Program tenants keep the legacy focus-first query
+    // byte-identical (focusGoal === null already means no row wins that key).
+    // The isFocus SELECT stays: it is pass-through row data for
+    // BetweenGoalsActiveGoal's prop contract, not an ordering read.
+    const betweenGoalsMembership = await getActiveProgramMembership();
     const [
-      activeGoals,
+      activeGoalsRaw,
       latestAchieved,
       betweenGoalsGameState,
       betweenGoalsNutrition,
@@ -83,7 +103,9 @@ export default async function HomePage() {
     ] = await Promise.all([
       betweenGoalsDb.goal.findMany({
         where: { status: "active" },
-        orderBy: [{ isFocus: "desc" }, { updatedAt: "desc" }],
+        orderBy: betweenGoalsMembership
+          ? [{ updatedAt: "desc" }]
+          : [{ isFocus: "desc" }, { updatedAt: "desc" }],
         select: { id: true, objective: true, kind: true, targetDate: true, isFocus: true, active: true },
       }),
       betweenGoalsDb.goal.findFirst({
@@ -108,6 +130,16 @@ export default async function HomePage() {
         },
       }),
     ]);
+    // Members lead the chip list under a Program; stable within tiers over
+    // the DB's updatedAt-desc order. No rotation owner exists on this branch
+    // (see the comment above), so the owner argument is always null here.
+    const activeGoals = betweenGoalsMembership
+      ? orderMembersFirst(
+          activeGoalsRaw,
+          new Set(betweenGoalsMembership.memberGoals.map((m) => m.id)),
+          null,
+        )
+      : activeGoalsRaw;
     if (activeGoals.length > 0 || latestAchieved) {
       return (
         <BetweenGoalsToday
@@ -142,21 +174,41 @@ export default async function HomePage() {
     );
   }
 
-  // AC-A: project focus goal wins over any lingering fitness Program rows.
-  // CharacterHeader/gameState are skipped on this path (no computeGameState call below).
+  // #289: project-focus routing is Program-aware. A project-focus user who is
+  // a member of an active multi-domain Program renders the SAME unified Today
+  // as every other Program tenant (one timeline, per-item goal marks —
+  // RFC §7); ProjectTodayView survives ONLY as the zero-Program legacy
+  // fallback (single-goal project tenants that predate the Program model).
+  // The membership probe runs on project-focus renders only — fitness-focus
+  // and zero-goal paths never pay it (resolveDay makes its own lookup later
+  // either way).
   if (focusGoal?.kind === "project") {
-    return <ProjectTodayView goal={focusGoal} />;
+    const projectMembership = await getActiveProgramMembership();
+    const hasActiveProgramMembers =
+      projectMembership !== null &&
+      projectMembership.memberGoals.some((g) => g.status === "active");
+    if (!hasActiveProgramMembers) {
+      // Legacy tenant: no active Program → the original project view,
+      // unchanged (CharacterHeader/gameState skipped inside it, as before).
+      return <ProjectTodayView goal={focusGoal} />;
+    }
+    // Program member → fall through to the unified path. NOTE: `program`
+    // (the ROTATION plan snapshot) may legitimately be null on this path.
   }
 
-  // [v2] program is guaranteed non-null at this point:
-  // if it were null, one of the two guards above would have returned.
-  // Truth table: (null + project) → early return; (null + fitness/null) → NoActiveProgram.
-  const ctx = getTodayContext(program!);
+  // [v2 → #289] `program` (rotation snapshot) nullability truth table:
+  //   (null + fitness/null focus)          → get-started card above;
+  //   (null + project focus + no Program)  → ProjectTodayView above;
+  //   (null + project focus + Program)     → falls through to HERE — every
+  //   `program` use below is null-guarded; resolveDay resolves the day as
+  //   out_of_plan and the timeline carries the Program's real asks.
+  // #285: getTodayContext deleted — resolveDay (below) is the single
+  // day-resolver; week/phase/split-day derive from its output further down.
   // now/todayStart/todayEnd/todayDateKey are computed above, before the
   // between-goals branch — shared by both paths, computed exactly once.
 
   const db = await getDb();
-  const [recentWorkouts, resolved, todayNutrition, gameState, weekGoalEvents, quickPickFoods, todayCompletedDetails, goalForFeas] =
+  const [recentWorkouts, resolved, gameState, weekGoalEvents, quickPickFoods, goalForFeas] =
     await Promise.all([
       db.workout.findMany({
         where: { status: "completed" },
@@ -165,27 +217,19 @@ export default async function HomePage() {
         include: { exercises: { include: { sets: true } } },
       }),
       resolveDay(now),
-      db.nutritionLog.findMany({
-        where: { date: { gte: todayStart, lte: todayEnd } },
-        orderBy: { date: "asc" },
-      }),
+      // UXR-PV-85: the duplicate db.nutritionLog.findMany was deleted —
+      // resolveDay already returns today's logs (same window, same order) as
+      // resolved.loggedNutrition; NutritionToday consumes that below.
       computeGameState(),
       // REQ-106: 7-day lookahead for OtherGoalsStrip (today through today+6).
       // resolveDay already provides today's otherGoalEvents/crossGoalConflicts;
       // this call adds the week-ahead window. All date math via @/lib/calendar.
       getGoalEvents({ start: todayStart, end: endOfDay(addDays(now, 6)) }),
       getQuickPickFoods(),
-      // Today's completed workouts, full detail — rendered in place of the
-      // prescription when a workout was logged (single source of truth).
-      db.workout.findMany({
-        where: { status: "completed", startedAt: { gte: todayStart, lte: todayEnd } },
-        orderBy: { startedAt: "asc" },
-        include: {
-          exercises: { orderBy: { orderIndex: "asc" }, include: { sets: { orderBy: { setIndex: "asc" } } } },
-        },
-      }),
       // GoalLike fields for computeGoalFeasibility — guarded because focusGoal can be null.
-      // The project early-return at line 46 already fired so focusGoal is fitness or null here.
+      // #289: focusGoal may be fitness, null, OR a project goal (a project-focus
+      // Program member falls through to this path); computeGoalFeasibility is
+      // kind-aware — ProjectTodayView called it for the same goal before.
       // A null focusGoal → goalForFeas resolves null → feasibility = null → no card rendered.
       focusGoal
         ? db.goal.findUnique({
@@ -195,13 +239,109 @@ export default async function HomePage() {
         : Promise.resolve(null),
     ]);
 
-  // FeasibilityReadout data — computed sequentially after the Promise.all (D-2).
-  // goalForFeas is null when focusGoal is null → feasibility is null → no card rendered.
-  // .catch(() => null) guards against transient per-target query failures (D-4);
-  // the {feasibility && ...} JSX guard absorbs null cleanly with no card shown.
-  const feasibility = goalForFeas
-    ? await computeGoalFeasibility(goalForFeas).catch(() => null)
-    : null;
+  // #288: is this an active-Program tenant? Drives the Unified Today timeline
+  // and nothing else — zero-Program users render byte-identically to the
+  // pre-timeline page (TodayTimeline returns null; OtherGoalsStrip's
+  // suppressTodayBlock stays false; no extra queries run for them).
+  const memberGoals = resolved.program?.memberGoals ?? [];
+  const isProgramUser = memberGoals.some((g) => g.status === "active");
+  const memberIds = memberGoals.map((g) => g.id);
+
+  // Second await batch — everything here needs `resolved` (D-2 kept the
+  // feasibility read serial already; the additions ride the same round-trip).
+  const [feasibility, todayCompletedDetails, programRulesRow, memberDetailRows, rotationOwner] =
+    await Promise.all([
+      // FeasibilityReadout data. goalForFeas is null when focusGoal is null →
+      // feasibility null → no card rendered. .catch(() => null) guards against
+      // transient per-target query failures (D-4); the {feasibility && ...}
+      // JSX guard absorbs null cleanly with no card shown.
+      goalForFeas
+        ? computeGoalFeasibility(goalForFeas).catch(() => null)
+        : Promise.resolve(null),
+      // Today's completed workouts, full detail — rendered in place of the
+      // prescription when a workout was logged. UXR-PV-86: narrowed to the ids
+      // resolveDay already returned so this can never disagree with `resolved`
+      // about what happened today.
+      db.workout.findMany({
+        where: {
+          id: { in: resolved.workouts.filter((w) => w.status === "completed").map((w) => w.id) },
+        },
+        orderBy: { startedAt: "asc" },
+        include: {
+          exercises: { orderBy: { orderIndex: "asc" }, include: { sets: { orderBy: { setIndex: "asc" } } } },
+        },
+      }),
+      // #288 (Program users only): Program.attributionRules — the claim side
+      // of the mark lane reuses the production link matcher, and rules are not
+      // on ResolvedDay (calendar.ts is untouched by this story).
+      isProgramUser
+        ? db.program.findFirst({
+            where: { id: resolved.program!.id },
+            select: { attributionRules: true },
+          })
+        : Promise.resolve(null),
+      // #288 (Program users only): member-goal detail for identity fidelity
+      // (createdAt for the UXR-PV-04 sort, legend for short labels)
+      // + attributionHints for the claim matcher. One findMany, batched.
+      // #301: the per-goal focus flag is no longer read here — the identity
+      // sort's lead key comes from the rotation owner below.
+      isProgramUser
+        ? db.goal.findMany({
+            where: { id: { in: memberIds } },
+            select: { id: true, createdAt: true, attributionHints: true, legend: true },
+          })
+        : Promise.resolve([]),
+      // #301 (Program users only): the rotation-owning goal — the day-driving
+      // goal keeps slot 0 in the mark lane (replaces the deprecated per-goal
+      // focus read that used to feed the UXR-PV-04 sort).
+      isProgramUser ? getRotationOwnerGoal() : Promise.resolve(null),
+    ]);
+
+  // #288: goal identities + the unified timeline (pure derivations — zero
+  // additional queries; all inputs are already in hand).
+  const memberDetailById = new Map(memberDetailRows.map((r) => [r.id, r]));
+  const rotationOwnerGoalId = rotationOwner?.goalId ?? null;
+  const identities = isProgramUser
+    ? assignGoalIdentities(
+        memberGoals.map((g) => ({
+          ...g,
+          // #301: assignGoalIdentities' lead sort key keeps its `isFocus`
+          // parameter name, but the semantic supplied here is "is the
+          // rotation-owning goal" — the goal whose plan drives the day holds
+          // slot 0 (●); the deprecated per-goal flag is no longer read.
+          isFocus: rotationOwnerGoalId !== null && g.id === rotationOwnerGoalId,
+          createdAt: memberDetailById.get(g.id)?.createdAt,
+          legend: memberDetailById.get(g.id)?.legend,
+        })),
+      )
+    : [];
+  const timelineEntries = isProgramUser
+    ? buildTodayTimeline({
+        dateKey: todayDateKey,
+        activeWorkout: resolved.activeWorkout,
+        plannedHike: resolved.plannedHikeToday,
+        baselinesDue: resolved.baselinesDue.map((b) => ({
+          testName: b.test.testName,
+          checkpoint: b.checkpoint,
+          logged: b.loggedOnDate !== null,
+        })),
+        scheduledItems: resolved.scheduledItemsToday,
+        nutritionPlan: resolved.nutritionPlan,
+        loggedMealsCount: resolved.loggedNutrition.length,
+        completedWorkouts: todayCompletedDetails.map((w) => ({
+          title: w.title,
+          exerciseNames: w.exercises.map((e) => e.name),
+        })),
+        members: memberGoals,
+        goalMarks: resolved.goalMarks,
+        attributionRules: programRulesRow
+          ? parseAttributionRules(programRulesRow.attributionRules)
+          : null,
+        attributionHintsByGoal: new Map(
+          memberDetailRows.map((r) => [r.id, parseAttributionHints(r.attributionHints)]),
+        ),
+      })
+    : [];
   const coachFeas = goalForFeas ? parseCoachFeasibility(goalForFeas.coachFeasibility) : null;
   const targetDateLabel =
     goalForFeas?.targetDate != null
@@ -211,6 +351,21 @@ export default async function HomePage() {
           timeZone: USER_TZ,
         }).format(goalForFeas.targetDate)
       : null;
+
+  // #285: getTodayContext's fields, now derived from resolveDay's output +
+  // pure template lookups (field mapping, in-plan byte-identical):
+  //   ctx.weekIndex → resolved.weekIndex           (already a ResolvedDay field)
+  //   ctx.phase     → phaseForWeekIndex(template, resolved.weekIndex)
+  //   ctx.day       → splitDayForRotationDay(template, resolved.rotationDay)
+  // Out-of-plan dates (before startedOn / past totalWeeks) now render honestly:
+  // weekIndex/phase/split-day are null, so the header shows "Off plan" instead
+  // of the old function's clamped phantom rotation copy.
+  // #289: null-guarded — a project-focus Program tenant may have no rotation
+  // plan; both derive to null and the hero renders its Program-aware fallback.
+  const todayPhase = program ? phaseForWeekIndex(program.template, resolved.weekIndex) : null;
+  const rotationDayTemplate = program
+    ? splitDayForRotationDay(program.template, resolved.rotationDay)
+    : null;
 
   const baselinesDue = resolved.baselinesDue;
   // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask):
@@ -283,12 +438,12 @@ export default async function HomePage() {
   }).format(new Date());
 
   // Summary copy — REQ-D4: no leaked dev string at old line 98. Driven by the
-  // ACTIVE workout (on a deferred day there is none → fall back to ctx.day / null).
+  // ACTIVE workout (on a deferred day there is none → fall back to the rotation split day / null).
   let summaryText: string | null = null;
   if (activeTemplate?.summary) {
     summaryText = activeTemplate.summary;
-  } else if (ctx.day?.summary) {
-    summaryText = ctx.day.summary;
+  } else if (rotationDayTemplate?.summary) {
+    summaryText = rotationDayTemplate.summary;
   }
   // When neither is available, summaryText stays null.
   // Previously this fell through to a dev-facing error string — removed (REQ-D4).
@@ -307,7 +462,7 @@ export default async function HomePage() {
         ? "Baseline Testing"
         : resolved.todayTask === "hike"
           ? "Hike Day"
-          : ctx.day?.title);
+          : rotationDayTemplate?.title);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -318,11 +473,15 @@ export default async function HomePage() {
 
       {/* REQ-106: Other-goals strip — between CharacterHeader and hero.
           UXR-62-05: PRD-fixed placement honored. Server component renders null
-          when no non-focus events exist within the 7-day window. */}
+          when no non-focus events exist within the 7-day window.
+          UXR-PV-91 (approved): for Program users the "Also today" block is
+          suppressed — the timeline's mark lane already carries today's
+          claims — while the 7-day lookahead + conflict rows stay. */}
       <OtherGoalsStrip
         events={weekGoalEvents}
         conflicts={resolved.crossGoalConflicts}
         todayKey={todayDateKey}
+        suppressTodayBlock={isProgramUser}
       />
 
       {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
@@ -330,17 +489,32 @@ export default async function HomePage() {
         className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
         aria-label="Today's workout"
       >
-        {/* Eyeline: week / phase */}
+        {/* Eyeline: week / phase. #289: a Program tenant outside any rotation
+            window (or with no rotation plan at all — the project-focus case)
+            reads the Program's own name instead of a bare "Off plan"; the
+            zero-Program render is unchanged. */}
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Week {ctx.weekIndex}
-            {ctx.phase ? ` · Phase ${ctx.phase.index} · ${ctx.phase.name}` : ""}
+            {resolved.weekIndex !== null
+              ? `Week ${resolved.weekIndex}${todayPhase ? ` · Phase ${todayPhase.index} · ${todayPhase.name}` : ""}`
+              : isProgramUser && resolved.program
+                ? resolved.program.name
+                : "Off plan"}
           </p>
         </div>
 
-        {/* Title */}
+        {/* Title. #289: for a Program tenant an out-of-rotation day is still a
+            real day (the timeline below carries the asks) — "Today", not the
+            alarming "Off plan". Zero-Program render unchanged. */}
         <h1 className="text-2xl font-semibold tracking-tight">
-          {workoutTitle ?? (isRestDay ? "Rest / Active Recovery" : isOutOfPlan ? "Off plan" : "Today")}
+          {workoutTitle ??
+            (isRestDay
+              ? "Rest / Active Recovery"
+              : isOutOfPlan
+                ? isProgramUser
+                  ? "Today"
+                  : "Off plan"
+                : "Today")}
         </h1>
 
         {/* Date + summary */}
@@ -368,6 +542,13 @@ export default async function HomePage() {
         )}
       </section>
 
+      {/* ── #288: Unified Today timeline — Program users only. ONE list for
+             the whole Program: rhythm-ladder order, every row carrying every
+             goal claim it serves in the mark lane (RFC §7 — never per-goal
+             sections). Renders null for zero-Program tenants, keeping their
+             page byte-identical to the pre-timeline render. ── */}
+      <TodayTimeline identities={identities} entries={timelineEntries} />
+
       {/* ── Feasibility (Reach) card — server-rendered from computeGoalFeasibility.
              Null when focusGoal is null (no focus goal set). Fitness hero above is
              byte-identical whether or not focusGoal is null. ── */}
@@ -382,7 +563,7 @@ export default async function HomePage() {
       {/* ── Baselines due — only when something is still outstanding (a completed
              retest is demoted below the workout). ── */}
       {showProminentBaseline && (
-        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={resolved.weekIndex} />
       )}
 
       {/* ── The day's workout. Once a session is logged we show the COMPLETED workout
@@ -434,7 +615,7 @@ export default async function HomePage() {
       {/* ── Completed baselines — demoted below the workout as a quiet "done"
              reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
       {showCompletedBaseline && (
-        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
       )}
 
       {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}
@@ -446,7 +627,7 @@ export default async function HomePage() {
           </Link>
         }
       >
-        <NutritionToday logs={todayNutrition} plan={resolved.nutritionPlan} showLogForm={false} quickPickFoods={quickPickFoods} />
+        <NutritionToday logs={resolved.loggedNutrition} plan={resolved.nutritionPlan} showLogForm={false} quickPickFoods={quickPickFoods} />
       </Card>
 
       {/* ── Recent workouts ── */}

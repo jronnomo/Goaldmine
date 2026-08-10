@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { parseDateKey } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore, setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
+import { deleteLogEntryCore } from "@/lib/log-entry-core";
 import { completeGoalCore, reopenGoalCore } from "@/lib/goal-completion";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import type { GoalTarget } from "@/lib/goal-targets";
@@ -269,7 +270,11 @@ export async function deleteMetricReading(goalId: string, metric: string, entryI
   if (!entry || entry.goalId !== goalId || entry.metric !== metric) {
     throw new Error("Reading not found");
   }
-  await db.logEntry.delete({ where: { id: entryId } });
+  // Core deletes the row + its ActivityGoalLink rows in one transaction (#272).
+  // null = row vanished between the guard and the delete — same user-facing
+  // "Reading not found" as the guard.
+  const deleted = await deleteLogEntryCore(entryId);
+  if (!deleted) throw new Error("Reading not found");
   revalidatePath(`/goals/${goalId}/metric/${metric}`);
   revalidatePath(`/goals/${goalId}/trends`);
   revalidatePath("/");

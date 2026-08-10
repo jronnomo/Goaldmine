@@ -17,6 +17,7 @@ claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp
 
 - **No LLM calls live in this app.** Claude reasons in claude.ai; the MCP tools are pure read/write.
 - **Multi-user + multi-tenant.** Auth.js (v5) with Google sign-in, invite-gated signup (`Invite`, `OPEN_SIGNUP`). All owned-model DB access goes through the **tenant-scoped Prisma client** (`getDb()` in `src/lib/db.ts`), which enforces `userId` filtering — never query owned models with a raw client. Isolation is tested (`db.scoped.test.ts`) and auditable (`npm run db:verify-isolation`).
+- **Program model (2026-08).** The active Program owns goal membership and the time window; the day's rotation comes via its attached active Plan (`getActiveProgram()` — its `.id` is ALWAYS a Plan id). One active Program per user is DB-enforced (`program_one_active_per_user` partial unique index). "The current goal" = `getRotationOwnerGoal()` (`src/lib/goal-focus.ts`); `Goal.isFocus` is legacy/display-only (gotchas §F).
 - **Auth for `/api/mcp`:** primary path is the hand-built **OAuth 2.1 server** (`src/lib/oauth/`, routes under `src/app/oauth/` + `.well-known` discovery): PKCE S256, dynamic client registration with redirect-host allowlist, hashed single-use auth codes, refresh rotation with family reuse-detection, RFC 8707 audience binding. Legacy single bearer token (`MCP_AUTH_TOKEN`, also via `/api/mcp/[token]`) still works.
 - **Timezone:** Vercel runs UTC; the user does not. Every date helper goes through `src/lib/calendar.ts` / `calendar-core.ts`. Never do raw `new Date()` day math.
 
@@ -36,6 +37,9 @@ claude.ai (web + mobile)  ──MCP / streamable HTTP──▶  Next.js /api/mcp
 - `src/lib/mcp/tools.ts` — the main tool registrations (large file); packs in `src/lib/mcp/tools/{github,project,render}-tools.ts`; server instructions in `mcp/instructions.ts`; `today-shapers.ts` shapes `get_today_plan` by goal kind.
 - `src/lib/readiness.ts`, `rarity-core.ts` — the honesty math (untested=0, gate caps at 80, coverage, feasibility tiers). Pure + unit-tested; keep it that way.
 - `src/lib/plan.ts`, `plan-lint.ts`, `snapshot-diff.ts`, `override-integrity.ts` — plan revisions (full snapshot + reasoning), day overrides, and the linter (`lintTemplate()` pure pre-write check; `lintActivePlan()` backs the `lint_plan` tool).
+- `src/lib/rotation-core.ts` — ALL rotation arithmetic (daysDelta/weekIndex/day windows/override merge). Pure; never re-derive day math inline (gotchas §F.6).
+- `src/lib/program-core.ts` + `src/lib/mcp/tools/program-tools.ts` — Program lifecycle writes (create/attach/archive) and the Program MCP pack; `src/lib/program.ts` is the read seam (`getActiveProgram`/membership).
+- `src/lib/attribution*.ts` — activity→goal auto-link engine (`ActivityGoalLink`): evaluators (`attribution.ts`), write hooks (`attribution-hooks.ts`), Program rules parsing, manual link/unlink with tombstones.
 - `src/lib/records.ts` — baseline scheduling + PR detection (canonical exercise names — see gotchas).
 - `src/lib/compare.ts` + `compare-core.ts` — two-date snapshot comparison ("as of end-of-day" semantics, USER_TZ cutoffs). Serves `/compare`, the calendar compare mode, and the `compare_dates` tool; readiness numbers must stay byte-identical to `/progress` (same `computeReadiness` path).
 - `src/lib/game/` — XP curves, day-ledger engine, badges, attributes.
@@ -64,6 +68,8 @@ Smoke test: see README "MCP server" section for the curl.
 - `npm run dev` · `npm run build` · `npm run lint` · `npm run test` (Vitest, ~613 tests) · `npx tsc --noEmit`
 - `npx prisma generate` — after any schema edit (postinstall also runs it + copies zxing wasm)
 - `npm run db:migrate` / `db:seed` / `db:push` — guarded (see above)
+- `npm run db:verify-links` — ActivityGoalLink orphan audit (no FK to activities — run after touching delete paths)
+- `npm run verify:isfocus` — isFocus-retirement allowlist gate (run before any commit touching the flag)
 - `npx tsx scripts/mint-invite.ts` — invite-gated signup tokens
 
 ## Conventions

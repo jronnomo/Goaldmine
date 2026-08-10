@@ -8,6 +8,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { parseDateKey, dateKey as toDateKey } from "@/lib/calendar";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 
 // Status groups — mirrors render-tools.ts
 const TERMINAL_STATUSES = new Set(["rendered", "failed"]);
@@ -20,7 +21,11 @@ const TERMINAL_STATUSES = new Set(["rendered", "failed"]);
 //   • Existing in terminal (rendered | failed) → reset to pending.
 //   • Existing in non-terminal → friendly no-op (don't clobber in-flight job).
 //
-// Focus goal is resolved via isFocus=true (single focus goal in this app).
+// The job's goal — the (goalId, date) unique-constraint key — is the
+// ROTATION-OWNING goal under a Program (#298: the goal whose prescription
+// drives the day being rendered); zero-Program tenants keep the legacy
+// focus-goal resolution, byte-identical (resolved inside
+// getRotationOwnerGoal's legacy branch).
 // Date is parsed via parseDateKey to USER_TZ midnight (matches parseDateInput).
 // ---------------------------------------------------------------------------
 export async function queueRenderJob(form: FormData): Promise<{ message: string }> {
@@ -40,21 +45,20 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
 
   const db = await getDb();
 
-  // Resolve focus goal — error if none set
-  const focusGoal = await db.goal.findFirst({
-    where: { isFocus: true },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-  if (!focusGoal) {
+  // Resolve the default goal (rotation owner / legacy focus) — error if none.
+  const resolution = await getRotationOwnerGoal();
+  if (resolution.goalId === null) {
     throw new Error(
-      "No focus goal is set. Ask your coach to set a focus goal first.",
+      resolution.mode === "program"
+        ? "Your Program has no rotation plan to attach the render job to. Ask your coach to queue it against a specific goal (queue_render_job with goalId)."
+        : "No focus goal is set. Ask your coach to set a focus goal first.",
     );
   }
+  const jobGoalId = resolution.goalId;
 
   // Check existing job for (goalId, date) — unique constraint
   const existing = await db.dayRenderJob.findUnique({
-    where: { goalId_date: { goalId: focusGoal.id, date } },
+    where: { goalId_date: { goalId: jobGoalId, date } },
   });
 
   if (existing) {
@@ -89,7 +93,7 @@ export async function queueRenderJob(form: FormData): Promise<{ message: string 
   await db.dayRenderJob.create({
     data: {
       date,
-      goalId: focusGoal.id,
+      goalId: jobGoalId,
       clipforgeProjectId,
       status: "pending",
     },

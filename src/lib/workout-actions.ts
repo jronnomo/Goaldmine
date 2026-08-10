@@ -4,17 +4,24 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   appendBaselineToDayWorkout,
-  removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
+import { deleteBaselineCore } from "@/lib/baseline-core";
+import { deleteNutritionCore } from "@/lib/nutrition-core";
 import { getDb } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
-import { userTzWallClockToUTC, parseDateKey, startOfDay } from "@/lib/calendar";
+import {
+  parseDateKey,
+  startOfDay,
+  dateKey,
+  parseDatetimeLocalValue,
+} from "@/lib/calendar";
 import { normalizeMetricKey, BODY_METRIC_BY_KEY } from "@/lib/metrics-registry";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import { mergeMealDraft } from "@/lib/nutrition-merge";
 
 export async function logMeasurement(form: FormData) {
   const weightLb = Number(form.get("weightLb"));
@@ -172,16 +179,15 @@ export async function updateBaseline(id: string, form: FormData) {
 }
 
 export async function deleteBaselineRow(id: string) {
-  const db = await getDb();
-  const row = await db.baseline.findUniqueOrThrow({ where: { id } });
-  await db.baseline.delete({ where: { id } });
-  await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
+  // Core deletes the row + its ActivityGoalLink rows and syncs the day's
+  // mirrored baseline workout (#272).
+  const { testName } = await deleteBaselineCore(id);
   revalidatePath("/baselines");
-  revalidatePath(`/baselines/test/${encodeURIComponent(row.testName)}`);
+  revalidatePath(`/baselines/test/${encodeURIComponent(testName)}`);
   revalidatePath("/progress");
   revalidatePath("/history");
   revalidatePath("/");
-  redirect(`/baselines/test/${encodeURIComponent(row.testName)}`);
+  redirect(`/baselines/test/${encodeURIComponent(testName)}`);
 }
 
 const MEAL_TYPES = new Set([
@@ -200,21 +206,13 @@ const MEAL_TYPES = new Set([
 // wall-clock "YYYY-MM-DDTHH:MM" (via toDatetimeLocalValue), so it MUST be
 // interpreted in USER_TZ — `new Date(dateStr)` parses datetime-local strings as
 // server-local/UTC and shifts the meal by the TZ offset (UXR-meal-edit-11).
-// When the field is absent (quick create with no When picker), "now" is correct.
+// When the field is absent (quick create with no When picker), "now" is
+// correct. The actual parse delegates to calendar-core's parseDatetimeLocalValue
+// (this file is "use server" — all its exports must be async functions, so the
+// pure regex parse lives there instead, where it's unit-testable).
 function parseUserTzDate(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date();
-  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (m) {
-    return userTzWallClockToUTC(
-      Number(m[1]),
-      Number(m[2]),
-      Number(m[3]),
-      Number(m[4]),
-      Number(m[5]),
-    );
-  }
-  // Unexpected shape — fall back to permissive parse (validated by caller).
-  return new Date(dateStr);
+  return parseDatetimeLocalValue(dateStr);
 }
 
 // Parse the 6 optional macro inputs. Empty → null (lets an edit clear a value);
@@ -275,6 +273,11 @@ export async function logNutrition(form: FormData) {
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  // #294: the day-detail page has its own log entry point (defaultDate-seeded
+  // MealComposer), so a backfilled/pre-planned meal must bust that exact day's
+  // route too — "/", "layout" covers pages nested under the root layout in
+  // theory, but this route is dynamic-per-day, so revalidate it explicitly.
+  revalidatePath(`/days/${dateKey(date)}`);
 }
 
 // De-redirected for in-place use (UXR-meal-edit-12): the BottomSheet host awaits
@@ -320,7 +323,96 @@ export async function updateNutrition(id: string, form: FormData) {
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(date)}`); // #294 — see logNutrition
   return { ok: true as const };
+}
+
+// #295 (B4c): fold a just-composed meal INTO an existing NutritionLog row for
+// the same USER_TZ day + meal slot, instead of creating a duplicate row.
+//
+// This is deliberately the updateNutrition-style path (project gotcha:
+// "nutrition has two edit paths") — ONE full-row write carries items and the
+// macro columns together, so they can never desync the way the items[]-only
+// nutrition_log_ops path would.
+//
+// Merge rules live in the pure, unit-tested @/lib/nutrition-merge:
+//   items  — concatenated (existing row's first);
+//   macros — per-field: summed when BOTH sides recorded it, else null (once
+//            unrecorded items are folded in, any number would misstate the
+//            combined meal — honest unknown, mirroring parseMacros' empty⇒null);
+//   notes  — joined with a newline when both present.
+//
+// The existing row is re-read here (tenant-scoped) rather than trusted from
+// the client, so a stale threaded copy can never clobber edits made elsewhere
+// between render and submit.
+export async function appendNutrition(existingId: string, form: FormData) {
+  const mealType = String(form.get("mealType") ?? "").trim();
+  const notes = (form.get("notes") as string | null)?.trim() || null;
+  const dateStr = (form.get("date") as string | null)?.trim();
+
+  if (!MEAL_TYPES.has(mealType)) throw new Error("Invalid meal type");
+
+  // Same itemsJson-authoritative / text-fallback parse as logNutrition.
+  const itemsJsonRaw = form.get("itemsJson") as string | null;
+  let items: NutritionItem[];
+  if (itemsJsonRaw) {
+    try {
+      items = parseStoredItems(JSON.parse(itemsJsonRaw));
+    } catch {
+      items = parseItemsText(String(form.get("items") ?? ""));
+    }
+  } else {
+    items = parseItemsText(String(form.get("items") ?? ""));
+  }
+  // Same macros-only rule as logNutrition: empty items OK when macros present.
+  const macros = parseMacros(form);
+  if (items.length === 0 && !Object.values(macros).some((v) => v != null)) {
+    throw new Error("Add at least one item, or enter macros");
+  }
+
+  const date = parseUserTzDate(dateStr);
+  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+
+  const db = await getDb();
+  // Tenant-scoped findUnique — resolves to null for another user's row.
+  const existing = await db.nutritionLog.findUnique({ where: { id: existingId } });
+  if (!existing) {
+    throw new Error("That meal no longer exists — log it as a separate entry");
+  }
+  // The choice UI matched on (day, slot); if either drifted between render and
+  // submit (row edited/moved elsewhere), appending would silently put food on
+  // the wrong meal — refuse instead of guessing.
+  if (existing.mealType !== mealType || dateKey(existing.date) !== dateKey(date)) {
+    throw new Error("That meal changed — log it as a separate entry");
+  }
+
+  const merged = mergeMealDraft(
+    {
+      items: parseStoredItems(existing.items),
+      macros: {
+        calories: existing.calories,
+        proteinG: existing.proteinG,
+        carbsG: existing.carbsG,
+        fatG: existing.fatG,
+        fiberG: existing.fiberG,
+        sodiumMg: existing.sodiumMg,
+      },
+      notes: existing.notes,
+    },
+    { items, macros, notes },
+  );
+
+  // date + mealType intentionally untouched: appending folds food into the
+  // existing meal — its slot and timestamp stay put.
+  await db.nutritionLog.update({
+    where: { id: existingId },
+    data: { items: merged.items, notes: merged.notes, ...merged.macros },
+  });
+
+  revalidatePath("/", "layout");
+  revalidatePath("/");
+  revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(existing.date)}`); // #294 — see logNutrition
 }
 
 // Deleted-meal snapshot — everything restoreNutrition needs to re-create the row.
@@ -344,11 +436,13 @@ export type NutritionSnapshot = {
 // optimistic-delete/Undo flow (UXR-meal-edit-13) can restore it. Navigation for
 // the full-page fallback is handled by EditNutritionForm's onDeleted.
 export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
-  const db = await getDb();
-  const row = await db.nutritionLog.delete({ where: { id } });
+  // Core deletes the row + its ActivityGoalLink rows in one transaction and
+  // returns the deleted row for the Undo snapshot (#272).
+  const row = await deleteNutritionCore(id);
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(row.date)}`); // #294 — see logNutrition
   return {
     mealType: row.mealType,
     items: parseStoredItems(row.items),

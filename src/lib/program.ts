@@ -1,38 +1,112 @@
 import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template";
-import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar";
+// #297: import the pure date primitives from the LEAF module (calendar-core),
+// not the calendar.ts barrel. calendar.ts imports this module (and, via
+// goal-events → goal-focus, so does everything goal-focus touches) — pulling
+// primitives through the barrel created a program ⇄ calendar cycle that made
+// it unsafe for goal-focus.ts / override-integrity.ts to call
+// getActiveProgram(). Same functions, same behavior; calendar.ts re-exports
+// these verbatim from calendar-core.
+import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar-core";
+import { daysDelta, isInPlan } from "@/lib/rotation-core";
 import { getDb } from "@/lib/db";
+import { parseAttributionRules, type AttributionRule } from "@/lib/attribution-rules";
 
 export type ActiveProgramSnapshot = {
+  // FROZEN contract (#277 / plan §4.2): ALWAYS a Plan id, never a Program id.
+  // ≈6 planId-keyed call sites depend on this (every PlanDayOverride lookup,
+  // calendar.ts, override-integrity.ts). Program-shaped context lives in
+  // ActiveProgramMembership below — this type must never grow a Program id
+  // or membership field (keeps game/engine.ts decoupled from Program concepts).
   id: string;
   name: string;
   startedOn: Date;
   template: ProgramTemplate;
   // Track 2: high-water mark from Plan.confirmedThroughDate. null when no
-  // weeks have been confirmed, or when falling back to the Program table.
+  // weeks have been confirmed.
   confirmedThroughDate: Date | null;
 };
 
-export type TodayContext = {
-  program: ActiveProgramSnapshot;
-  daysSinceStart: number;
-  weekIndex: number; // 1-based, capped at totalWeeks
-  dayOfWeek: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-  phase: Phase | null;
-  day: DayTemplate | null;
+/**
+ * Program-shaped context for the active multi-domain Program (#277 / plan
+ * §4.2). This is the ONLY place the Program's own id is exposed —
+ * ActiveProgramSnapshot.id stays a Plan id, so consumers that need the
+ * Program row (membership, attribution, the /program dashboard) opt into
+ * this separate lookup instead of the day-resolution seam growing new fields.
+ *
+ * memberGoals returns ALL goals attached via Goal.programId, each carrying
+ * its own `status` — consumers filter (e.g. the auto-link engine skips
+ * non-active goals; achieved goals are detached at completion anyway, but a
+ * defensive filter beats silently hiding attached rows here). Never leaks
+ * userId.
+ */
+export type ActiveProgramMembership = {
+  /** The Program's OWN id (not a Plan id — see the type doc above). */
+  id: string;
+  name: string;
+  status: string;
+  startedOn: Date;
+  endsOn: Date | null;
+  notes: string | null;
+  /** Parsed + validated attributionRules, or null when unset/malformed
+   *  (see parseAttributionRules — malformed Json never throws). */
+  attributionRules: AttributionRule[] | null;
+  memberGoals: { id: string; objective: string; kind: string; status: string }[];
 };
 
+// #285: TodayContext + getTodayContext were DELETED here. getTodayContext was
+// a third, independent day-resolver (Math.round day math, weekIndex clamping,
+// override-blind) duplicating what resolveDay already computes — the RFC's
+// "three duplicate resolvers" cleanup. Callers read resolveDay's
+// weekIndex/rotationDay and use the pure template lookups below for the
+// phase / split-day equivalents.
+
+/**
+ * The seam (#277 / plan §4.2 — frozen external contract). Same signature and
+ * return shape as ever: `ActiveProgramSnapshot | null`, `.id` is ALWAYS a
+ * Plan id. Selection is now Program-first:
+ *
+ *  1. Active Program row exists (the partial unique index
+ *     `program_one_active_per_user` guarantees ≤1 per user) → the day is
+ *     owned by the Plan attached to THAT Program:
+ *     `plan.findFirst({ active: true, programId })`, most-recently-updated
+ *     wins if several are attached. Plan found → snapshot from it, exactly
+ *     as before. No attached active Plan → **null** ("Program with no
+ *     rotation" — a normal state: pure-project Programs, mid-transition).
+ *     NEVER fall through to an unscoped `plan.findFirst({ active: true })` —
+ *     multiple active Plans across goals is the normal steady state, so the
+ *     fall-through would surface another goal's dormant plan as "the day"
+ *     (the founding cross-goal leak bug this redesign exists to fix —
+ *     plan-critique Critical #1).
+ *
+ *  2. No active Program AND zero Program rows for this user (never adopted
+ *     Programs) → the legacy isFocus-desc tiebreak query, byte-identical to
+ *     the pre-#277 behavior. This is the per-tenant rollout gate: tenants
+ *     without Program rows are untouched by the seam flip.
+ *
+ *  3. No active Program but Program rows EXIST (all completed/archived/draft)
+ *     → null via the Program-aware path. Subtlety, deliberate: "zero Program
+ *     rows" means the user never adopted Programs (keep legacy behavior);
+ *     "has Programs but none active" means the user RETIRED their program —
+ *     they must not silently regress to isFocus-tiebreak day resolution.
+ *     Rollback semantics follow: archiving the founder's Program row yields
+ *     a safe "no rotation today" (this branch), while deleting the Program
+ *     rows entirely restores full legacy behavior (branch 2).
+ *
+ * M1/#269 (unchanged): the LegacyProgram-table fallback stays deleted — a
+ * stale active legacy row can never shadow Plan resolution.
+ */
 export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
-  // Prefer the focus goal's active Plan first (isFocus desc), then fall back
-  // to any active plan (transition-safe). This ensures the focus goal's plan
-  // drives the daily prescription while remaining resilient during the transition
-  // period when some goals may not yet have isFocus set.
-  // Falls back further to the global seeded Program for new users.
   const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true },
-    orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
-  });
-  if (plan) {
+
+  const program = await db.program.findFirst({ where: { status: "active" } });
+  if (program) {
+    // Program-owned rotation: ONLY a Plan attached to this Program may own
+    // the day. No `where: { active: true }` fall-through — see doc comment.
+    const plan = await db.plan.findFirst({
+      where: { active: true, programId: program.id },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!plan) return null; // Program with no rotation
     return {
       id: plan.id,
       name: plan.name,
@@ -41,105 +115,202 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
       confirmedThroughDate: plan.confirmedThroughDate ?? null,
     };
   }
-  const program = await db.program.findFirst({
+
+  // No ACTIVE Program. Distinguish "never adopted" (zero rows → legacy path)
+  // from "retired" (rows exist, none active → null). getDb() is
+  // tenant-scoped, so count() is this user's rows only.
+  const programRowCount = await db.program.count();
+  if (programRowCount > 0) return null; // retired/dormant Program user
+
+  // Zero Program rows: legacy pre-Program tenant. Byte-identical to the
+  // pre-#277 query — prefer the focus goal's active Plan first (isFocus
+  // desc), then any active plan (transition-safe while isFocus adoption
+  // was incomplete).
+  const plan = await db.plan.findFirst({
     where: { active: true },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
   });
-  if (!program) return null;
+  if (!plan) return null;
   return {
-    id: program.id,
-    name: program.name,
-    startedOn: program.startedOn,
-    template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
-    confirmedThroughDate: null,
+    id: plan.id,
+    name: plan.name,
+    startedOn: plan.startedOn,
+    template: plan.planJson as unknown as ProgramTemplate,
+    confirmedThroughDate: plan.confirmedThroughDate ?? null,
   };
 }
 
 /**
+ * Program-shaped context for the active Program, or null when the user has
+ * no ACTIVE Program row (zero rows and retired-Program users alike — there
+ * is no membership without an active Program). See ActiveProgramMembership's
+ * type doc for the shape contract; the Program's own id lives ONLY here.
+ *
+ * Deliberately a separate lookup from getActiveProgram(): the seam stays
+ * frozen (`.id` = Plan id, no new fields) while Program consumers
+ * (attribution engine, /program dashboard, program MCP pack) get the full
+ * Program row + membership here. An active Program with no rotation
+ * (getActiveProgram() → null) still HAS membership — the chewgether shape.
+ */
+export async function getActiveProgramMembership(): Promise<ActiveProgramMembership | null> {
+  const db = await getDb();
+
+  const program = await db.program.findFirst({ where: { status: "active" } });
+  if (!program) return null;
+
+  // All attached goals, any status, explicit select (never leaks userId).
+  // createdAt asc = stable, attachment-ordered listing. The id tiebreak makes
+  // the order TOTAL — two goals seeded in the same second must not swap
+  // positions between renders, because goal-identity.ts derives each goal's
+  // mark slot (● ■ ▲) from this order (UXR-PV-04).
+  const memberGoals = await db.goal.findMany({
+    where: { programId: program.id },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, objective: true, kind: true, status: true },
+  });
+
+  return {
+    id: program.id,
+    name: program.name,
+    status: program.status,
+    startedOn: program.startedOn,
+    endsOn: program.endsOn ?? null,
+    notes: program.notes ?? null,
+    attributionRules: parseAttributionRules(program.attributionRules),
+    memberGoals,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #298/#301 (isFocus sweep) — membership-first ordering. The twin
+// getRotationOwnerGoal/RotationOwnerResolution this section once carried was
+// consolidated into src/lib/goal-focus.ts (the "who drives today" module) —
+// this module keeps the day-resolution seam + membership only.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * #298/#301: membership-first ordering for multi-goal LIST contexts ("what's
+ * in play") — the rotation-owning goal first, then the active Program's other
+ * member goals, then non-members. Pure + stable: rows within the same tier
+ * keep their incoming order, so callers express secondary tiebreaks via the
+ * DB orderBy they fetched with (exactly how `isFocus: "desc"` used to compose
+ * with them).
+ *
+ * Also expresses the legacy single-goal lift: an empty `memberGoalIds` plus
+ * the legacy focus-goal id as `rotationOwnerGoalId` reproduces the healthy-
+ * state `orderBy: [{ isFocus: "desc" }, ...rest]` result (one focus row to
+ * the front, everything else in DB order).
+ */
+export function orderMembersFirst<T extends { id: string }>(
+  rows: readonly T[],
+  memberGoalIds: ReadonlySet<string>,
+  rotationOwnerGoalId: string | null,
+): T[] {
+  const tier = (id: string): number =>
+    rotationOwnerGoalId !== null && id === rotationOwnerGoalId
+      ? 0
+      : memberGoalIds.has(id)
+        ? 1
+        : 2;
+  return [...rows].sort((a, b) => tier(a.id) - tier(b.id));
+}
+
+/**
  * Fallback for the game engine (engine.ts's program-fallback, REQ-004c):
- * the most-recently-updated plan/program regardless of `active`. Used ONLY
- * when getActiveProgram() returns null (e.g. right after completeGoalCore
+ * the most-recently-updated Plan regardless of `active`. Used ONLY when
+ * getActiveProgram() returns null (e.g. right after completeGoalCore
  * deactivates the goal's plan(s) — the character page must keep showing the
  * founder's historical XP/level instead of wiping to emptyState()).
  *
- * Mirrors getActiveProgram's precedence (Plan first, then Program) and
- * snapshot shape exactly — the only difference is dropping the `active: true`
- * filter and ordering purely by `updatedAt desc` ("most recently updated",
- * full stop; no isFocus tiebreak — that tiebreak in getActiveProgram exists
- * for the multi-active-plan transition case, which doesn't apply here).
+ * Mirrors getActiveProgram's snapshot shape exactly — the only difference is
+ * dropping the `active: true` filter and ordering purely by `updatedAt desc`
+ * ("most recently updated", full stop; no isFocus tiebreak — that tiebreak in
+ * getActiveProgram exists for the multi-active-plan transition case, which
+ * doesn't apply here). Zero Plan rows → null (M1/#269: the LegacyProgram
+ * fallback was deleted here too).
  *
  * getActiveProgram() itself is untouched — this is a separate, explicit
  * fallback the caller opts into, never an implicit change to "the" active
  * program lookup.
+ *
+ * #277 decision — deliberately NOT given the Program-first treatment (issue
+ * AC scopes it out; the reasoning, from its single caller,
+ * game/engine.ts:1012 `getActiveProgram() ?? getMostRecentProgram()`):
+ * the engine's semantic is "keep showing historical XP/level after
+ * completion/retirement instead of wiping /character to emptyState()", and
+ * it consumes template + startedOn only — never overrides or 'the day'.
+ * Filtering by Program membership here would break exactly that continuity
+ * for a user whose historical Plans predate (or sit outside) their Program
+ * — e.g. the founder retiring a Program must not blank the character page.
+ * "Most-recently-updated Plan, full stop" is the history-preserving pick;
+ * a user with zero Plans ever (the pure-project chewgether shape) still
+ * gets null → emptyState, which is correct for a user who never had a
+ * rotation. Note the seam flip does widen this fallback's reach: an active
+ * Program with no rotation now makes getActiveProgram() null, so the engine
+ * lands here and may read a NON-member Plan's window — acceptable because
+ * it feeds only historical XP display, never day resolution or overrides.
  */
 export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | null> {
   const db = await getDb();
   const plan = await db.plan.findFirst({
     orderBy: { updatedAt: "desc" },
   });
-  if (plan) {
-    return {
-      id: plan.id,
-      name: plan.name,
-      startedOn: plan.startedOn,
-      template: plan.planJson as unknown as ProgramTemplate,
-      confirmedThroughDate: plan.confirmedThroughDate ?? null,
-    };
-  }
-  const program = await db.program.findFirst({
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!program) return null;
+  if (!plan) return null;
   return {
-    id: program.id,
-    name: program.name,
-    startedOn: program.startedOn,
-    template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
-    confirmedThroughDate: null,
+    id: plan.id,
+    name: plan.name,
+    startedOn: plan.startedOn,
+    template: plan.planJson as unknown as ProgramTemplate,
+    confirmedThroughDate: plan.confirmedThroughDate ?? null,
   };
 }
 
-export function getTodayContext(
-  program: ActiveProgramSnapshot,
-  now: Date = new Date(),
-): TodayContext {
-  // Day boundaries in USER_TZ — the user's phone clock owns "today", not the
-  // server's UTC. dayMs uses 86400 because daysSinceStart is the wall-clock
-  // day count; DST transitions are absorbed by startOfDay's TZ correction.
-  const startMidnight = startOfDay(program.startedOn);
-  const today = startOfDay(now);
-
-  const dayMs = 1000 * 60 * 60 * 24;
-  const daysSinceStart = Math.max(
-    0,
-    Math.round((today.getTime() - startMidnight.getTime()) / dayMs),
-  );
-  const weekIndex = Math.min(program.template.totalWeeks, Math.floor(daysSinceStart / 7) + 1);
-
-  // Plan-relative rotation. Day 1 of the program lands on plan.startedOn,
-  // regardless of which calendar weekday that is. After 7 days the rotation
-  // cycles. The template's `weeklySplit[].dayOfWeek` is the rotation index
-  // (1..7), NOT a calendar weekday.
-  const dayOfWeek = ((daysSinceStart % 7) + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
-
+/**
+ * #285: pure TEMPLATE lookup — which phase does a (resolveDay-computed)
+ * weekIndex fall in? No date math, no IO; the day-resolution itself lives
+ * exclusively in resolveDay now.
+ *
+ * Fallback semantics preserved from the deleted getTodayContext for in-plan
+ * dates: a malformed template (non-array phases) yields null; a weekIndex no
+ * phase claims falls back to the first phase. A null weekIndex (out-of-plan
+ * date) yields null — the old function's clamped phantom phase on
+ * out-of-plan dates is deliberately gone.
+ */
+export function phaseForWeekIndex(
+  template: ProgramTemplate,
+  weekIndex: number | null,
+): Phase | null {
+  if (weekIndex === null) return null;
   // Defensive: a malformed snapshot (e.g., a stringified template that
   // accidentally got persisted as a character-indexed object) shouldn't take
-  // the page down. Treat phases / weeklySplit as optional.
-  const phasesArr = Array.isArray(program.template?.phases) ? program.template.phases : [];
-  const weeklySplitArr = Array.isArray(program.template?.weeklySplit)
-    ? program.template.weeklySplit
-    : [];
-
-  const phase =
+  // the page down. Treat phases as optional.
+  const phasesArr = Array.isArray(template?.phases) ? template.phases : [];
+  return (
     phasesArr.find((p) => Array.isArray(p?.weeks) && p.weeks.includes(weekIndex)) ??
     phasesArr[0] ??
-    null;
+    null
+  );
+}
 
-  const day = weeklySplitArr.find((d) => d?.dayOfWeek === dayOfWeek) ?? weeklySplitArr[0] ?? null;
-
-  return { program, daysSinceStart, weekIndex, dayOfWeek, phase, day };
+/**
+ * #285: pure TEMPLATE lookup — the weeklySplit entry for a
+ * (resolveDay-computed) rotation day. Same contract notes as
+ * phaseForWeekIndex above: no date math, getTodayContext's in-plan fallback
+ * (?? first split day) preserved, null rotationDay (out-of-plan) → null.
+ * The template's `weeklySplit[].dayOfWeek` is the rotation index (1..7),
+ * NOT a calendar weekday.
+ *
+ * Distinct from calendar.ts's templateForRotationDay(program, date), which
+ * takes a DATE and re-derives the rotation index; this one takes the already
+ * resolved index — use it when you hold a ResolvedDay.
+ */
+export function splitDayForRotationDay(
+  template: ProgramTemplate,
+  rotationDay: number | null,
+): DayTemplate | null {
+  if (rotationDay === null) return null;
+  const weeklySplitArr = Array.isArray(template?.weeklySplit) ? template.weeklySplit : [];
+  return weeklySplitArr.find((d) => d?.dayOfWeek === rotationDay) ?? weeklySplitArr[0] ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -164,9 +335,9 @@ export type PlanWindowCandidate = ActiveProgramSnapshot & {
 };
 
 /**
- * Pure coverage check — same daysDelta math as resolveDay (calendar.ts:843-848):
- * daysDelta = floor((startOfDay(target) - startOfDay(startedOn)) / 1 day);
- * covered = 0 <= daysDelta < template.totalWeeks * 7.
+ * Pure coverage check — rotation-core's daysDelta/isInPlan (B4/A3: the same
+ * canonical math resolveDay uses):
+ * covered = 0 <= daysDelta(startedOn, target) < template.totalWeeks * 7.
  *
  * S4 clamp: when `goalCompletedAt` is provided, the window's effective end is
  * clamped to the completion day itself — the completion day IS covered, the
@@ -183,10 +354,10 @@ function coversDayKey(
   targetDayKey: string,
   goalCompletedAt?: Date | null,
 ): boolean {
-  const startMid = startOfDay(program.startedOn);
   const targetMid = parseDateKey(targetDayKey); // === startOfDay(that date)
-  const daysDelta = Math.floor((targetMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return false;
+  if (!isInPlan(daysDelta(program.startedOn, targetMid), program.template.totalWeeks)) {
+    return false;
+  }
   if (goalCompletedAt && targetMid.getTime() > startOfDay(goalCompletedAt).getTime()) return false;
   return true;
 }
@@ -199,8 +370,9 @@ function coversDayKey(
  * Contract (D1 + S3 + S4, binding):
  *  1. If `activeProgram` covers `dayKey` → return it as {source:"active"}.
  *     This is the Today-page contract: whenever this branch hits, the result
- *     is byte-identical to what getActiveProgram()/getTodayContext produce —
- *     applies to past, today, and future dates alike.
+ *     is byte-identical to what getActiveProgram() (and resolveDay's Today
+ *     path on top of it) produce — applies to past, today, and future dates
+ *     alike.
  *  2. Otherwise, ONLY when `dayKey < todayKey` (strictly past, USER_TZ dateKey
  *     string compare — never raw Date comparison): search `candidates` for
  *     ones whose window covers `dayKey` (S4-clamped per candidate). Among
@@ -222,26 +394,13 @@ function coversDayKey(
  *     candidate): return `activeProgram` as {source:"active"} when present,
  *     else null. Bit-identical to today's out-of-plan/active behavior.
  *
- * SMOKE-1 (binding, additive precedence — checked BEFORE step 1 above):
- * `getActiveProgram()` falls back to the legacy `Program` table only when the
- * user has ZERO active `Plan` rows (see that function). When it does, the
- * resulting `activeProgram.id` is a Program-table id and can never appear in
- * `candidates`, because `getPlanWindowCandidates()` queries the Plan table
- * exclusively (every Plan row, active or not — see that function). A real
- * active Plan, by contrast, always appears there. So "activeProgram.id is
- * absent from candidates" is a reliable legacy-fallback signal, requiring no
- * extra flag on ActiveProgramSnapshot.
- *
- * When dayKey is strictly past AND activeProgram is that legacy-fallback AND
- * a candidate covers dayKey, the covering candidate wins over the legacy row
- * — the legacy row's `active` label was only ever a "nothing else to show"
- * placeholder, and letting it short-circuit step 1 for a date a real Plan
- * covers (a) mislabels the source (no archived badge) and (b) is actively
- * wrong: resolveDay's override lookup keys `planId` off whichever program won
- * here, so the real Plan's PlanDayOverride rows would otherwise be invisible.
- * Today/future dates, and past dates with no covering real-Plan candidate
- * (legacy-only users with zero Plan rows), are unaffected — this branch only
- * fires when a covering candidate is actually found.
+ * M1/#269: the old SMOKE-1 special case (a legacy Program-table fallback row
+ * losing to a covering real-Plan candidate on past dates) was deleted along
+ * with getActiveProgram()'s LegacyProgram fallback. `activeProgram` is now
+ * always a real Plan snapshot (or null), and a real Plan's id always appears
+ * among `candidates` for same-scope callers (getPlanWindowCandidates()
+ * fetches every Plan row, active or not) — so the legacy id-membership check
+ * had no remaining input that could trigger it.
  */
 export function pickProgramForDate(
   candidates: PlanWindowCandidate[],
@@ -298,19 +457,6 @@ export function pickProgramForDate(
     confirmedThroughDate: winner.confirmedThroughDate,
     source,
   });
-
-  // SMOKE-1: legacy-fallback active row loses to a covering real Plan on a
-  // past date — see the doc comment above. The winner's `active` flag is
-  // expected to always be false here (if a real Plan were active,
-  // getActiveProgram() would have returned it instead of falling back to
-  // Program), but we still label off the flag rather than hardcoding
-  // "archived", for defensive correctness.
-  const isLegacyFallback =
-    isPast && activeProgram !== null && !candidates.some((c) => c.id === activeProgram.id);
-  if (isLegacyFallback && covering.length > 0) {
-    const winner = pickCoveringWinner();
-    return toProgramForDate(winner, winner.active ? "active" : "archived");
-  }
 
   if (activeProgram && coversDayKey(activeProgram, dayKey)) {
     return {
@@ -389,19 +535,12 @@ export async function getPlanWindowCandidates(): Promise<PlanWindowCandidate[]> 
  * - Else: fall through to the active program (or null if none exists) —
  *   today's out-of-plan/active behavior, unchanged.
  *
- * The candidate query is skipped entirely for today/future dates (the hot
- * path) — pickProgramForDate's SMOKE-1 legacy-fallback branch is itself
- * gated on `isPast`, so it's a no-op there regardless.
- *
- * SMOKE-1: for a strictly-past `date`, the query can no longer be skipped
- * just because `activeProgram` already covers it — that's exactly the buggy
- * case (a legacy Program-table fallback "covers" its recorded window too).
- * pickProgramForDate needs the full candidate list to tell a legacy fallback
- * apart from a real active Plan (id membership — see its doc comment), so
- * every past-date lookup now fetches it. Accepted trade-off: one extra query
- * per past-date, single-day lookup (e.g. get_day) — batch callers (get_week,
- * the month view) already fetch `candidates` once per range and are
- * unaffected.
+ * The candidate query is skipped whenever it cannot matter: today/future
+ * dates (pickProgramForDate never consults candidates there), and past dates
+ * the active program already covers (step 1 wins before candidates are ever
+ * considered). M1/#269 restored the covered-past-date skip — it had been
+ * disabled only so the (now deleted) SMOKE-1 legacy check could run its
+ * id-membership test against the full candidate list.
  */
 export async function getProgramForDate(
   date: Date,
@@ -411,7 +550,8 @@ export async function getProgramForDate(
   const dayKey = dateKey(date);
   const todayKey = dateKey(now);
 
-  const mightNeedArchived = dayKey < todayKey;
+  const mightNeedArchived =
+    dayKey < todayKey && !(activeProgram && coversDayKey(activeProgram, dayKey));
   const candidates = mightNeedArchived ? await getPlanWindowCandidates() : [];
 
   return pickProgramForDate(candidates, dayKey, todayKey, activeProgram);

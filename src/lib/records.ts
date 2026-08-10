@@ -3,6 +3,8 @@
 
 import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
 import { prisma, getDb } from "@/lib/db";
+import { canonicalExerciseName } from "@/lib/exercise-canonical";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
 
 export type CheckpointStatus = "upcoming" | "due" | "overdue" | "done";
@@ -38,14 +40,16 @@ export type ScheduledBaseline = {
   dayOfWeek: number;
   retestWeeks: number[];
   checkpoints: ScheduledCheckpoint[];
-  latestResult: { date: Date; value: number; units: string } | null;
+  /** capped (#276): the latest value hit an equipment ceiling — display marker only. */
+  latestResult: { date: Date; value: number; units: string; capped: boolean } | null;
   resultCount: number;
 };
 
 export type BaselineSummary = {
   testName: string;
   units: string;
-  latest: { date: Date; value: number };
+  /** capped (#276): equipment-ceiling marker on the latest result — display only, never PR/readiness math. */
+  latest: { date: Date; value: number; capped: boolean };
   earliest: { date: Date; value: number };
   count: number;
   /** Δ from earliest to latest. Direction is metric-dependent — display only. */
@@ -115,57 +119,12 @@ export function epley1RM(weightLb: number, reps: number): number {
 // ----------------------------------------------------------------------------
 // Exercise name canonicalization.
 //
-// One movement gets logged under several names — Strong-export spelling drift
-// ("Pull Up" vs "Pull-Up"), and baseline tests mirror into workouts under their
-// descriptive testName ("Plank Max Hold") rather than the working name
-// ("Plank"). Equipment strings are just as inconsistent for one movement
-// (null / "Bodyweight" / "Dumbbell"). Left unmerged, PR detection and the
-// records summary fragment: a 64s working plank "beats" the 60s working best
-// while the real 252s max sits in a separate "Plank Max Hold" bucket.
-//
-// Fix: group by canonical name ONLY — equipment is descriptive metadata, never
-// a bucket key. The alias map is curated, not pattern-stripped: some baseline
-// tests are a DIFFERENT metric ("Pull-Up Total Across 5 Sets" is a 5-set sum,
-// "2-Min Bodyweight Squat" is a timed AMRAP) and must NOT fold into the
-// movement, or they'd suppress real single-set PRs.
-//
-// canonical → every variant spelling that folds into it.
-const EXERCISE_ALIAS_GROUPS: Record<string, string[]> = {
-  "Pull-Up": ["Pull Up", "Pull-Up Max Reps"],
-  "Push-Up": ["Push Up", "Push-Up Max Reps"],
-  Dip: ["Chest Dip", "Dip (strict, unassisted)", "Dip Max Reps"],
-  Plank: ["Plank Max Hold"],
-  "Hollow Body Hold": ["Hollow Hold"],
-  "DB Shoulder Press": ["Shoulder Press"],
-  "Bent-Over One-Arm DB Row": ["Bent Over One Arm Row"],
-  "Step-Up": ["Step-Ups"],
-  "Stair Climber": ["CLMBR", "Climbr (Stair Climber)"],
-};
-
-// Normalized variant key → canonical. Each canonical also maps to itself so
-// "Pull-Up" and "pull-up" both resolve.
-const EXERCISE_ALIAS_INDEX = new Map<string, string>();
-for (const [canonical, variants] of Object.entries(EXERCISE_ALIAS_GROUPS)) {
-  EXERCISE_ALIAS_INDEX.set(canonical.trim().toLowerCase(), canonical);
-  for (const v of variants) EXERCISE_ALIAS_INDEX.set(v.trim().toLowerCase(), canonical);
-}
-
-/**
- * Resolve a logged exercise name to its canonical movement name. Unmapped names
- * pass through trimmed (so they stay their own bucket). Case-insensitive.
- */
-export function canonicalExerciseName(name: string): string {
-  return EXERCISE_ALIAS_INDEX.get(name.trim().toLowerCase()) ?? name.trim();
-}
-
-/**
- * Return all known spelling variants for a canonical exercise name, including
- * the canonical name itself.  Used by goal-attribution.ts to build an IN-list
- * for the workoutExercise query.
- */
-export function aliasVariantsFor(canonical: string): string[] {
-  return [canonical, ...(EXERCISE_ALIAS_GROUPS[canonical] ?? [])];
-}
+// Canonical exercise naming (alias map + canonicalExerciseName +
+// aliasVariantsFor) moved VERBATIM to src/lib/exercise-canonical.ts (#307) so
+// pure consumers (src/lib/attribution.ts) can canonicalize without importing
+// Prisma through this module. Re-exported here so every existing
+// `@/lib/records` import keeps working — there is still exactly ONE alias map.
+export { canonicalExerciseName, aliasVariantsFor } from "@/lib/exercise-canonical";
 
 // ── Endurance metric-kind registry ──────────────────────────────────────────
 // Keyed by CANONICAL exercise name (post-canonicalExerciseName).
@@ -233,7 +192,7 @@ export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
     out.push({
       testName: g.testName,
       units: last.units,
-      latest: { date: last.date, value: last.value },
+      latest: { date: last.date, value: last.value, capped: last.capped },
       earliest: { date: first.date, value: first.value },
       count: g._count._all,
       delta: last.value - first.value,
@@ -299,7 +258,7 @@ export async function getBaselineScheduleForPlan(
   startedOn: Date | null;
   totalWeeks: number | null;
   scheduled: ScheduledBaseline[];
-  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[];
 }> {
   const now = opts?.now ?? new Date();
   const template = plan.planJson as unknown as ProgramTemplate;
@@ -355,7 +314,7 @@ export async function getBaselineScheduleForPlan(
       retestWeeks: test.retestWeeks,
       checkpoints,
       latestResult: latest
-        ? { date: latest.date, value: latest.value, units: latest.units }
+        ? { date: latest.date, value: latest.value, units: latest.units, capped: latest.capped }
         : null,
       resultCount: rows.length,
     };
@@ -363,7 +322,7 @@ export async function getBaselineScheduleForPlan(
 
   // Tests logged but not in the template — surface them so they're not lost.
   const scheduledNames = new Set(flat.map((f) => f.test.testName));
-  const unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[] = [];
+  const unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[] = [];
   for (const [testName, rows] of byName) {
     if (scheduledNames.has(testName)) continue;
     const latest = rows.at(-1)!;
@@ -371,7 +330,7 @@ export async function getBaselineScheduleForPlan(
       testName,
       units: latest.units,
       resultCount: rows.length,
-      latest: { date: latest.date, value: latest.value },
+      latest: { date: latest.date, value: latest.value, capped: latest.capped },
     });
   }
   unscheduledExtras.sort((a, b) => a.testName.localeCompare(b.testName));
@@ -396,16 +355,31 @@ export async function getBaselineSchedule(opts?: { now?: Date }): Promise<{
   startedOn: Date | null;
   totalWeeks: number | null;
   scheduled: ScheduledBaseline[];
-  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number } }[];
+  unscheduledExtras: { testName: string; units: string; resultCount: number; latest: { date: Date; value: number; capped: boolean } }[];
 }> {
-  // Focus-strict: only return the focus goal's active plan (DC-6 + CRIT-2 fix).
-  // When the focus goal has no active plan, return the empty shape rather than
-  // silently showing another goal's baseline schedule on baselines/new.
+  // Rotation-plan-scoped, deliberately NOT member-goal-wide (#298 — this
+  // preserves DC-6 + CRIT-2's original rationale): the baseline schedule IS
+  // the live rotation's schedule. Under a Program exactly one Plan owns the
+  // day (the rotation owner's — its baselineWeek is the live schedule), and
+  // splicing dormant member plans' checkpoints into /baselines/new would
+  // recreate the "another goal's schedule shows up" bug CRIT-2 fixed. When
+  // no rotation owner exists (Program with no rotation, or retired Program
+  // rows), return the empty shape. Zero-Program tenants resolve the legacy
+  // focus goal via getRotationOwnerGoal() and keep their pre-sweep behavior:
+  // that goal's most-recently-updated active plan, else the empty shape.
   const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true, goal: { isFocus: true } },
-    orderBy: { updatedAt: "desc" },
-  });
+  const resolution = await getRotationOwnerGoal();
+  const plan =
+    resolution.mode === "program"
+      ? resolution.planId
+        ? await db.plan.findFirst({ where: { id: resolution.planId } })
+        : null
+      : resolution.goalId
+        ? await db.plan.findFirst({
+            where: { active: true, goalId: resolution.goalId },
+            orderBy: { updatedAt: "desc" },
+          })
+        : null;
   if (!plan) {
     return { startedOn: null, totalWeeks: null, scheduled: [], unscheduledExtras: [] };
   }

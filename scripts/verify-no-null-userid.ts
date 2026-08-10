@@ -1,7 +1,7 @@
 // verify-no-null-userid.ts
 //
 // REQ-002 (E7-1): 0-null ownership guard.
-// Counts rows WHERE userId IS NULL across all 16 scoped models.
+// Counts rows WHERE userId IS NULL across all 20 scoped models.
 // Prints per-table counts + a summary; exits non-zero if any table has nulls.
 //
 // Safe to run on any DB — read-only, no writes.
@@ -23,9 +23,11 @@ async function main() {
     : "(no DATABASE_URL)";
   const dbEnv = process.env.DB_ENV ?? "(not set)";
   console.log(`DB_ENV: ${dbEnv}  host: ${host}`);
-  console.log("Checking for unowned rows (userId IS NULL) across 16 scoped models...\n");
+  console.log("Checking for unowned rows (userId IS NULL) across 20 scoped models...\n");
 
-  // All 16 models that carry a userId column (scoped models per E2 migration).
+  // All 20 models that carry a userId column (scoped models per E2 migration
+  // + the M2 program-redesign additions: Program, ActivityGoalLink,
+  // WriteReceipt, SavedMeal).
   const checks: { label: string; count: () => Promise<number> }[] = [
     {
       label: "workout",
@@ -73,9 +75,9 @@ async function main() {
         prisma.goal.count({ where: { userId: null } }),
     },
     {
-      label: "program",
+      label: "legacyProgram",
       count: () =>
-        prisma.program.count({ where: { userId: null } }),
+        prisma.legacyProgram.count({ where: { userId: null } }),
     },
     {
       label: "gameBonusXp",
@@ -107,6 +109,27 @@ async function main() {
       count: () =>
         prisma.dayRenderJob.count({ where: { userId: null } }),
     },
+    // M2 program-redesign additive models (#270/#271/#274/#275)
+    {
+      label: "program",
+      count: () =>
+        prisma.program.count({ where: { userId: null } }),
+    },
+    {
+      label: "activityGoalLink",
+      count: () =>
+        prisma.activityGoalLink.count({ where: { userId: null } }),
+    },
+    {
+      label: "writeReceipt",
+      count: () =>
+        prisma.writeReceipt.count({ where: { userId: null } }),
+    },
+    {
+      label: "savedMeal",
+      count: () =>
+        prisma.savedMeal.count({ where: { userId: null } }),
+    },
   ];
 
   let total = 0;
@@ -126,7 +149,7 @@ async function main() {
 
   console.log();
   if (total === 0) {
-    console.log(`✓ All 16 tables clean — 0 unowned rows. Exit 0.`);
+    console.log(`✓ All 20 tables clean — 0 unowned rows. Exit 0.`);
   } else {
     console.error(`✗ ${total} unowned row(s) found across ${results.filter((r) => r.n > 0).length} table(s). Exit 1.`);
   }

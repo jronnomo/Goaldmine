@@ -20,10 +20,13 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
+import { GoalMark } from "@/components/GoalMark";
 import { WeekRail } from "@/components/WeekRail";
 import type { CalendarDayCell } from "@/lib/calendar";
 import { parseDateKey } from "@/lib/calendar-core";
 import { findLegendEntry, type LegendEntry, type LegendKind } from "@/lib/legend";
+import type { GoalIdentity } from "@/lib/goal-identity";
+import { splitWindowIntoSegments, type CalendarWindow, type WindowSegment } from "@/lib/calendar-windows";
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -37,6 +40,12 @@ const COMPARE_STORAGE_KEY = "goaldmine.compareMode";
 
 // UXR-62-03: focus-first ordering, cap 2–3 total markers before +N chip.
 // 3 chosen: worst-case race-week cell has 1 focus + 2 foreign glyphs before chip.
+// #291 / UXR-PV-34: under a Program (identities non-empty) the semantic is
+// re-based to *3 GOALS per cell* — one GoalMark per member goal (the rotation
+// owner contributes its GoalMark, NOT the trained Bullseye: UXR-PV-88 fix A,
+// approved — Bullseye exclusivity narrowed to non-Program tenants; completion
+// is already signalled by the gold halo). Zero-Program cells keep the legacy
+// marker semantics below, byte-identical.
 const MARKER_CAP = 3;
 
 type Marker = { entry: LegendEntry; count: number };
@@ -91,11 +100,18 @@ export function CalendarMonth({
   monthKey,
   legend,
   confirmedThroughDate,
+  identities = [],
+  windows = [],
 }: {
   cells: CalendarDayCell[];
   monthKey: string; // "yyyy-mm" of the displayed month
   legend: readonly LegendEntry[];
   confirmedThroughDate?: Date | null; // Track 2: from calendar/page.tsx via program
+  /** #291: member-goal identity marks (active Program only; [] = legacy
+   *  rendering, byte-identical to pre-#291). */
+  identities?: GoalIdentity[];
+  /** #291: deload/observance windows in this grid (active Program only). */
+  windows?: CalendarWindow[];
 }) {
   // Compare via the tz-stable dateKey string, not Date.getMonth() — the latter
   // is shifted by the client's timezone and can misclassify boundary days
@@ -240,6 +256,24 @@ export function CalendarMonth({
   // (via startOfWeekMonday/endOfWeekSunday), so chunking by 7 gives correct rows.
   const weeks = Array.from({ length: 6 }, (_, i) => cells.slice(i * 7, i * 7 + 7));
 
+  // ── #291: Program mode ──────────────────────────────────────────────────────
+  const identityById = new Map(identities.map((i) => [i.goalId, i]));
+  const programMode = identities.length > 0;
+  // Deload span-bar segments per week row (research §7.3). OBSERVANCE windows
+  // get NO band — their entire treatment is the in-cell em dash.
+  const weekRowKeys = weeks.map((w) => w.map((c) => c.dateKey));
+  const segmentsByWeekRow = new Map<number, WindowSegment[]>();
+  if (programMode) {
+    for (const win of windows) {
+      if (win.kind !== "deload") continue;
+      for (const seg of splitWindowIntoSegments(win, weekRowKeys)) {
+        const arr = segmentsByWeekRow.get(seg.weekRow) ?? [];
+        arr.push(seg);
+        segmentsByWeekRow.set(seg.weekRow, arr);
+      }
+    }
+  }
+
   return (
     <div className="space-y-3">
       {/* REQ-006: compare-mode pill row — right-aligned, above the whole grid. */}
@@ -304,35 +338,66 @@ export function CalendarMonth({
         <div className="space-y-1">
           {weeks.map((weekCells, rowIdx) => {
             const weekIndex = weekCells.find((c) => c.isInPlan)?.weekIndex ?? null;
+            const weekSegments = segmentsByWeekRow.get(rowIdx) ?? [];
             return (
-              <div
-                key={rowIdx}
-                data-testid={weekIndex != null ? `week-row-${weekIndex}` : undefined}
-                className="grid grid-cols-[16px_repeat(7,1fr)] gap-1"
-              >
-                <WeekRail
-                  cells={weekCells}
-                  weekIndex={weekIndex}
-                  confirmedThroughDate={confirmedThroughDate ?? null}
-                />
-                {weekCells.map((c) => {
-                  // "selected" is repurposed in compare mode: it drives the
-                  // same ring-2 styling for whichever day is currently
-                  // picked as A, rather than adding a parallel prop set.
-                  const isSelectedForDisplay =
-                    mode === "normal" ? c.dateKey === selectedKey : c.dateKey === compareA;
-                  return (
-                    <DayCell
-                      key={c.dateKey}
-                      cell={c}
-                      inMonth={inMonth(c)}
-                      legend={legend}
-                      selected={isSelectedForDisplay}
-                      compareBadge={mode === "selectB" && c.dateKey === compareA ? "A" : undefined}
-                      onSelect={() => handleDayTap(c)}
-                    />
-                  );
-                })}
+              <div key={rowIdx}>
+                <div
+                  data-testid={weekIndex != null ? `week-row-${weekIndex}` : undefined}
+                  className="grid grid-cols-[16px_repeat(7,1fr)] gap-1"
+                >
+                  <WeekRail
+                    cells={weekCells}
+                    weekIndex={weekIndex}
+                    confirmedThroughDate={confirmedThroughDate ?? null}
+                  />
+                  {weekCells.map((c) => {
+                    // "selected" is repurposed in compare mode: it drives the
+                    // same ring-2 styling for whichever day is currently
+                    // picked as A, rather than adding a parallel prop set.
+                    const isSelectedForDisplay =
+                      mode === "normal" ? c.dateKey === selectedKey : c.dateKey === compareA;
+                    return (
+                      <DayCell
+                        key={c.dateKey}
+                        cell={c}
+                        inMonth={inMonth(c)}
+                        legend={legend}
+                        selected={isSelectedForDisplay}
+                        compareBadge={mode === "selectB" && c.dateKey === compareA ? "A" : undefined}
+                        onSelect={() => handleDayTap(c)}
+                        programMode={programMode}
+                        identityById={identityById}
+                      />
+                    );
+                  })}
+                </div>
+                {/* #291: conditional second grid row — the deload/travel span
+                    bar (research §7.3). STATIC by design (a band is a fact,
+                    not an event — the shipped ReachMeter no-animation
+                    precedent); ~5px tall, aria-hidden, pointer-events-none —
+                    every covered day is already a ≥60px tappable cell whose
+                    detail panel names the window. gridColumn is an INLINE
+                    style (Tailwind's JIT cannot see runtime class strings;
+                    column 1 is the rail, hence 2 +). Rounded only at the
+                    window's true ends — a flat edge reads as "continues". */}
+                {weekSegments.length > 0 && (
+                  <div
+                    aria-hidden="true"
+                    className="grid grid-cols-[16px_repeat(7,1fr)] gap-1 mt-0.5 pointer-events-none"
+                  >
+                    {weekSegments.map((seg, segIdx) => (
+                      <span
+                        key={`${seg.windowId}-${segIdx}`}
+                        data-testid={`window-span-${seg.windowId}-${segIdx}`}
+                        title={seg.label}
+                        className={`h-[5px] bg-[var(--accent-soft)] ${
+                          seg.isStart ? "rounded-l-full" : ""
+                        } ${seg.isEnd ? "rounded-r-full" : ""}`}
+                        style={{ gridColumn: `${2 + seg.colStart} / span ${seg.span}` }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -342,7 +407,9 @@ export function CalendarMonth({
           in progress — Fix 6 accepts the resulting one-frame flash on
           month-nav rehydrate rather than a sessionStorage lazy-initializer
           (which would cause a hydration mismatch). */}
-      {mode === "normal" && selected && <DayDetail cell={selected} legend={legend} />}
+      {mode === "normal" && selected && (
+        <DayDetail cell={selected} legend={legend} programMode={programMode} identityById={identityById} />
+      )}
     </div>
   );
 }
@@ -367,6 +434,8 @@ function DayCell({
   selected,
   compareBadge,
   onSelect,
+  programMode = false,
+  identityById,
 }: {
   cell: CalendarDayCell;
   inMonth: boolean;
@@ -374,18 +443,77 @@ function DayCell({
   selected: boolean;
   compareBadge?: "A"; // REQ-006: corner chip for the picked A day in compare mode
   onSelect: () => void;
+  /** #291: true when the tenant has an active Program — switches the marker
+   *  row to the one-mark-per-goal grammar. false = legacy rendering,
+   *  byte-identical to pre-#291. */
+  programMode?: boolean;
+  identityById?: Map<string, GoalIdentity>;
 }) {
   const focusMarkers = markersFor(cell, legend);
   const foreignEvents = cell.otherGoalEvents;
 
-  // UXR-62-03: focus-first, cap at MARKER_CAP total, remainder → +N chip
+  // UXR-62-03 (legacy): focus-first, cap at MARKER_CAP total, remainder → +N chip
   const shownFocus = focusMarkers.slice(0, MARKER_CAP);
   const foreignSlots = Math.max(0, MARKER_CAP - shownFocus.length);
   const shownForeign = foreignEvents.slice(0, foreignSlots);
   const overflow = (focusMarkers.length - shownFocus.length) + (foreignEvents.length - shownForeign.length);
 
   const isCompleted = cell.workoutCount > 0 || cell.hikeCount > 0;
-  const isQuietPast = cell.isPast && cell.isInPlan && focusMarkers.length === 0 && foreignEvents.length === 0;
+
+  // ── #291: Program-mode marker entries — ONE mark per GOAL (UXR-PV-34) ────
+  // Member goals render their GoalMark (slot order = position constancy);
+  // non-member goals with events keep the foreign claim-ring treatment, one
+  // entry per goal (first event's icon). The pixel budget that forces this:
+  // 34.6px of marker row at 390px — three 10px marks + two 2px gaps = 34px
+  // (UXR-PV-88 arithmetic; the 14px trained Bullseye floor is what made the
+  // legacy row overflow, hence fix A).
+  type ProgramEntry =
+    | { kind: "member"; goalId: string; identity: GoalIdentity; state: "logged" | "claimed" }
+    | { kind: "foreign"; goalId: string; icon: string; label: string };
+  let programEntries: ProgramEntry[] = [];
+  // Observance override (UXR-PV-88/39): the entire marker row is ONE em dash —
+  // no band, no wash, no marker, zero motion. Honest-data exception: if the
+  // user actually logged on an observance day, the logged marks win (visual
+  // restraint must never hide real training).
+  const isObservance = programMode && cell.window?.kind === "observance" && !isCompleted;
+  if (programMode && !isObservance) {
+    const memberEntries = cell.memberGoalMarks
+      .map((m) => {
+        const identity = identityById?.get(m.goalId);
+        return identity ? { kind: "member" as const, goalId: m.goalId, identity, state: m.state } : null;
+      })
+      .filter((e): e is Extract<ProgramEntry, { kind: "member" }> => e !== null)
+      .sort((a, b) => a.identity.slot - b.identity.slot);
+    const seenForeign = new Set<string>();
+    const foreignEntries: ProgramEntry[] = [];
+    for (const e of foreignEvents) {
+      if (seenForeign.has(e.goalId)) continue;
+      seenForeign.add(e.goalId);
+      foreignEntries.push({
+        kind: "foreign",
+        goalId: e.goalId,
+        icon: e.icon,
+        label: `${e.label} — ${e.goalObjective}`,
+      });
+    }
+    programEntries = [...memberEntries, ...foreignEntries];
+  }
+  const showSkippedMarkProgram =
+    programMode && !isObservance && inMonth && cell.skippedCount > 0 && !isCompleted;
+  // Cap: 3 goals fit (34px); with a bare +N (or the ✕ glyph) present, only 2
+  // marks fit alongside it. Never drop to a "+N" that represents one goal —
+  // 3 entries always render as 3 marks.
+  let programCap = programEntries.length > MARKER_CAP ? MARKER_CAP - 1 : MARKER_CAP;
+  if (showSkippedMarkProgram) programCap = Math.min(programCap, MARKER_CAP - 1);
+  const shownProgramEntries = programEntries.slice(0, programCap);
+  const programOverflow = programEntries.length - shownProgramEntries.length;
+
+  const isQuietPast =
+    cell.isPast &&
+    cell.isInPlan &&
+    (programMode
+      ? programEntries.length === 0 && !isObservance
+      : focusMarkers.length === 0 && foreignEvents.length === 0);
 
   // Every day carries a slim border for separation; out-of-month days get a
   // fainter one so the current month still reads as the focus.
@@ -437,22 +565,47 @@ function DayCell({
   const showSkippedMark = inMonth && cell.skippedCount > 0 && !isCompleted;
 
   // REQ-006 / a11y: extend aria-label with confidence, other-goal events, + conflict.
-  const ariaLabel = [
-    cell.dateKey,
-    cell.dayTitle ? `— ${cell.dayTitle}` : "",
-    cell.confidence && cell.confidence !== "past" ? `· ${cell.confidence}` : "",
-    showSkippedMark ? ", skipped (acknowledged)" : "",
-    // REQ-106: append foreign goal event labels for screen readers
-    ...cell.otherGoalEvents.map((e) => `· ${e.label} — ${e.goalObjective}`),
-    // REQ-106: use human label for cross-goal conflicts, kind for same-goal conflicts
-    cell.conflict
-      ? `· conflict: ${cell.conflict.label ?? cell.conflict.kind}`
-      : "",
-    // REQ-006: announce the compare-mode A pick for screen readers.
-    compareBadge ? "· A selected" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  // #291: Program cells name the member goals IN WORDS (research §9 — never
+  // just event labels); an observance day announces itself and nothing else.
+  const memberNames = programMode
+    ? cell.memberGoalMarks
+        .map((m) => identityById?.get(m.goalId)?.label)
+        .filter((l): l is string => !!l)
+    : [];
+  const ariaLabel = isObservance
+    ? [
+        `${cell.dateKey} — observance · nothing scheduled`,
+        compareBadge ? "· A selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : [
+        cell.dateKey,
+        cell.dayTitle ? `— ${cell.dayTitle}` : "",
+        cell.confidence && cell.confidence !== "past" ? `· ${cell.confidence}` : "",
+        showSkippedMark ? ", skipped (acknowledged)" : "",
+        // #291: the covering window's name rides every covered cell (the span
+        // bar itself is aria-hidden).
+        programMode && cell.window ? `· ${cell.window.label}` : "",
+        memberNames.length > 0 ? `· ${memberNames.join(", ")}` : "",
+        // REQ-106: append foreign goal event labels for screen readers
+        ...cell.otherGoalEvents.map((e) => `· ${e.label} — ${e.goalObjective}`),
+        // REQ-106: use human label for cross-goal conflicts, kind for same-goal conflicts
+        cell.conflict
+          ? `· conflict: ${cell.conflict.label ?? cell.conflict.kind}`
+          : "",
+        // REQ-006: announce the compare-mode A pick for screen readers.
+        compareBadge ? "· A selected" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+  // #291 / UXR-PV-39: the observance day gets ZERO motion of any kind — the
+  // transition/hover/compare-ring classes are gated at EMISSION here (never
+  // suppressed by a CSS override). Selection/today rings stay (state, not
+  // motion) minus the compare-ring transition carrier.
+  const motionClass = isObservance ? "" : "transition-colors hover:border-[var(--accent)]";
+  const ringClassEmitted = isObservance ? ringClass.replace("compare-ring", "").trim() : ringClass;
 
   return (
     <button
@@ -464,44 +617,97 @@ function DayCell({
       data-confidence={cell.confidence ?? "out-of-plan"}
       data-conflict={cell.conflict?.kind ?? undefined}
       data-plan-source={cell.planSource ?? undefined}
-      className={`relative min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs transition-colors hover:border-[var(--accent)] ${toneClass} ${ringClass} ${glowClass} ${confidenceClass}`}
+      className={`relative min-h-[3.75rem] rounded-lg border flex flex-col items-center justify-start gap-0.5 p-1 text-xs ${motionClass} ${toneClass} ${ringClassEmitted} ${glowClass} ${confidenceClass}`}
     >
       <span className={`${numClass} ${archivedClass}`}>{cell.date.getDate()}</span>
-      {/* Focus markers first, then foreign goal markers, capped at MARKER_CAP total.
-          UXR-62-01/02: foreign markers get claim-ring via ForeignGoalMarker.
-          UXR-62-03: overflow collapsed to +N chip. */}
-      <span className={`flex flex-wrap items-center justify-center gap-0.5 ${archivedClass}`}>
-        {shownFocus.map((m) => (
-          <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
-        ))}
-        {shownForeign.map((e, idx) => (
-          <ForeignGoalMarker
-            key={`${e.goalId}-${e.type}-${idx}`}
-            icon={e.icon}
-            label={`${e.label} — ${e.goalObjective}`}
-            size={13}
-          />
-        ))}
-        {/* REQ-65-4: muted ✕ for acknowledged-skipped days (no completed training). */}
-        {showSkippedMark && (
+      {programMode ? (
+        /* #291: one mark per GOAL, flex-NOWRAP (UXR-PV-33 — safe only because
+           the entries are 10px GoalMarks per UXR-PV-88 fix A; wrap was what
+           hid the 390px overflow). Observance: the row is ONE em dash. */
+        isObservance ? (
           <span
+            data-testid={`day-observance-${cell.dateKey}`}
             aria-hidden="true"
-            style={{ fontSize: "11px" }}
-            className="text-[var(--muted)]"
+            className="leading-none text-[var(--muted)]"
           >
-            ✕
+            —
           </span>
-        )}
-        {/* UXR-62-04: +N chip — 9px muted text on accent-soft */}
-        {overflow > 0 && (
-          <span
-            data-testid="cal-marker-overflow"
-            className="rounded-full bg-[var(--accent-soft)] px-1 leading-[1.6] text-[9px] text-[var(--muted)]"
-          >
-            +{overflow}
+        ) : (
+          <span className={`flex flex-nowrap items-center justify-center gap-0.5 ${archivedClass}`}>
+            {shownProgramEntries.map((entry) =>
+              entry.kind === "member" ? (
+                <GoalMark
+                  key={entry.goalId}
+                  identity={entry.identity}
+                  state={entry.state}
+                  size={10}
+                  data-testid={`cal-goal-mark-${entry.goalId}-${cell.dateKey}`}
+                />
+              ) : (
+                <ForeignGoalMarker
+                  key={entry.goalId}
+                  icon={entry.icon}
+                  label={entry.label}
+                  size={10}
+                />
+              ),
+            )}
+            {/* REQ-65-4: muted ✕ for acknowledged-skipped days (unchanged glyph). */}
+            {showSkippedMarkProgram && (
+              <span aria-hidden="true" style={{ fontSize: "11px" }} className="text-[var(--muted)]">
+                ✕
+              </span>
+            )}
+            {/* Overflow: the BARE 9px text form — the pill does not fit the
+                34.6px marker row (research §7.3). Counts GOALS, not markers. */}
+            {programOverflow > 0 && (
+              <span
+                data-testid="cal-marker-overflow"
+                className="leading-none text-[9px] text-[var(--muted)] tabular-nums"
+              >
+                +{programOverflow}
+              </span>
+            )}
           </span>
-        )}
-      </span>
+        )
+      ) : (
+        /* Legacy (zero-Program) marker row — byte-identical to pre-#291.
+           Focus markers first, then foreign goal markers, capped at MARKER_CAP
+           total. UXR-62-01/02: foreign markers get claim-ring via
+           ForeignGoalMarker. UXR-62-03: overflow collapsed to +N chip. */
+        <span className={`flex flex-wrap items-center justify-center gap-0.5 ${archivedClass}`}>
+          {shownFocus.map((m) => (
+            <MarkerIcon key={m.entry.kind} entry={m.entry} size={13} />
+          ))}
+          {shownForeign.map((e, idx) => (
+            <ForeignGoalMarker
+              key={`${e.goalId}-${e.type}-${idx}`}
+              icon={e.icon}
+              label={`${e.label} — ${e.goalObjective}`}
+              size={13}
+            />
+          ))}
+          {/* REQ-65-4: muted ✕ for acknowledged-skipped days (no completed training). */}
+          {showSkippedMark && (
+            <span
+              aria-hidden="true"
+              style={{ fontSize: "11px" }}
+              className="text-[var(--muted)]"
+            >
+              ✕
+            </span>
+          )}
+          {/* UXR-62-04: +N chip — 9px muted text on accent-soft */}
+          {overflow > 0 && (
+            <span
+              data-testid="cal-marker-overflow"
+              className="rounded-full bg-[var(--accent-soft)] px-1 leading-[1.6] text-[9px] text-[var(--muted)]"
+            >
+              +{overflow}
+            </span>
+          )}
+        </span>
+      )}
 
       {/* REQ-006: compare-mode "A" chip — same chip vocabulary as the +N
           overflow chip above, placed in the opposite corner from the
@@ -538,9 +744,13 @@ function DayCell({
 function DayDetail({
   cell,
   legend,
+  programMode = false,
+  identityById,
 }: {
   cell: CalendarDayCell;
   legend: readonly LegendEntry[];
+  programMode?: boolean;
+  identityById?: Map<string, GoalIdentity>;
 }) {
   const markers = markersFor(cell, legend);
   const dateLabel = cell.date.toLocaleDateString(undefined, {
@@ -551,6 +761,26 @@ function DayDetail({
 
   // REQ-106: is this a cross-goal conflict (carries a human label)?
   const isCrossGoalConflict = cell.conflict != null && CROSS_GOAL_KINDS.has(cell.conflict.kind);
+
+  // #291 / UXR-PV-34: the panel FOLLOWS the cell's goal grammar — the full,
+  // uncapped member list (the cell caps at 3 goals; the panel is the
+  // progressive-disclosure surface), each with its mark, state, and the
+  // goal's own events on this date.
+  const memberRows = programMode
+    ? cell.memberGoalMarks
+        .map((m) => {
+          const identity = identityById?.get(m.goalId);
+          return identity
+            ? {
+                identity,
+                state: m.state,
+                events: cell.memberGoalEvents.filter((e) => e.goalId === m.goalId),
+              }
+            : null;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null)
+        .sort((a, b) => a.identity.slot - b.identity.slot)
+    : [];
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 space-y-2">
@@ -579,6 +809,40 @@ function DayDetail({
       </p>
       {cell.plannedWorkoutTitle && (
         <p className="text-xs text-[var(--muted)]">planned: {cell.plannedWorkoutTitle}</p>
+      )}
+
+      {/* #291: the covering window's name — the span bar / em-dash cell is
+          deliberately mute (aria-hidden band, bare dash), so the panel is
+          where the window says its name. */}
+      {programMode && cell.window && (
+        <p className="text-xs text-[var(--muted)]">
+          {cell.window.kind === "observance"
+            ? `${cell.window.label} — nothing scheduled.`
+            : cell.window.label}
+        </p>
+      )}
+
+      {/* #291: member-goal rows — the panel's uncapped counterpart of the
+          cell's capped goal marks (same slot order, same grammar). */}
+      {memberRows.length > 0 && (
+        <ul className="space-y-1" data-testid="day-detail-member-goals">
+          {memberRows.map((row) => (
+            <li
+              key={row.identity.goalId}
+              className="flex items-baseline gap-1.5 text-xs text-[var(--muted)]"
+            >
+              <GoalMark identity={row.identity} state={row.state} size={12} />
+              <span>
+                <span className="text-[var(--foreground)]">{row.identity.label}</span>
+                {" — "}
+                {row.state === "logged" ? "logged" : "claimed"}
+                {row.events.length > 0
+                  ? ` · ${row.events.map((e) => e.label).join(" · ")}`
+                  : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
 
       {/* REQ-65-4: acknowledged-skipped indicator in DayDetail. */}

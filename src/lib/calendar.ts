@@ -2,13 +2,15 @@
 // completed workouts, baselines due, and goal markers.
 
 import { prisma, getDb } from "@/lib/db";
-import { isMirrorOverride } from "@/lib/override-integrity";
+import { matchingMirrorKind } from "@/lib/override-integrity";
 import {
   getActiveProgram,
+  getActiveProgramMembership,
   getProgramForDate,
   pickProgramForDate,
   getPlanWindowCandidates,
   type ActiveProgramSnapshot,
+  type ActiveProgramMembership,
   type ProgramForDate,
   type PlanWindowCandidate,
 } from "@/lib/program";
@@ -21,6 +23,18 @@ import {
   otherGoalEvents as filterOtherGoalEvents,
   type GoalEvent,
 } from "@/lib/goal-events";
+// #297: THE shared "current goal" accessor — rotation owner under a Program,
+// legacy isFocus fallback for zero-Program tenants. Replaces this file's
+// three inline `isFocus: true` reads.
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
+// #291: cross-goal calendar — per-member-goal identity marks + deload/
+// observance windows (both pure, client-safe modules).
+import { assignGoalIdentities, type GoalIdentity } from "@/lib/goal-identity";
+import {
+  deriveCalendarWindows,
+  type CalendarWindow,
+  type CalendarWindowKind,
+} from "@/lib/calendar-windows";
 import {
   crossGoalConflicts as computeCrossGoalConflicts,
   type CrossGoalConflict,
@@ -32,6 +46,7 @@ import {
 // existing `@/lib/calendar` importer keeps working unchanged.
 import {
   dateKey,
+  parseDateKey,
   startOfDay,
   endOfDay,
   startOfWeekMonday,
@@ -44,6 +59,7 @@ export {
   userWeekdayMon1,
   dateKey,
   parseDateKey,
+  dateKeyAtCurrentTime,
   startOfDay,
   endOfDay,
   startOfWeekMonday,
@@ -51,9 +67,30 @@ export {
   addDays,
   shiftWallClock,
   toDatetimeLocalValue,
+  parseDatetimeLocalValue,
   weekRangeLabel,
   bucketDatesToWeekOffsets,
 } from "./calendar-core";
+// B4/A3 consolidation: THE rotation math lives in rotation-core.ts — resolveDay,
+// buildCell, weekConflicts, and every other site here consume it. The pure
+// template lookups that used to be implemented in this file are re-exported so
+// every existing `@/lib/calendar` importer keeps working unchanged.
+import {
+  daysDelta,
+  isInPlan as isInPlanWindow,
+  weekIndex as weekIndexOf,
+  rotationPosition,
+  rotationWeekWindow,
+  dateForRotationSlot,
+  lastPlanDayStart,
+  isTestDueInWeek,
+  mergeDayOverride,
+} from "./rotation-core";
+export {
+  templateForRotationDay,
+  isDateWithinActivePlanWindow,
+  rotationBaselineNamesForDate,
+} from "./rotation-core";
 
 export type CalendarDayCell = {
   date: Date;
@@ -112,6 +149,28 @@ export type CalendarDayCell = {
    *  (REQ-004) — cells never disagree with resolveDay's resolvedPlan.source
    *  for the same date since both go through pickProgramForDate. */
   planSource?: "active" | "archived";
+  /** #291: per-member-goal presence for this cell (active Program only; []
+   *  otherwise). One entry per ACTIVE member goal with concrete presence on
+   *  this date; presence mirrors resolveDay's goalMarks claims (rotation /
+   *  scheduled_item / baseline:<test> / event pins) EXCEPT the ambient
+   *  "nutrition" claim, which is deliberately excluded here — it would mark
+   *  every day for every fitness member (pure ink, no information; it stays
+   *  a Today-lane concept). state: "logged" when ANY logged evidence exists
+   *  for the goal on this date (completed training on its rotation day, a
+   *  done scheduled item, a satisfied baseline), else "claimed" (hollow). */
+  memberGoalMarks: { goalId: string; state: "logged" | "claimed" }[];
+  /** #291: member goals' events for this date (active Program only; []
+   *  otherwise). The Program-tenant counterpart of otherGoalEvents — under a
+   *  Program, otherGoalEvents narrows to NON-member goals only, and member
+   *  events land here for the DayDetail panel + aria text. */
+  memberGoalEvents: GoalEvent[];
+  /** #291: deload/observance window covering this cell, derived from the
+   *  active plan's day-swap override titles (see src/lib/calendar-windows.ts
+   *  for the title-prefix contract with the Phase 2A import). null outside
+   *  windows and for zero-Program tenants. "observance" drives the em-dash
+   *  cell treatment (no band, no wash, no marker, zero motion — UXR-PV-88/39);
+   *  "deload" cells ride under the second-grid-row span bar. */
+  window: { kind: CalendarWindowKind; label: string } | null;
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -157,7 +216,7 @@ function filterCandidatesToGridOverlap(
 ): PlanWindowCandidate[] {
   return candidates.filter((c) => {
     const startMid = startOfDay(c.startedOn);
-    const endMid = addDays(startMid, c.template.totalWeeks * 7 - 1);
+    const endMid = lastPlanDayStart(c.startedOn, c.template.totalWeeks);
     return startMid.getTime() <= gridEnd.getTime() && endMid.getTime() >= gridStart.getTime();
   });
 }
@@ -172,26 +231,41 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  // Phase 1: fetch focus goal (gates the ScheduledItem query in Phase 2) alongside
-  // the active program + the full plan-window candidate list (REQ-003) — neither
-  // of the latter two depends on `goal`, so they run in the same round-trip instead
+  // Phase 1: fetch the day-driving goal (gates the ScheduledItem query in Phase 2)
+  // alongside the active program + the full plan-window candidate list (REQ-003) —
+  // none of these depends on another, so they run in the same round-trip instead
   // of forcing an extra sequential step.
-  // [v2] MED-1: the goal fetch alone would be a single indexed query; folding program
-  // + candidates in here keeps the "goal gates Phase 2" shape while avoiding a second
-  // await before Phase 2 can start. Accepted trade-off — #38's AC text does not forbid
-  // it; latency impact is sub-millisecond.
-  const [goal, program, allCandidates] = await Promise.all([
-    db.goal.findFirst({
-      where: { isFocus: true },
-      // Deterministically picks the most-recently-updated if multiple are
-      // stuck isFocus=true (bad state).
-      orderBy: { updatedAt: "desc" },
-      // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
-      select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
-    }),
+  // #297: the goal read is Program-aware — getRotationOwnerGoal() resolves the
+  // active Program's rotation-owning goal (Plan.goalId), falling back to the
+  // legacy isFocus query ONLY for zero-Program-rows tenants (byte-identical
+  // there — same where/orderBy, superset select mapped back to the same shape).
+  // A Program with no rotation (or a retired-Program tenant) yields null,
+  // exactly like the seam.
+  // #291: membership joins Phase 1 — the cross-goal month needs the member
+  // list before Phase 2 can generalize the ScheduledItem query to all member
+  // goals. null for zero-Program tenants (every #291 addition below is inert
+  // then — cells/payload stay byte-identical).
+  const [ownerResolution, program, membership, allCandidates] = await Promise.all([
+    getRotationOwnerGoal(),
     getActiveProgram(),
+    getActiveProgramMembership(),
     getPlanWindowCandidates(),
   ]);
+  const ownerGoal = ownerResolution.goal;
+  const memberIds = membership ? membership.memberGoals.map((g) => g.id) : [];
+  const memberIdSet = new Set(memberIds);
+  // Preserve the exact pre-#297 field shape (REQ-003 select: kind for
+  // PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate) so the month
+  // payload stays byte-identical for zero-Program tenants.
+  const goal = ownerGoal
+    ? {
+        id: ownerGoal.id,
+        targetDate: ownerGoal.targetDate,
+        objective: ownerGoal.objective,
+        legend: ownerGoal.legend,
+        kind: ownerGoal.kind,
+      }
+    : null;
 
   // REQ-003: candidates overlapping the visible grid, for buildCell's per-cell
   // pickProgramForDate call. The active plan's overrides must always be
@@ -203,8 +277,15 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     new Set([...candidates.map((c) => c.id), ...(program?.id ? [program.id] : [])]),
   );
 
-  // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
-  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines] =
+  // Phase 2: remaining queries in parallel.
+  // #291: the ScheduledItem query is membership-aware — under a Program it
+  // fetches ALL member goals' items (the A5 fix: DEXA scans / weigh-ins no
+  // longer vanish on a fitness-rotation month); the legacy focus-project gate
+  // is unchanged for zero-Program tenants. memberDetailRows feeds identity
+  // fidelity (UXR-PV-04 sort inputs + legend short labels), per-goal baseline
+  // targets, and plan-ownership (the rotation mark) — one findMany, Program
+  // tenants only.
+  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines, memberDetailRows] =
     await Promise.all([
     db.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
@@ -226,23 +307,64 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       : Promise.resolve([] as never[]),
     // REQ-104: cross-goal events for the full grid (3 queries — unchanged).
     getGoalEventsResult({ start: gridStart, end: gridEnd }),
-    // REQ-004: ScheduledItem markers — project path only; zero queries for fitness/null.
-    goal?.kind === "project"
+    // REQ-004 / #291: ScheduledItem markers. Program path: union across ALL
+    // member goals (per-goal marks need goalId + status). Legacy path: the
+    // focus project goal only — same where clause as ever; the select gains
+    // goalId/status purely for a uniform row type (cell payload derived from
+    // it is unchanged: scheduledItemCount counts rows per date).
+    membership && memberIds.length > 0
       ? db.scheduledItem.findMany({
           where: {
-            goalId: goal.id,
+            goalId: { in: memberIds },
             date: { gte: gridStart, lte: gridEnd },
             status: { in: ["planned", "done"] },
           },
-          select: { id: true, date: true },
+          select: { id: true, goalId: true, date: true, status: true },
           orderBy: { date: "asc" },
         })
-      : Promise.resolve([] as { id: string; date: Date }[]),
+      : goal?.kind === "project"
+        ? db.scheduledItem.findMany({
+            where: {
+              goalId: goal.id,
+              date: { gte: gridStart, lte: gridEnd },
+              status: { in: ["planned", "done"] },
+            },
+            select: { id: true, goalId: true, date: true, status: true },
+            orderBy: { date: "asc" },
+          })
+        : Promise.resolve([] as { id: string; goalId: string; date: Date; status: string }[]),
     // Logged baseline results — used to count only UNLOGGED tests per cell so a
     // completed retest (e.g. logged early in its credit window) doesn't keep
     // showing a "N Baseline due" badge. Fetched whole (single-user, small table)
     // so a result outside the grid window still credits its checkpoint.
     db.baseline.findMany({ select: { testName: true, date: true }, orderBy: { date: "asc" } }),
+    // #291 (Program tenants only): member-goal detail — identity fidelity
+    // fields (UXR-PV-04 sort + legend short labels), baseline target metrics,
+    // and owned-plan ids (identifies the rotation mark's owner per cell,
+    // including archived member plans — same definition as resolveDay's
+    // goalMarks rotation claim).
+    membership && memberIds.length > 0
+      ? db.goal.findMany({
+          where: { id: { in: memberIds } },
+          select: {
+            id: true,
+            isFocus: true,
+            createdAt: true,
+            legend: true,
+            targets: true,
+            plans: { select: { id: true } },
+          },
+        })
+      : Promise.resolve(
+          [] as {
+            id: string;
+            isFocus: boolean;
+            createdAt: Date;
+            legend: unknown;
+            targets: unknown;
+            plans: { id: string }[];
+          }[],
+        ),
   ]);
 
   // Bucket logged baselines by test name (date-asc) for the per-cell unlogged count.
@@ -283,10 +405,19 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   for (const o of overrides) overridesByKey.set(`${o.planId}|${dateKey(o.date)}`, o);
 
   // REQ-004: bucket ScheduledItem counts by dateKey for O(1) cell lookup.
+  // #291: additionally bucket per goal (`${goalId}|${dateKey}`) with a
+  // planned/done split for the member-goal mark states. Legacy tenants keep
+  // the same total-count semantics (their rows are the focus project's only).
   const scheduledsByKey = new Map<string, number>();
+  const scheduledByGoalKey = new Map<string, { planned: number; done: number }>();
   for (const si of scheduledItemsForCal) {
     const k = dateKey(si.date);
     scheduledsByKey.set(k, (scheduledsByKey.get(k) ?? 0) + 1);
+    const gk = `${si.goalId}|${k}`;
+    const bucket = scheduledByGoalKey.get(gk) ?? { planned: 0, done: 0 };
+    if (si.status === "done") bucket.done += 1;
+    else bucket.planned += 1;
+    scheduledByGoalKey.set(gk, bucket);
   }
 
   // Group planned hikes by rotation weekIndex for per-cell conflict computation.
@@ -294,13 +425,11 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // conflict with rotation days.
   const plannedHikesByWeek = new Map<number, typeof hikes>();
   if (program) {
-    const pStartMid = startOfDay(program.startedOn);
     for (const h of hikes) {
       if (h.status !== "planned") continue;
-      const hStart = startOfDay(h.date);
-      const delta = Math.floor((hStart.getTime() - pStartMid.getTime()) / (24 * 3600 * 1000));
-      if (delta < 0 || delta >= program.template.totalWeeks * 7) continue;
-      const wi = Math.floor(delta / 7) + 1;
+      const delta = daysDelta(program.startedOn, h.date);
+      if (!isInPlanWindow(delta, program.template.totalWeeks)) continue;
+      const wi = weekIndexOf(delta);
       const arr = plannedHikesByWeek.get(wi) ?? [];
       arr.push(h);
       plannedHikesByWeek.set(wi, arr);
@@ -310,6 +439,62 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // REQ-104: cross-goal event + conflict data for cell building.
   const { events: allGoalEvents, focusGoalId, otherGoalsMeta } = goalEventsResult;
   const eventsByKey = eventsByDateKey(allGoalEvents);
+
+  // ── #291: Program-shaped month context (inert for zero-Program tenants) ──
+  // Identities: the same UXR-PV-04 slot assignment Today and /program use —
+  // one mark per member goal, stable across surfaces.
+  const memberDetailById = new Map(memberDetailRows.map((r) => [r.id, r]));
+  const identities: GoalIdentity[] = membership
+    ? assignGoalIdentities(
+        membership.memberGoals.map((g) => ({
+          ...g,
+          isFocus: memberDetailById.get(g.id)?.isFocus,
+          createdAt: memberDetailById.get(g.id)?.createdAt,
+          legend: memberDetailById.get(g.id)?.legend,
+        })),
+      )
+    : [];
+
+  // Windows: derived from the ACTIVE plan's day-swap override titles (the
+  // Phase 2A import contract — see calendar-windows.ts). Program tenants
+  // only; an archived plan's overrides never band the live month.
+  const windows: CalendarWindow[] = membership && program
+    ? deriveCalendarWindows(
+        overrides
+          .filter((o) => o.planId === program.id && o.workoutJson != null)
+          .map((o) => ({
+            dateKey: dateKey(o.date),
+            title: (o.workoutJson as { title?: unknown } | null)?.title,
+          })),
+      )
+    : [];
+  const windowByKey = new Map<string, { kind: CalendarWindowKind; label: string }>();
+  for (const w of windows) {
+    for (
+      let cur = parseDateKey(w.startKey);
+      dateKey(cur) <= w.endKey;
+      cur = addDays(cur, 1)
+    ) {
+      windowByKey.set(dateKey(cur), { kind: w.kind, label: w.label });
+    }
+  }
+
+  // Per-cell mark inputs (see buildCell's programCtx arg).
+  const programCtx = membership
+    ? {
+        activeMembers: membership.memberGoals
+          .filter((g) => g.status === "active")
+          .map((g) => ({ id: g.id, kind: g.kind })),
+        ownerGoalIdByPlanId: new Map<string, string>(
+          memberDetailRows.flatMap((r) => r.plans.map((p) => [p.id, r.id] as [string, string])),
+        ),
+        baselineTargetsByGoalId: new Map<string, string[]>(
+          memberDetailRows.map((r) => [r.id, baselineTestNamesFromTargets(r.targets)]),
+        ),
+        scheduledByGoalKey,
+        windowByKey,
+      }
+    : null;
 
   // Planned hike dateKeys for event-near-long-effort detection.
   const plannedHikeDateKeys = hikes
@@ -349,6 +534,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // the column alignment.
   for (let cursor = gridStart; cursor.getTime() <= gridEnd.getTime(); cursor = addDays(cursor, 1)) {
     const cursorKey = dateKey(cursor);
+    const eventsForDate = eventsByKey.get(cursorKey) ?? [];
     const cell = buildCell({
       date: cursor,
       todayKey,
@@ -360,13 +546,19 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       plannedHikesByKey,
       overridesByKey,
       plannedHikesByWeek,
-      otherGoalEventsForDate: filterOtherGoalEvents(
-        eventsByKey.get(cursorKey) ?? [],
-        focusGoalId,
-      ),
+      // #291: under a Program, "other" narrows to NON-member goals — member
+      // goals' events become first-class cell presence (memberGoalEvents +
+      // marks) instead of foreign pins. Zero-Program: unchanged focus split.
+      otherGoalEventsForDate: membership
+        ? eventsForDate.filter((e) => !memberIdSet.has(e.goalId))
+        : filterOtherGoalEvents(eventsForDate, focusGoalId),
+      memberGoalEventsForDate: membership
+        ? eventsForDate.filter((e) => memberIdSet.has(e.goalId))
+        : [],
       crossGoalConflictForDate: crossGoalConflictsByKey.get(cursorKey) ?? null,
       scheduledsByKey, // REQ-004: new
       loggedBaselinesByTest,
+      programCtx, // #291: null for zero-Program tenants
     });
     cells.push(cell);
   }
@@ -377,8 +569,18 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     cells,
     program,
     goal,
-    /** Non-focus active goals — for the legend card (REQ-106). */
-    otherGoals: otherGoalsMeta,
+    /** Non-focus active goals — for the legend card (REQ-106). #291: under a
+     *  Program, member goals move to the identities strip, so they are
+     *  excluded here (they'd otherwise render twice in the legend). */
+    otherGoals: membership
+      ? otherGoalsMeta.filter((og) => !memberIdSet.has(og.id))
+      : otherGoalsMeta,
+    /** #291: per-member-goal identity marks (UXR-PV-04 slot order) — [] for
+     *  zero-Program tenants. Feeds the cell marker row + legend strip. */
+    identities,
+    /** #291: deload/observance windows visible in this grid — [] for
+     *  zero-Program tenants. Feeds the WindowSpanBar row + DayDetail. */
+    windows,
   };
 }
 
@@ -422,14 +624,29 @@ function buildCell(args: {
   /** REQ-003: keyed `${planId}|${dateKey}` — see the override query comment above. */
   overridesByKey: Map<string, { planId: string; workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
   plannedHikesByWeek: Map<number, { id: string; date: Date; status: string }[]>;
-  /** REQ-104: non-focus events for this specific date (pre-filtered by caller). */
+  /** REQ-104: non-focus events for this specific date (pre-filtered by caller).
+   *  #291: under a Program this is NON-MEMBER events only. */
   otherGoalEventsForDate: GoalEvent[];
+  /** #291: member goals' events for this date (pre-partitioned by caller;
+   *  [] for zero-Program tenants). */
+  memberGoalEventsForDate: GoalEvent[];
   /** REQ-104: cross-goal conflict for this date, if any (pre-computed by caller). */
   crossGoalConflictForDate: CrossGoalConflict | null;
   /** REQ-004: pre-bucketed ScheduledItem count map (dateKey → count). */
   scheduledsByKey: Map<string, number>;
   /** Logged baseline results bucketed by test name — for the unlogged-only count. */
   loggedBaselinesByTest: Map<string, { date: Date }[]>;
+  /** #291: Program-tenant mark inputs; null for zero-Program tenants (every
+   *  #291 cell field stays inert then). ownerGoalIdByPlanId includes archived
+   *  member plans — the rotation mark follows the PICKED plan's owner, the
+   *  same definition as resolveDay's goalMarks rotation claim. */
+  programCtx: {
+    activeMembers: { id: string; kind: string }[];
+    ownerGoalIdByPlanId: Map<string, string>;
+    baselineTargetsByGoalId: Map<string, string[]>;
+    scheduledByGoalKey: Map<string, { planned: number; done: number }>;
+    windowByKey: Map<string, { kind: CalendarWindowKind; label: string }>;
+  } | null;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -451,23 +668,25 @@ function buildCell(args: {
   let rotationDay: number | null = null;
   let weekIndex: number | null = null;
   let dayTitle: string | null = null;
+  // B4/G6: the day's override→template decision, from the SAME shared code
+  // resolveDay and the XP ledger use (mergeDayOverride). Non-null iff isInPlan.
+  let cellCore: ReturnType<typeof mergeDayOverride> | null = null;
 
   if (picked) {
-    const startKey = dateKey(picked.startedOn);
-    const startMid = startOfDay(picked.startedOn);
-    const dMid = startOfDay(args.date);
-    const daysDelta = Math.floor((dMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-    if (k >= startKey && daysDelta < picked.template.totalWeeks * 7) {
+    const pos = rotationPosition(picked.startedOn, picked.template.totalWeeks, args.date);
+    if (pos.isInPlan) {
       isInPlan = true;
-      rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-      weekIndex = Math.floor(daysDelta / 7) + 1;
-      const override = args.overridesByKey.get(`${picked.id}|${k}`);
-      if (override?.workoutJson) {
-        dayTitle = (override.workoutJson as { title?: string }).title ?? "Custom day";
-      } else {
-        const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
-        dayTitle = tmpl?.title ?? null;
-      }
+      rotationDay = pos.rotationDay;
+      weekIndex = pos.weekIndex;
+      cellCore = mergeDayOverride(
+        picked.template,
+        rotationDay!,
+        weekIndex!,
+        args.overridesByKey.get(`${picked.id}|${k}`),
+      );
+      dayTitle = cellCore.isOverride
+        ? (cellCore.workoutTemplate as { title?: string } | null)?.title ?? "Custom day"
+        : cellCore.workoutTemplate?.title ?? null;
     }
   }
 
@@ -481,28 +700,23 @@ function buildCell(args: {
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
   const cellOverride = picked ? args.overridesByKey.get(`${picked.id}|${k}`) : undefined;
   const hasOverride = cellOverride !== undefined;
-  // Override-aware, UNLOGGED-only baseline count. An override's baselineTestNames
-  // replaces the rotation default for that day — an empty array means "explicitly
-  // none" (mirrors resolveDay). A test whose result is already logged within its
-  // credit window is NOT counted: a completed retest shouldn't keep showing a "due"
-  // badge (same loggedOnDate semantics as the workout-deferral guard).
+  // Override-aware, UNLOGGED-only baseline count. The scheduled set (override
+  // list vs rotation default, unknown names dropped, empty array = explicitly
+  // none) comes from the SAME mergeDayOverride call as the cell's template
+  // decision — it cannot disagree with resolveDay's baselinesDue for the same
+  // date. A test whose result is already logged within its credit window is
+  // NOT counted: a completed retest shouldn't keep showing a "due" badge
+  // (same loggedOnDate semantics as the workout-deferral guard).
   const baselinesDue = !isInPlan
     ? 0
-    : scheduledBaselineTests(
-        picked!,
-        weekIndex!,
-        rotationDay!,
-        Array.isArray(cellOverride?.baselineTestNames)
-          ? (cellOverride.baselineTestNames as string[])
-          : null,
-      ).filter(
-        (t) =>
+    : cellCore!.baselineTests.filter(
+        ({ test }) =>
           !baselineSatisfied(
-            t,
+            test,
             weekIndex!,
             args.date,
             picked!.startedOn,
-            args.loggedBaselinesByTest.get(t.testName),
+            args.loggedBaselinesByTest.get(test.testName),
           ),
       ).length;
 
@@ -523,9 +737,10 @@ function buildCell(args: {
   const skipConflicts = picked?.source === "archived";
 
   if (!skipConflicts && isInPlan && rotationDay !== null && weekIndex !== null && picked) {
-    const hasWorkoutOverride = args.overridesByKey.get(`${picked.id}|${k}`)?.workoutJson != null;
-
-    if (!hasWorkoutOverride) {
+    // C-2 consolidation: "resolved by an override" is cellCore.isOverride —
+    // the SAME workoutJson-based definition resolveDay's isOverride carries
+    // (both now come from mergeDayOverride).
+    if (!cellCore!.isOverride) {
       const weekHikes = args.plannedHikesByWeek.get(weekIndex) ?? [];
 
       // Priority 1: retest-on-hike (more immediately actionable)
@@ -533,13 +748,7 @@ function buildCell(args: {
         (d) => d.dayOfWeek === rotationDay,
       );
       if (baselineDay) {
-        const hasDueTests = baselineDay.tests.some((t) => {
-          const initialWeek = t.initialWeek ?? 1;
-          return (
-            weekIndex === initialWeek ||
-            (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-          );
-        });
+        const hasDueTests = baselineDay.tests.some((t) => isTestDueInWeek(t, weekIndex!));
         if (hasDueTests) {
           const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
           if (hikeOnThisDay) {
@@ -551,8 +760,10 @@ function buildCell(args: {
         }
       }
 
-      // Priority 2: long-effort conflict (only on the long-endurance rotation day)
-      const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
+      // Priority 2: long-effort conflict (only on the long-endurance rotation
+      // day). No override on this branch, so cellCore.workoutTemplate IS the
+      // rotation-day weeklySplit entry.
+      const tmpl = cellCore!.workoutTemplate;
       if (!conflict && tmpl?.category === "long-endurance") {
         const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
         const hikesElsewhere = weekHikes.filter((h) => dateKey(h.date) !== k);
@@ -585,6 +796,65 @@ function buildCell(args: {
     display.state === "completed" && display.plannedTitle && display.plannedTitle !== cellTitle
       ? display.plannedTitle
       : null;
+
+  // ── #291: per-member-goal marks + window (Program tenants only) ──────────
+  // Presence mirrors resolveDay's goalMarks claims (rotation / scheduled_item
+  // / baseline:<test>) plus event pins; the ambient "nutrition" claim is
+  // deliberately excluded (see the CalendarDayCell field doc). State is
+  // "logged" on ANY logged evidence for the goal on this date, else
+  // "claimed" — the coarse v1 fill rule (ActivityGoalLink-driven fill states
+  // are the Today lane's job, not the month grid's).
+  const memberGoalMarks: CalendarDayCell["memberGoalMarks"] = [];
+  let cellWindow: CalendarDayCell["window"] = null;
+  if (args.programCtx) {
+    cellWindow = args.programCtx.windowByKey.get(k) ?? null;
+    const trained = workoutCount > 0 || hikeCount > 0;
+    const eventGoalIds = new Set(args.memberGoalEventsForDate.map((e) => e.goalId));
+    for (const g of args.programCtx.activeMembers) {
+      let present = false;
+      let logged = false;
+      // Rotation claim — the picked plan's owning member goal, in-plan dates
+      // only (same definition as resolveDay's goalMarks rotation claim,
+      // archived member plans included via ownerGoalIdByPlanId).
+      if (isInPlan && picked && args.programCtx.ownerGoalIdByPlanId.get(picked.id) === g.id) {
+        present = true;
+        if (trained) logged = true;
+      }
+      // Scheduled items (per-goal bucket; done ⇒ logged).
+      const sched = args.programCtx.scheduledByGoalKey.get(`${g.id}|${k}`);
+      if (sched) {
+        present = true;
+        if (sched.done > 0) logged = true;
+      }
+      // Baseline claim — the day's scheduled tests matched against this
+      // goal's `baseline:<testName>` target metrics; all matched tests
+      // satisfied (same credit-window matcher as baselinesDue) ⇒ logged.
+      if (isInPlan && cellCore) {
+        const targetNames = args.programCtx.baselineTargetsByGoalId.get(g.id) ?? [];
+        if (targetNames.length > 0) {
+          const matched = cellCore.baselineTests.filter(({ test }) =>
+            targetNames.includes(test.testName),
+          );
+          if (matched.length > 0) {
+            present = true;
+            const allSatisfied = matched.every(({ test }) =>
+              baselineSatisfied(
+                test,
+                weekIndex!,
+                args.date,
+                picked!.startedOn,
+                args.loggedBaselinesByTest.get(test.testName),
+              ),
+            );
+            if (allSatisfied) logged = true;
+          }
+        }
+      }
+      // Event pins (target-date / retest / planned-hike / scheduled-item).
+      if (eventGoalIds.has(g.id)) present = true;
+      if (present) memberGoalMarks.push({ goalId: g.id, state: logged ? "logged" : "claimed" });
+    }
+  }
 
   // Same-goal conflicts take precedence (legacy rule).
   // Cross-goal conflict fills cell.conflict ONLY when no same-goal conflict exists.
@@ -625,44 +895,16 @@ function buildCell(args: {
     otherGoalEvents: args.otherGoalEventsForDate,
     scheduledItemCount: args.scheduledsByKey.get(k) ?? 0, // REQ-004: new — always 0 for fitness
     planSource, // REQ-003: new
+    // #291: Program-tenant cell fields — inert ([]/[]/null) for zero-Program.
+    memberGoalMarks,
+    memberGoalEvents: args.memberGoalEventsForDate,
+    window: cellWindow,
   };
 }
 
-// Scheduled baseline tests for a calendar cell (override-aware), as full test
-// objects. Override path: each name matched against a real test in baselineWeek
-// (unknown names ignored; empty list → none). Native path: the rotation day's
-// tests that are due this week (initial week, or a retest week beyond it).
-// Mirrors resolveDay's two paths — but returns the tests so the caller can filter
-// out already-logged ones.
-function scheduledBaselineTests(
-  program: ActiveProgramSnapshot,
-  weekIndex: number,
-  rotationDay: number,
-  overrideNames: string[] | null,
-): BaselineTest[] {
-  if (overrideNames !== null) {
-    const out: BaselineTest[] = [];
-    for (const name of overrideNames) {
-      for (const day of program.template.baselineWeek ?? []) {
-        const t = day.tests.find((x) => x.testName === name);
-        if (t) {
-          out.push(t);
-          break;
-        }
-      }
-    }
-    return out;
-  }
-  const day = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-  if (!day) return [];
-  return day.tests.filter((t) => {
-    const initialWeek = t.initialWeek ?? 1;
-    return (
-      weekIndex === initialWeek ||
-      (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-    );
-  });
-}
+// (scheduledBaselineTests was deleted here — buildCell now takes the scheduled
+// set from rotation-core's mergeDayOverride, the same code resolveDay and the
+// XP ledger consume.)
 
 // True if a scheduled baseline test for this rotation week already has a logged
 // result crediting it — within its checkpoint window for that week (reusing
@@ -754,13 +996,16 @@ export type ResolvedDay = {
   // Flag C — orphaned mirror-override guard (general; see src/lib/override-integrity.ts).
   // True when this date's session comes from an override whose workoutJson MIRRORS a
   // first-class scheduled object (today only a hike: category "long-endurance") but no
-  // backing object is present for the date — a phantom session left behind when the object
-  // was removed/rescheduled (only its own row is cleaned up, not the mirror override).
-  // Surfaces the get_day vs object-tool disagreement instead of hiding it. The classifier
-  // (isMirrorOverride) is registry-driven and kind-agnostic; the backing-absent signal in
-  // this hot path is currently hike-specific (plannedHikeToday === null). A new mirror kind
-  // adds its registry entry AND its per-day backing signal here. Lint + the removal warning
-  // are already fully generic via the registry. Heuristic — treat as a soft signal.
+  // backing object (ANY status — not just "planned") is present for the date — a phantom
+  // session left behind when the object was removed/rescheduled (only its own row is
+  // cleaned up, not the mirror override). Surfaces the get_day vs object-tool disagreement
+  // instead of hiding it. Both the classifier (matchingMirrorKind) AND the backing-presence
+  // check (kind.backingDateKeys()) are registry-driven and kind-agnostic — this is the same
+  // any-status "does a real Hike row exist on this date" definition the lint_plan path uses,
+  // not plannedHikeToday (which reconcileLongEffort unconditionally nulls on override days,
+  // and which only ever considered status:"planned" hikes within the rotation week — both
+  // wrong signals for this check). A new mirror kind only needs its registry entry; nothing
+  // here is hike-specific anymore.
   orphanedOverride: boolean;
   nutritionText: string | null;
   nutritionPlan: NutritionPlan | null;
@@ -814,6 +1059,58 @@ export type ResolvedDay = {
    *  (out_of_plan). Drives the "Archived plan · {name}" badge + write-form
    *  suppression on /days/[dateKey] (REQ-004). */
   resolvedPlan: { id: string; name: string; source: "active" | "archived" } | null;
+  /** #282 (plan §4.2): the active multi-domain Program's membership context,
+   *  from getActiveProgramMembership(). DISTINCT from `resolvedPlan` (which
+   *  stays the rotation-plan pointer, untouched): this is the Program row's
+   *  OWN id + member goals. null when the user has no ACTIVE Program row —
+   *  resolveDay never synthesizes one from the legacy isFocus path, so
+   *  zero-Program tenants see null here and identical values everywhere else. */
+  program: {
+    id: string;
+    name: string;
+    status: string;
+    startedOn: Date;
+    endsOn: Date | null;
+    memberGoals: { id: string; objective: string; kind: string; status: string }[];
+  } | null;
+  /** #282: today's ScheduledItem rows unioned across EVERY member goal of the
+   *  active Program (not just the rotation-owning goal) — single findMany,
+   *  goalId IN memberIds, this date's USER_TZ window, scoped db. Each row
+   *  carries its owning goalId + objective so a per-item goal badge renders
+   *  without a second lookup (RFC D5 point 2). Always present; [] when there
+   *  is no active Program or no member goal has items today. */
+  scheduledItemsToday: {
+    id: string;
+    goalId: string;
+    goalObjective: string | null;
+    type: string;
+    title: string;
+    detail: string | null;
+    status: string;
+    completedAt: Date | null;
+  }[];
+  /** #282: per-member-goal day-service claims for badging — the PLAN side of
+   *  "which goals does today serve", derived cheaply from data resolveDay
+   *  already has (no ActivityGoalLink reads). Claim vocabulary:
+   *    - "rotation"            — this goal owns the plan the day resolved
+   *                              against and the date is in that plan's window
+   *    - "scheduled_item"      — ≥1 ScheduledItem for this goal today
+   *    - "baseline:<testName>" — a baseline due today matches one of this
+   *                              goal's `baseline:<testName>` target metrics
+   *    - "nutrition"           — fitness-kind goal (a meal logged today would
+   *                              auto-link to it — mirrors evaluateNutritionLinks)
+   *  Claims are computed for status==="active" member goals only (defensive
+   *  filter mirroring attribution.ts's activeMembers); non-active members
+   *  appear with claims: []. The LOGGED-side fill state (which claims were
+   *  actually satisfied, via ActivityGoalLink rows) is deliberately NOT here —
+   *  it lands with the unified-Today UI story, which reads links. Always
+   *  present; [] when there is no active Program. */
+  goalMarks: {
+    goalId: string;
+    objective: string;
+    kind: string;
+    claims: string[];
+  }[];
 };
 
 /**
@@ -853,6 +1150,28 @@ export type ResolveDayCtx = {
    *     date" — resolveDay must not override that with its own guess.
    */
   program?: ProgramForDate | null;
+  /**
+   * #282: the active Program's membership context, pre-fetched by callers
+   * that resolve a RANGE of days (get_week) so 7 resolveDay calls don't issue
+   * 7 redundant getActiveProgramMembership() queries. Same key-presence
+   * semantics as `program` above:
+   *   - key absent / `undefined` → resolveDay looks up
+   *     getActiveProgramMembership() itself (joined to the internal
+   *     Promise.all — one extra parallel query).
+   *   - explicitly provided (including `null`) → used as-is, no lookup.
+   *     `null` means "caller already determined there is no active Program".
+   */
+  membership?: ActiveProgramMembership | null;
+  /**
+   * #297: the day-driving goal (rotation owner under a Program, legacy focus
+   * goal for zero-Program tenants — getRotationOwnerGoal()'s result trimmed
+   * to the three fields resolveDay reads), pre-fetched by range callers so 7
+   * resolveDay calls don't issue 7 redundant owner lookups. Same key-presence
+   * semantics as `program`/`membership` above; explicit `null` means "caller
+   * already determined no goal drives the day" (rotation-less Program /
+   * retired-Program tenants).
+   */
+  dayGoal?: { id: string; targetDate: Date | null; objective: string } | null;
 };
 
 /**
@@ -942,6 +1261,26 @@ export function deriveDayDisplay(input: {
   return { state, primaryTitle: plannedTitle, plannedTitle, primaryWorkoutId: null };
 }
 
+/**
+ * #282: extract the test names from a goal's `baseline:<testName>` target
+ * metrics. Pure + defensive — targets is untrusted Json (same trust boundary
+ * as planJson), so anything non-array / non-{metric:string} is skipped rather
+ * than thrown. Deliberately a minimal inline parse instead of importing
+ * goal-targets.ts (server-only readiness plumbing stays out of calendar.ts —
+ * CLAUDE.md: no readiness imports here).
+ */
+function baselineTestNamesFromTargets(targets: unknown): string[] {
+  if (!Array.isArray(targets)) return [];
+  const out: string[] = [];
+  for (const t of targets) {
+    const metric = (t as { metric?: unknown } | null)?.metric;
+    if (typeof metric === "string" && metric.startsWith("baseline:")) {
+      out.push(metric.slice("baseline:".length));
+    }
+  }
+  return out;
+}
+
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
   // REQ-003: `ctx.program` explicitly provided (including `null`) short-circuits
   // the lookup — the caller (get_week's per-day pick, the month view) already
@@ -959,25 +1298,24 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   // --- hoist: pure rotation math (no DB) ---
   // Moved above Promise.all so weekWindow is known in time to join the parallel fetch.
   // C-1: these declarations replace the post-Promise.all let declarations (now removed).
+  // B4/A3: the math itself is rotation-core's — the same primitives buildCell
+  // and the XP ledger consume.
   let isInPlan = false;
   let rotationDay: number | null = null;
   let weekIndex: number | null = null;
   let weekWindow: { start: Date; end: Date } | null = null;
 
   if (program) {
-    const startMid = startOfDay(program.startedOn);
-    const daysDelta = Math.floor(
-      (dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
-    );
-    if (daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7) {
+    const pos = rotationPosition(program.startedOn, program.template.totalWeeks, dayStart);
+    if (pos.isInPlan) {
       isInPlan = true;
-      rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-      weekIndex = Math.floor(daysDelta / 7) + 1;
-      weekWindow = rotationWeekWindow(program, weekIndex);
+      rotationDay = pos.rotationDay;
+      weekIndex = pos.weekIndex;
+      weekWindow = rotationWeekWindow(program.startedOn, weekIndex!);
     }
   }
 
-  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents] = await Promise.all([
+  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents, membership] = await Promise.all([
     db.workout.findMany({
       where: { startedAt: { gte: dayStart, lte: dayEnd } },
       include: { exercises: { select: { id: true } } },
@@ -998,11 +1336,18 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       },
       orderBy: { date: "desc" },
     }),
-    db.goal.findFirst({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, targetDate: true, objective: true },
-    }),
+    // #297: Program-aware day-goal read — the rotation owner under a Program,
+    // the legacy focus goal for zero-Program tenants (byte-identical there).
+    // Feeds isGoalDate + goalObjective below; null under a rotation-less
+    // Program is correct (no goal-date pin belongs to "the day" then —
+    // member goals' own target dates ride otherGoalEvents/goal-events).
+    // ctx.dayGoal (key-presence semantics, like program/membership) lets
+    // range callers batch this to one lookup per week.
+    ctx?.dayGoal !== undefined
+      ? Promise.resolve(ctx.dayGoal)
+      : getRotationOwnerGoal().then(({ goal: g }) =>
+          g ? { id: g.id, targetDate: g.targetDate, objective: g.objective } : null,
+        ),
     db.nutritionLog.findMany({
       where: { date: { gte: dayStart, lte: dayEnd } },
       orderBy: { date: "asc" },
@@ -1050,6 +1395,13 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
             start: addDays(startOfWeekMonday(date), -CROSS_GOAL_RULES.raceProximityDays),
             end: addDays(endOfWeekSunday(date), CROSS_GOAL_RULES.raceProximityDays),
           }),
+    // #282 (8th item): the active Program's membership — one extra parallel
+    // query, or zero when the caller pre-fetched it (get_week's per-week ctx).
+    // Key-presence semantics match ctx.program: explicitly-provided null means
+    // "caller already determined there is no active Program".
+    ctx?.membership !== undefined
+      ? Promise.resolve(ctx.membership)
+      : getActiveProgramMembership(),
   ]);
 
   // REQ-104: cross-goal event + conflict computation.
@@ -1085,45 +1437,18 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   let longEffortConflict: ResolvedDay["longEffortConflict"] = null;
 
   if (isInPlan && program && rotationDay !== null && weekIndex !== null) {
-    // rotationDay and weekIndex are already computed above (hoisted).
-    // No daysDelta recomputation needed here.
+    // B4/A3: override→template precedence + the scheduled-baseline set come
+    // from rotation-core's mergeDayOverride — the SAME decision code buildCell
+    // and the XP ledger consume. Override list path: exact names, unknown
+    // names dropped, empty array = explicitly none, week filter bypassed (a
+    // deferred "initial" can land outside its scheduled week). Native path:
+    // the rotation day's tests due this week. Only the DB work (matching
+    // logged results) remains here.
+    const core = mergeDayOverride(program.template, rotationDay, weekIndex, override);
+    workoutTemplate = core.workoutTemplate;
+    isOverride = core.isOverride;
 
-    if (override?.workoutJson) {
-      workoutTemplate = override.workoutJson as unknown as DayTemplate;
-      isOverride = true;
-    } else {
-      workoutTemplate =
-        program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
-    }
-
-    // Baselines due. Two paths:
-    // 1. The override has a baselineTestNames array → use that exact list,
-    //    looking up each test by name across the entire baselineWeek.
-    //    Empty array = explicitly no tests today (override "skip").
-    // 2. Otherwise → derive from the rotation day, same as before.
-    const overrideNames = Array.isArray(override?.baselineTestNames)
-      ? (override!.baselineTestNames as unknown as string[])
-      : null;
-
-    let testsForDay: { test: BaselineTest; baselineDay: BaselineDay }[] = [];
-    if (overrideNames !== null) {
-      for (const name of overrideNames) {
-        for (const day of program.template.baselineWeek ?? []) {
-          const test = day.tests.find((t) => t.testName === name);
-          if (test) {
-            testsForDay.push({ test, baselineDay: day });
-            break;
-          }
-        }
-      }
-    } else {
-      const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-      if (baselineDay) {
-        testsForDay = baselineDay.tests.map((test) => ({ test, baselineDay }));
-      }
-    }
-
-    if (testsForDay.length > 0) {
+    if (core.baselineTests.length > 0) {
       // Match logged results within each test's checkpoint credit window
       // (shared with get_baseline_schedule via checkpointWindows), not just on
       // this exact date — an early, off-schedule retest still counts (the Wk-7
@@ -1131,15 +1456,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       // day). The day itself is always included too, so an override that
       // parks a test outside any window still sees a same-day log.
       const dayEndExcl = new Date(dayEnd.getTime() + 1);
-      const matchTargets = testsForDay.map(({ test, baselineDay }) => {
-        // Rotation default: the test's initialWeek (default 1) surfaces the
-        // initial, retestWeeks beyond it trigger retests, all else is silent.
-        // With an override, the user has explicitly placed these tests on this
-        // date — bypass the week filter entirely (a deferred "initial" can
-        // land outside its scheduled week).
-        const initialWeek = test.initialWeek ?? 1;
-        const checkpoint: "initial" | "retest" =
-          weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+      const matchTargets = core.baselineTests.map(({ test, baselineDay, checkpoint }) => {
         const windows = checkpointWindows(test, program.startedOn);
         const cp =
           checkpoint === "retest"
@@ -1148,7 +1465,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         const from =
           cp && startOfDay(cp.windowStart) < dayStart ? startOfDay(cp.windowStart) : dayStart;
         const to = cp && cp.windowEnd > dayEndExcl ? cp.windowEnd : dayEndExcl;
-        return { test, baselineDay, checkpoint, initialWeek, from, to };
+        return { test, baselineDay, checkpoint, from, to };
       });
 
       const logged = await db.baseline.findMany({
@@ -1161,7 +1478,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         orderBy: { date: "asc" },
       });
 
-      for (const { test, baselineDay, checkpoint, initialWeek, from, to } of matchTargets) {
+      for (const { test, baselineDay, checkpoint, from, to } of matchTargets) {
         // Earliest result within this test's window (rows are date-asc) — same
         // pick as the schedule view's statusFor, so a past initial day keeps
         // showing its own week-1 result rather than a later retest that also
@@ -1172,13 +1489,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         const loggedOnDate = result
           ? { id: result.id, value: result.value, units: result.units, date: result.date }
           : null;
-        if (overrideNames !== null) {
-          baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
-        } else if (weekIndex === initialWeek) {
-          baselinesDue.push({ test, baselineDay, checkpoint: "initial", loggedOnDate });
-        } else if (weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex)) {
-          baselinesDue.push({ test, baselineDay, checkpoint: "retest", loggedOnDate });
-        }
+        baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
       }
     }
 
@@ -1193,6 +1504,79 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       isOverride,
       workoutTemplate,
     }));
+  }
+
+  // ── #282: program-shaped context (scheduledItemsToday union + goalMarks) ──
+  // Runs ONLY for users with an active Program (membership non-null with
+  // members) — zero-Program tenants pay nothing beyond the membership lookup
+  // already in the Promise.all above. Sits after the in-plan block because
+  // goalMarks' baseline claims read the finished baselinesDue list; the two
+  // queries here are one serial round-trip for Program users only (same
+  // pattern as the serial baseline.findMany above).
+  let scheduledItemsToday: ResolvedDay["scheduledItemsToday"] = [];
+  let goalMarks: ResolvedDay["goalMarks"] = [];
+  if (membership && membership.memberGoals.length > 0) {
+    const memberIds = membership.memberGoals.map((g) => g.id);
+    const [itemRows, memberGoalDetails] = await Promise.all([
+      db.scheduledItem.findMany({
+        where: { goalId: { in: memberIds }, date: { gte: dayStart, lte: dayEnd } },
+        orderBy: { date: "asc" },
+        select: {
+          id: true,
+          goalId: true,
+          type: true,
+          title: true,
+          detail: true,
+          status: true,
+          completedAt: true,
+        },
+      }),
+      // Per-goal detail the claims need: baseline target metrics + which plans
+      // each member goal owns (identifies the rotation-owning goal without a
+      // separate Plan lookup; includes non-active plans so a past date resolved
+      // against an archived member plan still gets its rotation claim).
+      db.goal.findMany({
+        where: { id: { in: memberIds } },
+        select: { id: true, targets: true, plans: { select: { id: true } } },
+      }),
+    ]);
+
+    const objectiveById = new Map(membership.memberGoals.map((g) => [g.id, g.objective]));
+    scheduledItemsToday = itemRows.map((row) => ({
+      id: row.id,
+      goalId: row.goalId,
+      goalObjective: objectiveById.get(row.goalId) ?? null,
+      type: row.type,
+      title: row.title,
+      detail: row.detail,
+      status: row.status,
+      completedAt: row.completedAt ?? null,
+    }));
+
+    const rotationOwnerGoalId =
+      program !== null
+        ? memberGoalDetails.find((g) => g.plans.some((p) => p.id === program.id))?.id ?? null
+        : null;
+    const baselineTargetsByGoal = new Map(
+      memberGoalDetails.map((g) => [g.id, baselineTestNamesFromTargets(g.targets)]),
+    );
+    const goalsWithItemsToday = new Set(itemRows.map((r) => r.goalId));
+
+    goalMarks = membership.memberGoals.map((g) => {
+      const claims: string[] = [];
+      if (g.status === "active") {
+        if (isInPlan && rotationOwnerGoalId === g.id) claims.push("rotation");
+        if (goalsWithItemsToday.has(g.id)) claims.push("scheduled_item");
+        const baselineTargets = baselineTargetsByGoal.get(g.id) ?? [];
+        for (const due of baselinesDue) {
+          if (baselineTargets.includes(due.test.testName)) {
+            claims.push(`baseline:${due.test.testName}`);
+          }
+        }
+        if (g.kind === "fitness") claims.push("nutrition");
+      }
+      return { goalId: g.id, objective: g.objective, kind: g.kind, claims };
+    });
   }
 
   const isGoalDate = !!goal && !!goal.targetDate && dateKey(goal.targetDate) === dateKey(date);
@@ -1221,15 +1605,41 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   });
 
   // Flag C: a mirror-override (today: hike-flavored) with no backing object on the date is
-  // a phantom session (see ResolvedDay.orphanedOverride). plannedHikeToday is null exactly
-  // when no planned Hike row sits on this date — the hike kind's free, query-free backing
-  // signal — so this surfaces the get_day vs list_planned_hikes disagreement.
-  const orphanedOverride =
-    isOverride && plannedHikeToday === null && isMirrorOverride(workoutTemplate);
+  // a phantom session (see ResolvedDay.orphanedOverride). Bug fix (#266): this USED to gate
+  // on `plannedHikeToday === null`, but reconcileLongEffort (above) unconditionally nulls
+  // plannedHikeToday whenever isOverride is true, and even when it wasn't null it only ever
+  // reflected status:"planned" hikes in the rotation week — so the old expression algebraically
+  // reduced to `isOverride && isMirrorOverride(workoutTemplate)` and flagged every summit-day
+  // override as orphaned regardless of whether a real Hike row backed it. Fixed by reusing the
+  // registry's own any-status backing check (src/lib/override-integrity.ts), the same
+  // definition the lint_plan path uses — gated on isOverride+mirror-match first so the DB
+  // lookup only runs on the rare mirror-override day, not every resolveDay call.
+  const overrideMirrorKind = isOverride ? matchingMirrorKind(workoutTemplate) : null;
+  const orphanedOverride = overrideMirrorKind
+    ? !(await overrideMirrorKind.backingDateKeys()).has(dateKey(date))
+    : false;
 
   // REQ-003: additive — which plan this date resolved against, if any.
   const resolvedPlan: ResolvedDay["resolvedPlan"] = program
     ? { id: program.id, name: program.name, source: program.source }
+    : null;
+
+  // #282: additive — the active Program's own context (id here is the PROGRAM
+  // row id, never a Plan id; the rotation-plan pointer stays `resolvedPlan`).
+  const programMembership: ResolvedDay["program"] = membership
+    ? {
+        id: membership.id,
+        name: membership.name,
+        status: membership.status,
+        startedOn: membership.startedOn,
+        endsOn: membership.endsOn,
+        memberGoals: membership.memberGoals.map((g) => ({
+          id: g.id,
+          objective: g.objective,
+          kind: g.kind,
+          status: g.status,
+        })),
+      }
     : null;
 
   return {
@@ -1307,6 +1717,10 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     otherGoalEvents: otherEventsForDate,
     crossGoalConflicts: cgConflicts,
     resolvedPlan, // REQ-003: new
+    // #282: program-shaped additions (additive; null/[]/[] for zero-Program tenants).
+    program: programMembership,
+    scheduledItemsToday,
+    goalMarks,
   };
 }
 
@@ -1317,86 +1731,30 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
   return r.baselinesDue;
 }
 
-/**
- * Baseline test names that would normally appear on `date` by rotation default
- * (week 1 initials + retest weeks). Ignores any per-day override — answers the
- * question "what would a fresh day with no override show?".
- */
-/**
- * Resolve the rotation-day template that would render on `date` if no override
- * existed. Returns null when `date` is outside the plan's calendar window
- * (before startedOn or past totalWeeks*7). Override-unaware by design — this
- * is the "base" view that PlanDayOverride.workoutJson layers on top of.
- *
- * Use case: workoutJsonOps in apply_day_override needs a base DayTemplate to
- * apply edits against when no override exists yet for the date.
- */
-export function templateForRotationDay(
-  program: ActiveProgramSnapshot,
-  date: Date,
-): DayTemplate | null {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return null;
-  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-  return program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
-}
-
-/**
- * S7 (Goal Story & Time-Aware History, write-guard): pure coverage check —
- * is `date` within `program`'s calendar window (same daysDelta math as
- * resolveDay / templateForRotationDay above)?
- *
- * History-write guards (day-actions.ts's upsertDayOverrideFromForm /
- * clearDayOverride, day-log-actions.ts's skipDay) call this with the ACTIVE
- * program to independently verify a write target server-side — the client's
- * isInPlan/isRestDay props (driven by resolveDay/getCalendarMonth, which can
- * now report isInPlan:true for a date covered only by an ARCHIVED plan) must
- * never be the only line of defense for "history can't be edited" (architecture
- * critique D5: SkipDayControl's guard was client-trusted, not independently
- * derived). No completion clamp here (unlike program.ts's coversDayKey) — an
- * ACTIVE plan's goal is by definition not yet completed.
- */
-export function isDateWithinActivePlanWindow(
-  program: { startedOn: Date; template: { totalWeeks: number } },
-  date: Date,
-): boolean {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  return daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7;
-}
-
-export function rotationBaselineNamesForDate(
-  program: ActiveProgramSnapshot,
-  date: Date,
-): string[] {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return [];
-  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-  const weekIndex = Math.floor(daysDelta / 7) + 1;
-  const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-  if (!baselineDay) return [];
-  return baselineDay.tests
-    .filter((t) => {
-      const initialWeek = t.initialWeek ?? 1;
-      return weekIndex === initialWeek || (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex));
-    })
-    .map((t) => t.testName);
-}
+// templateForRotationDay / isDateWithinActivePlanWindow /
+// rotationBaselineNamesForDate moved to rotation-core.ts (B4/A3) and are
+// re-exported at the top of this file — every `@/lib/calendar` importer keeps
+// working unchanged.
 
 /** Unresolved notes + a link target into the active plan's goal. */
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
   const db = await getDb();
   const [plan, count] = await Promise.all([
-    db.plan.findFirst({
-      where: { active: true, goal: { isFocus: true } },
-      orderBy: { updatedAt: "desc" },
-      include: { goal: { select: { id: true } } },
-    }),
+    // #297: the rotation plan comes from getActiveProgram() — the SAME
+    // resolution calendar day-building uses — instead of a third inline
+    // re-implementation of the isFocus-desc query. snapshot.id is a Plan id
+    // (frozen #277 contract); one point-read recovers goalId for the link
+    // target. Zero-Program tenants resolve via the seam's legacy branch
+    // (active plan, isFocus-desc tiebreak) — for a normally-shaped tenant
+    // (focused goal owns the active plan) this is the same plan as before.
+    getActiveProgram().then((snapshot) =>
+      snapshot
+        ? db.plan.findFirst({
+            where: { id: snapshot.id },
+            select: { id: true, goalId: true },
+          })
+        : null,
+    ),
     // Only count notes that actually call for a coaching decision: audibles
     // (plan changes) and feedback. Journals are diary entries you rarely
     // "resolve", and standing_rules are never resolved by design — counting
@@ -1404,22 +1762,13 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
     db.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
   ]);
   if (!plan) return { count, goalId: null, planId: null };
-  return { count, goalId: plan.goal.id, planId: plan.id };
+  return { count, goalId: plan.goalId, planId: plan.id };
 }
 
 // --- Long-effort reconciliation helpers ---
 
-// Returns the UTC instants for the first and last millisecond of a rotation week.
-// Day 1 of weekIndex lands at startOfDay(program.startedOn + (weekIndex-1)*7 days).
-// Uses addDays/startOfDay/endOfDay — no raw Date arithmetic.
-// Not exported — only resolveDay and weekConflicts (both in calendar.ts) call it.
-function rotationWeekWindow(
-  program: ActiveProgramSnapshot,
-  weekIndex: number,
-): { start: Date; end: Date } {
-  const weekStart = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7);
-  return { start: weekStart, end: endOfDay(addDays(weekStart, 6)) };
-}
+// (The private rotationWeekWindow helper moved to rotation-core.ts — same
+// formula, takes startedOn instead of the full snapshot.)
 
 // Pure — no DB, no await, no side effects, no mutation.
 // Takes the already-fetched week hikes and the already-resolved template/flags.
@@ -1502,7 +1851,7 @@ export async function weekConflicts(
   weekIndex: number,
 ): Promise<WeekConflict[]> {
   const db = await getDb();
-  const window = rotationWeekWindow(program, weekIndex);
+  const window = rotationWeekWindow(program.startedOn, weekIndex);
 
   const [plannedHikes, overrideRows] = await Promise.all([
     db.hike.findMany({
@@ -1529,7 +1878,7 @@ export async function weekConflicts(
   // hardcoding Day 6, so a re-anchored rotation stays correct.
   const longTmpl = program.template.weeklySplit.find((d) => d.category === "long-endurance");
   if (longTmpl !== undefined) {
-    const longDate = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + (longTmpl.dayOfWeek - 1));
+    const longDate = dateForRotationSlot(program.startedOn, weekIndex, longTmpl.dayOfWeek);
     const longKey  = dateKey(longDate);
 
     if (!overrideKeys.has(longKey)) {
@@ -1550,7 +1899,7 @@ export async function weekConflicts(
   // countBaselinesDueForCell which uses the same week-gate logic.
   for (let relDay = 0; relDay < 7; relDay++) {
     const rotDay  = (relDay + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
-    const calDate = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + relDay);
+    const calDate = dateForRotationSlot(program.startedOn, weekIndex, rotDay);
     const calKey  = dateKey(calDate);
 
     if (overrideKeys.has(calKey)) continue;
@@ -1558,13 +1907,7 @@ export async function weekConflicts(
     const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotDay);
     if (!baselineDay) continue;
 
-    const hasDueTests = baselineDay.tests.some((t) => {
-      const initialWeek = t.initialWeek ?? 1;
-      return (
-        weekIndex === initialWeek ||
-        (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-      );
-    });
+    const hasDueTests = baselineDay.tests.some((t) => isTestDueInWeek(t, weekIndex));
     if (!hasDueTests) continue;
 
     const hikeOnThisDay = plannedHikes.find((h) => dateKey(h.date) === calKey);

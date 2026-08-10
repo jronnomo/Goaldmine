@@ -12,10 +12,12 @@ import {
   deleteWorkoutCore,
   WorkoutOpSchema,
 } from "@/lib/workout-core";
-import { logHikeCore, updateHikeCore } from "@/lib/hike-core";
+import { logHikeCore, updateHikeCore, deleteHikeCore } from "@/lib/hike-core";
+import { deleteMeasurementCore } from "@/lib/measurement-core";
+import { deleteNutritionCore } from "@/lib/nutrition-core";
+import { deleteBaselineCore } from "@/lib/baseline-core";
 import {
   appendBaselineToDayWorkout,
-  removeBaselineFromDayWorkout,
   syncBaselineUpdateToWorkout,
 } from "@/lib/baseline-workout";
 import {
@@ -33,12 +35,18 @@ import {
   type WeekConflict,
   type ResolveDayCtx,
 } from "@/lib/calendar";
+import {
+  daysDelta,
+  weekIndex as weekIndexOf,
+  dateForRotationSlot,
+} from "@/lib/rotation-core";
 import { orphanedOverrideWarning } from "@/lib/override-integrity";
 import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma, getDb } from "@/lib/db";
 import type { ScopedClient } from "@/lib/db";
-import { formatWorkout, type ExportFormat } from "@/lib/formatters";
+import { autoLinkNutrition, swallowAutoLinkError } from "@/lib/attribution-hooks";
+import { formatWorkout, toFormattableWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
 import { isFlavorKey, legendForFlavor } from "@/lib/goal-flavors";
 import { lastTrainedForGoals, relativeTrainedLabel } from "@/lib/goal-attribution";
@@ -47,10 +55,16 @@ import type { GoalTarget } from "@/lib/goal-targets";
 import { LegendSchema } from "@/lib/legend";
 import {
   getActiveProgram,
+  getActiveProgramMembership,
   getPlanWindowCandidates,
   pickProgramForDate,
   type ActiveProgramSnapshot,
 } from "@/lib/program";
+// #297/#300: THE shared "current goal" accessor — rotation owner under a
+// Program, legacy isFocus fallback for zero-Program tenants, null for
+// rotation-less/retired-Program tenants. Replaces this file's inline
+// `isFocus: true` default-goal reads.
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { getGoalStory } from "@/lib/goal-story";
 import {
   MAX_DAY_TEMPLATE_BYTES,
@@ -93,7 +107,7 @@ import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
-import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
+import { RARITY_TIERS, parseCoachFeasibility, type GoalFeasibility } from "@/lib/rarity-core";
 import {
   GoalTargetSchema,
   normalizeMetricKey,
@@ -103,10 +117,16 @@ import {
   resolveTemplateTargets,
 } from "@/lib/metrics-registry";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
+import { registerProgramTools } from "@/lib/mcp/tools/program-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
-import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import {
+  shapeProgramTodayPayload,
+  shapeLegacyProjectTodayPayload,
+} from "@/lib/mcp/today-shapers";
+import { deriveSavedMealLog } from "@/lib/saved-meal";
+import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 
 const DateKeyShape = z
   .string()
@@ -202,12 +222,33 @@ type LogNoteInput = z.infer<typeof LogNoteSchema>;
 
 const LogNutritionShape = {
   mealType: MealTypeShape,
-  items: z.array(NutritionItemShape).min(1),
+  items: z
+    .array(NutritionItemShape)
+    .min(1)
+    .optional()
+    .describe(
+      "Food items eaten. REQUIRED unless savedMealId is provided. Precedence: when items are passed together with savedMealId, these items replace the saved meal's items entirely (explicit values win over derived ones).",
+    ),
   notes: z.string().optional(),
   macros: PlannedMealMacrosShape.optional().describe(
-    "Optional estimated macros for this meal (calories, proteinG, carbsG, fatG, fiberG, sodiumMg). Provide your best estimate from the items so the dashboard can total the day; omit any field you can't estimate.",
+    "Optional estimated macros for this meal (calories, proteinG, carbsG, fatG, fiberG, sodiumMg). Provide your best estimate from the items so the dashboard can total the day; omit any field you can't estimate. " +
+      "Precedence: when passed together with savedMealId, these macros replace the saved meal's scaled macros entirely (explicit values win over derived ones).",
   ),
   date: z.string().optional().describe("ISO datetime; default = now"),
+  savedMealId: z
+    .string()
+    .optional()
+    .describe(
+      "Log a SavedMeal by reference (id from list_saved_meals). Items + macros are derived from the saved meal, with macros scaled by servings ÷ the meal's defaultServings and item qty annotated (e.g. '1 bowl ×2') when that factor ≠ 1. " +
+        "Unknown/foreign ids return a friendly not-found error. Explicit items/macros passed in the same call take precedence over the derived values.",
+    ),
+  servings: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      "How many servings were eaten (default 1). Only meaningful with savedMealId: the saved meal's macros are multiplied by servings ÷ defaultServings.",
+    ),
 } as const;
 const LogNutritionSchema = z.object(LogNutritionShape);
 type LogNutritionInput = z.infer<typeof LogNutritionSchema>;
@@ -439,17 +480,60 @@ async function logNoteCore(db: DbClient, input: LogNoteInput): Promise<{ id: str
 }
 
 async function logNutritionCore(db: DbClient, input: LogNutritionInput): Promise<{ id: string; message: string }> {
+  let items = input.items;
+  let macros = input.macros;
+  let savedMealSuffix = "";
+
+  // #275: savedMealId derives items+macros from the user's SavedMeal, scaled
+  // by servings ÷ defaultServings. The scoped client injects userId into the
+  // findUnique where — another user's meal id resolves to null, so the same
+  // friendly not-found error covers both "deleted" and "not yours".
+  if (input.savedMealId) {
+    const meal = await db.savedMeal.findUnique({ where: { id: input.savedMealId } });
+    if (!meal) {
+      throw new Error(
+        `Saved meal not found: ${input.savedMealId}. It may have been deleted — call list_saved_meals to look up current ids, or pass items directly.`,
+      );
+    }
+    const servings = input.servings ?? 1;
+    const derived = deriveSavedMealLog(
+      { items: meal.items, macros: meal.macros, defaultServings: meal.defaultServings },
+      servings,
+    );
+    // Precedence (documented in the input schema): explicit items/macros
+    // passed in the same call win wholesale over the derived values.
+    items = items ?? derived.items;
+    macros = macros ?? derived.macros;
+    savedMealSuffix = ` from saved meal "${meal.name}" (${servings} serving${servings === 1 ? "" : "s"})`;
+  }
+
+  if (!items || items.length === 0) {
+    throw new Error(
+      "items is required when savedMealId is not provided — pass the foods eaten, or a savedMealId from list_saved_meals.",
+    );
+  }
+
   const n = await db.nutritionLog.create({
     data: {
       date: input.date ? parseDateInput(input.date) : new Date(),
       mealType: input.mealType,
-      items: input.items as Prisma.InputJsonValue,
+      items: items as Prisma.InputJsonValue,
       notes: input.notes ?? null,
       // Optional macros — undefined fields are omitted (stored as null).
-      ...input.macros,
+      // Items + macros land in ONE row in ONE write, so the item list and the
+      // day's totals can never desync (the update_nutrition invariant).
+      ...macros,
     },
   });
-  return { id: n.id, message: "Nutrition logged" };
+  // #309 v1c: link the meal to ACTIVE fitness-kind member goals only (never
+  // project goals; Program attributionRules do NOT apply to nutrition in v1 —
+  // see evaluateNutritionLinks). Written through the SAME client `db` so
+  // batch_log_nutrition's links ride its transaction. No-op without an active
+  // Program; idempotent; best-effort.
+  await autoLinkNutrition(db, { nutritionLogId: n.id, date: n.date }).catch(
+    swallowAutoLinkError("logNutritionCore"),
+  );
+  return { id: n.id, message: `Nutrition logged${savedMealSuffix}` };
 }
 
 // Decode a literal `\uXXXX` escape into its character. Conservative on purpose:
@@ -507,6 +591,7 @@ export function registerAll(server: McpServer) {
   registerReadTools(server);
   registerWriteTools(server);
   registerProjectTools(server);
+  registerProgramTools(server);
   registerGitHubTools(server);
   registerRenderTools(server);
 }
@@ -561,21 +646,16 @@ function registerReadTools(server: McpServer) {
         "AUTHORITATIVE TASK FIELDS: `todayTask` is one of 'workout' | 'rest' | 'baseline' | 'hike' | 'out_of_plan' — the single source of truth for what today actually is. `activeWorkout` is the session to do (null on baseline/hike/out_of_plan); `deferredWorkout` is the rotation session that stepped aside (non-null only on baseline/hike). On a baseline day the tests in `baselinesDue` ARE the session — do NOT prescribe `deferredWorkout` as today's work. For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. `workoutDeferredForBaseline`/`workoutDeferredForHike` are deprecated booleans kept for one release (they equal todayTask === 'baseline'/'hike'). " +
         "Also surfaces plannedHikeToday (hike detail if planned today) and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
-        "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
+        "focusGoal is the goal driving the day — the focus goal (or the Program's rotation-owning goal when a Program is active); activeGoal is a duplicate kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
-        "When focusGoal.kind === 'project', the payload is project-shaped: todayTask is null, " +
-        "activeWorkout/deferredWorkout/nutrition/baselines/mobility and all fitness scalars are null/false/[], " +
-        "todayItems contains today's ScheduledItems (id, type, title, status, completedAt) for that project goal, " +
-        "and feasibility carries the project's computed Reach tier (null if unrated/error). " +
-        "goalObjective is always populated from the focus goal's objective. " +
-        "When the focus goal is fitness or no focus goal is set, todayItems is [], feasibility is absent, " +
-        "and all fitness fields are fully populated as usual.",
+        "PROGRAM-SHAPED MERGE (when the user has an active Program): the payload is ONE merged shape, never a fitness-vs-project fork. Rotation fields above reflect the PROGRAM's plan only (isInPlan/confidence describe that plan's window — never some other goal's plan); an active Program with no rotation plan yields todayTask 'out_of_plan' with null/[] fitness fields — that is the normal 'no rotation today' state for a pure-project Program, NOT an error. On top: `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (today's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), `goalMarks` (per-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition), `todayItems` (same union, saved-prompt-compatible shape + goalId/goalObjective), and `goalSections` keyed by goalId ({objective, kind, status, todayItems, feasibility}) — feasibility computed per ACTIVE project-kind member goal (null if unrated/error). A day can carry BOTH a rotation session and project work — read both. " +
+        "LEGACY (no Program): behavior is unchanged. focusGoal.kind === 'project' → the old project-shaped payload (todayTask null, fitness scalars null/false/[], todayItems + feasibility for that goal only); fitness or no focus goal → fitness fields fully populated, todayItems [], feasibility absent, and `program` is null with scheduledItemsToday/goalMarks [].",
     },
     async () =>
       safe(async () => {
         const db = await getDb();
         const now = new Date();
-        const [r, standingRules, activeGoalRow] = await Promise.all([
+        const [r, standingRules, ownerResolution] = await Promise.all([
           resolveDay(now),
           db.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
@@ -590,12 +670,14 @@ function registerReadTools(server: McpServer) {
               lastAcknowledgedAt: true,
             },
           }),
-          db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true, kind: true, objective: true, githubRepo: true, targets: true, targetDate: true },
-          }),
+          // #300: the day-driving goal via the shared #297 accessor —
+          // rotation owner under a Program, legacy focus goal for
+          // zero-Program tenants (byte-identical row there). null under a
+          // rotation-less/retired Program — the merged Program payload
+          // carries the member context then; no goal is silently guessed.
+          getRotationOwnerGoal(),
         ]);
+        const activeGoalRow = ownerResolution.goal;
         const activeGoal = activeGoalRow
           ? {
               id: activeGoalRow.id,
@@ -604,6 +686,34 @@ function registerReadTools(server: McpServer) {
               githubRepo: activeGoalRow.githubRepo,
             }
           : null;
+
+        // ── #283: program-shaped merge — ANY user with an active Program ────
+        // No kind branching here: rotation fields pass through from r (already
+        // Program-scoped by the seam — isInPlan/confidence can no longer leak
+        // an unrelated plan's window), plus program/scheduledItemsToday/
+        // goalMarks/goalSections. One feasibility computation per ACTIVE
+        // project-kind member goal.
+        if (r.program) {
+          const projectMemberIds = r.program.memberGoals
+            .filter((g) => g.kind === "project" && g.status === "active")
+            .map((g) => g.id);
+          const feasibilityByGoalId = new Map<string, GoalFeasibility | null>();
+          if (projectMemberIds.length > 0) {
+            const projectGoalRows = await db.goal.findMany({
+              where: { id: { in: projectMemberIds } },
+              select: { id: true, kind: true, targetDate: true, targets: true },
+            });
+            await Promise.all(
+              projectGoalRows.map(async (row) => {
+                feasibilityByGoalId.set(row.id, await computeGoalFeasibility(row).catch(() => null));
+              }),
+            );
+          }
+          return shapeProgramTodayPayload(r, activeGoal, standingRules, feasibilityByGoalId);
+        }
+
+        // ── Zero-Program legacy paths — byte-identical to pre-#283 (the #282
+        //    keys ride along as null/[]/[]) ─────────────────────────────────
         let todayItems: {
           id: string;
           type: string;
@@ -633,7 +743,7 @@ function registerReadTools(server: McpServer) {
             targets: activeGoalRow.targets,
             kind: activeGoalRow.kind,
           }).catch(() => null);
-          return shapeProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
+          return shapeLegacyProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
         }
         return {
           ...r,
@@ -656,7 +766,8 @@ function registerReadTools(server: McpServer) {
         "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date. " +
         "Read the authoritative task fields `todayTask` ('workout'|'rest'|'baseline'|'hike'|'out_of_plan'), `activeWorkout` (the session to do; null when deferred), and `deferredWorkout` (the stepped-aside rotation session). For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. The deprecated workoutDeferredFor* flags equal todayTask === 'baseline'/'hike'. " +
         "Also surfaces plannedHikeToday and longEffortConflict. " +
-        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date.",
+        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date. " +
+        "PROGRAM CONTEXT (when the user has an active Program — null/[] otherwise): `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (that date's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), and `goalMarks` (per-member-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition) — for past AND future dates alike, so member-goal work is never invisible on a day scan.",
       inputSchema: { date: DateKeyShape },
     },
     async ({ date }) =>
@@ -681,7 +792,8 @@ function registerReadTools(server: McpServer) {
         "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
         "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
         "REQ-007a (time-aware): past weeks resolve against whichever plan covered them, INCLUDING a completed goal's now-archived plan — each day resolves independently, so a week straddling a plan transition (e.g. the week a goal was completed) can show archived-plan days alongside active-plan/out-of-plan days in the same response. Read days[].resolvedPlan ({id,name,source:'active'|'archived'}, or null) per day to see which plan governed it. " +
-        "Goal events assembled once for the week (~3 extra queries total) and passed to each resolveDay via ctx (zero extra queries per day).",
+        "PROGRAM CONTEXT (when the user has an active Program — null/[] otherwise): each days[] entry also carries `program` (Program id/name/status/window/memberGoals), `scheduledItemsToday` (that day's ScheduledItems unioned across ALL member goals, with goalId+goalObjective per row), and `goalMarks` (per-goal day-service claims) — so the weekly scan surfaces member-goal work, not just the rotation. " +
+        "Goal events + Program membership assembled once for the week and passed to each resolveDay via ctx (zero extra event/membership queries per day).",
       inputSchema: {
         startDate: z
           .string()
@@ -707,14 +819,27 @@ function registerReadTools(server: McpServer) {
         // complete_goal) must resolve each day against its OWN covering plan,
         // via the same pure pickProgramForDate the month view and resolveDay's
         // own internal lookup use — so this can never disagree with them.
-        const activeProgram = await getActiveProgram();
-        const candidates = await getPlanWindowCandidates();
+        // #284: Program membership fetched ONCE here too and threaded to every
+        // resolveDay via ctx.membership — never 7 redundant lookups.
+        // #297: same batching for the day-driving goal (rotation owner under a
+        // Program, legacy focus goal for zero-Program tenants) via ctx.dayGoal.
+        const [activeProgram, membership, candidates, weekOwnerResolution] = await Promise.all([
+          getActiveProgram(),
+          getActiveProgramMembership(),
+          getPlanWindowCandidates(),
+          getRotationOwnerGoal(),
+        ]);
+        const dayGoalRow = weekOwnerResolution.goal;
+        const dayGoal = dayGoalRow
+          ? { id: dayGoalRow.id, targetDate: dayGoalRow.targetDate, objective: dayGoalRow.objective }
+          : null;
 
         // Anchor pick: identifies which plan's rotation the requested week
         // snaps to (rotation weeks are plan-relative — anchored on that plan's
-        // startedOn, never calendar Mon–Sun). `null` only when there has never
-        // been any program in the system at all (not even a fallback active
-        // one) — the legacy "create a goal" empty state.
+        // startedOn, never calendar Mon–Sun). `null` only when NO plan exists
+        // to anchor on — either the legacy "create a goal" empty state, or an
+        // active Program that owns no rotation plan (pure-project Programs:
+        // there is no plan-relative week to resolve).
         const baseDayKey = toDateKey(baseDate);
         const anchorPick = pickProgramForDate(candidates, baseDayKey, todayKey, activeProgram);
         if (!anchorPick) {
@@ -726,17 +851,32 @@ function registerReadTools(server: McpServer) {
             days: [],
             otherGoalEvents: [],
             crossGoalConflicts: [],
-            message: "No active program yet — create a goal with a target date to generate a plan.",
+            // #284: an active Program with no rotation plan is a normal state
+            // — don't tell a Program user to "create a goal". Rotation weeks
+            // are plan-relative, so with no plan there is no week to resolve;
+            // point at the per-day tools, which DO carry the item union.
+            ...(membership
+              ? {
+                  program: {
+                    id: membership.id,
+                    name: membership.name,
+                    status: membership.status,
+                    memberGoals: membership.memberGoals,
+                  },
+                  message:
+                    `Active Program '${membership.name}' has no rotation plan, so there is no rotation week to resolve. ` +
+                    "Use get_today_plan / get_day for scheduled items across member goals.",
+                }
+              : {
+                  message: "No active program yet — create a goal with a target date to generate a plan.",
+                }),
           };
         }
 
-        const anchorStartMid = startOfDay(anchorPick.startedOn);
-        const baseDayStart = startOfDay(baseDate);
-        const anchorDaysDelta = Math.floor(
-          (baseDayStart.getTime() - anchorStartMid.getTime()) / (24 * 3600 * 1000),
-        );
-        const anchorWi = Math.floor(anchorDaysDelta / 7) + 1;
-        const weekStart = addDays(anchorStartMid, (anchorWi - 1) * 7);
+        // B4/A3: rotation-core's canonical anchor math (same formulas
+        // resolveDay uses — floor daysDelta → weekIndex).
+        const anchorWi = weekIndexOf(daysDelta(anchorPick.startedOn, baseDate));
+        const weekStart = dateForRotationSlot(anchorPick.startedOn, anchorWi, 1);
         const weekEnd = addDays(weekStart, 6);
 
         // Pre-assemble goal events + cross-goal conflicts for the whole week
@@ -771,6 +911,11 @@ function registerReadTools(server: McpServer) {
           crossGoalConflicts: weekCrossConflicts,
           focusGoalId: eventsResult.focusGoalId,
           program: pick,
+          // #284: membership fetched once above — explicit value (including
+          // null) short-circuits resolveDay's own lookup on all 7 days.
+          membership,
+          // #297: day-driving goal fetched once above — same short-circuit.
+          dayGoal,
         }));
 
         const days = await Promise.all(
@@ -793,12 +938,9 @@ function registerReadTools(server: McpServer) {
         // week") than an arbitrary extrapolation from whichever date the caller
         // happened to pass in.
         const day0Pick = dayPicks[0];
-        const wi = day0Pick
-          ? Math.floor(
-              (startOfDay(weekStart).getTime() - startOfDay(day0Pick.startedOn).getTime()) /
-                (24 * 3600 * 1000 * 7),
-            ) + 1
-          : null;
+        // weekIndexOf(daysDelta(...)) — identical to the old direct
+        // floor(msDiff / 7 days) + 1 by the identity floor(floor(x)/7) === floor(x/7).
+        const wi = day0Pick ? weekIndexOf(daysDelta(day0Pick.startedOn, weekStart)) : null;
         const totalWeeks = day0Pick ? day0Pick.template.totalWeeks : null;
 
         return {
@@ -904,7 +1046,7 @@ function registerReadTools(server: McpServer) {
       title: "List all training goals",
       description:
         "Show every training goal — active and inactive — with focus flag, tracking status, target date, status, and target count. " +
-        "active=true means the goal is tracked and contributes events to the calendar and Today strip; isFocus=true means this goal's plan drives the daily prescription (exactly one should be true at a time). " +
+        "active=true means the goal is tracked and contributes events to the calendar and Today strip. isFocus is the LEGACY single-focus flag: for tenants without a Program it marks the goal whose plan drives the daily prescription (exactly one should be true at a time); under an active Program the day is driven by the Program's rotation-owning goal instead, and isFocus remains only as a display/compat field. " +
         "targetDate=null indicates a someday goal (no calendar pin, no countdown). " +
         "Use to discover which goal is in focus, list all tracked goals with their target dates, or find someday goals. " +
         "Pair with get_goal for full detail on one goal. " +
@@ -953,7 +1095,7 @@ function registerReadTools(server: McpServer) {
       description:
         "Full goal with targets, references, the active plan (with planJson — the ROTATION TEMPLATE, not the resolved per-date prescription), the most recent plan revisions, and an upcomingOverrides summary so you can see which dates diverge from the template. " +
         "Important: planJson tells you 'Mondays do this' — it does NOT include per-date overrides. To answer 'what's actually prescribed on date X', call get_day(X), not get_goal. To answer 'what's exercise Y prescribed at on its next occurrences', call find_exercise_in_plan. " +
-        "isFocus=true means this goal's plan drives the daily prescription; other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
+        "isFocus=true marks the legacy focus goal — its plan drives the daily prescription only for tenants without a Program (under an active Program, the rotation-owning member goal drives the day); other active goals stay visible in the calendar and MCP read tools as goal events and cross-goal conflicts. " +
         "Use get_goal to gather goal context (targets, references, recent revisions) before proposing a plan revision. " +
         "Plan fields (plans[]) are empty for someday goals (targetDate=null — no plan scaffolded; call update_goal with a targetDate to scaffold one). " +
         "attributionHints is the array of canonical exercise names that count as training this goal. " +
@@ -1096,7 +1238,9 @@ function registerReadTools(server: McpServer) {
         goalId: z
           .string()
           .optional()
-          .describe("Goal id (use list_goals to discover). Omit to use the current focus goal."),
+          .describe(
+            "Goal id (use list_goals to discover). Omit to default to the focus goal (or the Program's rotation-owning goal when a Program is active).",
+          ),
         asOf: DateKeyShape.optional().describe(
           "Compute as of this date (yyyy-mm-dd), end-of-day in the user's timezone. Defaults to today — pass a past date to inspect an earlier point.",
         ),
@@ -1105,11 +1249,15 @@ function registerReadTools(server: McpServer) {
     async ({ goalId, asOf }) =>
       safe(async () => {
         const db = await getDb();
+        // #300: omitted-goalId default via the shared #297 accessor (rotation
+        // owner under a Program; legacy focus goal for zero-Program tenants).
         const goal = goalId
           ? await db.goal.findUniqueOrThrow({ where: { id: goalId } })
-          : await db.goal.findFirst({ where: { isFocus: true }, orderBy: { updatedAt: "desc" } });
+          : (await getRotationOwnerGoal()).goal;
         if (!goal) {
-          throw new Error("No focused goal found — pass goalId, or set a goal to focus first.");
+          throw new Error(
+            "No current goal to default to — the active Program has no rotation (or no goal is focused). Pass goalId explicitly (use list_goals to discover ids).",
+          );
         }
         const targets = (goal.targets as unknown as GoalTarget[] | null) ?? [];
         const asOfDate = asOf ? parseDateKey(asOf) : new Date();
@@ -1140,17 +1288,20 @@ function registerReadTools(server: McpServer) {
     async () =>
       safe(async () => {
         const db = await getDb();
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        const notes = await db.note.findMany({
-          where: { resolvedAt: null },
-          omit: { userId: true },
-          orderBy: { date: "desc" },
-        });
+        // #300: the rotation plan via getActiveProgram() — snapshot.id IS a
+        // Plan id (frozen #277 contract); the legacy isFocus-desc branch
+        // inside the seam covers zero-Program tenants. Mirrors
+        // getPendingNotesCount (#297).
+        const [program, notes] = await Promise.all([
+          getActiveProgram(),
+          db.note.findMany({
+            where: { resolvedAt: null },
+            omit: { userId: true },
+            orderBy: { date: "desc" },
+          }),
+        ]);
         return {
-          planId: plan?.id ?? null,
+          planId: program?.id ?? null,
           notes,
           count: notes.length,
         };
@@ -1336,7 +1487,7 @@ function registerReadTools(server: McpServer) {
         "Every scheduled baseline test for the active plan with per-checkpoint status: initial collection (week 1) and each retest week. " +
         "Use to answer 'what fitness tests are due', 'what baselines are overdue', 'when's the next retest', or to plan a baseline-collection day. " +
         "Includes overdue/due flags so the coach can call out missed tests before they drift. " +
-        "Returns the empty shape when the focus goal has no active plan — set a targetDate on a someday goal to scaffold its plan first.",
+        "Returns the empty shape when no rotation plan is active — the focus goal has no active plan (or, under a Program, the Program owns no rotation plan); set a targetDate on a someday goal to scaffold its plan first.",
     },
     async () => safe(() => getBaselineSchedule()),
   );
@@ -1426,7 +1577,7 @@ function registerReadTools(server: McpServer) {
     {
       title: "Cold-start coaching catch-up (one call)",
       description:
-        "One-call cold-start catch-up for a NEW coaching conversation — today's date, focus goal + days-to-go, " +
+        "One-call cold-start catch-up for a NEW coaching conversation — today's date, the current goal (the focus goal, or the Program's rotation-owning goal when a Program is active) + days-to-go, " +
         "current plan week/phase, the last ~5 sessions (workouts + hikes blended newest-first), weight trend, " +
         "standing-rule HEADERS (NOT bodies; call get_today_plan for full bodies + today's prescription), " +
         "the latest review (body truncated to 400 chars + truncated:true; full text via get_latest_review), " +
@@ -1434,6 +1585,7 @@ function registerReadTools(server: McpServer) {
         "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions + cross-goal conflict kinds: " +
         "event-on-hard-day, key-events-same-week, event-near-long-effort), " +
         "and slim stackRarity {tier, baseTier, loadBump}. " +
+        "PROGRAM BLOCK (when the user has an active Program — null otherwise): `program` {name, status, memberGoalCount, memberGoals[], rotationOwnerObjective (which member goal's plan drives today's rotation, null when no rotation), scheduledItemsToday (compact cross-goal item list: goalId/goalObjective/type/title/status)} — so session-start context is never blind to non-fitness member-goal work. " +
         "otherActiveGoals: non-focus active goals with their next event in a 30-day window; isSomeday:true when targetDate is null. " +
         "Call this after get_today_plan in a fresh FITNESS chat — it is the rich second call that delivers history, weight trend, standing-rule headers, latest review, open items, week conflicts, and rarity stack; equivalent routing signal to get_today_plan for fitness session context. See COACH_INSTRUCTIONS for the full two-call session-start sequence. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
@@ -1456,7 +1608,7 @@ function registerReadTools(server: McpServer) {
         const [
           resolved,
           program,
-          activeGoal,
+          briefOwnerResolution,
           standingRules,
           recentWorkouts,
           recentHikes,
@@ -1468,11 +1620,10 @@ function registerReadTools(server: McpServer) {
         ] = await Promise.all([
           resolveDay(now),
           getActiveProgram(),
-          db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true, objective: true, targetDate: true, kind: true },
-          }),
+          // #300: the session's default goal via the shared #297 accessor
+          // (rotation owner under a Program; legacy focus goal for
+          // zero-Program tenants; null when a Program has no rotation).
+          getRotationOwnerGoal(),
           // ASC puts NULL first (Postgres default) → never-acknowledged rules surface
           // first in the brief. Intentional: stale rules are the ones the coach is most
           // at risk of forgetting. get_today_plan uses desc/nulls-last (freshest first)
@@ -1518,6 +1669,7 @@ function registerReadTools(server: McpServer) {
         ]);
 
         // --- goal ---
+        const activeGoal = briefOwnerResolution.goal;
         let goal: {
           id: string;
           objective: string;
@@ -1715,10 +1867,35 @@ function registerReadTools(server: McpServer) {
           loadBump: stackRarityResult.loadBump,
         };
 
+        // --- #284: compact Program-membership block — derived entirely from
+        // resolveDay's #282 fields (program/goalMarks/scheduledItemsToday), so
+        // this adds ZERO extra queries to the cold-start call. rotationOwner =
+        // the member goal whose goalMarks carry the "rotation" claim (the
+        // goal whose plan drives today's prescription); null when the Program
+        // has no rotation today. null program = no active Program.
+        const programBrief = resolved.program
+          ? {
+              name: resolved.program.name,
+              status: resolved.program.status,
+              memberGoalCount: resolved.program.memberGoals.length,
+              memberGoals: resolved.program.memberGoals,
+              rotationOwnerObjective:
+                resolved.goalMarks.find((m) => m.claims.includes("rotation"))?.objective ?? null,
+              scheduledItemsToday: resolved.scheduledItemsToday.map((it) => ({
+                goalId: it.goalId,
+                goalObjective: it.goalObjective,
+                type: it.type,
+                title: it.title,
+                status: it.status,
+              })),
+            }
+          : null;
+
         return {
           today: toDateKey(now),
           goal,
           plan,
+          program: programBrief,
           recentSessions: sessions,
           weightTrend,
           standingRules: standingRulesOut,
@@ -1886,6 +2063,26 @@ function registerReadTools(server: McpServer) {
           frequentFoods,
           byDay,
         };
+      }),
+  );
+
+  server.registerTool(
+    "list_saved_meals",
+    {
+      title: "List the user's saved meals (reusable meal templates)",
+      description:
+        "Every SavedMeal for the current user — id, name, items, macros, defaultServings — sorted by name. " +
+        "Use this to find the savedMealId for log_nutrition(savedMealId, servings), to check whether a name already exists before save_meal (save_meal upserts by name), " +
+        "or to answer 'what meals do I have saved'. The stored items/macros describe defaultServings worth of the meal.",
+    },
+    async () =>
+      safe(async () => {
+        const db = await getDb();
+        const savedMeals = await db.savedMeal.findMany({
+          omit: { userId: true },
+          orderBy: { name: "asc" },
+        });
+        return { count: savedMeals.length, savedMeals };
       }),
   );
 
@@ -2120,7 +2317,10 @@ function registerReadTools(server: McpServer) {
       description:
         "Format a stored workout for sharing or copying — Strong-app txt, Markdown, plain text, or JSON. " +
         "Use when the user asks to share, copy, print, or export a workout, or wants a paste-friendly summary. " +
-        "Default 'strong' format round-trips the import — paste it back into Strong or log_workout and you get the same session.",
+        "Default 'strong' format round-trips the import — paste it back into Strong or log_workout and you get the same session. " +
+        "'json' and 'markdown'/'plain' formats also surface each exercise's and set's real id (json: exercises[].id/sets[].id fields; markdown/plain: an inline '[id: ...]' marker) plus set-level rpe/notes — " +
+        "use those ids with update_workout_exercise, update_workout_set, or workout_ops. " +
+        "'strong' format omits ids/rpe/set-notes to stay byte-identical with the importable Strong txt shape.",
       inputSchema: {
         workoutId: z.string(),
         format: z.enum(["strong", "markdown", "plain", "json"]).default("strong"),
@@ -2138,30 +2338,7 @@ function registerReadTools(server: McpServer) {
             },
           },
         });
-        const text = formatWorkout(
-          {
-            id: w.id,
-            title: w.title,
-            startedAt: w.startedAt,
-            source: w.source,
-            sourceUrl: w.sourceUrl,
-            notes: w.notes,
-            exercises: w.exercises.map((ex) => ({
-              name: ex.name,
-              equipment: ex.equipment,
-              orderIndex: ex.orderIndex,
-              notes: ex.notes,
-              sets: ex.sets.map((s) => ({
-                setIndex: s.setIndex,
-                reps: s.reps,
-                weightLb: s.weightLb,
-                durationSec: s.durationSec,
-                distanceMi: s.distanceMi,
-              })),
-            })),
-          },
-          format as ExportFormat,
-        );
+        const text = formatWorkout(toFormattableWorkout(w), format as ExportFormat);
         return { workoutId, format, text };
       }),
   );
@@ -2433,15 +2610,12 @@ async function guardedAdvanceConfirmedThrough(
     };
   }
 
-  // Derive the current confirmed week index from confirmedThroughDate.
+  // Derive the current confirmed week index from confirmedThroughDate
+  // (rotation-core's canonical daysDelta → weekIndex).
   const currentWeekIdx: number = (() => {
     if (!program.confirmedThroughDate) return 0;
-    const startMid = startOfDay(program.startedOn);
-    const markMid = startOfDay(program.confirmedThroughDate);
-    const delta = Math.floor(
-      (markMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
-    );
-    return delta < 0 ? 0 : Math.floor(delta / 7) + 1;
+    const delta = daysDelta(program.startedOn, program.confirmedThroughDate);
+    return delta < 0 ? 0 : weekIndexOf(delta);
   })();
 
   // C-1: refuse if target is below current mark — use reopen_week instead.
@@ -2511,21 +2685,24 @@ function registerWriteTools(server: McpServer) {
         sourceUrl: z.string().optional(),
         notes: z.string().optional(),
         exercises: z.array(ExerciseInputShape),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
-      safe(async () => {
-        const { id, recordsSet } = await createWorkoutCore({
-          title: input.title,
-          startedAt: new Date(input.startedAt),
-          status: "completed",
-          source: input.source,
-          sourceUrl: input.sourceUrl,
-          notes: input.notes,
-          exercises: input.exercises,
-        });
-        return { id, message: "Workout logged", recordsSet };
-      }),
+      safe(async () =>
+        withWriteReceipt("log_workout", input.requestId, await getDb(), async () => {
+          const { id, recordsSet } = await createWorkoutCore({
+            title: input.title,
+            startedAt: new Date(input.startedAt),
+            status: "completed",
+            source: input.source,
+            sourceUrl: input.sourceUrl,
+            notes: input.notes,
+            exercises: input.exercises,
+          });
+          return { id, message: "Workout logged", recordsSet };
+        }),
+      ),
   );
 
   server.registerTool(
@@ -2550,50 +2727,53 @@ function registerWriteTools(server: McpServer) {
         bodyFatPct: z.number().min(0).max(100).optional(),
         notes: z.string().optional(),
         date: z.string().optional().describe("ISO datetime; default = now"),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
+        return withWriteReceipt("log_measurement", input.requestId, db, async () => {
+          const date = input.date ? parseDateInput(input.date) : startOfDay(new Date());
 
-        // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
-        let rhrRow: { id: string } | undefined;
-        if (input.restingHr !== undefined) {
-          rhrRow = await db.bodyMetric.create({
-            data: {
-              date,
+          // restingHr is deprecated — route to BodyMetric instead of Measurement.restingHr.
+          let rhrRow: { id: string } | undefined;
+          if (input.restingHr !== undefined) {
+            rhrRow = await db.bodyMetric.create({
+              data: {
+                date,
+                key: "rhr",
+                value: input.restingHr,
+                unit: "bpm",
+                source: "claude",
+              },
+            });
+          }
+
+          // Only write a Measurement row when weight or body-fat are provided.
+          if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
+            const m = await db.measurement.create({
+              data: {
+                date,
+                weightLb: input.weightLb ?? null,
+                bodyFatPct: input.bodyFatPct ?? null,
+                notes: input.notes ?? null,
+              },
+            });
+            return { id: m.id, message: "Measurement logged" };
+          }
+
+          // restingHr-only path: return the BodyMetric row id so the coach has a handle.
+          if (rhrRow) {
+            return {
+              id: rhrRow.id,
               key: "rhr",
-              value: input.restingHr,
-              unit: "bpm",
-              source: "claude",
-            },
-          });
-        }
+              message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
+            };
+          }
 
-        // Only write a Measurement row when weight or body-fat are provided.
-        if (input.weightLb !== undefined || input.bodyFatPct !== undefined || input.notes !== undefined) {
-          const m = await db.measurement.create({
-            data: {
-              date,
-              weightLb: input.weightLb ?? null,
-              bodyFatPct: input.bodyFatPct ?? null,
-              notes: input.notes ?? null,
-            },
-          });
-          return { id: m.id, message: "Measurement logged" };
-        }
-
-        // restingHr-only path: return the BodyMetric row id so the coach has a handle.
-        if (rhrRow) {
-          return {
-            id: rhrRow.id,
-            key: "rhr",
-            message: "Resting HR logged as body metric (key='rhr') — use log_body_metric going forward",
-          };
-        }
-
-        return { message: "Measurement logged" };
+          return { message: "Measurement logged" };
+        });
       }),
   );
 
@@ -2668,7 +2848,7 @@ function registerWriteTools(server: McpServer) {
         "Use a testName from the program template's baseline week when applicable so the result joins the existing test schedule; " +
         "use a custom name only for one-off measurements. Each result drives the trend on /baselines/test/[testName] and " +
         "feeds get_baseline_history / get_baseline_schedule. " +
-        "Idempotent per day: logging the same testName again on the same calendar date updates that result in place rather than creating a duplicate row. " +
+        "Idempotent per day: logging the same testName again on the same calendar date updates that result in place rather than creating a duplicate row. If the result was limited by available equipment (e.g. maxed the heaviest dumbbell), pass capped=true so reads/dashboard mark the plateau as expected. " +
         "value must be > 0 — a 0/blank result is rejected as a phantom completion; to deliberately document a DNF / skipped / substituted test, pass allowZero=true (recorded with no workout mirror).",
       inputSchema: {
         testName: z.string(),
@@ -2682,79 +2862,93 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Permit value=0 to document a DNF / skipped / substituted test. Without this, value<=0 is rejected as a phantom completion.",
           ),
+        capped: z
+          .boolean()
+          .optional()
+          .describe(
+            "Set true when the value hit an equipment ceiling (e.g. a 65 lb dumbbell max) — a plateau at this value is expected, not a stall. " +
+              "Display annotation only (defaults to false): surfaces as a 'capped' marker in records/history/schedule reads and the dashboard; NEVER feeds PR or readiness math.",
+          ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // Reject phantom completions: a bare 0 reads as "logged but no real
-        // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
-        // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
-        // reach 6.5 cm short of the toes is -6.5). The linter surfaces value<=0
-        // as a non-blocking warning so signed/legacy values still get a look.
-        if (input.value === 0 && !input.allowZero) {
-          throw new Error(
-            `value=0 for "${input.testName}" looks like a phantom completion. Pass the real measured value, ` +
-              `or set allowZero=true to deliberately record a DNF / skipped / substituted test.`,
-          );
-        }
+        return withWriteReceipt("log_baseline", input.requestId, db, async () => {
+          // Reject phantom completions: a bare 0 reads as "logged but no real
+          // effort" and produces no workout mirror (see appendBaselineToDayWorkout).
+          // Negatives are NOT blocked — signed metrics are real (e.g. a sit-and-
+          // reach 6.5 cm short of the toes is -6.5). The linter surfaces value<=0
+          // as a non-blocking warning so signed/legacy values still get a look.
+          if (input.value === 0 && !input.allowZero) {
+            throw new Error(
+              `value=0 for "${input.testName}" looks like a phantom completion. Pass the real measured value, ` +
+                `or set allowZero=true to deliberately record a DNF / skipped / substituted test.`,
+            );
+          }
 
-        const date = input.date ? parseDateInput(input.date) : new Date();
+          const date = input.date ? parseDateInput(input.date) : new Date();
 
-        // Idempotency: one result per testName per calendar day. A repeat call
-        // updates the existing row in place (mirrors apply_day_override's upsert
-        // and log_hike's finalize-in-place) instead of stacking duplicates.
-        const existing = await db.baseline.findFirst({
-          where: {
-            testName: input.testName,
-            date: { gte: startOfDay(date), lte: endOfDay(date) },
-          },
-          orderBy: { date: "asc" },
-        });
+          // Idempotency: one result per testName per calendar day. A repeat call
+          // updates the existing row in place (mirrors apply_day_override's upsert
+          // and log_hike's finalize-in-place) instead of stacking duplicates.
+          const existing = await db.baseline.findFirst({
+            where: {
+              testName: input.testName,
+              date: { gte: startOfDay(date), lte: endOfDay(date) },
+            },
+            orderBy: { date: "asc" },
+          });
 
-        if (existing) {
-          const updated = await db.baseline.update({
-            where: { id: existing.id },
+          if (existing) {
+            const updated = await db.baseline.update({
+              where: { id: existing.id },
+              data: {
+                value: input.value,
+                units: input.units,
+                date,
+                notes: input.notes ?? null,
+                // Full re-log semantics (mirrors notes): omitting capped on a
+                // re-log clears it rather than sticking stale.
+                capped: input.capped ?? false,
+              },
+            });
+            await syncBaselineUpdateToWorkout({
+              testName: input.testName,
+              oldDate: existing.date,
+              oldValue: existing.value,
+              newDate: date,
+              newValue: input.value,
+              newUnits: input.units,
+              newNotes: input.notes ?? null,
+            });
+            return {
+              id: updated.id,
+              deduped: true,
+              message: `Existing ${input.testName} result on this date updated in place (no duplicate created).`,
+            };
+          }
+
+          const b = await db.baseline.create({
             data: {
+              testName: input.testName,
               value: input.value,
               units: input.units,
               date,
               notes: input.notes ?? null,
+              capped: input.capped ?? false,
             },
           });
-          await syncBaselineUpdateToWorkout({
-            testName: input.testName,
-            oldDate: existing.date,
-            oldValue: existing.value,
-            newDate: date,
-            newValue: input.value,
-            newUnits: input.units,
-            newNotes: input.notes ?? null,
-          });
-          return {
-            id: updated.id,
-            deduped: true,
-            message: `Existing ${input.testName} result on this date updated in place (no duplicate created).`,
-          };
-        }
-
-        const b = await db.baseline.create({
-          data: {
+          await appendBaselineToDayWorkout({
             testName: input.testName,
             value: input.value,
             units: input.units,
             date,
             notes: input.notes ?? null,
-          },
+          });
+          return { id: b.id, deduped: false, message: "Baseline logged (and appended to day's baseline workout)" };
         });
-        await appendBaselineToDayWorkout({
-          testName: input.testName,
-          value: input.value,
-          units: input.units,
-          date,
-          notes: input.notes ?? null,
-        });
-        return { id: b.id, deduped: false, message: "Baseline logged (and appended to day's baseline workout)" };
       }),
   );
 
@@ -2868,23 +3062,26 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Which goal this hike trains (use list_goals to find goal ids). Omit to attribute to the current focus goal. Stored permanently on the hike row — affects calendar markers and goal-level readiness.",
           ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () =>
-        logHikeCore({
-          date: parseDateInput(input.date),
-          route: input.route,
-          distanceMi: input.distanceMi,
-          elevationFt: input.elevationFt,
-          durationMin: input.durationMin,
-          packWeightLb: input.packWeightLb,
-          rpe: input.rpe,
-          status: input.status,
-          notes: input.notes,
-          goalId: input.goalId,
-          replacesPlannedHikeId: input.replacesPlannedHikeId,
-        }),
+        withWriteReceipt("log_hike", input.requestId, await getDb(), () =>
+          logHikeCore({
+            date: parseDateInput(input.date),
+            route: input.route,
+            distanceMi: input.distanceMi,
+            elevationFt: input.elevationFt,
+            durationMin: input.durationMin,
+            packWeightLb: input.packWeightLb,
+            rpe: input.rpe,
+            status: input.status,
+            notes: input.notes,
+            goalId: input.goalId,
+            replacesPlannedHikeId: input.replacesPlannedHikeId,
+          }),
+        ),
       ),
   );
 
@@ -2927,9 +3124,13 @@ function registerWriteTools(server: McpServer) {
       title: "Log a note",
       description:
         "Audible / journal / feedback / standing_rule / review. Set targetDate (yyyy-mm-dd) when the note is *about* a specific future day. When type='standing_rule', lastAcknowledgedAt is stamped to NOW so the rule starts fresh in get_today_plan's freshness ordering. For bulk note creation (e.g. promoting many rules at once), use batch_log_note. For a structured first-class weekly review (surfaced by get_latest_review) use log_review.",
-      inputSchema: LogNoteShape,
+      inputSchema: { ...LogNoteShape, requestId: RequestIdShape },
     },
-    async (input) => safe(async () => logNoteCore(await getDb(), input)),
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("log_note", input.requestId, db, () => logNoteCore(db, input));
+      }),
   );
 
   server.registerTool(
@@ -3013,7 +3214,7 @@ function registerWriteTools(server: McpServer) {
         "Past weeks are skipped in the conflict guard (stale planned hikes are unresolvable). " +
         "Call reopen_week to move the mark backward. Coach-driven only; the app never auto-advances. " +
         "Pass dryRun:true to preview blockedBy and the target mark WITHOUT writing — useful for inspecting conflicts before committing. " +
-        "If the focus goal has no plan (someday goal), this tool operates on the next active plan — set a target date on the someday goal to scaffold its plan first.",
+        "Operates on the active rotation plan (the Program's plan when a Program is active; the focus goal's plan otherwise). If that goal has no plan (someday goal), set a target date on it to scaffold one first.",
       inputSchema: {
         weekIndex: z
           .number()
@@ -3175,10 +3376,18 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Log a meal",
       description:
-        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
-      inputSchema: LogNutritionShape,
+        "Record what the user ate for one meal. Items are food groups/brands (e.g. '97% beef', 'Kroger hamburger buns', 'cheddar cheese', 'frozen vegetables') with optional free-form qty. Pass your best estimated `macros` (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) so the dashboard can total the day's intake vs. target — omit any field you can't estimate. " +
+        "SAVED MEALS: for a frequently-eaten meal saved via save_meal, pass savedMealId (+ servings, default 1) instead of re-entering items/macros — items and macros are derived from the saved meal, scaled by servings ÷ defaultServings. Explicit items/macros passed alongside savedMealId take precedence over the derived values. " +
+        "Use apply_day_override(nutritionText=…) for one-off adjustments or apply_plan_revision (Phase.nutrition.habits) for systemic changes. For logging many meals at once (e.g. a HelloFresh week), use batch_log_nutrition.",
+      inputSchema: { ...LogNutritionShape, requestId: RequestIdShape },
     },
-    async (input) => safe(async () => logNutritionCore(await getDb(), input)),
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        return withWriteReceipt("log_nutrition", input.requestId, db, () =>
+          logNutritionCore(db, input),
+        );
+      }),
   );
 
   server.registerTool(
@@ -3248,54 +3457,57 @@ function registerWriteTools(server: McpServer) {
       inputSchema: {
         id: z.string().describe("NutritionLog.id"),
         ops: z.array(NutritionLogOpSchema).min(1).describe("Operations applied in order to the log's items array."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ id, ops }) =>
+    async ({ id, ops, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const log = await db.nutritionLog.findUniqueOrThrow({ where: { id } });
-        const items = parseStoredItems(log.items);
-        let next: ReturnType<typeof applyNutritionLogOps>;
-        try {
-          next = applyNutritionLogOps(items, ops);
-        } catch (e) {
-          throw new Error(
-            `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
+        return withWriteReceipt("nutrition_log_ops", requestId, db, async () => {
+          const log = await db.nutritionLog.findUniqueOrThrow({ where: { id } });
+          const items = parseStoredItems(log.items);
+          let next: ReturnType<typeof applyNutritionLogOps>;
+          try {
+            next = applyNutritionLogOps(items, ops);
+          } catch (e) {
+            throw new Error(
+              `nutrition_log_ops failed: ${e instanceof Error ? e.message : String(e)}. Nothing was written.`,
+            );
+          }
+          await db.nutritionLog.update({
+            where: { id },
+            data: { items: next as unknown as Prisma.InputJsonValue },
+          });
+          // This tool only rewrites the items array; the stored macro columns are
+          // left untouched. Any op that changes food content or quantity desyncs
+          // the day's totals from the new item list — warn the caller and hand
+          // back the stale macros so they can reconcile via update_nutrition.
+          const macrosMayBeStale = ops.some(
+            (op) =>
+              op.op === "addItem" ||
+              op.op === "removeItem" ||
+              (op.op === "updateItem" && op.patch.qty !== undefined),
           );
-        }
-        await db.nutritionLog.update({
-          where: { id },
-          data: { items: next as unknown as Prisma.InputJsonValue },
+          const baseMessage = `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`;
+          if (!macrosMayBeStale) {
+            return { id, itemCount: next.length, opsApplied: ops.length, items: next, macrosMayBeStale, message: baseMessage };
+          }
+          const storedMacros = Object.fromEntries(
+            MACRO_KEYS.map((k) => [k, (log as Record<string, unknown>)[k] ?? null]),
+          );
+          return {
+            id,
+            itemCount: next.length,
+            opsApplied: ops.length,
+            items: next,
+            macrosMayBeStale,
+            storedMacros,
+            message:
+              baseMessage +
+              " ⚠️ This changed food content/quantity but the stored macros were NOT recomputed — the day's totals are now stale. " +
+              "Reconcile by calling update_nutrition with the corrected macros (current stored values returned as storedMacros).",
+          };
         });
-        // This tool only rewrites the items array; the stored macro columns are
-        // left untouched. Any op that changes food content or quantity desyncs
-        // the day's totals from the new item list — warn the caller and hand
-        // back the stale macros so they can reconcile via update_nutrition.
-        const macrosMayBeStale = ops.some(
-          (op) =>
-            op.op === "addItem" ||
-            op.op === "removeItem" ||
-            (op.op === "updateItem" && op.patch.qty !== undefined),
-        );
-        const baseMessage = `Applied ${ops.length} op${ops.length === 1 ? "" : "s"}; log now has ${next.length} item${next.length === 1 ? "" : "s"}.`;
-        if (!macrosMayBeStale) {
-          return { id, itemCount: next.length, opsApplied: ops.length, items: next, macrosMayBeStale, message: baseMessage };
-        }
-        const storedMacros = Object.fromEntries(
-          MACRO_KEYS.map((k) => [k, (log as Record<string, unknown>)[k] ?? null]),
-        );
-        return {
-          id,
-          itemCount: next.length,
-          opsApplied: ops.length,
-          items: next,
-          macrosMayBeStale,
-          storedMacros,
-          message:
-            baseMessage +
-            " ⚠️ This changed food content/quantity but the stored macros were NOT recomputed — the day's totals are now stale. " +
-            "Reconcile by calling update_nutrition with the corrected macros (current stored values returned as storedMacros).",
-        };
       }),
   );
 
@@ -3310,9 +3522,111 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        await db.nutritionLog.delete({ where: { id } });
+        await deleteNutritionCore(id); // also cleans ActivityGoalLink rows (#272)
         return { id, message: "Nutrition deleted" };
+      }),
+  );
+
+  server.registerTool(
+    "save_meal",
+    {
+      title: "Save a reusable meal (upsert by name)",
+      description:
+        "Save a frequently-eaten meal ONCE so it can be re-logged by reference via log_nutrition(savedMealId, servings) without re-entering items and macros — e.g. 'Protein Brookie', 'Chipotle Protein Bowl'. " +
+        "UPSERT BY NAME (per user): one saved meal per name — saving a name that already exists (case-insensitive match) REPLACES that meal's items/macros/defaultServings in place and keeps the newly passed casing; no duplicate is created. Omitting macros on a re-save clears any stored macros. " +
+        "items + macros should describe defaultServings worth of the meal (defaultServings defaults to 1); log_nutrition scales macros by servings ÷ defaultServings at log time. " +
+        "Browse with list_saved_meals; remove with delete_saved_meal.",
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            "Meal name, unique per user (e.g. 'Protein Brookie'). Re-saving an existing name (case-insensitive) updates that meal in place.",
+          ),
+        items: z
+          .array(NutritionItemShape)
+          .min(1)
+          .describe("Food items for defaultServings worth of the meal — same shape as log_nutrition items."),
+        macros: PlannedMealMacrosShape.optional().describe(
+          "Estimated macros (calories/proteinG/carbsG/fatG/fiberG/sodiumMg) for defaultServings worth of the meal. Omit fields you can't estimate; omitting the whole object stores no macros (and clears them on a re-save).",
+        ),
+        defaultServings: z
+          .number()
+          .positive()
+          .optional()
+          .describe(
+            "How many servings the stored items/macros describe (default 1). log_nutrition scales macros by servings ÷ this value.",
+          ),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const db = await getDb();
+        const name = input.name.trim();
+        // Zod already rejects the empty string; this catches whitespace-only.
+        if (!name) throw new Error("save_meal requires a non-empty name.");
+
+        // Upsert-by-name: the scoped client injects userId into the where, so
+        // the case-insensitive match only ever sees the caller's own meals.
+        const existing = await db.savedMeal.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+        });
+
+        const defaultServings = input.defaultServings ?? 1;
+        if (existing) {
+          const updated = await db.savedMeal.update({
+            where: { id: existing.id },
+            data: {
+              name, // latest casing wins
+              items: input.items as Prisma.InputJsonValue,
+              // Replace semantics: a re-save describes the meal fully — an
+              // omitted macros object clears any previously stored macros.
+              macros:
+                input.macros === undefined
+                  ? Prisma.DbNull
+                  : (input.macros as Prisma.InputJsonValue),
+              defaultServings,
+            },
+          });
+          return {
+            id: updated.id,
+            name: updated.name,
+            updated: true,
+            message: `Saved meal "${updated.name}" updated in place (upsert-by-name — no duplicate created).`,
+          };
+        }
+
+        const created = await db.savedMeal.create({
+          data: {
+            name,
+            items: input.items as Prisma.InputJsonValue,
+            ...(input.macros !== undefined && { macros: input.macros as Prisma.InputJsonValue }),
+            defaultServings,
+          },
+        });
+        return {
+          id: created.id,
+          name: created.name,
+          updated: false,
+          message: `Saved meal "${created.name}" created. Log it via log_nutrition(savedMealId: "${created.id}", servings).`,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "delete_saved_meal",
+    {
+      title: "Delete a saved meal",
+      description:
+        "Permanently remove a SavedMeal by id (look ids up via list_saved_meals). " +
+        "Past NutritionLog rows that were logged from it are untouched — this only removes the reusable template.",
+      inputSchema: { id: z.string().describe("SavedMeal.id from list_saved_meals") },
+    },
+    async ({ id }) =>
+      safe(async () => {
+        const db = await getDb();
+        await db.savedMeal.delete({ where: { id } });
+        return { id, message: "Saved meal deleted" };
       }),
   );
 
@@ -3344,120 +3658,126 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "When true and the snapshot's totalWeeks differs from Plan.weeks, also update Plan.weeks and Plan.endsOn (= startedOn + totalWeeks*7) in the same transaction, so the calendar's week counter and plan range stay in sync. Does not touch Goal.targetDate.",
           ),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
-        // Auto-recover then validate structural shape.
-        let snapshot: unknown = input.snapshotJson;
-        if (typeof snapshot === "string") {
-          try {
-            snapshot = JSON.parse(snapshot);
-          } catch {
+        return withWriteReceipt("apply_plan_revision", input.requestId, db, async (storeReceipt) => {
+          // Common mistake: Claude passes snapshotJson as a JSON-encoded string.
+          // Auto-recover then validate structural shape.
+          let snapshot: unknown = input.snapshotJson;
+          if (typeof snapshot === "string") {
+            try {
+              snapshot = JSON.parse(snapshot);
+            } catch {
+              throw new Error(
+                "snapshotJson was passed as a string but isn't valid JSON. Pass the ProgramTemplate as a plain object.",
+              );
+            }
+          }
+          assertValidProgramTemplate(snapshot);
+
+          const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
+          const template = snapshot as ProgramTemplate;
+
+          // Lint the proposed snapshot before writing. Structural errors block;
+          // warnings ride along in the response. goalTargetDate isn't used by the
+          // template-only rules, so the plan end stands in here.
+          const lintFindings: LintFinding[] = lintTemplate(template, {
+            weeks: plan.weeks,
+            endsOn: plan.endsOn,
+            startedOn: plan.startedOn,
+            goalTargetDate: plan.endsOn,
+          });
+          const lintErrors = lintFindings.filter((f) => f.severity === "error");
+          if (lintErrors.length > 0) {
             throw new Error(
-              "snapshotJson was passed as a string but isn't valid JSON. Pass the ProgramTemplate as a plain object.",
+              `Refusing to apply: the snapshot has ${lintErrors.length} structural error(s). ` +
+                lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+                " Fix the template and retry.",
             );
           }
-        }
-        assertValidProgramTemplate(snapshot);
+          const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+          // Note: "info" findings (e.g. multiple-hikes-one-week from lintActivePlan) are
+          // intentionally excluded here — lintTemplate never produces info findings, and
+          // advisory info items must not block revisions.
 
-        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
-        const template = snapshot as ProgramTemplate;
+          // Metadata drift / Phase-5 cascade.
+          const totalWeeks = template.totalWeeks;
+          const weeksChanged = totalWeeks !== plan.weeks;
+          const expectedEndsOn = startOfDay(addDays(plan.startedOn, totalWeeks * 7));
+          const willCascade = weeksChanged && input.cascadeMetadata === true;
 
-        // Lint the proposed snapshot before writing. Structural errors block;
-        // warnings ride along in the response. goalTargetDate isn't used by the
-        // template-only rules, so the plan end stands in here.
-        const lintFindings: LintFinding[] = lintTemplate(template, {
-          weeks: plan.weeks,
-          endsOn: plan.endsOn,
-          startedOn: plan.startedOn,
-          goalTargetDate: plan.endsOn,
-        });
-        const lintErrors = lintFindings.filter((f) => f.severity === "error");
-        if (lintErrors.length > 0) {
-          throw new Error(
-            `Refusing to apply: the snapshot has ${lintErrors.length} structural error(s). ` +
-              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
-              " Fix the template and retry.",
-          );
-        }
-        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
-        // Note: "info" findings (e.g. multiple-hikes-one-week from lintActivePlan) are
-        // intentionally excluded here — lintTemplate never produces info findings, and
-        // advisory info items must not block revisions.
+          // Surface drift so the two can't silently diverge even when the coach
+          // didn't opt into the cascade. Computed from pre-transaction values —
+          // hoisted above the transaction so the full response payload can be
+          // assembled inside it for the atomic receipt write.
+          const metadataDrift = weeksChanged
+            ? {
+                planWeeks: plan.weeks,
+                snapshotTotalWeeks: totalWeeks,
+                currentEndsOn: toDateKey(plan.endsOn),
+                expectedEndsOn: toDateKey(expectedEndsOn),
+                cascaded: willCascade,
+                ...(willCascade
+                  ? {}
+                  : { fix: "Call update_plan_metadata to sync Plan.weeks/endsOn (and Goal.targetDate if the goal date moved)." }),
+              }
+            : null;
 
-        // Metadata drift / Phase-5 cascade.
-        const totalWeeks = template.totalWeeks;
-        const weeksChanged = totalWeeks !== plan.weeks;
-        const expectedEndsOn = startOfDay(addDays(plan.startedOn, totalWeeks * 7));
-        const willCascade = weeksChanged && input.cascadeMetadata === true;
-
-        const resolveIds = [
-          ...new Set([
-            ...(input.resolvedNoteIds ?? []),
-            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
-          ]),
-        ];
-        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
-          const r = await tx.planRevision.create({
-            data: {
-              planId: plan.id,
-              triggerNoteId: input.triggerNoteId ?? null,
-              triggerSource: input.triggerSource,
-              summary: input.summary,
-              reasoning: input.reasoning,
-              snapshotJson: snapshot as Prisma.InputJsonValue,
-            },
-          });
-          await tx.plan.update({
-            where: { id: plan.id },
-            data: {
-              planJson: snapshot as Prisma.InputJsonValue,
-              ...(willCascade ? { weeks: totalWeeks, endsOn: expectedEndsOn } : {}),
-            },
-          });
-          let resolvedCount = 0;
-          if (resolveIds.length > 0) {
-            const update = await tx.note.updateMany({
-              where: { id: { in: resolveIds }, resolvedAt: null },
+          const resolveIds = [
+            ...new Set([
+              ...(input.resolvedNoteIds ?? []),
+              ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+            ]),
+          ];
+          return db.$transaction(async (tx) => {
+            const r = await tx.planRevision.create({
               data: {
-                resolvedAt: r.createdAt,
-                resolvedReason: `applied via revision ${r.id}`,
+                planId: plan.id,
+                triggerNoteId: input.triggerNoteId ?? null,
+                triggerSource: input.triggerSource,
+                summary: input.summary,
+                reasoning: input.reasoning,
+                snapshotJson: snapshot as Prisma.InputJsonValue,
               },
             });
-            resolvedCount = update.count;
-          }
-          return { rev: r, resolvedCount };
-        });
-
-        // Surface drift so the two can't silently diverge even when the coach
-        // didn't opt into the cascade.
-        const metadataDrift = weeksChanged
-          ? {
-              planWeeks: plan.weeks,
-              snapshotTotalWeeks: totalWeeks,
-              currentEndsOn: toDateKey(plan.endsOn),
-              expectedEndsOn: toDateKey(expectedEndsOn),
-              cascaded: willCascade,
-              ...(willCascade
-                ? {}
-                : { fix: "Call update_plan_metadata to sync Plan.weeks/endsOn (and Goal.targetDate if the goal date moved)." }),
+            await tx.plan.update({
+              where: { id: plan.id },
+              data: {
+                planJson: snapshot as Prisma.InputJsonValue,
+                ...(willCascade ? { weeks: totalWeeks, endsOn: expectedEndsOn } : {}),
+              },
+            });
+            let resolvedCount = 0;
+            if (resolveIds.length > 0) {
+              const update = await tx.note.updateMany({
+                where: { id: { in: resolveIds }, resolvedAt: null },
+                data: {
+                  resolvedAt: r.createdAt,
+                  resolvedReason: `applied via revision ${r.id}`,
+                },
+              });
+              resolvedCount = update.count;
             }
-          : null;
-
-        return {
-          revisionId: rev.id,
-          resolvedNoteCount: resolvedCount,
-          warnings: lintWarnings,
-          metadataDrift,
-          message:
-            `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}` +
-            (willCascade ? ` — Plan.weeks/endsOn synced to ${totalWeeks}w.` : "") +
-            (metadataDrift && !willCascade ? " — metadata drift detected (see metadataDrift); follow up with update_plan_metadata." : "") +
-            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
-        };
+            const payload = {
+              revisionId: r.id,
+              resolvedNoteCount: resolvedCount,
+              warnings: lintWarnings,
+              metadataDrift,
+              message:
+                `Plan revision applied${resolvedCount > 0 ? ` (resolved ${resolvedCount} note(s))` : ""}` +
+                (willCascade ? ` — Plan.weeks/endsOn synced to ${totalWeeks}w.` : "") +
+                (metadataDrift && !willCascade ? " — metadata drift detected (see metadataDrift); follow up with update_plan_metadata." : "") +
+                (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
+            };
+            // Last op in the tx: the receipt commits atomically with the revision.
+            await storeReceipt(tx, payload);
+            return payload;
+          });
+        });
       }),
   );
 
@@ -3552,89 +3872,93 @@ function registerWriteTools(server: McpServer) {
           .array(z.string())
           .optional()
           .describe("Notes addressed by this edit — marked resolved in the same transaction."),
+        requestId: RequestIdShape,
       },
     },
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
+        return withWriteReceipt("baseline_ops", input.requestId, db, async (storeReceipt) => {
+          const plan = await db.plan.findUniqueOrThrow({ where: { id: input.planId } });
 
-        // The live snapshot should already be valid (apply_plan_revision gates
-        // every write), but assert before patching so a malformed planJson fails
-        // loudly here rather than producing a half-typed result.
-        const current: unknown = plan.planJson;
-        assertValidProgramTemplate(current);
-        const tpl = current as ProgramTemplate;
+          // The live snapshot should already be valid (apply_plan_revision gates
+          // every write), but assert before patching so a malformed planJson fails
+          // loudly here rather than producing a half-typed result.
+          const current: unknown = plan.planJson;
+          assertValidProgramTemplate(current);
+          const tpl = current as ProgramTemplate;
 
-        const { baselineWeek, changes } = applyBaselineOps(tpl.baselineWeek, input.ops);
-        const next: ProgramTemplate = { ...tpl, baselineWeek };
-        assertValidProgramTemplate(next);
+          const { baselineWeek, changes } = applyBaselineOps(tpl.baselineWeek, input.ops);
+          const next: ProgramTemplate = { ...tpl, baselineWeek };
+          assertValidProgramTemplate(next);
 
-        // Same lint gate as apply_plan_revision: errors block, warnings ride along.
-        const lintFindings: LintFinding[] = lintTemplate(next, {
-          weeks: plan.weeks,
-          endsOn: plan.endsOn,
-          startedOn: plan.startedOn,
-          goalTargetDate: plan.endsOn,
-        });
-        const lintErrors = lintFindings.filter((f) => f.severity === "error");
-        if (lintErrors.length > 0) {
-          throw new Error(
-            `Refusing to apply: the patched baseline has ${lintErrors.length} structural error(s). ` +
-              lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
-              " Adjust the ops and retry.",
-          );
-        }
-        const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
-
-        const summary = input.summary ?? summarizeBaselineChanges(changes);
-        const reasoning = input.reasoning ?? "Baseline test edit via baseline_ops.";
-        const resolveIds = [
-          ...new Set([
-            ...(input.resolvedNoteIds ?? []),
-            ...(input.triggerNoteId ? [input.triggerNoteId] : []),
-          ]),
-        ];
-
-        const { rev, resolvedCount } = await db.$transaction(async (tx) => {
-          const r = await tx.planRevision.create({
-            data: {
-              planId: plan.id,
-              triggerNoteId: input.triggerNoteId ?? null,
-              triggerSource: input.triggerSource,
-              summary,
-              reasoning,
-              snapshotJson: next as Prisma.InputJsonValue,
-            },
+          // Same lint gate as apply_plan_revision: errors block, warnings ride along.
+          const lintFindings: LintFinding[] = lintTemplate(next, {
+            weeks: plan.weeks,
+            endsOn: plan.endsOn,
+            startedOn: plan.startedOn,
+            goalTargetDate: plan.endsOn,
           });
-          await tx.plan.update({
-            where: { id: plan.id },
-            data: { planJson: next as Prisma.InputJsonValue },
-          });
-          let resolvedCount = 0;
-          if (resolveIds.length > 0) {
-            const update = await tx.note.updateMany({
-              where: { id: { in: resolveIds }, resolvedAt: null },
+          const lintErrors = lintFindings.filter((f) => f.severity === "error");
+          if (lintErrors.length > 0) {
+            throw new Error(
+              `Refusing to apply: the patched baseline has ${lintErrors.length} structural error(s). ` +
+                lintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" ") +
+                " Adjust the ops and retry.",
+            );
+          }
+          const lintWarnings = lintFindings.filter((f) => f.severity === "warning");
+
+          const summary = input.summary ?? summarizeBaselineChanges(changes);
+          const reasoning = input.reasoning ?? "Baseline test edit via baseline_ops.";
+          const resolveIds = [
+            ...new Set([
+              ...(input.resolvedNoteIds ?? []),
+              ...(input.triggerNoteId ? [input.triggerNoteId] : []),
+            ]),
+          ];
+
+          return db.$transaction(async (tx) => {
+            const r = await tx.planRevision.create({
               data: {
-                resolvedAt: r.createdAt,
-                resolvedReason: `applied via revision ${r.id}`,
+                planId: plan.id,
+                triggerNoteId: input.triggerNoteId ?? null,
+                triggerSource: input.triggerSource,
+                summary,
+                reasoning,
+                snapshotJson: next as Prisma.InputJsonValue,
               },
             });
-            resolvedCount = update.count;
-          }
-          return { rev: r, resolvedCount };
+            await tx.plan.update({
+              where: { id: plan.id },
+              data: { planJson: next as Prisma.InputJsonValue },
+            });
+            let resolvedCount = 0;
+            if (resolveIds.length > 0) {
+              const update = await tx.note.updateMany({
+                where: { id: { in: resolveIds }, resolvedAt: null },
+                data: {
+                  resolvedAt: r.createdAt,
+                  resolvedReason: `applied via revision ${r.id}`,
+                },
+              });
+              resolvedCount = update.count;
+            }
+            const payload = {
+              revisionId: r.id,
+              changes,
+              resolvedNoteCount: resolvedCount,
+              warnings: lintWarnings,
+              message:
+                `${changes.length} baseline edit(s) applied via revision ${r.id}.` +
+                (resolvedCount > 0 ? ` Resolved ${resolvedCount} note(s).` : "") +
+                (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
+            };
+            // Last op in the tx: the receipt commits atomically with the revision.
+            await storeReceipt(tx, payload);
+            return payload;
+          });
         });
-
-        return {
-          revisionId: rev.id,
-          changes,
-          resolvedNoteCount: resolvedCount,
-          warnings: lintWarnings,
-          message:
-            `${changes.length} baseline edit(s) applied via revision ${rev.id}.` +
-            (resolvedCount > 0 ? ` Resolved ${resolvedCount} note(s).` : "") +
-            (lintWarnings.length > 0 ? ` ${lintWarnings.length} lint warning(s).` : ""),
-        };
       }),
   );
 
@@ -3830,13 +4154,21 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Update a logged baseline result",
       description:
-        "Fix a baseline value/units/date/notes after the fact. Common when the user logs a misinterpreted score (e.g. total weight instead of per-DB).",
+        "Fix a baseline value/units/date/notes after the fact. Common when the user logs a misinterpreted score (e.g. total weight instead of per-DB). " +
+        "Also toggles the capped marker (equipment-ceiling annotation) on an existing result. Patch semantics: only fields you pass are changed.",
       inputSchema: {
         id: z.string(),
         value: z.number().optional(),
         units: z.string().optional(),
         date: z.string().optional().describe("ISO datetime"),
         notes: z.string().nullable().optional(),
+        capped: z
+          .boolean()
+          .optional()
+          .describe(
+            "Toggle the equipment-ceiling marker after the fact — true when the value hit a fixed load cap (e.g. 65 lb DB), so a plateau there is expected, not a stall. " +
+              "Display annotation only; never feeds PR or readiness math. Omit to leave unchanged.",
+          ),
       },
     },
     async (input) =>
@@ -3847,6 +4179,7 @@ function registerWriteTools(server: McpServer) {
         if (input.units !== undefined) data.units = input.units;
         if (input.date !== undefined) data.date = parseDateInput(input.date);
         if (input.notes !== undefined) data.notes = input.notes;
+        if (input.capped !== undefined) data.capped = input.capped;
         const before = await db.baseline.findUniqueOrThrow({ where: { id: input.id } });
         const updated = await db.baseline.update({ where: { id: input.id }, data });
         await syncBaselineUpdateToWorkout({
@@ -4078,8 +4411,7 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        await db.measurement.delete({ where: { id } });
+        await deleteMeasurementCore(id); // also cleans ActivityGoalLink rows (#272)
         return { id, message: "Measurement deleted" };
       }),
   );
@@ -4097,10 +4429,9 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        const row = await db.baseline.findUniqueOrThrow({ where: { id } });
-        await db.baseline.delete({ where: { id } });
-        await removeBaselineFromDayWorkout({ testName: row.testName, date: row.date });
+        // Core deletes the row + its ActivityGoalLink rows and syncs the day's
+        // mirrored baseline workout (#272).
+        await deleteBaselineCore(id);
         return { id, message: "Baseline deleted (workout synced)" };
       }),
   );
@@ -4116,18 +4447,13 @@ function registerWriteTools(server: McpServer) {
     },
     async ({ id }) =>
       safe(async () => {
-        const db = await getDb();
-        // Capture the date before deletion so we can check for a mirror override the delete
-        // would strand (object rows and their mirror overrides aren't linked — see
-        // override-integrity.ts).
-        const existing = await db.hike.findUnique({
-          where: { id },
-          select: { date: true },
-        });
-        await db.hike.delete({ where: { id } });
+        // Core captures the date before deletion (for the mirror-override
+        // check below) and cleans ActivityGoalLink rows in the same
+        // transaction as the row delete (#272).
+        const { date } = await deleteHikeCore(id);
         let message = "Hike deleted";
-        if (existing) {
-          const warn = await orphanedOverrideWarning(existing.date);
+        if (date) {
+          const warn = await orphanedOverrideWarning(date);
           if (warn) message += ` — ${warn}`;
         }
         return { id, message };
@@ -4275,11 +4601,12 @@ function registerWriteTools(server: McpServer) {
         // 3. Day context for weekIndex + todayTask
         const r = await resolveDay(dayStart);
 
-        // 4. Focus goal for narrative caption
-        const focusGoal = await db.goal.findFirst({
-          where: { isFocus: true, active: true },
-          select: { objective: true, kind: true },
-        });
+        // 4. Narrative-caption goal (#300): the rotation owner under a
+        //    Program, legacy focus goal otherwise — the caption names the
+        //    goal the day actually served. (The old query's extra
+        //    `active: true` belt is covered by invariant: the focus goal
+        //    cannot be untracked, and a rotation owner's plan is active.)
+        const focusGoal = (await getRotationOwnerGoal()).goal;
 
         // 5. Footage markers — highlight-first, then capturedAt asc, then createdAt asc
         const rawMarkers = await db.footageMarker.findMany({
@@ -4392,7 +4719,7 @@ function registerWriteTools(server: McpServer) {
       title: "Edit one exercise on a logged workout",
       description:
         "PATCH-style update for a single WorkoutExercise row (one exercise within a logged session). " +
-        "Pass the exercise's id (look it up via export_workout). Edits name, equipment, notes, or orderIndex. " +
+        "Pass the exercise's id (look it up via export_workout with format:'json' or 'markdown' — the default 'strong' format omits ids). Edits name, equipment, notes, or orderIndex. " +
         "Does NOT add or remove exercises and does NOT touch sets — use update_workout_set for set-level edits. " +
         "null clears nullable fields (equipment, notes). Returns the list of fields actually changed.",
       inputSchema: {
@@ -4429,7 +4756,7 @@ function registerWriteTools(server: McpServer) {
       title: "Edit one set on a logged workout",
       description:
         "PATCH-style update for a single Set row (one set within a logged exercise). " +
-        "Pass the set's id (look it up via export_workout). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. " +
+        "Pass the set's id (look it up via export_workout with format:'json' or 'markdown' — the default 'strong' format omits ids). Edits setIndex, reps, weightLb, durationSec, distanceMi, rpe, or notes. " +
         "Use to correct a mis-logged rep count, weight, RPE, or annotation without re-logging the whole workout. " +
         "null clears nullable fields (all metric fields and notes). Returns the list of fields actually changed.",
       inputSchema: {
@@ -4470,13 +4797,16 @@ function registerWriteTools(server: McpServer) {
         "{op:'removeExercise', exerciseId} — drops one WorkoutExercise (cascade-deletes its sets). " +
         "{op:'addSet', workoutExerciseId, set:{setIndex?, reps?, weightLb?, durationSec?, distanceMi?, rpe?, notes?}} — adds a set (setIndex defaults to max+1). " +
         "{op:'removeSet', setId} — drops one set. " +
-        "Look up IDs via export_workout. For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
+        "Look up IDs via export_workout with format:'json' or 'markdown' (the default 'strong' format omits ids). For pure metric edits (changing a rep count, fixing a title), prefer update_workout / update_workout_set — they're simpler and don't need the transaction.",
       inputSchema: {
         ops: z.array(WorkoutOpSchema).min(1).describe("Operations applied in order, atomically."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ ops }) =>
-      safe(async () => workoutOpsCore(ops)),
+    async ({ ops, requestId }) =>
+      safe(async () =>
+        withWriteReceipt("workout_ops", requestId, await getDb(), () => workoutOpsCore(ops)),
+      ),
   );
 
   server.registerTool(
@@ -4575,7 +4905,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Create a new goal (with optional legend, targets, and attribution hints)",
       description:
-        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists — use setFocusGoal from the app UI to explicitly switch focus. Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists, and it does NOT join any Program — under an active Program the day keeps being driven by the Program's rotation-owning goal regardless of focus. To make the new goal drive Today: for Program users, attach it with attach_goal_to_program (or manage Programs via create_program / update_program / set_program_status); for tenants without a Program, use the set_active_goal compat shim (propose-before-switching covenant applies — and mind its blast radius: switching focus into a DIFFERENT Program deactivates the entire current one). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). Plan scaffolding for DATED fitness goals is Program-aware: with an ACTIVE Program nothing is auto-scaffolded (the Program owns the rotation — no generic template battery is stamped); with no active Program the legacy generic program-template plan is scaffolded to the target date. Pass `scaffoldPlan` to override either default; the result's `scaffolded` field reports what actually happened. If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape.optional().describe(
@@ -4627,9 +4957,20 @@ function registerWriteTools(server: McpServer) {
           "Requires kind='project'; ignored when `targets` is provided. " +
           "Cannot be combined with copyFromGoalId unless explicit targets are provided."
         ),
+        scaffoldPlan: z
+          .boolean()
+          .optional()
+          .describe(
+            "Override the plan-scaffolding default for a DATED FITNESS goal. Omitted (default): Program-aware — " +
+              "tenants with an ACTIVE Program get NO auto-scaffolded plan (the Program owns the rotation; the generic " +
+              "program-template baseline battery is never stamped), while tenants with no active Program keep the legacy " +
+              "auto-scaffold (generic program-template plan sized to the target date). " +
+              "true = force the scaffold even under an active Program; false = suppress it even with no Program. " +
+              "Ignored for someday (no targetDate) and project goals — they never scaffold a plan.",
+          ),
       },
     },
-    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints, template }) =>
+    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints, template, scaffoldPlan }) =>
       safe(async () => {
         const parsedDate = targetDate ? parseDateInput(targetDate) : null;
 
@@ -4640,7 +4981,7 @@ function registerWriteTools(server: McpServer) {
         const resolvedTargets = resolveTemplateTargets({ template, targets, kind, copyFromGoalId });
         const seededFromTemplate = template !== undefined && targets === undefined;
 
-        const { goal, planId } = await createGoalCore({
+        const { goal, planId, scaffolded } = await createGoalCore({
           objective,
           targetDate: parsedDate,
           notes,
@@ -4650,6 +4991,7 @@ function registerWriteTools(server: McpServer) {
           targets: resolvedTargets,
           coachFeasibility,
           attributionHints,
+          scaffoldPlan,
         });
 
         // Non-blocking stack warning — compute after create so the new goal is included.
@@ -4677,13 +5019,23 @@ function registerWriteTools(server: McpServer) {
           `Goal created: ${objective}` +
           `${legend && legend.length > 0 ? " (with custom legend)" : ""}` +
           `${seededFromTemplate ? " (seeded from career template)" : ""}`;
+        // B7/G7: name the suppression when a DATED FITNESS goal did not
+        // scaffold — either the caller said so (scaffoldPlan:false) or the
+        // Program-aware default kicked in. Project/someday messages unchanged.
+        const suppressedNote =
+          parsedDate !== null && kind === "fitness" && !scaffolded
+            ? scaffoldPlan === false
+              ? " (no plan scaffolded — suppressed by scaffoldPlan:false)"
+              : " (no plan auto-scaffolded — an active Program owns the rotation; pass scaffoldPlan:true to force the generic template plan)"
+            : "";
         const message = parsedDate === null
           ? `${baseMsg} (someday — no plan scaffolded; add a target date later to scaffold one)`
-          : baseMsg;
+          : `${baseMsg}${suppressedNote}`;
 
         return {
           goalId: goal.id,
           planId,
+          scaffolded,
           message,
           stackWarning,
         };
@@ -4754,7 +5106,7 @@ function registerWriteTools(server: McpServer) {
       description:
         "Log multiple meals in one all-or-nothing transaction. " +
         "Use for bulk meal entry — a full HelloFresh week, prepped meal-prep schedule, or replaying meals from a paper log. " +
-        "Each operation has the same shape as a single log_nutrition call (mealType, items[], notes?, macros?, date?). " +
+        "Each operation has the same shape as a single log_nutrition call (mealType, items[]?, notes?, macros?, date?, savedMealId?, servings?) — saved-meal references resolve inside the transaction with the same scaling/precedence rules as log_nutrition. " +
         `Max ${MAX_BATCH_SIZE} operations per call. On any failure the entire batch rolls back; the response names the failing index and the underlying error.`,
       inputSchema: {
         operations: z
@@ -4762,31 +5114,36 @@ function registerWriteTools(server: McpServer) {
           .min(1)
           .max(MAX_BATCH_SIZE)
           .describe("Array of log_nutrition inputs, applied sequentially in one txn."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ operations }) =>
+    async ({ operations, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const results = await db.$transaction(async (tx) => {
-          const out: { id: string; message: string }[] = [];
-          for (let i = 0; i < operations.length; i++) {
-            try {
-              out.push(await logNutritionCore(tx, operations[i]!));
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              throw new Error(
-                `batch_log_nutrition failed at operation [${i}]: ${msg}. ` +
-                  `Transaction rolled back; no meals were logged. Fix this op and retry.`,
-              );
+        return withWriteReceipt("batch_log_nutrition", requestId, db, (storeReceipt) =>
+          db.$transaction(async (tx) => {
+            const out: { id: string; message: string }[] = [];
+            for (let i = 0; i < operations.length; i++) {
+              try {
+                out.push(await logNutritionCore(tx, operations[i]!));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(
+                  `batch_log_nutrition failed at operation [${i}]: ${msg}. ` +
+                    `Transaction rolled back; no meals were logged. Fix this op and retry.`,
+                );
+              }
             }
-          }
-          return out;
-        });
-        return {
-          applied: results.length,
-          results,
-          message: `Batch logged ${results.length} meal${results.length === 1 ? "" : "s"} atomically.`,
-        };
+            const payload = {
+              applied: out.length,
+              results: out,
+              message: `Batch logged ${out.length} meal${out.length === 1 ? "" : "s"} atomically.`,
+            };
+            // Last op in the tx: the receipt commits atomically with the batch.
+            await storeReceipt(tx, payload);
+            return payload;
+          }),
+        );
       }),
   );
 
@@ -4805,31 +5162,36 @@ function registerWriteTools(server: McpServer) {
           .min(1)
           .max(MAX_BATCH_SIZE)
           .describe("Array of log_note inputs, applied sequentially in one txn."),
+        requestId: RequestIdShape,
       },
     },
-    async ({ operations }) =>
+    async ({ operations, requestId }) =>
       safe(async () => {
         const db = await getDb();
-        const results = await db.$transaction(async (tx) => {
-          const out: { id: string; message: string }[] = [];
-          for (let i = 0; i < operations.length; i++) {
-            try {
-              out.push(await logNoteCore(tx, operations[i]!));
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              throw new Error(
-                `batch_log_note failed at operation [${i}]: ${msg}. ` +
-                  `Transaction rolled back; no notes were logged. Fix this op and retry.`,
-              );
+        return withWriteReceipt("batch_log_note", requestId, db, (storeReceipt) =>
+          db.$transaction(async (tx) => {
+            const out: { id: string; message: string }[] = [];
+            for (let i = 0; i < operations.length; i++) {
+              try {
+                out.push(await logNoteCore(tx, operations[i]!));
+              } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                throw new Error(
+                  `batch_log_note failed at operation [${i}]: ${msg}. ` +
+                    `Transaction rolled back; no notes were logged. Fix this op and retry.`,
+                );
+              }
             }
-          }
-          return out;
-        });
-        return {
-          applied: results.length,
-          results,
-          message: `Batch logged ${results.length} note${results.length === 1 ? "" : "s"} atomically.`,
-        };
+            const payload = {
+              applied: out.length,
+              results: out,
+              message: `Batch logged ${out.length} note${out.length === 1 ? "" : "s"} atomically.`,
+            };
+            // Last op in the tx: the receipt commits atomically with the batch.
+            await storeReceipt(tx, payload);
+            return payload;
+          }),
+        );
       }),
   );
 
@@ -4879,11 +5241,19 @@ function registerWriteTools(server: McpServer) {
           resolvedFingerprint = matching[0].fingerprint ?? fingerprintFinding(rule, matching[0].context);
         }
 
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        if (!plan) throw new Error("No active plan found for the focus goal.");
+        // #300: the SAME rotation plan lint_plan runs on — getActiveProgram()
+        // (snapshot.id is a Plan id, frozen #277 contract), matching
+        // lintActivePlan's own #297 resolution so an ack always lands on the
+        // plan whose findings it suppresses.
+        const programSnapshot = await getActiveProgram();
+        const plan = programSnapshot
+          ? await db.plan.findFirst({ where: { id: programSnapshot.id } })
+          : null;
+        if (!plan) {
+          throw new Error(
+            "No active rotation plan found — the active Program has no rotation (or no plan is active). Nothing to acknowledge against.",
+          );
+        }
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -4934,11 +5304,17 @@ function registerWriteTools(server: McpServer) {
         if (rule === undefined && fingerprint === undefined) {
           throw new Error("Provide at least one of `rule` or `fingerprint`.");
         }
-        const plan = await db.plan.findFirst({
-          where: { active: true, goal: { isFocus: true } },
-          orderBy: { updatedAt: "desc" },
-        });
-        if (!plan) throw new Error("No active plan found for the focus goal.");
+        // #300: same rotation-plan resolution as acknowledge_lint_finding /
+        // lintActivePlan above — one source of truth for "the linted plan".
+        const programSnapshot = await getActiveProgram();
+        const plan = programSnapshot
+          ? await db.plan.findFirst({ where: { id: programSnapshot.id } })
+          : null;
+        if (!plan) {
+          throw new Error(
+            "No active rotation plan found — the active Program has no rotation (or no plan is active). Nothing to clear.",
+          );
+        }
         const existing: LintAcknowledgement[] = Array.isArray(plan.lintAcknowledgements)
           ? (plan.lintAcknowledgements as LintAcknowledgement[])
           : [];
@@ -4989,7 +5365,7 @@ function registerWriteTools(server: McpServer) {
           .string()
           .optional()
           .describe(
-            "Attribute id for the active goal kind (e.g. STR|END|MOB|CON for fitness). " +
+            "Attribute id for the current goal's kind — the Program's rotation-owning goal when a Program is active, else the focus goal (e.g. STR|END|MOB|CON for fitness). " +
               "Omit for overall-only XP.",
           ),
         date: z
@@ -5002,12 +5378,17 @@ function registerWriteTools(server: McpServer) {
     async (input) =>
       safe(async () => {
         const db = await getDb();
-        // 1. Resolve focus goal for attribute validation
-        const goal = await db.goal.findFirst({
-          where: { isFocus: true },
-          orderBy: { updatedAt: "desc" },
-          select: { id: true, kind: true },
-        });
+        // 1. Resolve the pack-gating goal for attribute validation (#300):
+        //    rotation owner ?? legacy focus — the SAME composition the XP
+        //    engine's own goal-context uses (#299), so a granted attribute is
+        //    always valid for the pack the ledger will render it under.
+        const goal =
+          (await getRotationOwnerGoal()).goal ??
+          (await db.goal.findFirst({
+            where: { isFocus: true },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true, kind: true },
+          }));
         const pack = rulePackForGoal(goal?.kind ?? "fitness");
         const validIds = pack.attributes.map((a) => a.id);
 
@@ -5020,7 +5401,7 @@ function registerWriteTools(server: McpServer) {
           }
           if (!goal) {
             throw new Error(
-              "No active goal — omit the attribute field to grant overall-only XP.",
+              "No rotation-owning or focused goal to validate the attribute against — omit the attribute field to grant overall-only XP.",
             );
           }
         }
@@ -5635,7 +6016,7 @@ function registerWriteTools(server: McpServer) {
         "tracked=false: goal is silenced from the calendar and Today strip. " +
         "Guard: the focus goal cannot be untracked — switch focus to another goal first (error text passes through from the guard). " +
         "Does not affect the goal's plan (use set_plan_active to pause/resume the plan separately). " +
-        "(focus-switching is app-UI only — no MCP tool exists)",
+        "(To switch focus, use the set_active_goal MCP compat shim — mind its cross-Program blast radius: switching into a different Program deactivates the entire current one. Program membership itself is managed by the Program pack: create_program / attach_goal_to_program / set_program_status.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         tracked: z.boolean().describe("true = track the goal; false = untrack it"),
@@ -5664,7 +6045,7 @@ function registerWriteTools(server: McpServer) {
         "Resume re-activates the most recent plan. " +
         "Guard: the focus goal's plan cannot be paused — switch focus to another goal first (error text passes through from the guard). " +
         "Defensive no-op when resuming a goal that has no plan. " +
-        "(focus-switching is app-UI only — no MCP tool exists)",
+        "(To switch focus, use the set_active_goal MCP compat shim — mind its cross-Program blast radius: switching into a different Program deactivates the entire current one. Under a Program, which goal's plan drives the day is a Program concern — manage it via create_program / attach_goal_to_program / set_program_status rather than focus flips.)",
       inputSchema: {
         goalId: z.string().describe("Goal id; use list_goals to discover"),
         active: z
@@ -5750,9 +6131,9 @@ function registerWriteTools(server: McpServer) {
       title: "Generate weekly recap card (shareable image + stats)",
       description:
         "Render the week's recap as a share-ready image plus the underlying numbers. " +
-        "Defaults to the focus goal and the current week (through today). " +
+        "Defaults to the current goal — the focus goal (or the Program's rotation-owning goal when a Program is active) — and the current week (through today). " +
         'Use for "make my recap card", "weekly recap image", "card for last week". ' +
-        "Progress relates to the focus goal's baseline→target metrics. " +
+        "Progress relates to the featured goal's baseline→target metrics. " +
         "Pass goalId for a specific catalogued goal, weekOffset (0=this week, -1=last week) for a different week, " +
         'format for the target surface: "story" 9:16 (default), "post" 4:5 feed post, "square" 1:1.',
       inputSchema: {
@@ -5766,7 +6147,9 @@ function registerWriteTools(server: McpServer) {
         goalId: z
           .string()
           .optional()
-          .describe("Catalogued goal to feature; defaults to the focus goal"),
+          .describe(
+            "Catalogued goal to feature; defaults to the focus goal (or the Program's rotation-owning goal when a Program is active)",
+          ),
         template: z
           .enum(["coal", "parchment"])
           .optional()

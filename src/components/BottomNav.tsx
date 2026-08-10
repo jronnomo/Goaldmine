@@ -76,7 +76,11 @@ const TABS: Tab[] = [
 // change, update this list to match.
 // Deliberately excluded (not More destinations): /settings, /stats, /import,
 // /workouts/[id].
-const MORE_ROUTES = ["/coach", "/journal", "/character", "/goals", "/history", "/nutrition"];
+// /program (#290) lights More while it lives in the More sheet; the Plan-tab
+// href flip (UXR-PV-56) is a separate follow-up and will move it there. Note
+// startsWith safety: "/program" ≠ "/progress" prefix, so the Progress tab's
+// match is unaffected.
+const MORE_ROUTES = ["/coach", "/journal", "/character", "/goals", "/history", "/nutrition", "/program"];
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Component
