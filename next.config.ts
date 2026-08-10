@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/recap/card": ["./src/app/recap/fonts/**"],
     "/recap/story/[slide]": ["./src/app/recap/fonts/**"],
+    "/recap/completion": ["./src/app/recap/fonts/**"],
     "/api/mcp": ["./src/app/recap/fonts/**"],
   },
 };

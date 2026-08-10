@@ -50,7 +50,7 @@ export type TemplateTokens = {
   };
 
   // Featured-highlight band sizing (compact on shorter canvases)
-  highlightIconSize: number; // emoji icon
+  highlightIconSize: number; // highlight icon (inline SVG mark, see recap-card.tsx HighlightIcon)
   highlightPadY: number; // band vertical padding
 
   // Stat grid columns per row (2 = 2×2 grid; square uses 4-across single row)
