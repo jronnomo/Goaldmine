@@ -12,6 +12,26 @@
 // Editing rule: the spec file is the sacred text. Any deviation made here for
 // engine-shape reasons is called out inline with a `DEVIATION:` comment and
 // surfaced in the import script's output.
+//
+// ── SPEC V2 DELTA (2026-08-10 04:23 edit, AFTER the prod import ran from v1) ──
+// The owner updated examples/phase2a-goals-import-spec.md lines 32–46; the
+// idempotent re-run adds exactly this delta and nothing else:
+//   1. NEW travel row Oct 2–5 "Out of town — destination TBD" (UNCERTAIN
+//      TRAINING WINDOW) → buildPhase2aOverrides() gains 4 NOTE-ONLY overrides
+//      (the Sep 4–7 soft-break mechanism — no workoutJson day-swap, so they
+//      never band on the calendar; see the calendar-windows.ts contract),
+//      notes carrying the no-baseline-retest/DEXA/practice-exam constraint
+//      for the window + 3 days after (→ Oct 2–8 exclusion).
+//   2. NEW "Sep 24 – Oct 5 disruption cluster" block (options a/b/c, decide
+//      by mid-September) → PHASE2A_CLUSTER_RULE standing rule + the Sep 15
+//      "phase2a:cluster-decision" ScheduledItem on Goal 1 (rotation owner).
+//   3. "Nutrition through the cluster" (MAINTENANCE on all travel days in
+//      BOTH windows, deficit on the normal days between) → the Oct
+//      overrides' nutritionText + the cluster rule.
+//   4. Rolling-window caveat (handstand rates provisional until 6 fresh
+//      qualifying sessions post-Oct 5) → the cluster rule.
+// Sanity counts moved: overrides 13 → 17 · scheduled items 9 → 10 · standing
+// rules in the rule block 1 → 2 (the weigh-in cadence rule is unchanged).
 
 import type { GoalTarget } from "@/lib/metrics-registry";
 import type { AttributionRule } from "@/lib/attribution-rules";
@@ -869,7 +889,7 @@ export function buildPhase2aRotationTemplate(): ProgramTemplate {
 export type Phase2aScheduledItem = {
   /** Stable idempotency key (ScheduledItem.externalRef, unique per goal). */
   externalRef: string;
-  goalKey: "bodycomp" | "aws";
+  goalKey: "bodycomp" | "aws" | "handstand";
   dateKey: string;
   type: string;
   title: string;
@@ -920,6 +940,20 @@ export const PHASE2A_SCHEDULED_ITEMS: Phase2aScheduledItem[] = [
     title: "Practice-exam checkpoint #2 (Block 2 end)",
     detail:
       "If ≥ 80%, schedule the real exam — the readiness gate clears at 80.",
+  },
+  // v2 delta: the disruption-cluster decision, owned by Goal 1 (the rotation
+  // owner — the choice reshapes ITS training density, not the other goals').
+  {
+    externalRef: "phase2a:cluster-decision",
+    goalKey: "handstand",
+    dateKey: "2026-09-15",
+    type: "task",
+    title: "Decide Sep 24–Oct 5 cluster strategy",
+    detail:
+      "Sep 24 – Oct 5 is ~8 disrupted days inside a 12-day span, mid-Block-1 (skill acquisition) — one cluster, not two independent breaks. Decide by mid-September: " +
+      "(a) Absorb — one extended low-consistency stretch; hold skill frequency as the only priority (even 10 min against a wall counts), accept the rolling-window dip and let it recover honestly. " +
+      "(b) Shift Deload #1 to Oct 2–5 — train through Sep 25–27 at reduced volume instead, making the second trip the real deload; better training density, but Sep 25–27 is a Virginia get-together and may not cooperate. " +
+      "(c) Front-load Block 1 — push harder Sep 8–23, go in with margin.",
   },
   ...(["2026-09-01", "2026-10-01", "2026-11-01", "2026-12-01"] as const).map(
     (dk) => ({
@@ -1041,6 +1075,25 @@ export function buildPhase2aOverrides(): Phase2aOverride[] {
     });
   }
 
+  // Oct 2–5 — out of town, destination TBD (v2 delta): UNCERTAIN TRAINING
+  // WINDOW, note-only exactly like the Sep 4–7 soft break — NO workoutJson
+  // day-swap. That also keeps the calendar-windows contract intact: windows
+  // derive only from day-swap titles ("Deload…"/"Mirror Lake…"), and these
+  // labels/notes deliberately start with neither — plain note-only days,
+  // never a band.
+  for (const dk of ["2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"]) {
+    out.push({
+      dateKey: dk,
+      label: "Out of town — destination TBD (uncertain window)",
+      nutritionText:
+        "Travel — eat at MAINTENANCE (cluster default: maintenance on all travel days in BOTH windows, deficit on the normal days between; not a refeed schedule — just not fighting two things at once). Protein floor 150–155 g stands.",
+      mobilityText:
+        "Skill only if space/wall allows; walk if a treadmill exists, outdoor walk if not.",
+      notes:
+        "Out of town, destination TBD — UNCERTAIN TRAINING WINDOW inside the Sep 24 – Oct 5 disruption cluster (starts 5 days after Deload #1 ends). No fixed expectation. Nothing scored, no makeup sessions, no readiness penalty for a gap. Do NOT schedule any baseline retest, DEXA, or practice exam in this window or the 3 days after it (through 2026-10-08).",
+    });
+  }
+
   // Nov 26–29 — DELOAD #2 (Thanksgiving / Virginia). Block 2 deep-cut —
   // MAINTENANCE these days, not deficit.
   for (const dk of ["2026-11-26", "2026-11-27", "2026-11-28", "2026-11-29"]) {
@@ -1119,6 +1172,25 @@ export const PHASE2A_NUTRITION_RULE = {
     "• Greek yogurt default: nonfat vanilla Chobani. Eggs counted individually. Log only what's stated.",
     "• Saved meals carried over: Protein Brookie (310/6.5F/31P/42.5C per brookie), Chipotle Protein Bowl (670/20F/71P/60C full bowl, log fractions). Honey Blend and Chick-fil-A sauce defaults exist.",
     "• Thanksgiving Nov 26–29 (deload #2): MAINTENANCE those days, not deficit.",
+  ].join("\n"),
+};
+
+/** v2 delta: the Sep 24 – Oct 5 disruption cluster (spec lines 37–46) as a
+ *  standing rule — cluster framing, the three options + decide-by date, the
+ *  maintenance-on-travel-days nutrition default, and the rolling-window
+ *  caveat. First line is deliberately distinct from the other rules' first
+ *  lines (idempotency keys on body first-line). */
+export const PHASE2A_CLUSTER_RULE = {
+  type: "standing_rule" as const,
+  body: [
+    "Phase 2A Sep 24 – Oct 5 disruption cluster: golf day + Deload #1 (Sep 25–27) + the Oct 2–5 TBD trip = ~8 disrupted days inside a 12-day span, mid-Block-1 (skill acquisition, where consistency matters most) — ONE cluster, not two independent breaks.",
+    "• Decide by mid-September (the Sep 15 'Decide Sep 24–Oct 5 cluster strategy' task):",
+    "  (a) Absorb — treat Sep 24 – Oct 5 as one extended low-consistency stretch; hold skill frequency as the only priority (even 10 min against a wall counts), accept that the rolling-window handstand rates dip and let them recover honestly afterward.",
+    "  (b) Shift Deload #1 to Oct 2–5 — train through Sep 25–27 at reduced volume instead, making the second trip the real deload. Better training density, but Sep 25–27 is a Virginia get-together and may not cooperate.",
+    "  (c) Front-load Block 1 — push harder Sep 8–23, go in with margin.",
+    "• Nutrition through the cluster: MAINTENANCE on all travel days in BOTH windows (Sep 25–27 and Oct 2–5), deficit on the normal days between. Not a refeed schedule — just not fighting two things at once.",
+    "• Rolling-window caveat: the handstand repeatability targets score off the last 6 QUALIFYING sessions; the cluster can leave the denominator stale (mid-September sessions still counting in mid-October). Read the rates as provisional until 6 fresh sessions have accumulated post-Oct 5.",
+    "• Scheduling exclusion: NO baseline retest, DEXA, or practice exam inside Oct 2–5 or the 3 days after (through Oct 8). The week-10 retest lands Oct 12–18 — outside it; keep it that way.",
   ].join("\n"),
 };
 
