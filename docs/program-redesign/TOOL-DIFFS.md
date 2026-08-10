@@ -15,6 +15,104 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — #311: Program MCP pack part 2 — membership + overview NEW (`attach_goal_to_program` / `detach_goal_from_program` / `attach_plan_to_program` / `get_program_overview`)
+
+**Issue:** #311 (Sprint 17 — Seam flip, epic #259; depends on #310)
+
+**Connector reconnect REQUIRED after deploy** — four brand-new tools (seven
+counting #310's, which ships in the same deploy); the claude.ai connector
+caches the old tool list until reconnected (Settings → Connectors → Goaldmine
+→ reconnect).
+
+**New tools** (same pack file `src/lib/mcp/tools/program-tools.ts`, cores in
+`src/lib/program-core.ts`):
+
+- `attach_goal_to_program { goalId, programId, requestId? }` — sets
+  `Goal.programId`. Works for goals of ANY kind (fitness + project share one
+  Program). **Membership ≠ tracking** (documented decision): the write
+  touches `programId` ONLY — never `Goal.active`/`isFocus` (deliberately
+  unlike `set_active_goal`, which force-activates); a member goal can be
+  paused. **R9:** a `status='achieved'` goal is rejected with the reopen hint
+  (`reopen_goal`) — the reason is stated in the tool description itself. A
+  goal already in another Program is MOVED (single membership) with
+  `previousProgramId` reported; same-Program re-attach is a no-op
+  (`changed:false`).
+- `detach_goal_from_program { goalId, requestId? }` — clears
+  `Goal.programId`. **Idempotent:** detaching a goal that is in no Program is
+  a no-op success (`changed:false`), NOT an error. Takes only `goalId` (a
+  goal has at most one Program).
+- `attach_plan_to_program { planId, programId, requestId? }` — sets
+  `Plan.programId` (the Program's rotation plan). **Documented decision:**
+  the plan's goal MUST already be a member of that Program — a plan whose
+  goal is outside it is rejected with a clean error pointing at
+  `attach_goal_to_program` (membership before content; no warn-but-allow).
+  Same-Program re-attach is a no-op; cross-Program move reports
+  `previousProgramId`.
+- `get_program_overview { programId? }` — READ tool. Omitted `programId`
+  resolves the caller's ACTIVE Program (friendly error when none). Returns
+  `program {id, name, status, startedOn, endsOn, notes, createdAt,
+  updatedAt}` (calendar dates as yyyy-mm-dd USER_TZ, instants as ISO),
+  `memberGoals [{id, objective, kind, status, hasActivePlan}]`,
+  `rotationPlan {id, name, active} | null` (active preferred, else newest
+  plan attached to the Program), and `attributionRules`. Every query uses an
+  explicit select — no `userId` anywhere, and no Note reads at all.
+  Leaky-reads coverage added in `src/lib/mcp/leaky-reads.test.ts`.
+
+The three writes take the optional `requestId` idempotency key (#274
+`withWriteReceipt`).
+
+**Tests:** `src/lib/program-core.test.ts` (R9 rejection, membership-only
+write shape, idempotent detach, plan-not-member rejection, overview shape +
+active-resolution) and `src/lib/mcp/leaky-reads.test.ts`
+(`get_program_overview` select projections, zero Note reads, payload shape).
+
+---
+
+## 2026-08-09 — #310: Program MCP pack part 1 — `create_program` / `update_program` / `set_program_status` NEW
+
+**Issue:** #310 (Sprint 17 — Seam flip, epic #259)
+
+**Connector reconnect REQUIRED after deploy** — three brand-new tools; the
+claude.ai connector caches the old tool list and will not see them until
+reconnected (Settings → Connectors → Goaldmine → reconnect).
+
+**New tools** (pack file `src/lib/mcp/tools/program-tools.ts`, cores in
+`src/lib/program-core.ts`, wired via `registerProgramTools` in `tools.ts`):
+
+- `create_program { name, startedOn, endsOn?, notes?, requestId? }` — creates
+  the multi-domain Program container. **Status always starts `draft`** (the
+  tool takes no status input); activation is `set_program_status`'s job, so
+  create can never trip the one-active constraint. `startedOn`/`endsOn` are
+  yyyy-mm-dd USER_TZ calendar dates via `parseDateInput`; `endsOn` before
+  `startedOn` is a friendly error. Returns the row (`id, name, status,
+  startedOn, endsOn, notes, createdAt, updatedAt`) — dates as yyyy-mm-dd,
+  instants as ISO, never `userId`.
+- `update_program { programId, name?, startedOn?, endsOn?, notes?,
+  attributionRules?, requestId? }` — true PATCH: only supplied fields change;
+  `null` clears `endsOn`/`notes`/`attributionRules`; `{programId}` alone is a
+  friendly no-op. **Does NOT accept `status`** (lifecycle lives in
+  `set_program_status`). `attributionRules` validated as
+  `Array<{ match: { titleContains?: string[], exerciseContains?: string[],
+  source?: string }, goalIds: string[], note?: string }>` with ≥1 match
+  criterion and ≥1 goalId per rule (local schema in `program-core.ts`; TODO
+  marked to consolidate with `src/lib/attribution-rules.ts` when the
+  auto-link engine lands it). Merged-window guard: the patched
+  startedOn/endsOn pair must stay ordered.
+- `set_program_status { programId, status, requestId? }` — `status ∈ draft |
+  active | completed | archived`. Second-activate returns a clean error
+  **naming the currently active Program** (app-level pre-check AND a P2002
+  catch for the `program_one_active_per_user` race — never a raw Postgres
+  unique-violation). Same-status call is an idempotent no-op
+  (`changed:false`).
+
+All three take the optional `requestId` idempotency key (#274
+`withWriteReceipt` semantics: same key ⇒ original result replayed with
+`replayed:true`).
+
+**Tests:** `src/lib/program-core.test.ts` — draft-only create, PATCH round
+trip, attributionRules validation, one-active enforcement on both the
+pre-check and P2002-race paths, same-status no-op.
+
 ## 2026-08-09 — #276: `log_baseline`/`update_baseline` gain `capped`; baseline read payloads carry it
 
 **Issue:** #276 (Sprint 16 — Additive schema, epic #258)

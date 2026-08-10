@@ -39,6 +39,9 @@ const {
   mockBaselineFindUniqueOrThrow,
   mockBaselineCreate,
   mockBaselineUpdate,
+  mockProgramFindFirst,
+  mockProgramFindUnique,
+  mockGoalFindMany,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -82,6 +85,12 @@ const {
   const mockBaselineCreate = vi.fn().mockResolvedValue({ id: "b-new" });
   const mockBaselineUpdate = vi.fn();
 
+  // #311 get_program_overview — dedicated spies (program model + goal.findMany)
+  // so the overview's select-projection assertions inspect exactly its calls.
+  const mockProgramFindFirst = vi.fn().mockResolvedValue(null);
+  const mockProgramFindUnique = vi.fn().mockResolvedValue(null);
+  const mockGoalFindMany = vi.fn().mockResolvedValue([]);
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
@@ -97,7 +106,13 @@ const {
     nutritionLog: { findMany: mockFindMany, create: mockNutritionLogCreate },
     bodyMetric: { findMany: mockFindMany },
     plan: { findFirst: mockFindFirst },
-    goal: { findUniqueOrThrow: mockFindUniqueOrThrow, findUnique: mockFindUnique, update: mockGoalUpdate },
+    goal: {
+      findUniqueOrThrow: mockFindUniqueOrThrow,
+      findUnique: mockFindUnique,
+      findMany: mockGoalFindMany,
+      update: mockGoalUpdate,
+    },
+    program: { findFirst: mockProgramFindFirst, findUnique: mockProgramFindUnique },
     savedMeal: {
       findMany: mockSavedMealFindMany,
       findFirst: mockSavedMealFindFirst,
@@ -137,6 +152,9 @@ const {
     mockBaselineFindUniqueOrThrow,
     mockBaselineCreate,
     mockBaselineUpdate,
+    mockProgramFindFirst,
+    mockProgramFindUnique,
+    mockGoalFindMany,
   };
 });
 
@@ -1344,5 +1362,125 @@ describe("log_baseline / update_baseline — capped persistence (#276)", () => {
     };
     expect(call.data).toEqual({ value: 70 });
     expect("capped" in call.data).toBe(false);
+  });
+});
+
+// ── get_program_overview — leaky-reads coverage (#311) ───────────────────────
+// Strategy per the file header: assert on QUERY CALL ARGS. The overview must
+// (a) never select userId on any of its three queries (Program, member Goals,
+// rotation Plan), and (b) never read Note at all — a tool that issues no Note
+// query cannot leak private note types (standing_rule/review/open_item).
+
+describe("get_program_overview — leaky-reads coverage (#311)", () => {
+  const PROGRAM_ROW = {
+    id: "prog-1",
+    name: "Fall Block",
+    status: "active",
+    startedOn: new Date("2026-09-01T06:00:00.000Z"),
+    endsOn: null,
+    notes: null,
+    attributionRules: [{ match: { titleContains: ["hike"] }, goalIds: ["g-1"] }],
+    createdAt: new Date("2026-08-09T12:00:00.000Z"),
+    updatedAt: new Date("2026-08-09T12:00:00.000Z"),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockProgramFindFirst).mockResolvedValue(PROGRAM_ROW);
+    vi.mocked(mockProgramFindUnique).mockResolvedValue(PROGRAM_ROW);
+    vi.mocked(mockGoalFindMany).mockResolvedValue([
+      { id: "g-1", objective: "Summit", kind: "fitness", status: "active", plans: [{ id: "p-1" }] },
+      { id: "g-2", objective: "Ship MVP", kind: "project", status: "active", plans: [] },
+    ]);
+    vi.mocked(mockFindFirst).mockResolvedValue({ id: "p-1", name: "Rotation", active: true });
+  });
+
+  it("omitted programId: program.findFirst uses an explicit select WITHOUT userId", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    await handler({});
+
+    expect(vi.mocked(mockProgramFindFirst)).toHaveBeenCalledOnce();
+    const args = vi.mocked(mockProgramFindFirst).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.where).toEqual({ status: "active" });
+    const select = args.select as Record<string, unknown>;
+    expect(select).toBeDefined();
+    expect(select.userId).toBeUndefined();
+    expect(select.id).toBe(true); // sanity: it IS a projection, not a full-row read
+  });
+
+  it("explicit programId: program.findUnique also selects WITHOUT userId", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    await handler({ programId: "prog-1" });
+
+    expect(vi.mocked(mockProgramFindUnique)).toHaveBeenCalledOnce();
+    const args = vi.mocked(mockProgramFindUnique).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.where).toEqual({ id: "prog-1" });
+    expect((args.select as Record<string, unknown>).userId).toBeUndefined();
+  });
+
+  it("member-goal query selects only {id, objective, kind, status, plans:{id}} — no userId at either level", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    await handler({});
+
+    expect(vi.mocked(mockGoalFindMany)).toHaveBeenCalledOnce();
+    const args = vi.mocked(mockGoalFindMany).mock.calls[0][0] as Record<string, unknown>;
+    expect(args.where).toEqual({ programId: "prog-1" });
+    expect(args.select).toEqual({
+      id: true,
+      objective: true,
+      kind: true,
+      status: true,
+      plans: { where: { active: true }, select: { id: true }, take: 1 },
+    });
+  });
+
+  it("rotation-plan query selects only {id, name, active} — no userId", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    await handler({});
+
+    // plan.findFirst is the shared mockFindFirst; the overview's call is the
+    // one filtered by programId.
+    const planCall = vi.mocked(mockFindFirst).mock.calls.find(
+      (c) => ((c[0] as Record<string, unknown>).where as Record<string, unknown>)?.programId === "prog-1",
+    );
+    expect(planCall).toBeDefined();
+    expect((planCall![0] as Record<string, unknown>).select).toEqual({
+      id: true,
+      name: true,
+      active: true,
+    });
+  });
+
+  it("issues NO Note reads at all (private note types cannot leak from this tool)", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    await handler({});
+
+    // mockFindMany backs workout/measurement/NOTE/baseline/hike/nutritionLog/
+    // bodyMetric — zero calls means zero Note reads (goal.findMany is a
+    // dedicated spy and does not route here).
+    expect(vi.mocked(mockFindMany)).not.toHaveBeenCalled();
+  });
+
+  it("payload shape: program + memberGoals(hasActivePlan) + rotationPlan + attributionRules, and no userId key anywhere", async () => {
+    const handler = fakeServer.getHandler("get_program_overview");
+    const result = (await handler({})) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      "attributionRules",
+      "memberGoals",
+      "program",
+      "rotationPlan",
+    ]);
+    expect(payload.memberGoals).toEqual([
+      { id: "g-1", objective: "Summit", kind: "fitness", status: "active", hasActivePlan: true },
+      { id: "g-2", objective: "Ship MVP", kind: "project", status: "active", hasActivePlan: false },
+    ]);
+    expect((payload.program as Record<string, unknown>).startedOn).toBe("2026-09-01"); // dateKey, not ISO instant
+    expect(result.content[0].text).not.toContain("userId");
   });
 });
