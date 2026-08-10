@@ -24,6 +24,7 @@ export function LogNutritionForm({
   trackedSoFar,
   dayTarget,
   onLogged,
+  defaultDate,
 }: {
   quickPickFoods?: LibraryFood[];
   libraryFoods?: LibraryFood[];
@@ -33,6 +34,9 @@ export function LogNutritionForm({
    *  (e.g. LogLauncher's self-fetch) refetch its "Logged today" list without
    *  requiring the sheet to close — see architecture-critique.md C1. */
   onLogged?: () => void;
+  /** Pre-seed the composer's date/time control to this dateKey ("YYYY-MM-DD")
+   *  instead of "now" — see MealComposer's `defaultDate` (#294). */
+  defaultDate?: string;
 }) {
   return (
     <MealComposer
@@ -42,6 +46,7 @@ export function LogNutritionForm({
       trackedSoFar={trackedSoFar}
       dayTarget={dayTarget}
       onLogged={onLogged}
+      defaultDate={defaultDate}
     />
   );
 }

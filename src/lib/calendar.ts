@@ -44,6 +44,7 @@ export {
   userWeekdayMon1,
   dateKey,
   parseDateKey,
+  dateKeyAtCurrentTime,
   startOfDay,
   endOfDay,
   startOfWeekMonday,
@@ -51,6 +52,7 @@ export {
   addDays,
   shiftWallClock,
   toDatetimeLocalValue,
+  parseDatetimeLocalValue,
   weekRangeLabel,
   bucketDatesToWeekOffsets,
 } from "./calendar-core";

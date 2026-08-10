@@ -11,7 +11,12 @@ import { getDb } from "@/lib/db";
 import { parseStrongWorkout } from "@/lib/parsers/strong";
 import { createWorkoutCore } from "@/lib/workout-core";
 import { parseItemsText } from "@/lib/items-text";
-import { userTzWallClockToUTC, parseDateKey, startOfDay } from "@/lib/calendar";
+import {
+  parseDateKey,
+  startOfDay,
+  dateKey,
+  parseDatetimeLocalValue,
+} from "@/lib/calendar";
 import { normalizeMetricKey, BODY_METRIC_BY_KEY } from "@/lib/metrics-registry";
 import { parseStoredItems } from "@/lib/nutrition-log-ops";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
@@ -200,21 +205,13 @@ const MEAL_TYPES = new Set([
 // wall-clock "YYYY-MM-DDTHH:MM" (via toDatetimeLocalValue), so it MUST be
 // interpreted in USER_TZ — `new Date(dateStr)` parses datetime-local strings as
 // server-local/UTC and shifts the meal by the TZ offset (UXR-meal-edit-11).
-// When the field is absent (quick create with no When picker), "now" is correct.
+// When the field is absent (quick create with no When picker), "now" is
+// correct. The actual parse delegates to calendar-core's parseDatetimeLocalValue
+// (this file is "use server" — all its exports must be async functions, so the
+// pure regex parse lives there instead, where it's unit-testable).
 function parseUserTzDate(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date();
-  const m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  if (m) {
-    return userTzWallClockToUTC(
-      Number(m[1]),
-      Number(m[2]),
-      Number(m[3]),
-      Number(m[4]),
-      Number(m[5]),
-    );
-  }
-  // Unexpected shape — fall back to permissive parse (validated by caller).
-  return new Date(dateStr);
+  return parseDatetimeLocalValue(dateStr);
 }
 
 // Parse the 6 optional macro inputs. Empty → null (lets an edit clear a value);
@@ -275,6 +272,11 @@ export async function logNutrition(form: FormData) {
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  // #294: the day-detail page has its own log entry point (defaultDate-seeded
+  // MealComposer), so a backfilled/pre-planned meal must bust that exact day's
+  // route too — "/", "layout" covers pages nested under the root layout in
+  // theory, but this route is dynamic-per-day, so revalidate it explicitly.
+  revalidatePath(`/days/${dateKey(date)}`);
 }
 
 // De-redirected for in-place use (UXR-meal-edit-12): the BottomSheet host awaits
@@ -320,6 +322,7 @@ export async function updateNutrition(id: string, form: FormData) {
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(date)}`); // #294 — see logNutrition
   return { ok: true as const };
 }
 
@@ -349,6 +352,7 @@ export async function deleteNutrition(id: string): Promise<NutritionSnapshot> {
   revalidatePath("/", "layout");
   revalidatePath("/");
   revalidatePath("/nutrition");
+  revalidatePath(`/days/${dateKey(row.date)}`); // #294 — see logNutrition
   return {
     mealType: row.mealType,
     items: parseStoredItems(row.items),
