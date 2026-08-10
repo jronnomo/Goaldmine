@@ -636,3 +636,103 @@ against the dev DB: `export_workout` (format:'json') → extracted `sets[].id`
 **Connector reconnect:** YES — `export_workout`'s output shape changed
 (new `id`/`rpe`/`notes` fields on exercises/sets). Reconnect the claude.ai
 MCP connector after this deploys.
+
+---
+
+## 2026-08-10 — isFocus sweep S20 batches (#297/#299/#300/#302) + cross-goal calendar windows contract (#291)
+
+**Issues:** #297 (lib-core), #299 (engine site), #300 (MCP tools batch),
+#302 (stale descriptions), #291 (cross-goal calendar).
+
+### Resolution changes (behavior)
+
+`getRotationOwnerGoal()` (`src/lib/goal-focus.ts`) is now THE shared
+"current goal" accessor: the active Program's rotation-owning goal
+(Plan.goalId of `getActiveProgram()`'s plan); the byte-identical legacy
+`isFocus: true` query for zero-Program-rows tenants; `null` for
+rotation-less/retired-Program tenants. Swapped onto it:
+
+- lib-core (#297): `getCalendarMonth` Phase-1 goal read, `resolveDay`'s
+  day-goal read (new `ResolveDayCtx.dayGoal` batches it in `get_week`),
+  `getPendingNotesCount`, `lintActivePlan` (now lints `getActiveProgram()`'s
+  own plan row), `orphanedOverrideWarning`.
+- engine (#299): `_computeGameState`'s pack-gating goal = rotation owner
+  **?? legacy focus** — the fallback is the TRACKED EXCEPTION per the M4c
+  non-goal (single-ledger v1): a rotation-less Program must not re-gate
+  attributes to the "fitness" default. Equivalence proven: new
+  `scripts/diff-engine-goal-context.ts` pre/post full-state snapshot on dev
+  (founder = zero-Program) — zero bytes changed; `diff-xp-ledger.ts` stays
+  XP-NEUTRAL.
+- MCP (#300), 8 sites in `tools.ts`: `get_today_plan` (activeGoalRow),
+  `compute_readiness` (omitted-goalId default), `get_pending_notes` (planId
+  via `getActiveProgram()`), `get_session_brief` (default goal),
+  `get_day_footage` (caption goal), `acknowledge_lint_finding` +
+  `clear_lint_acknowledgement` (the linted plan = `getActiveProgram()`'s
+  plan, matching `lintActivePlan`), `grant_bonus_xp` (rotation owner ??
+  legacy focus — deliberately the SAME composition as the engine's #299
+  tracked exception, so grant-time attribute validation can never disagree
+  with the pack the ledger renders). Error text reworded to the new failure
+  modes (e.g. "No current goal to default to — the active Program has no
+  rotation (or no goal is focused). Pass goalId explicitly…"; "No active
+  rotation plan found…"). `get_day_footage` also drops the old query's
+  `active: true` belt (invariant-covered: the focus goal cannot be
+  untracked; a rotation owner's plan is active).
+- NOT swapped (deliberate): `list_goals`' isFocus-desc ordering + `isFocus`
+  output field (display/compat, per the AC); hike **read-time attribution**
+  (`hike.goalId ?? focusGoalId`, goal-events) — unchanged machinery, so the
+  "attributed to the focus goal at read time" prose in `log_hike` /
+  `update_hike` / `list_planned_hikes` / `delete_goal` remains TRUE and was
+  left alone; `render-tools.ts:79` + its descriptions are SIBLING-OWNED
+  (#301 batch) and untouched here.
+
+### #291 — the calendar windows contract (writer: Phase 2A import)
+
+`src/lib/calendar-windows.ts` derives deload/observance windows from the
+ACTIVE plan's day-swap override **titles** — no schema change:
+`workoutJson.title` prefix `"Deload"` → `deload` (second-grid-row span
+bar), prefix `"Mirror Lake"` → `observance` (the covered cell renders ONE
+em dash — no band, no wash, no marker, zero motion; UXR-PV-88/39). The
+writer side is `buildPhase2aOverrides()` (`src/lib/phase2a-spec.ts`) —
+"Deload #1 — Virginia", "Deload #2 — Thanksgiving", "Mirror Lake — Matt".
+If the import's titles ever change, the classifier and spec must move
+together. Note-only overrides (the Virginia soft break) are NOT windows.
+`get_day`/`get_today_plan` payloads are untouched by #291 (calendar cells
+gained `memberGoalMarks`/`memberGoalEvents`/`window` — dashboard-only).
+
+### #302 — description strings changed (`src/lib/mcp/tools.ts`)
+
+Canonical phrasing used throughout: *"the focus goal (or the Program's
+rotation-owning goal when a Program is active)"* — truthful for both
+tenant shapes.
+
+| Tool | What changed |
+|---|---|
+| `get_today_plan` | "focusGoal is the isFocus=true goal" → "the goal driving the day — the focus goal (or the Program's rotation-owning goal when a Program is active)" |
+| `list_goals` | isFocus now described as the LEGACY single-focus flag: drives the prescription only for tenants without a Program; display/compat field under one |
+| `get_goal` | same isFocus=true correction (legacy-only day-driver) |
+| `compute_readiness` | goalId input: "Omit to default to the focus goal (or the Program's rotation-owning goal…)" |
+| `lint_plan` | empty-shape condition now names both shapes (focus goal without a plan / Program without a rotation) |
+| `get_session_brief` | "focus goal + days-to-go" → "the current goal (the focus goal, or the Program's rotation-owning goal when a Program is active)" |
+| `confirm_week` | "operates on the active rotation plan (the Program's plan when a Program is active; the focus goal's plan otherwise)" |
+| `create_goal` | now teaches the REAL day-driver model: new goals join no Program; attach via `attach_goal_to_program` (or `create_program`/`update_program`/`set_program_status`); `set_active_goal` described as the compat shim with its cross-Program blast radius |
+| `set_goal_tracked` | focus-switch parenthetical → compat-shim + Program-pack routing |
+| `set_plan_active` | same + "which goal's plan drives the day is a Program concern — manage via the Program pack rather than focus flips" |
+| `grant_bonus_xp` | attribute input: "for the current goal's kind — the Program's rotation-owning goal when a Program is active, else the focus goal" |
+| `generate_recap_card` | default-goal + input `goalId` descriptions → canonical phrasing |
+
+`instructions.ts` (COACH_INSTRUCTIONS) audited: the set_active_goal
+covenant + ACTIVE PROGRAM payload block were already synced by #280/#283 —
+no stale "focus-switching is app-UI only"-era text remains; no changes.
+`program-tools.ts` audited: no focus-goal phrasing. `render-tools.ts`'s
+"FOCUS goal" strings ride with the sibling #301 batch (file ownership).
+
+**Tests:** full `src/lib/mcp/` suite green (leaky-reads +
+no-founder-leak assertions unchanged); `engine.scenario.test.ts` gained
+the #299 equivalence trio; `calendar.test.ts` gained the #291 Program
+month suite + zero-Program inertness assert; new
+`calendar-windows.test.ts` (incl. the research-required synthetic
+boundary-crossing segment fixture).
+
+**Connector reconnect:** YES — tool descriptions + error text changed
+(no schema/tool-count change). Reconnect the claude.ai MCP connector
+after this deploys so cached descriptions refresh.

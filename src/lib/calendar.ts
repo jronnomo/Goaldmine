@@ -23,6 +23,18 @@ import {
   otherGoalEvents as filterOtherGoalEvents,
   type GoalEvent,
 } from "@/lib/goal-events";
+// #297: THE shared "current goal" accessor — rotation owner under a Program,
+// legacy isFocus fallback for zero-Program tenants. Replaces this file's
+// three inline `isFocus: true` reads.
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
+// #291: cross-goal calendar — per-member-goal identity marks + deload/
+// observance windows (both pure, client-safe modules).
+import { assignGoalIdentities, type GoalIdentity } from "@/lib/goal-identity";
+import {
+  deriveCalendarWindows,
+  type CalendarWindow,
+  type CalendarWindowKind,
+} from "@/lib/calendar-windows";
 import {
   crossGoalConflicts as computeCrossGoalConflicts,
   type CrossGoalConflict,
@@ -34,6 +46,7 @@ import {
 // existing `@/lib/calendar` importer keeps working unchanged.
 import {
   dateKey,
+  parseDateKey,
   startOfDay,
   endOfDay,
   startOfWeekMonday,
@@ -136,6 +149,28 @@ export type CalendarDayCell = {
    *  (REQ-004) — cells never disagree with resolveDay's resolvedPlan.source
    *  for the same date since both go through pickProgramForDate. */
   planSource?: "active" | "archived";
+  /** #291: per-member-goal presence for this cell (active Program only; []
+   *  otherwise). One entry per ACTIVE member goal with concrete presence on
+   *  this date; presence mirrors resolveDay's goalMarks claims (rotation /
+   *  scheduled_item / baseline:<test> / event pins) EXCEPT the ambient
+   *  "nutrition" claim, which is deliberately excluded here — it would mark
+   *  every day for every fitness member (pure ink, no information; it stays
+   *  a Today-lane concept). state: "logged" when ANY logged evidence exists
+   *  for the goal on this date (completed training on its rotation day, a
+   *  done scheduled item, a satisfied baseline), else "claimed" (hollow). */
+  memberGoalMarks: { goalId: string; state: "logged" | "claimed" }[];
+  /** #291: member goals' events for this date (active Program only; []
+   *  otherwise). The Program-tenant counterpart of otherGoalEvents — under a
+   *  Program, otherGoalEvents narrows to NON-member goals only, and member
+   *  events land here for the DayDetail panel + aria text. */
+  memberGoalEvents: GoalEvent[];
+  /** #291: deload/observance window covering this cell, derived from the
+   *  active plan's day-swap override titles (see src/lib/calendar-windows.ts
+   *  for the title-prefix contract with the Phase 2A import). null outside
+   *  windows and for zero-Program tenants. "observance" drives the em-dash
+   *  cell treatment (no band, no wash, no marker, zero motion — UXR-PV-88/39);
+   *  "deload" cells ride under the second-grid-row span bar. */
+  window: { kind: CalendarWindowKind; label: string } | null;
 };
 
 // Single source of truth for per-week unresolved conflicts.
@@ -196,26 +231,40 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   const gridStart = startOfWeekMonday(monthStart);
   const gridEnd = endOfWeekSunday(monthEnd);
 
-  // Phase 1: fetch focus goal (gates the ScheduledItem query in Phase 2) alongside
-  // the active program + the full plan-window candidate list (REQ-003) — neither
-  // of the latter two depends on `goal`, so they run in the same round-trip instead
+  // Phase 1: fetch the day-driving goal (gates the ScheduledItem query in Phase 2)
+  // alongside the active program + the full plan-window candidate list (REQ-003) —
+  // none of these depends on another, so they run in the same round-trip instead
   // of forcing an extra sequential step.
-  // [v2] MED-1: the goal fetch alone would be a single indexed query; folding program
-  // + candidates in here keeps the "goal gates Phase 2" shape while avoiding a second
-  // await before Phase 2 can start. Accepted trade-off — #38's AC text does not forbid
-  // it; latency impact is sub-millisecond.
-  const [goal, program, allCandidates] = await Promise.all([
-    db.goal.findFirst({
-      where: { isFocus: true },
-      // Deterministically picks the most-recently-updated if multiple are
-      // stuck isFocus=true (bad state).
-      orderBy: { updatedAt: "desc" },
-      // REQ-003: added kind for PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate.
-      select: { id: true, targetDate: true, objective: true, legend: true, kind: true },
-    }),
+  // #297: the goal read is Program-aware — getRotationOwnerGoal() resolves the
+  // active Program's rotation-owning goal (Plan.goalId), falling back to the
+  // legacy isFocus query ONLY for zero-Program-rows tenants (byte-identical
+  // there — same where/orderBy, superset select mapped back to the same shape).
+  // A Program with no rotation (or a retired-Program tenant) yields null,
+  // exactly like the seam.
+  // #291: membership joins Phase 1 — the cross-goal month needs the member
+  // list before Phase 2 can generalize the ScheduledItem query to all member
+  // goals. null for zero-Program tenants (every #291 addition below is inert
+  // then — cells/payload stay byte-identical).
+  const [ownerGoal, program, membership, allCandidates] = await Promise.all([
+    getRotationOwnerGoal(),
     getActiveProgram(),
+    getActiveProgramMembership(),
     getPlanWindowCandidates(),
   ]);
+  const memberIds = membership ? membership.memberGoals.map((g) => g.id) : [];
+  const memberIdSet = new Set(memberIds);
+  // Preserve the exact pre-#297 field shape (REQ-003 select: kind for
+  // PROJECT_DEFAULT_LEGEND fallback + ScheduledItem gate) so the month
+  // payload stays byte-identical for zero-Program tenants.
+  const goal = ownerGoal
+    ? {
+        id: ownerGoal.id,
+        targetDate: ownerGoal.targetDate,
+        objective: ownerGoal.objective,
+        legend: ownerGoal.legend,
+        kind: ownerGoal.kind,
+      }
+    : null;
 
   // REQ-003: candidates overlapping the visible grid, for buildCell's per-cell
   // pickProgramForDate call. The active plan's overrides must always be
@@ -227,8 +276,15 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     new Set([...candidates.map((c) => c.id), ...(program?.id ? [program.id] : [])]),
   );
 
-  // Phase 2: remaining queries in parallel; ScheduledItem query gated on project kind.
-  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines] =
+  // Phase 2: remaining queries in parallel.
+  // #291: the ScheduledItem query is membership-aware — under a Program it
+  // fetches ALL member goals' items (the A5 fix: DEXA scans / weigh-ins no
+  // longer vanish on a fitness-rotation month); the legacy focus-project gate
+  // is unchanged for zero-Program tenants. memberDetailRows feeds identity
+  // fidelity (UXR-PV-04 sort inputs + legend short labels), per-goal baseline
+  // targets, and plan-ownership (the rotation mark) — one findMany, Program
+  // tenants only.
+  const [workouts, hikes, overrides, goalEventsResult, scheduledItemsForCal, loggedBaselines, memberDetailRows] =
     await Promise.all([
     db.workout.findMany({
       where: { startedAt: { gte: gridStart, lte: gridEnd } },
@@ -250,23 +306,64 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       : Promise.resolve([] as never[]),
     // REQ-104: cross-goal events for the full grid (3 queries — unchanged).
     getGoalEventsResult({ start: gridStart, end: gridEnd }),
-    // REQ-004: ScheduledItem markers — project path only; zero queries for fitness/null.
-    goal?.kind === "project"
+    // REQ-004 / #291: ScheduledItem markers. Program path: union across ALL
+    // member goals (per-goal marks need goalId + status). Legacy path: the
+    // focus project goal only — same where clause as ever; the select gains
+    // goalId/status purely for a uniform row type (cell payload derived from
+    // it is unchanged: scheduledItemCount counts rows per date).
+    membership && memberIds.length > 0
       ? db.scheduledItem.findMany({
           where: {
-            goalId: goal.id,
+            goalId: { in: memberIds },
             date: { gte: gridStart, lte: gridEnd },
             status: { in: ["planned", "done"] },
           },
-          select: { id: true, date: true },
+          select: { id: true, goalId: true, date: true, status: true },
           orderBy: { date: "asc" },
         })
-      : Promise.resolve([] as { id: string; date: Date }[]),
+      : goal?.kind === "project"
+        ? db.scheduledItem.findMany({
+            where: {
+              goalId: goal.id,
+              date: { gte: gridStart, lte: gridEnd },
+              status: { in: ["planned", "done"] },
+            },
+            select: { id: true, goalId: true, date: true, status: true },
+            orderBy: { date: "asc" },
+          })
+        : Promise.resolve([] as { id: string; goalId: string; date: Date; status: string }[]),
     // Logged baseline results — used to count only UNLOGGED tests per cell so a
     // completed retest (e.g. logged early in its credit window) doesn't keep
     // showing a "N Baseline due" badge. Fetched whole (single-user, small table)
     // so a result outside the grid window still credits its checkpoint.
     db.baseline.findMany({ select: { testName: true, date: true }, orderBy: { date: "asc" } }),
+    // #291 (Program tenants only): member-goal detail — identity fidelity
+    // fields (UXR-PV-04 sort + legend short labels), baseline target metrics,
+    // and owned-plan ids (identifies the rotation mark's owner per cell,
+    // including archived member plans — same definition as resolveDay's
+    // goalMarks rotation claim).
+    membership && memberIds.length > 0
+      ? db.goal.findMany({
+          where: { id: { in: memberIds } },
+          select: {
+            id: true,
+            isFocus: true,
+            createdAt: true,
+            legend: true,
+            targets: true,
+            plans: { select: { id: true } },
+          },
+        })
+      : Promise.resolve(
+          [] as {
+            id: string;
+            isFocus: boolean;
+            createdAt: Date;
+            legend: unknown;
+            targets: unknown;
+            plans: { id: string }[];
+          }[],
+        ),
   ]);
 
   // Bucket logged baselines by test name (date-asc) for the per-cell unlogged count.
@@ -307,10 +404,19 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   for (const o of overrides) overridesByKey.set(`${o.planId}|${dateKey(o.date)}`, o);
 
   // REQ-004: bucket ScheduledItem counts by dateKey for O(1) cell lookup.
+  // #291: additionally bucket per goal (`${goalId}|${dateKey}`) with a
+  // planned/done split for the member-goal mark states. Legacy tenants keep
+  // the same total-count semantics (their rows are the focus project's only).
   const scheduledsByKey = new Map<string, number>();
+  const scheduledByGoalKey = new Map<string, { planned: number; done: number }>();
   for (const si of scheduledItemsForCal) {
     const k = dateKey(si.date);
     scheduledsByKey.set(k, (scheduledsByKey.get(k) ?? 0) + 1);
+    const gk = `${si.goalId}|${k}`;
+    const bucket = scheduledByGoalKey.get(gk) ?? { planned: 0, done: 0 };
+    if (si.status === "done") bucket.done += 1;
+    else bucket.planned += 1;
+    scheduledByGoalKey.set(gk, bucket);
   }
 
   // Group planned hikes by rotation weekIndex for per-cell conflict computation.
@@ -332,6 +438,62 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // REQ-104: cross-goal event + conflict data for cell building.
   const { events: allGoalEvents, focusGoalId, otherGoalsMeta } = goalEventsResult;
   const eventsByKey = eventsByDateKey(allGoalEvents);
+
+  // ── #291: Program-shaped month context (inert for zero-Program tenants) ──
+  // Identities: the same UXR-PV-04 slot assignment Today and /program use —
+  // one mark per member goal, stable across surfaces.
+  const memberDetailById = new Map(memberDetailRows.map((r) => [r.id, r]));
+  const identities: GoalIdentity[] = membership
+    ? assignGoalIdentities(
+        membership.memberGoals.map((g) => ({
+          ...g,
+          isFocus: memberDetailById.get(g.id)?.isFocus,
+          createdAt: memberDetailById.get(g.id)?.createdAt,
+          legend: memberDetailById.get(g.id)?.legend,
+        })),
+      )
+    : [];
+
+  // Windows: derived from the ACTIVE plan's day-swap override titles (the
+  // Phase 2A import contract — see calendar-windows.ts). Program tenants
+  // only; an archived plan's overrides never band the live month.
+  const windows: CalendarWindow[] = membership && program
+    ? deriveCalendarWindows(
+        overrides
+          .filter((o) => o.planId === program.id && o.workoutJson != null)
+          .map((o) => ({
+            dateKey: dateKey(o.date),
+            title: (o.workoutJson as { title?: unknown } | null)?.title,
+          })),
+      )
+    : [];
+  const windowByKey = new Map<string, { kind: CalendarWindowKind; label: string }>();
+  for (const w of windows) {
+    for (
+      let cur = parseDateKey(w.startKey);
+      dateKey(cur) <= w.endKey;
+      cur = addDays(cur, 1)
+    ) {
+      windowByKey.set(dateKey(cur), { kind: w.kind, label: w.label });
+    }
+  }
+
+  // Per-cell mark inputs (see buildCell's programCtx arg).
+  const programCtx = membership
+    ? {
+        activeMembers: membership.memberGoals
+          .filter((g) => g.status === "active")
+          .map((g) => ({ id: g.id, kind: g.kind })),
+        ownerGoalIdByPlanId: new Map<string, string>(
+          memberDetailRows.flatMap((r) => r.plans.map((p) => [p.id, r.id] as [string, string])),
+        ),
+        baselineTargetsByGoalId: new Map<string, string[]>(
+          memberDetailRows.map((r) => [r.id, baselineTestNamesFromTargets(r.targets)]),
+        ),
+        scheduledByGoalKey,
+        windowByKey,
+      }
+    : null;
 
   // Planned hike dateKeys for event-near-long-effort detection.
   const plannedHikeDateKeys = hikes
@@ -371,6 +533,7 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // the column alignment.
   for (let cursor = gridStart; cursor.getTime() <= gridEnd.getTime(); cursor = addDays(cursor, 1)) {
     const cursorKey = dateKey(cursor);
+    const eventsForDate = eventsByKey.get(cursorKey) ?? [];
     const cell = buildCell({
       date: cursor,
       todayKey,
@@ -382,13 +545,19 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
       plannedHikesByKey,
       overridesByKey,
       plannedHikesByWeek,
-      otherGoalEventsForDate: filterOtherGoalEvents(
-        eventsByKey.get(cursorKey) ?? [],
-        focusGoalId,
-      ),
+      // #291: under a Program, "other" narrows to NON-member goals — member
+      // goals' events become first-class cell presence (memberGoalEvents +
+      // marks) instead of foreign pins. Zero-Program: unchanged focus split.
+      otherGoalEventsForDate: membership
+        ? eventsForDate.filter((e) => !memberIdSet.has(e.goalId))
+        : filterOtherGoalEvents(eventsForDate, focusGoalId),
+      memberGoalEventsForDate: membership
+        ? eventsForDate.filter((e) => memberIdSet.has(e.goalId))
+        : [],
       crossGoalConflictForDate: crossGoalConflictsByKey.get(cursorKey) ?? null,
       scheduledsByKey, // REQ-004: new
       loggedBaselinesByTest,
+      programCtx, // #291: null for zero-Program tenants
     });
     cells.push(cell);
   }
@@ -399,8 +568,18 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
     cells,
     program,
     goal,
-    /** Non-focus active goals — for the legend card (REQ-106). */
-    otherGoals: otherGoalsMeta,
+    /** Non-focus active goals — for the legend card (REQ-106). #291: under a
+     *  Program, member goals move to the identities strip, so they are
+     *  excluded here (they'd otherwise render twice in the legend). */
+    otherGoals: membership
+      ? otherGoalsMeta.filter((og) => !memberIdSet.has(og.id))
+      : otherGoalsMeta,
+    /** #291: per-member-goal identity marks (UXR-PV-04 slot order) — [] for
+     *  zero-Program tenants. Feeds the cell marker row + legend strip. */
+    identities,
+    /** #291: deload/observance windows visible in this grid — [] for
+     *  zero-Program tenants. Feeds the WindowSpanBar row + DayDetail. */
+    windows,
   };
 }
 
@@ -444,14 +623,29 @@ function buildCell(args: {
   /** REQ-003: keyed `${planId}|${dateKey}` — see the override query comment above. */
   overridesByKey: Map<string, { planId: string; workoutJson: unknown; nutritionText: string | null; mobilityText: string | null; baselineTestNames: unknown }>;
   plannedHikesByWeek: Map<number, { id: string; date: Date; status: string }[]>;
-  /** REQ-104: non-focus events for this specific date (pre-filtered by caller). */
+  /** REQ-104: non-focus events for this specific date (pre-filtered by caller).
+   *  #291: under a Program this is NON-MEMBER events only. */
   otherGoalEventsForDate: GoalEvent[];
+  /** #291: member goals' events for this date (pre-partitioned by caller;
+   *  [] for zero-Program tenants). */
+  memberGoalEventsForDate: GoalEvent[];
   /** REQ-104: cross-goal conflict for this date, if any (pre-computed by caller). */
   crossGoalConflictForDate: CrossGoalConflict | null;
   /** REQ-004: pre-bucketed ScheduledItem count map (dateKey → count). */
   scheduledsByKey: Map<string, number>;
   /** Logged baseline results bucketed by test name — for the unlogged-only count. */
   loggedBaselinesByTest: Map<string, { date: Date }[]>;
+  /** #291: Program-tenant mark inputs; null for zero-Program tenants (every
+   *  #291 cell field stays inert then). ownerGoalIdByPlanId includes archived
+   *  member plans — the rotation mark follows the PICKED plan's owner, the
+   *  same definition as resolveDay's goalMarks rotation claim. */
+  programCtx: {
+    activeMembers: { id: string; kind: string }[];
+    ownerGoalIdByPlanId: Map<string, string>;
+    baselineTargetsByGoalId: Map<string, string[]>;
+    scheduledByGoalKey: Map<string, { planned: number; done: number }>;
+    windowByKey: Map<string, { kind: CalendarWindowKind; label: string }>;
+  } | null;
 }): CalendarDayCell {
   const k = dateKey(args.date);
   const isToday = k === args.todayKey;
@@ -602,6 +796,65 @@ function buildCell(args: {
       ? display.plannedTitle
       : null;
 
+  // ── #291: per-member-goal marks + window (Program tenants only) ──────────
+  // Presence mirrors resolveDay's goalMarks claims (rotation / scheduled_item
+  // / baseline:<test>) plus event pins; the ambient "nutrition" claim is
+  // deliberately excluded (see the CalendarDayCell field doc). State is
+  // "logged" on ANY logged evidence for the goal on this date, else
+  // "claimed" — the coarse v1 fill rule (ActivityGoalLink-driven fill states
+  // are the Today lane's job, not the month grid's).
+  const memberGoalMarks: CalendarDayCell["memberGoalMarks"] = [];
+  let cellWindow: CalendarDayCell["window"] = null;
+  if (args.programCtx) {
+    cellWindow = args.programCtx.windowByKey.get(k) ?? null;
+    const trained = workoutCount > 0 || hikeCount > 0;
+    const eventGoalIds = new Set(args.memberGoalEventsForDate.map((e) => e.goalId));
+    for (const g of args.programCtx.activeMembers) {
+      let present = false;
+      let logged = false;
+      // Rotation claim — the picked plan's owning member goal, in-plan dates
+      // only (same definition as resolveDay's goalMarks rotation claim,
+      // archived member plans included via ownerGoalIdByPlanId).
+      if (isInPlan && picked && args.programCtx.ownerGoalIdByPlanId.get(picked.id) === g.id) {
+        present = true;
+        if (trained) logged = true;
+      }
+      // Scheduled items (per-goal bucket; done ⇒ logged).
+      const sched = args.programCtx.scheduledByGoalKey.get(`${g.id}|${k}`);
+      if (sched) {
+        present = true;
+        if (sched.done > 0) logged = true;
+      }
+      // Baseline claim — the day's scheduled tests matched against this
+      // goal's `baseline:<testName>` target metrics; all matched tests
+      // satisfied (same credit-window matcher as baselinesDue) ⇒ logged.
+      if (isInPlan && cellCore) {
+        const targetNames = args.programCtx.baselineTargetsByGoalId.get(g.id) ?? [];
+        if (targetNames.length > 0) {
+          const matched = cellCore.baselineTests.filter(({ test }) =>
+            targetNames.includes(test.testName),
+          );
+          if (matched.length > 0) {
+            present = true;
+            const allSatisfied = matched.every(({ test }) =>
+              baselineSatisfied(
+                test,
+                weekIndex!,
+                args.date,
+                picked!.startedOn,
+                args.loggedBaselinesByTest.get(test.testName),
+              ),
+            );
+            if (allSatisfied) logged = true;
+          }
+        }
+      }
+      // Event pins (target-date / retest / planned-hike / scheduled-item).
+      if (eventGoalIds.has(g.id)) present = true;
+      if (present) memberGoalMarks.push({ goalId: g.id, state: logged ? "logged" : "claimed" });
+    }
+  }
+
   // Same-goal conflicts take precedence (legacy rule).
   // Cross-goal conflict fills cell.conflict ONLY when no same-goal conflict exists.
   // REQ-003: cross-goal conflicts are also skipped on archived cells (see the
@@ -641,6 +894,10 @@ function buildCell(args: {
     otherGoalEvents: args.otherGoalEventsForDate,
     scheduledItemCount: args.scheduledsByKey.get(k) ?? 0, // REQ-004: new — always 0 for fitness
     planSource, // REQ-003: new
+    // #291: Program-tenant cell fields — inert ([]/[]/null) for zero-Program.
+    memberGoalMarks,
+    memberGoalEvents: args.memberGoalEventsForDate,
+    window: cellWindow,
   };
 }
 
@@ -904,6 +1161,16 @@ export type ResolveDayCtx = {
    *     `null` means "caller already determined there is no active Program".
    */
   membership?: ActiveProgramMembership | null;
+  /**
+   * #297: the day-driving goal (rotation owner under a Program, legacy focus
+   * goal for zero-Program tenants — getRotationOwnerGoal()'s result trimmed
+   * to the three fields resolveDay reads), pre-fetched by range callers so 7
+   * resolveDay calls don't issue 7 redundant owner lookups. Same key-presence
+   * semantics as `program`/`membership` above; explicit `null` means "caller
+   * already determined no goal drives the day" (rotation-less Program /
+   * retired-Program tenants).
+   */
+  dayGoal?: { id: string; targetDate: Date | null; objective: string } | null;
 };
 
 /**
@@ -1068,11 +1335,18 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       },
       orderBy: { date: "desc" },
     }),
-    db.goal.findFirst({
-      where: { isFocus: true },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, targetDate: true, objective: true },
-    }),
+    // #297: Program-aware day-goal read — the rotation owner under a Program,
+    // the legacy focus goal for zero-Program tenants (byte-identical there).
+    // Feeds isGoalDate + goalObjective below; null under a rotation-less
+    // Program is correct (no goal-date pin belongs to "the day" then —
+    // member goals' own target dates ride otherGoalEvents/goal-events).
+    // ctx.dayGoal (key-presence semantics, like program/membership) lets
+    // range callers batch this to one lookup per week.
+    ctx?.dayGoal !== undefined
+      ? Promise.resolve(ctx.dayGoal)
+      : getRotationOwnerGoal().then((g) =>
+          g ? { id: g.id, targetDate: g.targetDate, objective: g.objective } : null,
+        ),
     db.nutritionLog.findMany({
       where: { date: { gte: dayStart, lte: dayEnd } },
       orderBy: { date: "asc" },
@@ -1465,11 +1739,21 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
   const db = await getDb();
   const [plan, count] = await Promise.all([
-    db.plan.findFirst({
-      where: { active: true, goal: { isFocus: true } },
-      orderBy: { updatedAt: "desc" },
-      include: { goal: { select: { id: true } } },
-    }),
+    // #297: the rotation plan comes from getActiveProgram() — the SAME
+    // resolution calendar day-building uses — instead of a third inline
+    // re-implementation of the isFocus-desc query. snapshot.id is a Plan id
+    // (frozen #277 contract); one point-read recovers goalId for the link
+    // target. Zero-Program tenants resolve via the seam's legacy branch
+    // (active plan, isFocus-desc tiebreak) — for a normally-shaped tenant
+    // (focused goal owns the active plan) this is the same plan as before.
+    getActiveProgram().then((snapshot) =>
+      snapshot
+        ? db.plan.findFirst({
+            where: { id: snapshot.id },
+            select: { id: true, goalId: true },
+          })
+        : null,
+    ),
     // Only count notes that actually call for a coaching decision: audibles
     // (plan changes) and feedback. Journals are diary entries you rarely
     // "resolve", and standing_rules are never resolved by design — counting
@@ -1477,7 +1761,7 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
     db.note.count({ where: { resolvedAt: null, type: { in: ["audible", "feedback"] } } }),
   ]);
   if (!plan) return { count, goalId: null, planId: null };
-  return { count, goalId: plan.goal.id, planId: plan.id };
+  return { count, goalId: plan.goalId, planId: plan.id };
 }
 
 // --- Long-effort reconciliation helpers ---

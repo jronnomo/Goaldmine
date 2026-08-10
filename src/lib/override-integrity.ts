@@ -12,11 +12,13 @@
 // findings), the resolver flag (ResolvedDay.orphanedOverride), and the removal warning
 // (delete_hike, etc.) all read this registry — none of them are per-kind.
 //
-// Imports only from the leaf calendar-core (date helpers) + db, so calendar.ts can import
-// isMirrorOverride from here without an import cycle.
+// Imports only from the leaf calendar-core (date helpers) + db + program.ts, so calendar.ts
+// can import isMirrorOverride from here without an import cycle (program.ts itself imports
+// only leaf modules — calendar-core, rotation-core, db — since #297).
 
 import { prisma, getDb } from "@/lib/db";
 import { dateKey, startOfDay, endOfDay } from "@/lib/calendar-core";
+import { getActiveProgram } from "@/lib/program";
 
 // One mirrored-object kind: how to recognize its mirror override, and which dates have a
 // real backing row. `matches` is pure so the hot resolver path stays query-free;
@@ -71,16 +73,18 @@ export function matchingMirrorKind(workoutJson: unknown): OverrideMirrorKind | n
 // mirror override whose backing object no longer exists. null otherwise. Detect-and-guide
 // only — never mutates.
 export async function orphanedOverrideWarning(date: Date): Promise<string | null> {
-  const db = await getDb();
-  const plan = await db.plan.findFirst({
-    where: { active: true },
-    orderBy: [{ goal: { isFocus: "desc" } }, { updatedAt: "desc" }],
-    select: { id: true },
-  });
-  if (!plan) return null;
+  // #297: resolve "the active plan" via getActiveProgram() — the same seam
+  // day resolution uses — instead of re-implementing the isFocus-desc query
+  // inline. snapshot.id is ALWAYS a Plan id (frozen #277 contract, verified
+  // against program.ts's post-M3 signature), so the planId-keyed override
+  // lookup below is unchanged. Zero-Program tenants resolve via the seam's
+  // legacy branch, which is byte-identical to the query this replaced
+  // (`{ active: true }`, isFocus-desc then updatedAt-desc).
+  const program = await getActiveProgram();
+  if (!program) return null;
   // non-scoped: PlanDayOverride has no userId FK — passes through ScopedClient untouched.
   const ov = await prisma.planDayOverride.findFirst({
-    where: { planId: plan.id, date: { gte: startOfDay(date), lte: endOfDay(date) } },
+    where: { planId: program.id, date: { gte: startOfDay(date), lte: endOfDay(date) } },
     select: { workoutJson: true },
   });
   if (!ov) return null;
