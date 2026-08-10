@@ -8,8 +8,10 @@ import { WeightChart } from "@/components/WeightChart";
 import { RecordsSummary } from "@/components/RecordsSummary";
 import { BodyMetricsSection } from "@/components/BodyMetricsSection";
 import { StatTile } from "@/components/StatTile";
+import { ProgramReadinessSection } from "@/components/progress/ProgramReadinessSection";
 import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
+import { getProgressProgramData, nonMemberGoals } from "@/lib/progress-program";
 import { computeReadiness, computeReadinessSeries } from "@/lib/readiness";
 
 export const dynamic = "force-dynamic";
@@ -35,8 +37,19 @@ export default async function ProgressPage() {
   const start = weights[0]?.weight;
   const delta = latest !== undefined && start !== undefined ? latest - start : null;
 
+  // #292: Program users get a dedicated member-goal section (live arcs via
+  // the sampled series + frozen R9 arcs + per-metric window rows). Active
+  // member goals move OUT of the legacy loop below; everything else — and the
+  // ENTIRE zero-Program page (programData === null ⇒ nonMemberGoals returns
+  // activeGoals untouched) — renders byte-identically to pre-#292.
+  const programData = await getProgressProgramData();
+  const legacyReadinessGoals = nonMemberGoals(
+    activeGoals,
+    programData ? programData.memberGoalIds : null,
+  );
+
   const readinessByGoal = await Promise.all(
-    activeGoals.map(async (g) => {
+    legacyReadinessGoals.map(async (g) => {
       const targets = (g.targets as unknown as GoalTarget[] | null) ?? [];
       if (targets.length === 0) {
         return { goal: g, snapshot: null, series: [] as { date: string; score: number }[] };
@@ -114,8 +127,14 @@ export default async function ProgressPage() {
         <span aria-hidden className="text-[var(--accent)]">→</span>
       </Link>
 
+      {/* #292: Program member goals — live arcs + frozen R9 arcs + per-metric
+          Program-window rows. Renders only for tenants with an active Program
+          and member goals; zero-Program tenants skip straight to the loop
+          below, byte-identical to pre-#292. */}
+      {programData && <ProgramReadinessSection data={programData} />}
+
       {/* Readiness by goal */}
-      {readinessByGoal.length === 0 && (
+      {readinessByGoal.length === 0 && !programData && (
         <Card title="Readiness">
           <p className="text-sm text-[var(--muted)]">
             No active goals yet.{" "}

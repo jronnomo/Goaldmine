@@ -107,6 +107,36 @@ export type DerivedSavedMealLog = {
 };
 
 /**
+ * Serializable SavedMeal shape threaded to the composer quick-pick (#296).
+ * Items/macros are pre-parsed server-side (via the defensive parsers above)
+ * so the client renders clean typed data — same posture as LibraryFood.
+ */
+export type SavedMealLite = {
+  id: string;
+  name: string;
+  items: SavedMealItem[];
+  macros?: NutritionMacros;
+  defaultServings: number;
+};
+
+/** Map a SavedMeal DB row (raw Json columns) to the client-safe lite shape. */
+export function toSavedMealLite(row: {
+  id: string;
+  name: string;
+  items: unknown;
+  macros: unknown;
+  defaultServings: number;
+}): SavedMealLite {
+  return {
+    id: row.id,
+    name: row.name,
+    items: parseSavedMealItems(row.items),
+    macros: parseSavedMealMacros(row.macros),
+    defaultServings: row.defaultServings,
+  };
+}
+
+/**
  * Derive the loggable items + macros for `servings` servings of a SavedMeal
  * row (raw Json columns in, clean scaled values out).
  */

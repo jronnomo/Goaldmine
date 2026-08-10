@@ -17,6 +17,8 @@ import {
 } from "@/lib/calendar-core";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import type { NutritionMacros } from "@/lib/nutrition-plan";
+import type { SavedMealLite } from "@/lib/saved-meal";
 import { findAppendTarget, type ExistingMealStub } from "@/lib/nutrition-merge";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { MEAL_LABELS } from "@/lib/nutrition-macros";
@@ -79,6 +81,12 @@ type DayContextProps = {
   dayTarget?: DayMacros | null;
   /** Pre-loaded library foods for the Browse-library picker. Passed to useFoodComposer. */
   libraryFoods?: LibraryFood[];
+  /**
+   * #296: server-fetched SavedMeal list for the composer quick-pick row.
+   * Passed to useFoodComposer; omit and the hook lazy-fetches on mount
+   * (mirrors the quickPickFoods pattern).
+   */
+  savedMeals?: SavedMealLite[];
 };
 
 export type MealComposerProps =
@@ -217,6 +225,7 @@ export function MealComposer(props: MealComposerProps) {
   const trackedSoFar  = props.trackedSoFar;
   const dayTarget     = props.dayTarget;
   const libraryFoods  = props.libraryFoods;
+  const savedMeals    = props.savedMeals;
   // Direct discriminant check (not the `isEdit` alias) so TS narrows `props`
   // to the create member here regardless of where this constant is read.
   const createDefaultDate = props.mode === "create" ? props.defaultDate : undefined;
@@ -383,32 +392,60 @@ export function MealComposer(props: MealComposerProps) {
   // B-2: compute `next`/`newMacros` OUTSIDE all setters; call setters sequentially.
   // B-3: this is the ONLY add path for food-resolved items; setItemsText is NEVER
   //       called from food-resolved add paths.
-  function addItemToComposer(item: NutritionItem): void {
+  // #296 widening: accepts an ARRAY for the SavedMeal expansion (N sequential
+  // single-item calls would each read the same stale `items` closure and drop
+  // all but the last), plus opts.macros — the saved meal's KNOWN scaled totals,
+  // credited here because freehand items carry no per-item macros and the
+  // recompute-from-items estimator must not overwrite authoritative numbers.
+  // Single-item calls (every pre-existing path) behave byte-identically.
+  function addItemToComposer(
+    itemOrItems: NutritionItem | NutritionItem[],
+    opts?: { macros?: NutritionMacros },
+  ): void {
+    const added = Array.isArray(itemOrItems) ? itemOrItems : [itemOrItems];
+    const knownMacros = opts?.macros;
+    if (added.length === 0 && !knownMacros) return;
     if (rawMode) {
       // rawMode: append text only; snapshotHash is NOT reset (rawMode is always
       // considered stale — intentional; user hits Recompute to reconcile). Items are
-      // freehand text here (not structured), so bump the total by the item's own
+      // freehand text here (not structured), so bump the total by the items' own
       // contribution rather than re-summing structured items. recalcItemMacros is
-      // null for a freehand "Add anyway" item → leave macros untouched.
-      const line = item.qty ? `${item.name} | ${item.qty}` : item.name;
-      setRawText((prev) => prev + (prev.trim() ? "\n" : "") + line);
-      const added = recalcItemMacros(item);
-      if (added) {
-        const newMacros = addMacroValues(macros, added);
+      // null for a freehand "Add anyway" item → contributes nothing.
+      if (added.length > 0) {
+        const lines = added
+          .map((it) => (it.qty ? `${it.name} | ${it.qty}` : it.name))
+          .join("\n");
+        setRawText((prev) => prev + (prev.trim() ? "\n" : "") + lines);
+      }
+      let bump: MacroValues | null = null;
+      for (const it of added) {
+        const m = recalcItemMacros(it);
+        if (m) bump = bump ? addMacroValues(bump, m) : { ...m };
+      }
+      if (knownMacros) bump = bump ? addMacroValues(bump, knownMacros) : { ...knownMacros };
+      if (bump) {
+        const newMacros = addMacroValues(macros, bump);
         handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
         setMacros(newMacros);
       }
       return;
     }
     // B-2: next/newMacros computed outside any setter; sequential calls below.
-    const next = [...items, item];
+    const next = [...items, ...added];
     setItems(next);
     setSnapshotHash(hashItems(next));
-    // Structured item → recompute the total from items, preserving the freehand
-    // residual. Freehand item (no source, e.g. "Add anyway") contributes nothing to
-    // the structured sum, so the total is unchanged — matches prior behavior.
-    if (item.source) {
-      const newMacros = recomposeWithResidual(macros, items, next);
+    // Structured item(s) → recompute the total from items, preserving the freehand
+    // residual. Freehand items (no source, e.g. "Add anyway" / SavedMeal rows)
+    // contribute nothing to the structured sum — their macro credit arrives via
+    // opts.macros (SavedMeal) or not at all (matches prior behavior).
+    let newMacros: MacroValues | null = null;
+    if (added.some((it) => it.source)) {
+      newMacros = recomposeWithResidual(macros, items, next);
+    }
+    if (knownMacros) {
+      newMacros = addMacroValues(newMacros ?? macros, knownMacros);
+    }
+    if (newMacros) {
       handleMacrosChanged(macros, newMacros); // flash BEFORE set (UXR-lib-16)
       setMacros(newMacros);
     }
@@ -442,6 +479,7 @@ export function MealComposer(props: MealComposerProps) {
     addItem: addItemToComposer,
     quickPickFoods,
     libraryFoods,
+    savedMeals,
   });
 
   // ── Item ops ───────────────────────────────────────────────────────────────

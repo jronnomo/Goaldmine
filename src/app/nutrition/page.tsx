@@ -16,6 +16,7 @@ import {
 } from "@/lib/calendar";
 import { getDb } from "@/lib/db";
 import { getQuickPickFoods, listLibraryFoods } from "@/lib/food-actions";
+import { listSavedMealsLite } from "@/lib/saved-meal-actions";
 import { sumLoggedDayMacros, sumPlanTargetMacros, hasAnyMacros, MEAL_LABELS } from "@/lib/nutrition-macros";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import { type NutritionItem, parseStoredItems } from "@/lib/nutrition-log-ops";
@@ -51,7 +52,7 @@ export default async function NutritionPage() {
   const since = startOfDay(addDays(new Date(), -30));
 
   const db = await getDb();
-  const [logs, quickPickFoods, libraryFoods, today] = await Promise.all([
+  const [logs, quickPickFoods, libraryFoods, savedMeals, today] = await Promise.all([
     db.nutritionLog.findMany({
       where: { date: { gte: since } },
       orderBy: { date: "desc" },
@@ -59,6 +60,7 @@ export default async function NutritionPage() {
     }),
     getQuickPickFoods(),
     listLibraryFoods(),
+    listSavedMealsLite(),
     // Today's resolved day — only source of a planned per-slot calorie target
     // (it lives in a per-day nutrition-plan override). Lights the Bullseye meter
     // for today's meals (UXR-meal-edit-26); other days have no target → hollow.
@@ -155,6 +157,7 @@ export default async function NutritionPage() {
         <LogNutritionForm
           quickPickFoods={quickPickFoods}
           libraryFoods={libraryFoods}
+          savedMeals={savedMeals}
           trackedSoFar={trackedTodayMacros}
           dayTarget={dayTargetMacros}
           existingMeals={existingMeals}

@@ -4,6 +4,7 @@ import { MealComposer } from "@/components/MealComposer";
 import type { LibraryFood } from "@/lib/food-types";
 import type { DayMacros } from "@/lib/nutrition-macros";
 import type { ExistingMealStub } from "@/lib/nutrition-merge";
+import type { SavedMealLite } from "@/lib/saved-meal";
 import {
   mergeFoodIntoForm,
   mergeEstimateIntoForm,
@@ -22,6 +23,7 @@ export { mergeFoodIntoForm, mergeEstimateIntoForm };
 export function LogNutritionForm({
   quickPickFoods,
   libraryFoods,
+  savedMeals,
   trackedSoFar,
   dayTarget,
   onLogged,
@@ -30,6 +32,8 @@ export function LogNutritionForm({
 }: {
   quickPickFoods?: LibraryFood[];
   libraryFoods?: LibraryFood[];
+  /** Server-fetched SavedMeal quick-pick list (#296) — see MealComposer. */
+  savedMeals?: SavedMealLite[];
   trackedSoFar?: DayMacros;
   dayTarget?: DayMacros | null;
   /** Called after a create-mode log lands (post-revalidatePath). Lets the host
@@ -48,6 +52,7 @@ export function LogNutritionForm({
       mode="create"
       quickPickFoods={quickPickFoods}
       libraryFoods={libraryFoods}
+      savedMeals={savedMeals}
       trackedSoFar={trackedSoFar}
       dayTarget={dayTarget}
       onLogged={onLogged}
