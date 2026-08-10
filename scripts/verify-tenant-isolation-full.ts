@@ -5,12 +5,12 @@
 // deleteMany cleanup, which only proved "deleteMany found N rows," never that
 // the schema's onDelete: Cascade graph itself is complete).
 //
-// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 17 scoped models
+// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 21 scoped models
 // AND the founder's data is byte-for-byte unchanged before/after.
 //
 // Steps (per PRD REQ-001):
 //   1. Founder snapshot: per-model counts (regression baseline).
-//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 17 models as practical),
+//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 21 models as practical),
 //      including a FoodLibrary (shared catalog) + FoodUsage (per-user) pair.
 //   3. Per-model read sweep: founder sees NO usr_e9_b rows; usr_e9_b sees ONLY its own rows.
 //   4. Lib-anchor isolation: getFocusGoal / getActiveProgram / resolveDay /
@@ -19,7 +19,7 @@
 //   6. Founder regression (mid-run): re-snapshot; assert IDENTICAL to step 1.
 //   7. Cleanup (finally): prisma.user.delete({ where: { id: B_USER_ID } }) — a single
 //      cascading DELETE that exercises the schema's real FK graph — then assert (a) all
-//      17 SCOPED_MODELS report ZERO rows for B, (b) founder counts unchanged (post-cleanup
+//      21 SCOPED_MODELS report ZERO rows for B, (b) founder counts unchanged (post-cleanup
 //      regression), (c) the shared FoodLibrary row SURVIVES (positive assertion — shared
 //      catalog must not cascade from a User delete).
 //   8. PASS/FAIL per assertion; process.exit(failures>0 ? 1 : 0).
@@ -116,7 +116,7 @@ type ModelCounts = {
   nutritionLog: number;
   mobilityCheckin: number;
   goal: number;
-  program: number;
+  legacyProgram: number;
   gameBonusXp: number;
   bodyMetric: number;
   scheduledItem: number;
@@ -124,38 +124,49 @@ type ModelCounts = {
   plan: number;
   dayRenderJob: number;
   foodUsage: number;
+  // M2 program-redesign additive models (#270/#271/#274/#275)
+  program: number;
+  activityGoalLink: number;
+  writeReceipt: number;
+  savedMeal: number;
 };
 
-// The 17 scoped models, mapped to their Prisma client accessor name.
+// The 21 scoped models, mapped to their Prisma client accessor name.
 // Module-scope (not local to Step 3) so Step 7's cleanup/assertion sweep can
 // reuse the exact same list.
 const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
-  { label: "workout",         accessor: "workout" },
-  { label: "measurement",     accessor: "measurement" },
-  { label: "footageMarker",   accessor: "footageMarker" },
-  { label: "baseline",        accessor: "baseline" },
-  { label: "note",            accessor: "note" },
-  { label: "hike",            accessor: "hike" },
-  { label: "nutritionLog",    accessor: "nutritionLog" },
-  { label: "mobilityCheckin", accessor: "mobilityCheckin" },
-  { label: "goal",            accessor: "goal" },
-  { label: "legacyProgram",   accessor: "legacyProgram" },
-  { label: "gameBonusXp",     accessor: "gameBonusXp" },
-  { label: "bodyMetric",      accessor: "bodyMetric" },
-  { label: "scheduledItem",   accessor: "scheduledItem" },
-  { label: "logEntry",        accessor: "logEntry" },
-  { label: "plan",            accessor: "plan" },
-  { label: "dayRenderJob",    accessor: "dayRenderJob" },
-  { label: "foodUsage",       accessor: "foodUsage" },
+  { label: "workout",          accessor: "workout" },
+  { label: "measurement",      accessor: "measurement" },
+  { label: "footageMarker",    accessor: "footageMarker" },
+  { label: "baseline",         accessor: "baseline" },
+  { label: "note",             accessor: "note" },
+  { label: "hike",             accessor: "hike" },
+  { label: "nutritionLog",     accessor: "nutritionLog" },
+  { label: "mobilityCheckin",  accessor: "mobilityCheckin" },
+  { label: "goal",             accessor: "goal" },
+  { label: "legacyProgram",    accessor: "legacyProgram" },
+  { label: "gameBonusXp",      accessor: "gameBonusXp" },
+  { label: "bodyMetric",       accessor: "bodyMetric" },
+  { label: "scheduledItem",    accessor: "scheduledItem" },
+  { label: "logEntry",         accessor: "logEntry" },
+  { label: "plan",             accessor: "plan" },
+  { label: "dayRenderJob",     accessor: "dayRenderJob" },
+  { label: "foodUsage",        accessor: "foodUsage" },
+  // M2 program-redesign additive models (#270/#271/#274/#275)
+  { label: "program",          accessor: "program" },
+  { label: "activityGoalLink", accessor: "activityGoalLink" },
+  { label: "writeReceipt",     accessor: "writeReceipt" },
+  { label: "savedMeal",        accessor: "savedMeal" },
 ];
 
 async function founderSnapshot(): Promise<ModelCounts> {
   const w = { where: { userId: FOUNDER_USER_ID } };
   const [
     workout, measurement, footageMarker, baseline, note,
-    hike, nutritionLog, mobilityCheckin, goal, program,
+    hike, nutritionLog, mobilityCheckin, goal, legacyProgram,
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
     foodUsage,
+    program, activityGoalLink, writeReceipt, savedMeal,
   ] = await Promise.all([
     prisma.workout.count(w),
     prisma.measurement.count(w),
@@ -174,12 +185,17 @@ async function founderSnapshot(): Promise<ModelCounts> {
     prisma.plan.count(w),
     prisma.dayRenderJob.count(w),
     prisma.foodUsage.count(w),
+    prisma.program.count(w),
+    prisma.activityGoalLink.count(w),
+    prisma.writeReceipt.count(w),
+    prisma.savedMeal.count(w),
   ]);
   return {
     workout, measurement, footageMarker, baseline, note,
-    hike, nutritionLog, mobilityCheckin, goal, program,
+    hike, nutritionLog, mobilityCheckin, goal, legacyProgram,
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
     foodUsage,
+    program, activityGoalLink, writeReceipt, savedMeal,
   };
 }
 
@@ -200,7 +216,7 @@ function assertCountsEqual(before: ModelCounts | null, after: ModelCounts, conte
     }
   }
   if (allMatch) {
-    pass(`[${context}] Founder counts identical across all 17 models`);
+    pass(`[${context}] Founder counts identical across all ${models.length} models`);
   }
 }
 
@@ -462,7 +478,53 @@ async function main() {
     console.log(`  FoodLibrary (shared): ${sharedFood.id}`);
     console.log(`  FoodUsage:           ${bFoodUsage.id} (food=${sharedFood.id})`);
 
-    console.log(`\n  [seed complete — 17 models seeded for ${B_USER_ID}]`);
+    // --- M2 program-redesign additive models (#270/#271/#274/#275) ---
+    // Program: seeded as "draft" so the partial unique index
+    // program_one_active_per_user (WHERE status='active') can never collide
+    // with leftovers from an interrupted prior run.
+    const bProgram2 = await dbB.program.create({
+      data: {
+        name: "e9b-program-m2",
+        status: "draft",
+        startedOn: ISO_DATE,
+      },
+    });
+    console.log(`  Program (M2):        ${bProgram2.id}`);
+
+    // ActivityGoalLink: polymorphic link from B's workout to B's focus goal
+    const bLink = await dbB.activityGoalLink.create({
+      data: {
+        activityType: "workout",
+        activityId: bWorkoutId,
+        goalId: bGoalId,
+        source: "auto",
+        activityDate: ISO_DATE,
+      },
+    });
+    console.log(`  ActivityGoalLink:    ${bLink.id}`);
+
+    // WriteReceipt: idempotent-replay receipt row
+    const bReceipt = await dbB.writeReceipt.create({
+      data: {
+        requestId: "e9b-req-1",
+        toolName: "log_workout",
+        resultJson: { ok: true, id: bWorkoutId },
+      },
+    });
+    console.log(`  WriteReceipt:        ${bReceipt.id}`);
+
+    // SavedMeal: reusable meal reference
+    const bMeal = await dbB.savedMeal.create({
+      data: {
+        name: "e9b-saved-meal",
+        items: [{ name: "e9b-food", qty: "1 serving" }],
+        macros: { calories: 400, proteinG: 30 },
+        defaultServings: 1,
+      },
+    });
+    console.log(`  SavedMeal:           ${bMeal.id}`);
+
+    console.log(`\n  [seed complete — 21 models seeded for ${B_USER_ID}]`);
 
     // =======================================================================
     // STEP 3 — Per-model read sweep (THE CORE PROOF)
@@ -719,10 +781,10 @@ async function main() {
         `[7a] ${B_USER_ID} still exists after cleanup!`,
       );
 
-      // [7b] Per-model zero-row sweep across all 17 SCOPED_MODELS — the actual
+      // [7b] Per-model zero-row sweep across all 21 SCOPED_MODELS — the actual
       // point of the upgrade. Proves the cascade reached every owned model,
       // not just that a deleteMany() found rows to remove.
-      console.log("\n--- Step 7b: post-cascade zero-row sweep (17 models) ---");
+      console.log("\n--- Step 7b: post-cascade zero-row sweep (21 models) ---");
       for (const { label, accessor } of MODEL_MAP) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const delegate = (prisma as any)[accessor] as {
@@ -773,7 +835,7 @@ async function main() {
   console.log("\n=== Results ===");
   if (failures === 0) {
     console.log(
-      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 17 scoped models.\n" +
+      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 21 scoped models.\n" +
       "Founder counts identical before/after. usr_e9_b fully cleaned up.\n" +
       "Phase-0 done-bar: GREEN. Exit 0.\n",
     );
