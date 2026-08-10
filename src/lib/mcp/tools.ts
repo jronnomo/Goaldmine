@@ -4902,7 +4902,7 @@ function registerWriteTools(server: McpServer) {
     {
       title: "Create a new goal (with optional legend, targets, and attribution hints)",
       description:
-        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists, and it does NOT join any Program — under an active Program the day keeps being driven by the Program's rotation-owning goal regardless of focus. To make the new goal drive Today: for Program users, attach it with attach_goal_to_program (or manage Programs via create_program / update_program / set_program_status); for tenants without a Program, use the set_active_goal compat shim (propose-before-switching covenant applies — and mind its blast radius: switching focus into a DIFFERENT Program deactivates the entire current one). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
+        "Create a new Goal. The new goal does NOT automatically become the focus goal unless no other focused goal currently exists, and it does NOT join any Program — under an active Program the day keeps being driven by the Program's rotation-owning goal regardless of focus. To make the new goal drive Today: for Program users, attach it with attach_goal_to_program (or manage Programs via create_program / update_program / set_program_status); for tenants without a Program, use the set_active_goal compat shim (propose-before-switching covenant applies — and mind its blast radius: switching focus into a DIFFERENT Program deactivates the entire current one). Pass `legend` inline to set goal-flavor iconography in the same call (otherwise the calendar uses the default hike-flavored legend until you call update_goal_legend separately). Empty array OR omitting `legend` are equivalent — both leave the goal on the default legend. `targetDate` is optional — omit for a someday goal (no calendar pin, no plan scaffolded, unrated for rarity — that is a fine default). Plan scaffolding for DATED fitness goals is Program-aware: with an ACTIVE Program nothing is auto-scaffolded (the Program owns the rotation — no generic template battery is stamped); with no active Program the legacy generic program-template plan is scaffolded to the target date. Pass `scaffoldPlan` to override either default; the result's `scaffolded` field reports what actually happened. If you receive an unclear response, call list_goals BEFORE retrying — duplicates are not auto-prevented.",
       inputSchema: {
         objective: z.string().min(1).max(200),
         targetDate: DateKeyShape.optional().describe(
@@ -4954,9 +4954,20 @@ function registerWriteTools(server: McpServer) {
           "Requires kind='project'; ignored when `targets` is provided. " +
           "Cannot be combined with copyFromGoalId unless explicit targets are provided."
         ),
+        scaffoldPlan: z
+          .boolean()
+          .optional()
+          .describe(
+            "Override the plan-scaffolding default for a DATED FITNESS goal. Omitted (default): Program-aware — " +
+              "tenants with an ACTIVE Program get NO auto-scaffolded plan (the Program owns the rotation; the generic " +
+              "program-template baseline battery is never stamped), while tenants with no active Program keep the legacy " +
+              "auto-scaffold (generic program-template plan sized to the target date). " +
+              "true = force the scaffold even under an active Program; false = suppress it even with no Program. " +
+              "Ignored for someday (no targetDate) and project goals — they never scaffold a plan.",
+          ),
       },
     },
-    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints, template }) =>
+    async ({ objective, targetDate, notes, kind, copyFromGoalId, legend, targets, coachFeasibility, attributionHints, template, scaffoldPlan }) =>
       safe(async () => {
         const parsedDate = targetDate ? parseDateInput(targetDate) : null;
 
@@ -4967,7 +4978,7 @@ function registerWriteTools(server: McpServer) {
         const resolvedTargets = resolveTemplateTargets({ template, targets, kind, copyFromGoalId });
         const seededFromTemplate = template !== undefined && targets === undefined;
 
-        const { goal, planId } = await createGoalCore({
+        const { goal, planId, scaffolded } = await createGoalCore({
           objective,
           targetDate: parsedDate,
           notes,
@@ -4977,6 +4988,7 @@ function registerWriteTools(server: McpServer) {
           targets: resolvedTargets,
           coachFeasibility,
           attributionHints,
+          scaffoldPlan,
         });
 
         // Non-blocking stack warning — compute after create so the new goal is included.
@@ -5004,13 +5016,23 @@ function registerWriteTools(server: McpServer) {
           `Goal created: ${objective}` +
           `${legend && legend.length > 0 ? " (with custom legend)" : ""}` +
           `${seededFromTemplate ? " (seeded from career template)" : ""}`;
+        // B7/G7: name the suppression when a DATED FITNESS goal did not
+        // scaffold — either the caller said so (scaffoldPlan:false) or the
+        // Program-aware default kicked in. Project/someday messages unchanged.
+        const suppressedNote =
+          parsedDate !== null && kind === "fitness" && !scaffolded
+            ? scaffoldPlan === false
+              ? " (no plan scaffolded — suppressed by scaffoldPlan:false)"
+              : " (no plan auto-scaffolded — an active Program owns the rotation; pass scaffoldPlan:true to force the generic template plan)"
+            : "";
         const message = parsedDate === null
           ? `${baseMsg} (someday — no plan scaffolded; add a target date later to scaffold one)`
-          : baseMsg;
+          : `${baseMsg}${suppressedNote}`;
 
         return {
           goalId: goal.id,
           planId,
+          scaffolded,
           message,
           stackWarning,
         };

@@ -15,6 +15,67 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — B7/G7: `create_goal` scaffolding is Program-aware + opt-in (`scaffoldPlan` input, `scaffolded` output)
+
+**Issue:** integration-gate check G7 + blocker B7
+(`examples/goaldmine-integration-blockers.md` §1/§2) — creating ANY dated
+fitness goal auto-stamped the generic Elbert-flavored `PROGRAM_TEMPLATE`
+plan (week-1 Pull-Up/Push-Up/Plank/Dead-Hang baseline battery + Upper Body
+session). Reproduced by the owner 2026-08-09 on the handstand goal; the
+plan had to be manually set inactive to stop Today showing the wrong
+session.
+
+**Why:** the Phase 2A import creates three goals of three different
+flavors. If each create stamps an irrelevant battery, the import's first
+act is generating garbage. Under the one-active-Program model, rotations
+come from the Program pack / import — a fresh goal must never bring its
+own generic plan along.
+
+**What changed:**
+
+- `createGoalCore` (`src/lib/goal-core.ts`) scaffold default is now
+  **tenant-shaped**: user has an ACTIVE Program
+  (`db.program.findFirst({ status: "active" })`, scoped client) → **NO
+  auto-scaffold** (`planId: null`); zero-Program or retired-Program tenant
+  → legacy auto-scaffold **byte-identical** (still the zero-Program
+  onboarding path; regression-pinned by template name/weeks in
+  `goal-core.test.ts`). New input `scaffoldPlan?: boolean` overrides the
+  default in either direction and skips the Program lookup. The hard gates
+  are NOT overridable: someday (`targetDate: null`) and non-fitness goals
+  never scaffold, even with `scaffoldPlan: true`.
+- `create_goal` **input**: new optional `scaffoldPlan: boolean`
+  (`true` = force the scaffold even under an active Program; `false` =
+  suppress it even with no Program). Description's scaffolding sentence
+  rewritten to teach the Program-aware default.
+- `create_goal` **output**: new `scaffolded: boolean` (+ `planId` non-null
+  exactly when `true`) — G7 is assertable from the tool result alone.
+  `message` names the suppression on a dated fitness goal ("no plan
+  auto-scaffolded — an active Program owns the rotation…" / "suppressed by
+  scaffoldPlan:false"); someday + project messages unchanged.
+- **Inherited by the other `createGoalCore` callers** (no schema change
+  there): `promote_note_to_goal` and the /goals + onboarding UI forms get
+  the same Program-aware default — under an active Program
+  `promote_note_to_goal`'s `planId` output is now `null` for a dated
+  fitness promotion.
+- `ensurePlanForGoalCore` / `update_goal`'s dated-upgrade path **UNTOUCHED**
+  — setting a `targetDate` on a plan-less goal still deliberately
+  scaffolds for all tenants; that remains the explicit opt-in path.
+
+**Tests:** `src/lib/goal-core.test.ts` — new B7/G7 matrix (active-Program
+suppression; zero-Program legacy scaffold pinned to
+`"<objective> — N-week plan"` / `weeks` / `planJson.name: "Mt. Elbert +
+Shred 90-Day"` / initial-revision summary; `scaffoldPlan:true` under a
+Program scaffolds without consulting Program state; `scaffoldPlan:false`
+suppresses for legacy tenants; hard gates beat `scaffoldPlan:true` for
+project/someday; retired-Program tenant = legacy path) + `scaffolded`
+pinned on the pre-existing kind-gate tests.
+
+**Connector reconnect:** YES — `create_goal` input schema (`scaffoldPlan`),
+output shape (`scaffolded`), and description all changed. Reconnect the
+claude.ai MCP connector after this deploys.
+
+---
+
 ## 2026-08-10 — UXR-PV-89: `attribute_activity` remove = TOMBSTONE (durable) + `list_activity_links` hides removed links by default
 
 **Issue:** #290 wave (Sprint 19 / M4b) — ledger sign-off `UXR-PV-89` from

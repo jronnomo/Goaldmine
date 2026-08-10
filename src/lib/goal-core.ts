@@ -41,12 +41,28 @@ export interface CreateGoalCoreInput {
   /** Canonical exercise names that count as training this goal.
    *  Canonicalized via canonicalExerciseName on write. */
   attributionHints?: string[] | null;
+  /** Explicit override for the plan-scaffolding decision on DATED FITNESS
+   *  goals (B7/G7 — integration gate).
+   *  - undefined (default): Program-aware — scaffold only when the user has
+   *    NO active Program. Program tenants get their rotation via the Program
+   *    pack / import, so a fresh goal must not stamp the generic
+   *    PROGRAM_TEMPLATE baseline battery. Zero-Program tenants keep the
+   *    legacy auto-scaffold as their onboarding path (byte-identical).
+   *  - true: force the scaffold even under an active Program.
+   *  - false: suppress it even for zero-Program tenants.
+   *  Someday (targetDate null) and non-fitness goals NEVER scaffold,
+   *  regardless of this flag — the hard gates are not overridable. */
+  scaffoldPlan?: boolean;
 }
 
 export interface CreateGoalCoreResult {
   goal: { id: string };
   /** null for someday goals (targetDate === null — no plan scaffolded). */
   planId: string | null;
+  /** true iff this call scaffolded a plan (then planId is non-null).
+   *  false for someday/non-fitness goals AND for dated fitness goals where
+   *  the Program-aware default (or scaffoldPlan:false) suppressed it. */
+  scaffolded: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +141,31 @@ export async function createGoalCore(
 
   const db = await getDb();
 
+  // B7/G7 (integration gate): scaffolding is Program-aware + opt-in.
+  // Hard gates first (NOT overridable): only dated fitness goals can ever
+  // scaffold — see the kind comment above and the D1 someday rule below.
+  // Within the eligible set, the default is tenant-shaped:
+  //   - active Program → NO auto-scaffold (the Program owns the rotation;
+  //     stamping the generic Elbert-flavored template battery onto every new
+  //     goal is the B7 regression, reproduced 2026-08-09),
+  //   - zero/retired Program → legacy auto-scaffold, byte-identical (it is
+  //     still the zero-Program onboarding path).
+  // input.scaffoldPlan overrides the default in either direction and skips
+  // the Program lookup entirely.
+  const scaffoldEligible = targetDate !== null && kind === "fitness";
+  let shouldScaffold = false;
+  if (scaffoldEligible) {
+    if (input.scaffoldPlan !== undefined) {
+      shouldScaffold = input.scaffoldPlan;
+    } else {
+      const activeProgram = await db.program.findFirst({
+        where: { status: "active" },
+        select: { id: true },
+      });
+      shouldScaffold = activeProgram === null;
+    }
+  }
+
   let targets: GoalTarget[] | null = input.targets ?? null;
   if (!targets && copyFromGoalId) {
     const source = await db.goal.findUnique({ where: { id: copyFromGoalId } });
@@ -193,10 +234,15 @@ export async function createGoalCore(
     // Step 2: Conditionally create Plan + nested PlanRevision as a top-level call.
     // D1 someday-no-plan: only scaffold when targetDate is set.
     // kind-gate: only fitness goals scaffold a (fitness-template) plan.
+    // B7/G7 Program-gate: shouldScaffold (computed above) additionally
+    // suppresses the auto-scaffold for active-Program tenants unless
+    // scaffoldPlan:true forces it.
     // Plan is scoped → tx.plan.create fires the extension, injecting userId ✓.
     // PlanRevision is non-scoped → safe to nest inside Plan's create ✓.
+    // (targetDate !== null is implied by shouldScaffold — repeated only for
+    // TypeScript narrowing.)
     let createdPlanId: string | null = null;
-    if (targetDate !== null && kind === "fitness") {
+    if (shouldScaffold && targetDate !== null) {
       const now = new Date();
       const weeks = weeksBetween(now, targetDate);
       const plan = await tx.plan.create({
@@ -213,7 +259,7 @@ export async function createGoalCore(
   });
 
   const planId = created.plans[0]?.id ?? null;
-  return { goal: { id: created.id }, planId };
+  return { goal: { id: created.id }, planId, scaffolded: planId !== null };
 }
 
 // ---------------------------------------------------------------------------
