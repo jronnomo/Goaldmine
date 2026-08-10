@@ -58,6 +58,26 @@ export {
   weekRangeLabel,
   bucketDatesToWeekOffsets,
 } from "./calendar-core";
+// B4/A3 consolidation: THE rotation math lives in rotation-core.ts — resolveDay,
+// buildCell, weekConflicts, and every other site here consume it. The pure
+// template lookups that used to be implemented in this file are re-exported so
+// every existing `@/lib/calendar` importer keeps working unchanged.
+import {
+  daysDelta,
+  isInPlan as isInPlanWindow,
+  weekIndex as weekIndexOf,
+  rotationPosition,
+  rotationWeekWindow,
+  dateForRotationSlot,
+  lastPlanDayStart,
+  isTestDueInWeek,
+  mergeDayOverride,
+} from "./rotation-core";
+export {
+  templateForRotationDay,
+  isDateWithinActivePlanWindow,
+  rotationBaselineNamesForDate,
+} from "./rotation-core";
 
 export type CalendarDayCell = {
   date: Date;
@@ -161,7 +181,7 @@ function filterCandidatesToGridOverlap(
 ): PlanWindowCandidate[] {
   return candidates.filter((c) => {
     const startMid = startOfDay(c.startedOn);
-    const endMid = addDays(startMid, c.template.totalWeeks * 7 - 1);
+    const endMid = lastPlanDayStart(c.startedOn, c.template.totalWeeks);
     return startMid.getTime() <= gridEnd.getTime() && endMid.getTime() >= gridStart.getTime();
   });
 }
@@ -298,13 +318,11 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // conflict with rotation days.
   const plannedHikesByWeek = new Map<number, typeof hikes>();
   if (program) {
-    const pStartMid = startOfDay(program.startedOn);
     for (const h of hikes) {
       if (h.status !== "planned") continue;
-      const hStart = startOfDay(h.date);
-      const delta = Math.floor((hStart.getTime() - pStartMid.getTime()) / (24 * 3600 * 1000));
-      if (delta < 0 || delta >= program.template.totalWeeks * 7) continue;
-      const wi = Math.floor(delta / 7) + 1;
+      const delta = daysDelta(program.startedOn, h.date);
+      if (!isInPlanWindow(delta, program.template.totalWeeks)) continue;
+      const wi = weekIndexOf(delta);
       const arr = plannedHikesByWeek.get(wi) ?? [];
       arr.push(h);
       plannedHikesByWeek.set(wi, arr);
@@ -455,23 +473,25 @@ function buildCell(args: {
   let rotationDay: number | null = null;
   let weekIndex: number | null = null;
   let dayTitle: string | null = null;
+  // B4/G6: the day's override→template decision, from the SAME shared code
+  // resolveDay and the XP ledger use (mergeDayOverride). Non-null iff isInPlan.
+  let cellCore: ReturnType<typeof mergeDayOverride> | null = null;
 
   if (picked) {
-    const startKey = dateKey(picked.startedOn);
-    const startMid = startOfDay(picked.startedOn);
-    const dMid = startOfDay(args.date);
-    const daysDelta = Math.floor((dMid.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-    if (k >= startKey && daysDelta < picked.template.totalWeeks * 7) {
+    const pos = rotationPosition(picked.startedOn, picked.template.totalWeeks, args.date);
+    if (pos.isInPlan) {
       isInPlan = true;
-      rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-      weekIndex = Math.floor(daysDelta / 7) + 1;
-      const override = args.overridesByKey.get(`${picked.id}|${k}`);
-      if (override?.workoutJson) {
-        dayTitle = (override.workoutJson as { title?: string }).title ?? "Custom day";
-      } else {
-        const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
-        dayTitle = tmpl?.title ?? null;
-      }
+      rotationDay = pos.rotationDay;
+      weekIndex = pos.weekIndex;
+      cellCore = mergeDayOverride(
+        picked.template,
+        rotationDay!,
+        weekIndex!,
+        args.overridesByKey.get(`${picked.id}|${k}`),
+      );
+      dayTitle = cellCore.isOverride
+        ? (cellCore.workoutTemplate as { title?: string } | null)?.title ?? "Custom day"
+        : cellCore.workoutTemplate?.title ?? null;
     }
   }
 
@@ -485,28 +505,23 @@ function buildCell(args: {
   const plannedHikeCount = args.plannedHikesByKey.get(k)?.length ?? 0;
   const cellOverride = picked ? args.overridesByKey.get(`${picked.id}|${k}`) : undefined;
   const hasOverride = cellOverride !== undefined;
-  // Override-aware, UNLOGGED-only baseline count. An override's baselineTestNames
-  // replaces the rotation default for that day — an empty array means "explicitly
-  // none" (mirrors resolveDay). A test whose result is already logged within its
-  // credit window is NOT counted: a completed retest shouldn't keep showing a "due"
-  // badge (same loggedOnDate semantics as the workout-deferral guard).
+  // Override-aware, UNLOGGED-only baseline count. The scheduled set (override
+  // list vs rotation default, unknown names dropped, empty array = explicitly
+  // none) comes from the SAME mergeDayOverride call as the cell's template
+  // decision — it cannot disagree with resolveDay's baselinesDue for the same
+  // date. A test whose result is already logged within its credit window is
+  // NOT counted: a completed retest shouldn't keep showing a "due" badge
+  // (same loggedOnDate semantics as the workout-deferral guard).
   const baselinesDue = !isInPlan
     ? 0
-    : scheduledBaselineTests(
-        picked!,
-        weekIndex!,
-        rotationDay!,
-        Array.isArray(cellOverride?.baselineTestNames)
-          ? (cellOverride.baselineTestNames as string[])
-          : null,
-      ).filter(
-        (t) =>
+    : cellCore!.baselineTests.filter(
+        ({ test }) =>
           !baselineSatisfied(
-            t,
+            test,
             weekIndex!,
             args.date,
             picked!.startedOn,
-            args.loggedBaselinesByTest.get(t.testName),
+            args.loggedBaselinesByTest.get(test.testName),
           ),
       ).length;
 
@@ -527,9 +542,10 @@ function buildCell(args: {
   const skipConflicts = picked?.source === "archived";
 
   if (!skipConflicts && isInPlan && rotationDay !== null && weekIndex !== null && picked) {
-    const hasWorkoutOverride = args.overridesByKey.get(`${picked.id}|${k}`)?.workoutJson != null;
-
-    if (!hasWorkoutOverride) {
+    // C-2 consolidation: "resolved by an override" is cellCore.isOverride —
+    // the SAME workoutJson-based definition resolveDay's isOverride carries
+    // (both now come from mergeDayOverride).
+    if (!cellCore!.isOverride) {
       const weekHikes = args.plannedHikesByWeek.get(weekIndex) ?? [];
 
       // Priority 1: retest-on-hike (more immediately actionable)
@@ -537,13 +553,7 @@ function buildCell(args: {
         (d) => d.dayOfWeek === rotationDay,
       );
       if (baselineDay) {
-        const hasDueTests = baselineDay.tests.some((t) => {
-          const initialWeek = t.initialWeek ?? 1;
-          return (
-            weekIndex === initialWeek ||
-            (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-          );
-        });
+        const hasDueTests = baselineDay.tests.some((t) => isTestDueInWeek(t, weekIndex!));
         if (hasDueTests) {
           const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
           if (hikeOnThisDay) {
@@ -555,8 +565,10 @@ function buildCell(args: {
         }
       }
 
-      // Priority 2: long-effort conflict (only on the long-endurance rotation day)
-      const tmpl = picked.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay);
+      // Priority 2: long-effort conflict (only on the long-endurance rotation
+      // day). No override on this branch, so cellCore.workoutTemplate IS the
+      // rotation-day weeklySplit entry.
+      const tmpl = cellCore!.workoutTemplate;
       if (!conflict && tmpl?.category === "long-endurance") {
         const hikeOnThisDay = weekHikes.find((h) => dateKey(h.date) === k);
         const hikesElsewhere = weekHikes.filter((h) => dateKey(h.date) !== k);
@@ -632,41 +644,9 @@ function buildCell(args: {
   };
 }
 
-// Scheduled baseline tests for a calendar cell (override-aware), as full test
-// objects. Override path: each name matched against a real test in baselineWeek
-// (unknown names ignored; empty list → none). Native path: the rotation day's
-// tests that are due this week (initial week, or a retest week beyond it).
-// Mirrors resolveDay's two paths — but returns the tests so the caller can filter
-// out already-logged ones.
-function scheduledBaselineTests(
-  program: ActiveProgramSnapshot,
-  weekIndex: number,
-  rotationDay: number,
-  overrideNames: string[] | null,
-): BaselineTest[] {
-  if (overrideNames !== null) {
-    const out: BaselineTest[] = [];
-    for (const name of overrideNames) {
-      for (const day of program.template.baselineWeek ?? []) {
-        const t = day.tests.find((x) => x.testName === name);
-        if (t) {
-          out.push(t);
-          break;
-        }
-      }
-    }
-    return out;
-  }
-  const day = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-  if (!day) return [];
-  return day.tests.filter((t) => {
-    const initialWeek = t.initialWeek ?? 1;
-    return (
-      weekIndex === initialWeek ||
-      (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-    );
-  });
-}
+// (scheduledBaselineTests was deleted here — buildCell now takes the scheduled
+// set from rotation-core's mergeDayOverride, the same code resolveDay and the
+// XP ledger consume.)
 
 // True if a scheduled baseline test for this rotation week already has a logged
 // result crediting it — within its checkpoint window for that week (reusing
@@ -1050,21 +1030,20 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   // --- hoist: pure rotation math (no DB) ---
   // Moved above Promise.all so weekWindow is known in time to join the parallel fetch.
   // C-1: these declarations replace the post-Promise.all let declarations (now removed).
+  // B4/A3: the math itself is rotation-core's — the same primitives buildCell
+  // and the XP ledger consume.
   let isInPlan = false;
   let rotationDay: number | null = null;
   let weekIndex: number | null = null;
   let weekWindow: { start: Date; end: Date } | null = null;
 
   if (program) {
-    const startMid = startOfDay(program.startedOn);
-    const daysDelta = Math.floor(
-      (dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000),
-    );
-    if (daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7) {
+    const pos = rotationPosition(program.startedOn, program.template.totalWeeks, dayStart);
+    if (pos.isInPlan) {
       isInPlan = true;
-      rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-      weekIndex = Math.floor(daysDelta / 7) + 1;
-      weekWindow = rotationWeekWindow(program, weekIndex);
+      rotationDay = pos.rotationDay;
+      weekIndex = pos.weekIndex;
+      weekWindow = rotationWeekWindow(program.startedOn, weekIndex!);
     }
   }
 
@@ -1183,45 +1162,18 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   let longEffortConflict: ResolvedDay["longEffortConflict"] = null;
 
   if (isInPlan && program && rotationDay !== null && weekIndex !== null) {
-    // rotationDay and weekIndex are already computed above (hoisted).
-    // No daysDelta recomputation needed here.
+    // B4/A3: override→template precedence + the scheduled-baseline set come
+    // from rotation-core's mergeDayOverride — the SAME decision code buildCell
+    // and the XP ledger consume. Override list path: exact names, unknown
+    // names dropped, empty array = explicitly none, week filter bypassed (a
+    // deferred "initial" can land outside its scheduled week). Native path:
+    // the rotation day's tests due this week. Only the DB work (matching
+    // logged results) remains here.
+    const core = mergeDayOverride(program.template, rotationDay, weekIndex, override);
+    workoutTemplate = core.workoutTemplate;
+    isOverride = core.isOverride;
 
-    if (override?.workoutJson) {
-      workoutTemplate = override.workoutJson as unknown as DayTemplate;
-      isOverride = true;
-    } else {
-      workoutTemplate =
-        program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
-    }
-
-    // Baselines due. Two paths:
-    // 1. The override has a baselineTestNames array → use that exact list,
-    //    looking up each test by name across the entire baselineWeek.
-    //    Empty array = explicitly no tests today (override "skip").
-    // 2. Otherwise → derive from the rotation day, same as before.
-    const overrideNames = Array.isArray(override?.baselineTestNames)
-      ? (override!.baselineTestNames as unknown as string[])
-      : null;
-
-    let testsForDay: { test: BaselineTest; baselineDay: BaselineDay }[] = [];
-    if (overrideNames !== null) {
-      for (const name of overrideNames) {
-        for (const day of program.template.baselineWeek ?? []) {
-          const test = day.tests.find((t) => t.testName === name);
-          if (test) {
-            testsForDay.push({ test, baselineDay: day });
-            break;
-          }
-        }
-      }
-    } else {
-      const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-      if (baselineDay) {
-        testsForDay = baselineDay.tests.map((test) => ({ test, baselineDay }));
-      }
-    }
-
-    if (testsForDay.length > 0) {
+    if (core.baselineTests.length > 0) {
       // Match logged results within each test's checkpoint credit window
       // (shared with get_baseline_schedule via checkpointWindows), not just on
       // this exact date — an early, off-schedule retest still counts (the Wk-7
@@ -1229,15 +1181,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
       // day). The day itself is always included too, so an override that
       // parks a test outside any window still sees a same-day log.
       const dayEndExcl = new Date(dayEnd.getTime() + 1);
-      const matchTargets = testsForDay.map(({ test, baselineDay }) => {
-        // Rotation default: the test's initialWeek (default 1) surfaces the
-        // initial, retestWeeks beyond it trigger retests, all else is silent.
-        // With an override, the user has explicitly placed these tests on this
-        // date — bypass the week filter entirely (a deferred "initial" can
-        // land outside its scheduled week).
-        const initialWeek = test.initialWeek ?? 1;
-        const checkpoint: "initial" | "retest" =
-          weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex) ? "retest" : "initial";
+      const matchTargets = core.baselineTests.map(({ test, baselineDay, checkpoint }) => {
         const windows = checkpointWindows(test, program.startedOn);
         const cp =
           checkpoint === "retest"
@@ -1246,7 +1190,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         const from =
           cp && startOfDay(cp.windowStart) < dayStart ? startOfDay(cp.windowStart) : dayStart;
         const to = cp && cp.windowEnd > dayEndExcl ? cp.windowEnd : dayEndExcl;
-        return { test, baselineDay, checkpoint, initialWeek, from, to };
+        return { test, baselineDay, checkpoint, from, to };
       });
 
       const logged = await db.baseline.findMany({
@@ -1259,7 +1203,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         orderBy: { date: "asc" },
       });
 
-      for (const { test, baselineDay, checkpoint, initialWeek, from, to } of matchTargets) {
+      for (const { test, baselineDay, checkpoint, from, to } of matchTargets) {
         // Earliest result within this test's window (rows are date-asc) — same
         // pick as the schedule view's statusFor, so a past initial day keeps
         // showing its own week-1 result rather than a later retest that also
@@ -1270,13 +1214,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
         const loggedOnDate = result
           ? { id: result.id, value: result.value, units: result.units, date: result.date }
           : null;
-        if (overrideNames !== null) {
-          baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
-        } else if (weekIndex === initialWeek) {
-          baselinesDue.push({ test, baselineDay, checkpoint: "initial", loggedOnDate });
-        } else if (weekIndex > initialWeek && test.retestWeeks?.includes(weekIndex)) {
-          baselinesDue.push({ test, baselineDay, checkpoint: "retest", loggedOnDate });
-        }
+        baselinesDue.push({ test, baselineDay, checkpoint, loggedOnDate });
       }
     }
 
@@ -1518,76 +1456,10 @@ export async function getBaselinesDueToday(now: Date = new Date()): Promise<Reso
   return r.baselinesDue;
 }
 
-/**
- * Baseline test names that would normally appear on `date` by rotation default
- * (week 1 initials + retest weeks). Ignores any per-day override — answers the
- * question "what would a fresh day with no override show?".
- */
-/**
- * Resolve the rotation-day template that would render on `date` if no override
- * existed. Returns null when `date` is outside the plan's calendar window
- * (before startedOn or past totalWeeks*7). Override-unaware by design — this
- * is the "base" view that PlanDayOverride.workoutJson layers on top of.
- *
- * Use case: workoutJsonOps in apply_day_override needs a base DayTemplate to
- * apply edits against when no override exists yet for the date.
- */
-export function templateForRotationDay(
-  program: ActiveProgramSnapshot,
-  date: Date,
-): DayTemplate | null {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return null;
-  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-  return program.template.weeklySplit.find((d) => d.dayOfWeek === rotationDay) ?? null;
-}
-
-/**
- * S7 (Goal Story & Time-Aware History, write-guard): pure coverage check —
- * is `date` within `program`'s calendar window (same daysDelta math as
- * resolveDay / templateForRotationDay above)?
- *
- * History-write guards (day-actions.ts's upsertDayOverrideFromForm /
- * clearDayOverride, day-log-actions.ts's skipDay) call this with the ACTIVE
- * program to independently verify a write target server-side — the client's
- * isInPlan/isRestDay props (driven by resolveDay/getCalendarMonth, which can
- * now report isInPlan:true for a date covered only by an ARCHIVED plan) must
- * never be the only line of defense for "history can't be edited" (architecture
- * critique D5: SkipDayControl's guard was client-trusted, not independently
- * derived). No completion clamp here (unlike program.ts's coversDayKey) — an
- * ACTIVE plan's goal is by definition not yet completed.
- */
-export function isDateWithinActivePlanWindow(
-  program: { startedOn: Date; template: { totalWeeks: number } },
-  date: Date,
-): boolean {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  return daysDelta >= 0 && daysDelta < program.template.totalWeeks * 7;
-}
-
-export function rotationBaselineNamesForDate(
-  program: ActiveProgramSnapshot,
-  date: Date,
-): string[] {
-  const startMid = startOfDay(program.startedOn);
-  const dayStart = startOfDay(date);
-  const daysDelta = Math.floor((dayStart.getTime() - startMid.getTime()) / (24 * 3600 * 1000));
-  if (daysDelta < 0 || daysDelta >= program.template.totalWeeks * 7) return [];
-  const rotationDay = (((daysDelta % 7) + 7) % 7) + 1;
-  const weekIndex = Math.floor(daysDelta / 7) + 1;
-  const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotationDay);
-  if (!baselineDay) return [];
-  return baselineDay.tests
-    .filter((t) => {
-      const initialWeek = t.initialWeek ?? 1;
-      return weekIndex === initialWeek || (weekIndex > initialWeek && t.retestWeeks?.includes(weekIndex));
-    })
-    .map((t) => t.testName);
-}
+// templateForRotationDay / isDateWithinActivePlanWindow /
+// rotationBaselineNamesForDate moved to rotation-core.ts (B4/A3) and are
+// re-exported at the top of this file — every `@/lib/calendar` importer keeps
+// working unchanged.
 
 /** Unresolved notes + a link target into the active plan's goal. */
 export async function getPendingNotesCount(): Promise<{ count: number; goalId: string | null; planId: string | null }> {
@@ -1610,17 +1482,8 @@ export async function getPendingNotesCount(): Promise<{ count: number; goalId: s
 
 // --- Long-effort reconciliation helpers ---
 
-// Returns the UTC instants for the first and last millisecond of a rotation week.
-// Day 1 of weekIndex lands at startOfDay(program.startedOn + (weekIndex-1)*7 days).
-// Uses addDays/startOfDay/endOfDay — no raw Date arithmetic.
-// Not exported — only resolveDay and weekConflicts (both in calendar.ts) call it.
-function rotationWeekWindow(
-  program: ActiveProgramSnapshot,
-  weekIndex: number,
-): { start: Date; end: Date } {
-  const weekStart = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7);
-  return { start: weekStart, end: endOfDay(addDays(weekStart, 6)) };
-}
+// (The private rotationWeekWindow helper moved to rotation-core.ts — same
+// formula, takes startedOn instead of the full snapshot.)
 
 // Pure — no DB, no await, no side effects, no mutation.
 // Takes the already-fetched week hikes and the already-resolved template/flags.
@@ -1703,7 +1566,7 @@ export async function weekConflicts(
   weekIndex: number,
 ): Promise<WeekConflict[]> {
   const db = await getDb();
-  const window = rotationWeekWindow(program, weekIndex);
+  const window = rotationWeekWindow(program.startedOn, weekIndex);
 
   const [plannedHikes, overrideRows] = await Promise.all([
     db.hike.findMany({
@@ -1730,7 +1593,7 @@ export async function weekConflicts(
   // hardcoding Day 6, so a re-anchored rotation stays correct.
   const longTmpl = program.template.weeklySplit.find((d) => d.category === "long-endurance");
   if (longTmpl !== undefined) {
-    const longDate = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + (longTmpl.dayOfWeek - 1));
+    const longDate = dateForRotationSlot(program.startedOn, weekIndex, longTmpl.dayOfWeek);
     const longKey  = dateKey(longDate);
 
     if (!overrideKeys.has(longKey)) {
@@ -1751,7 +1614,7 @@ export async function weekConflicts(
   // countBaselinesDueForCell which uses the same week-gate logic.
   for (let relDay = 0; relDay < 7; relDay++) {
     const rotDay  = (relDay + 1) as 1 | 2 | 3 | 4 | 5 | 6 | 7;
-    const calDate = addDays(startOfDay(program.startedOn), (weekIndex - 1) * 7 + relDay);
+    const calDate = dateForRotationSlot(program.startedOn, weekIndex, rotDay);
     const calKey  = dateKey(calDate);
 
     if (overrideKeys.has(calKey)) continue;
@@ -1759,13 +1622,7 @@ export async function weekConflicts(
     const baselineDay = program.template.baselineWeek?.find((d) => d.dayOfWeek === rotDay);
     if (!baselineDay) continue;
 
-    const hasDueTests = baselineDay.tests.some((t) => {
-      const initialWeek = t.initialWeek ?? 1;
-      return (
-        weekIndex === initialWeek ||
-        (weekIndex > initialWeek && (t.retestWeeks?.includes(weekIndex) ?? false))
-      );
-    });
+    const hasDueTests = baselineDay.tests.some((t) => isTestDueInWeek(t, weekIndex));
     if (!hasDueTests) continue;
 
     const hikeOnThisDay = plannedHikes.find((h) => dateKey(h.date) === calKey);

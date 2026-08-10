@@ -207,6 +207,20 @@ vi.mock("@/lib/calendar", () => ({
   templateForRotationDay: vi.fn().mockReturnValue(null),
   weekConflicts: vi.fn().mockResolvedValue([]),
 }));
+// B4/A3: get_week's anchor math and program.ts's coversDayKey now run through
+// the REAL rotation-core, whose primitives come from calendar-core — this
+// file's toy UTC-frame date world (identity startOfDay, raw-ms addDays, UTC
+// dateKey) must cover those primitives too, or rotation-core would compute in
+// USER_TZ while the mocked @/lib/calendar above computes in UTC and the two
+// frames drift by the TZ offset. rotation-core itself stays real — its
+// formulas are exactly what the S1/REQ-007a tests exercise.
+vi.mock("@/lib/calendar-core", () => ({
+  addDays: (d: Date, n: number) => new Date(d.getTime() + n * 86400000),
+  startOfDay: (d: Date) => d,
+  endOfDay: (d: Date) => d,
+  dateKey: (d: Date) => d.toISOString().slice(0, 10),
+  parseDateKey: (s: string) => new Date(s),
+}));
 vi.mock("@/lib/workout-core", () => ({
   createWorkoutCore: vi.fn(),
   updateWorkoutCore: vi.fn(),

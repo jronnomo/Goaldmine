@@ -14,6 +14,12 @@
 //    tool so the coach can self-check on demand.
 
 import { addDays, resolveDay, startOfDay, weekConflicts } from "@/lib/calendar";
+import {
+  daysDelta,
+  isInPlan,
+  weekIndex as weekIndexOf,
+  rotationDay as rotationDayOf,
+} from "@/lib/rotation-core";
 import { findOrphanedOverrides } from "@/lib/override-integrity";
 import { prisma, getDb } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
@@ -291,19 +297,18 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
     });
   }
 
-  // Rule: day overrides on dates outside the plan range. Same daysDelta math as
-  // resolveDay. (warning)
+  // Rule: day overrides on dates outside the plan range. rotation-core's
+  // daysDelta/isInPlan — the same canonical math resolveDay uses. (warning)
   const overrides = await prisma.planDayOverride.findMany({ where: { planId: plan.id } });
   const startMid = startOfDay(plan.startedOn);
-  const planSpanDays = template.totalWeeks * 7;
   for (const ov of overrides) {
-    const daysDelta = Math.floor((startOfDay(ov.date).getTime() - startMid.getTime()) / 86400000);
-    if (daysDelta < 0 || daysDelta >= planSpanDays) {
+    const dd = daysDelta(plan.startedOn, ov.date);
+    if (!isInPlan(dd, template.totalWeeks)) {
       findings.push({
         rule: "override-out-of-range",
         severity: "warning",
         message: `A day override exists for ${startOfDay(ov.date).toISOString().slice(0, 10)}, outside the plan's ${template.totalWeeks}-week range — it will never render.`,
-        context: { overrideId: ov.id, date: ov.date, daysDelta },
+        context: { overrideId: ov.id, date: ov.date, daysDelta: dd },
       });
     }
   }
@@ -316,10 +321,9 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   // Driven by the OVERRIDE_MIRROR_KINDS registry so a new kind is one entry, not a new rule
   // here. Heuristic — may flag a deliberate look-alike override; acknowledge_lint_finding to
   // suppress those. (warning)
-  const inRangeOverrides = overrides.filter((ov) => {
-    const dd = Math.floor((startOfDay(ov.date).getTime() - startMid.getTime()) / 86400000);
-    return dd >= 0 && dd < planSpanDays;
-  });
+  const inRangeOverrides = overrides.filter((ov) =>
+    isInPlan(daysDelta(plan.startedOn, ov.date), template.totalWeeks),
+  );
   for (const o of await findOrphanedOverrides(inRangeOverrides)) {
     findings.push({
       rule: o.rule,
@@ -344,9 +348,9 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   for (const ov of overrides) {
     const names = Array.isArray(ov.baselineTestNames) ? (ov.baselineTestNames as unknown[]) : null;
     if (!names || names.length === 0) continue;
-    const dd = Math.floor((startOfDay(ov.date).getTime() - startMid.getTime()) / 86400000);
-    if (dd < 0 || dd >= planSpanDays) continue; // out-of-range override already flagged
-    baselineOverrideWeeks.add(Math.floor(dd / 7) + 1);
+    const dd = daysDelta(plan.startedOn, ov.date);
+    if (!isInPlan(dd, template.totalWeeks)) continue; // out-of-range override already flagged
+    baselineOverrideWeeks.add(weekIndexOf(dd));
   }
   for (const wi of baselineOverrideWeeks) {
     // Count only UNLOGGED occurrences: a day where the test is already logged
@@ -357,7 +361,7 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
     const unloggedDates = new Map<string, Set<string>>(); // testName -> set of dateKeys still owing it
     for (let d = 0; d < 7; d++) {
       const dd = (wi - 1) * 7 + d;
-      if (dd < 0 || dd >= planSpanDays) continue;
+      if (!isInPlan(dd, template.totalWeeks)) continue;
       const r = await resolveDay(addDays(startMid, dd));
       for (const b of r.baselinesDue) {
         if (b.loggedOnDate !== null) continue; // already done that day → won't defer
@@ -409,12 +413,10 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
 
   // Rule: planned hike outside the plan window (before startedOn or past
   // totalWeeks*7). The resolver silently ignores it; this makes it visible.
-  // Use the same daysDelta math as resolveDay. (warning)
+  // rotation-core's daysDelta/isInPlan — resolveDay's canonical math. (warning)
   for (const h of plannedHikes) {
-    const hikeDaysDelta = Math.floor(
-      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
-    );
-    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) {
+    const hikeDaysDelta = daysDelta(plan.startedOn, h.date);
+    if (!isInPlan(hikeDaysDelta, template.totalWeeks)) {
       findings.push({
         rule: "hike-outside-plan",
         severity: "warning",
@@ -430,11 +432,9 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   // program.startedOn, NOT calendar Monday).
   const hikesByWeek = new Map<number, typeof plannedHikes>();
   for (const h of plannedHikes) {
-    const hikeDaysDelta = Math.floor(
-      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
-    );
-    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) continue; // already flagged above
-    const wi = Math.floor(hikeDaysDelta / 7) + 1;
+    const hikeDaysDelta = daysDelta(plan.startedOn, h.date);
+    if (!isInPlan(hikeDaysDelta, template.totalWeeks)) continue; // already flagged above
+    const wi = weekIndexOf(hikeDaysDelta);
     const arr = hikesByWeek.get(wi) ?? [];
     arr.push(h);
     hikesByWeek.set(wi, arr);
@@ -454,13 +454,10 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   // or Day 5 = "lower-power"). Pre-fatigued legs increase injury risk on a hike.
   // Checks rotation day of hike.date - 1. (warning)
   for (const h of plannedHikes) {
-    const hikeDaysDelta = Math.floor(
-      (startOfDay(h.date).getTime() - startMid.getTime()) / 86400000,
-    );
-    if (hikeDaysDelta < 0 || hikeDaysDelta >= planSpanDays) continue;
+    const hikeDaysDelta = daysDelta(plan.startedOn, h.date);
+    if (!isInPlan(hikeDaysDelta, template.totalWeeks)) continue;
     if (hikeDaysDelta === 0) continue; // no day before plan start
-    const prevDaysDelta = hikeDaysDelta - 1;
-    const prevRotationDay = (((prevDaysDelta % 7) + 7) % 7) + 1;
+    const prevRotationDay = rotationDayOf(hikeDaysDelta - 1);
     const prevTmpl = template.weeklySplit.find((d) => d.dayOfWeek === prevRotationDay);
     if (prevTmpl?.category === "lower" || prevTmpl?.category === "lower-power") {
       findings.push({
