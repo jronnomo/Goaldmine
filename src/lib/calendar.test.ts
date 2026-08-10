@@ -757,3 +757,330 @@ describe("resolveDay — orphanedOverride (bug #266: any-status backing check, n
     expect(r.orphanedOverride).toBe(false);
   });
 });
+
+// ─── getCalendarMonth — #291 cross-goal Program month ────────────────────────
+//
+// Fixture: the Phase-2A shape on the June 2026 grid (pinned "now" 2026-06-01).
+// Active Program with 3 members — handstand (owns the rotation plan, isFocus),
+// cut (carries a baseline:<testName> target metric), aws (project, scheduled
+// items). Day-swap overrides carry the Phase 2A import's window titles
+// ("Deload …" / "Mirror Lake …" — the calendar-windows.ts contract).
+describe("getCalendarMonth — #291 member marks, windows, event partition", () => {
+  const P291_PROGRAM_ROW = {
+    id: "prog-291",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: parseDateKey("2026-06-01"),
+    endsOn: null,
+    notes: null,
+    attributionRules: null,
+  };
+  const P291_MEMBERS = [
+    { id: "g-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+    { id: "g-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+    { id: "g-aws", objective: "AWS SAA cert", kind: "project", status: "active" },
+  ];
+  const P291_MEMBER_DETAIL = [
+    {
+      id: "g-handstand",
+      isFocus: true,
+      createdAt: parseDateKey("2026-05-01"),
+      legend: null,
+      targets: [],
+      plans: [{ id: "plan-291" }],
+    },
+    {
+      id: "g-cut",
+      isFocus: false,
+      createdAt: parseDateKey("2026-05-02"),
+      legend: null,
+      targets: [{ metric: "baseline:Plank Max Hold", targetValue: 120 }],
+      plans: [],
+    },
+    {
+      id: "g-aws",
+      isFocus: false,
+      createdAt: parseDateKey("2026-05-03"),
+      legend: null,
+      targets: [{ metric: "log:practice_exams", targetValue: 6 }],
+      plans: [],
+    },
+  ];
+  const P291_TEMPLATE = template({
+    totalWeeks: 12,
+    weeklySplit: [
+      { dayOfWeek: 1, title: "Handstand Skill A", category: "upper", summary: "", blocks: [] },
+      { dayOfWeek: 3, title: "Lower", category: "lower", summary: "", blocks: [] },
+    ],
+    baselineWeek: [
+      {
+        dayOfWeek: 1,
+        title: "Baseline check",
+        tests: [
+          {
+            testName: "Plank Max Hold",
+            units: "sec",
+            protocol: "Max-duration front plank.",
+            retestWeeks: [6],
+          },
+        ],
+      },
+    ],
+  });
+  const P291_PLAN_ROW = {
+    id: "plan-291",
+    name: "Handstand Block",
+    startedOn: parseDateKey("2026-06-01"),
+    planJson: P291_TEMPLATE,
+    confirmedThroughDate: null,
+  };
+  const P291_CANDIDATE = {
+    ...P291_PLAN_ROW,
+    active: true,
+    goal: { status: "active", completedAt: null },
+  };
+  const OWNER_ROW = {
+    id: "g-handstand",
+    objective: "Freestanding handstand",
+    targetDate: null,
+    kind: "fitness",
+    isFocus: true,
+    legend: null,
+    targets: [],
+    githubRepo: null,
+  };
+
+  // Window overrides on the ACTIVE plan: observance Fri–Sat Jun 5–6,
+  // deload Fri–Sun Jun 19–21 (both inside single Monday-start week rows).
+  const windowOverride = (dk: string, title: string, category: string) => ({
+    id: `ov-${dk}`,
+    planId: "plan-291",
+    date: parseDateKey(dk),
+    workoutJson: { dayOfWeek: 5, title, category, summary: "", blocks: [] },
+    nutritionText: null,
+    mobilityText: null,
+    baselineTestNames: null,
+  });
+  const P291_OVERRIDES = [
+    windowOverride("2026-06-05", "Mirror Lake — Matt", "rest"),
+    windowOverride("2026-06-06", "Mirror Lake — Matt", "rest"),
+    windowOverride("2026-06-19", "Deload #1 — Virginia", "zone2-mobility"),
+    windowOverride("2026-06-20", "Deload #1 — Virginia", "zone2-mobility"),
+    windowOverride("2026-06-21", "Deload #1 — Virginia", "zone2-mobility"),
+  ];
+
+  function mk291Db() {
+    const goalFindMany = vi.fn().mockImplementation((args: { select?: { plans?: unknown } }) =>
+      Promise.resolve(args?.select?.plans ? P291_MEMBER_DETAIL : P291_MEMBERS),
+    );
+    const db = mkDb({
+      program: {
+        findFirst: vi.fn().mockResolvedValue(P291_PROGRAM_ROW),
+        count: vi.fn().mockResolvedValue(1),
+      },
+      plan: {
+        findFirst: vi.fn().mockResolvedValue(P291_PLAN_ROW),
+        findMany: vi.fn().mockResolvedValue([P291_CANDIDATE]),
+      },
+      goal: { findFirst: vi.fn().mockResolvedValue(OWNER_ROW), findMany: goalFindMany },
+      workout: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "w-1",
+            // 10:00 local on Jun 1 — dateKey 2026-06-01 in USER_TZ.
+            startedAt: new Date(parseDateKey("2026-06-01").getTime() + 10 * 3600 * 1000),
+            status: "completed",
+            title: "Handstand Skill A",
+          },
+        ]),
+      },
+      scheduledItem: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "si-a", goalId: "g-aws", date: parseDateKey("2026-06-01"), status: "done" },
+          { id: "si-b", goalId: "g-aws", date: parseDateKey("2026-06-03"), status: "planned" },
+        ]),
+      },
+    });
+    return db;
+  }
+
+  it("member marks coexist per cell (no pin dropped), window cells + windows[] derived, identities slot-assigned", async () => {
+    mockGetDb.mockResolvedValue(mk291Db());
+    mockOverrideFindMany.mockResolvedValue(P291_OVERRIDES);
+
+    const month = await getCalendarMonth({ year: 2026, month: 5 });
+
+    // Identities: UXR-PV-04 slot order — handstand (isFocus) 0, cut 1, aws (project) 2.
+    expect(month.identities.map((i) => [i.goalId, i.slot])).toEqual([
+      ["g-handstand", 0],
+      ["g-cut", 1],
+      ["g-aws", 2],
+    ]);
+
+    // Windows: observance run + deload run, grouped + labelled.
+    expect(month.windows).toEqual([
+      {
+        id: "observance:2026-06-05",
+        kind: "observance",
+        label: "Mirror Lake — Matt",
+        startKey: "2026-06-05",
+        endKey: "2026-06-06",
+      },
+      {
+        id: "deload:2026-06-19",
+        kind: "deload",
+        label: "Deload #1 — Virginia",
+        startKey: "2026-06-19",
+        endKey: "2026-06-21",
+      },
+    ]);
+
+    // Jun 1 (Mon, wk1 d1): handstand logged (completed workout on its rotation
+    // day), cut claimed (Plank initial due, unlogged), aws logged (done item)
+    // — THREE goals coexist on one cell, none dropped or overwritten.
+    const jun1 = month.cells.find((c) => c.dateKey === "2026-06-01")!;
+    expect(jun1.memberGoalMarks).toEqual([
+      { goalId: "g-handstand", state: "logged" },
+      { goalId: "g-cut", state: "claimed" },
+      { goalId: "g-aws", state: "logged" },
+    ]);
+
+    // Jun 3 (Wed, rotation day 3): handstand claimed (future rotation day,
+    // nothing logged), aws claimed (planned item).
+    const jun3 = month.cells.find((c) => c.dateKey === "2026-06-03")!;
+    expect(jun3.memberGoalMarks).toEqual([
+      { goalId: "g-handstand", state: "claimed" },
+      { goalId: "g-aws", state: "claimed" },
+    ]);
+
+    // Window cells: observance + deload carry their window; a plain day does not.
+    expect(month.cells.find((c) => c.dateKey === "2026-06-05")!.window).toEqual({
+      kind: "observance",
+      label: "Mirror Lake — Matt",
+    });
+    expect(month.cells.find((c) => c.dateKey === "2026-06-20")!.window).toEqual({
+      kind: "deload",
+      label: "Deload #1 — Virginia",
+    });
+    expect(jun3.window).toBeNull();
+  });
+
+  it("events partition: member events → memberGoalEvents, non-member events stay otherGoalEvents; members leave the otherGoals legend list", async () => {
+    mockGetDb.mockResolvedValue(mk291Db());
+    mockOverrideFindMany.mockResolvedValue(P291_OVERRIDES);
+
+    const { getGoalEventsResult } = await import("@/lib/goal-events");
+    const memberEvent = {
+      goalId: "g-cut",
+      goalObjective: "10% body fat",
+      goalKind: "fitness",
+      isFocusGoal: false,
+      dateKey: "2026-06-10",
+      type: "target-date" as const,
+      icon: "■",
+      label: "Cut done",
+    };
+    const foreignEvent = {
+      goalId: "g-marathon",
+      goalObjective: "Marathon PR",
+      goalKind: "fitness",
+      isFocusGoal: false,
+      dateKey: "2026-06-10",
+      type: "target-date" as const,
+      icon: "🏃",
+      label: "Race day",
+    };
+    (getGoalEventsResult as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      events: [memberEvent, foreignEvent],
+      focusGoalId: "g-handstand",
+      otherGoalsMeta: [
+        {
+          id: "g-cut",
+          objective: "10% body fat",
+          goalDateIcon: "■",
+          goalDateLabel: "Cut done",
+          kind: "fitness",
+          targetDate: parseDateKey("2026-06-10"),
+        },
+        {
+          id: "g-marathon",
+          objective: "Marathon PR",
+          goalDateIcon: "🏃",
+          goalDateLabel: "Race day",
+          kind: "fitness",
+          targetDate: parseDateKey("2026-06-10"),
+        },
+      ],
+    });
+
+    const month = await getCalendarMonth({ year: 2026, month: 5 });
+    const jun10 = month.cells.find((c) => c.dateKey === "2026-06-10")!;
+
+    // The member goal's pin is first-class cell presence, not a foreign pin.
+    expect(jun10.memberGoalEvents).toEqual([memberEvent]);
+    expect(jun10.otherGoalEvents).toEqual([foreignEvent]);
+    // Its mark rides the member row (claimed — event pin, nothing logged).
+    expect(jun10.memberGoalMarks).toContainEqual({ goalId: "g-cut", state: "claimed" });
+    // Legend: member goals move to the identities strip; non-members stay.
+    expect(month.otherGoals.map((og) => og.id)).toEqual(["g-marathon"]);
+  });
+
+  it("ZERO-Program byte-identity: every #291 field is inert — identities/windows [], per-cell marks [] / events [] / window null — and legacy fields untouched", async () => {
+    // The mixed-month legacy fixture shape: zero Program rows (mkDb default).
+    const activePlanRow = {
+      id: "plan-legacy",
+      name: "Current Plan",
+      startedOn: parseDateKey("2026-06-01"),
+      planJson: template({
+        weeklySplit: [
+          { dayOfWeek: 1, title: "Lower A", category: "lower", summary: "", blocks: [] },
+        ],
+      }),
+      confirmedThroughDate: null,
+    };
+    mockGetDb.mockResolvedValue(
+      mkDb({
+        plan: {
+          findFirst: vi.fn().mockResolvedValue(activePlanRow),
+          findMany: vi.fn().mockResolvedValue([
+            { ...activePlanRow, active: true, goal: { status: "active", completedAt: null } },
+          ]),
+        },
+        goal: {
+          findFirst: vi.fn().mockResolvedValue({
+            id: "goal-1",
+            targetDate: null,
+            objective: "Test goal",
+            legend: null,
+            kind: "fitness",
+            isFocus: true,
+            targets: [],
+            githubRepo: null,
+          }),
+          findMany: vi.fn().mockResolvedValue([]),
+        },
+      }),
+    );
+
+    const month = await getCalendarMonth({ year: 2026, month: 5 });
+
+    expect(month.identities).toEqual([]);
+    expect(month.windows).toEqual([]);
+    for (const cell of month.cells) {
+      expect(cell.memberGoalMarks).toEqual([]);
+      expect(cell.memberGoalEvents).toEqual([]);
+      expect(cell.window).toBeNull();
+    }
+    // Legacy fields spot-check: the rotation still resolves as ever.
+    const jun1 = month.cells.find((c) => c.dateKey === "2026-06-01")!;
+    expect(jun1.isInPlan).toBe(true);
+    expect(jun1.dayTitle).toBe("Lower A");
+    expect(month.goal).toEqual({
+      id: "goal-1",
+      targetDate: null,
+      objective: "Test goal",
+      legend: null,
+      kind: "fitness",
+    });
+  });
+});

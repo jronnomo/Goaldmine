@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MarkerIcon, ForeignGoalMarker } from "@/components/MarkerIcon";
+import { GoalMark } from "@/components/GoalMark";
 import { Card } from "@/components/Card";
 import { CalendarMonth } from "@/components/CalendarMonth";
 import { StatTile } from "@/components/StatTile";
@@ -19,7 +20,8 @@ export default async function CalendarPage({
   const year = y ? Number(y) : now.getFullYear();
   const month = m ? Number(m) : now.getMonth();
 
-  const { cells, monthStart, goal, program, otherGoals } = await getCalendarMonth({ year, month });
+  const { cells, monthStart, goal, program, otherGoals, identities, windows } =
+    await getCalendarMonth({ year, month });
   const legend = resolveLegend(goal);
   // First-run signal: goalCount, NOT !goal — `goal` is the focus goal only
   // (getCalendarMonth's findFirst({ isFocus: true })), and focus-goal deletion
@@ -97,6 +99,8 @@ export default async function CalendarPage({
           monthKey={`${year}-${String(month + 1).padStart(2, "0")}`}
           legend={legend}
           confirmedThroughDate={program?.confirmedThroughDate ?? null}
+          identities={identities}
+          windows={windows}
         />
       </Card>
 
@@ -108,6 +112,30 @@ export default async function CalendarPage({
       )}
 
       <Card title="Legend">
+        {/* #291: member-goal identity strip — one row per Program member goal,
+            the same slot marks the cells carry (goal-identity labels). The
+            existing legend kinds below stay untouched. */}
+        {identities.length > 0 && (
+          <div data-testid="legend-program-goals" className="mb-3 pb-3 border-b border-[var(--border)]">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--muted)] mb-2">
+              Program goals — one mark per goal
+            </p>
+            <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              {identities
+                .filter((i) => i.shape !== null)
+                .map((identity) => (
+                  <LegendRow key={identity.goalId} label={identity.label}>
+                    <GoalMark identity={identity} state="logged" size={13} />
+                  </LegendRow>
+                ))}
+            </ul>
+            <p className="text-xs text-[var(--muted)] mt-2">
+              Filled = logged that day · hollow = claimed
+              {windows.some((w) => w.kind === "deload") ? " · bar under a week = deload/travel window" : ""}
+              {windows.some((w) => w.kind === "observance") ? " · — = nothing scheduled" : ""}
+            </p>
+          </div>
+        )}
         <ul className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {legend.map((entry) => (
             <LegendRow key={entry.kind} label={entry.label}>
