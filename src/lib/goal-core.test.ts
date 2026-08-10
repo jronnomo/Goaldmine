@@ -22,9 +22,19 @@ vi.mock("@/lib/db", () => ({
 }));
 // canonicalExerciseName is only invoked when attributionHints are present; passthrough.
 vi.mock("@/lib/records", () => ({ canonicalExerciseName: (s: string) => s }));
+// #280: goal-core imports setProgramStatusCore for the cross-Program shim —
+// mocked so the shim tests assert the REUSE of set_program_status's mechanism
+// without pulling program-core's real transaction logic.
+vi.mock("@/lib/program-core", () => ({ setProgramStatusCore: vi.fn() }));
 
-import { createGoalCore, ensurePlanForGoalCore, setFocusGoalCore } from "@/lib/goal-core";
+import {
+  createGoalCore,
+  ensurePlanForGoalCore,
+  setFocusGoalCore,
+  setFocusGoalProgramAwareCore,
+} from "@/lib/goal-core";
 import { getDb } from "@/lib/db";
+import { setProgramStatusCore } from "@/lib/program-core";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockGetDb = getDb as any;
@@ -178,5 +188,182 @@ describe("setFocusGoalCore — refuses achieved goals", () => {
     await expect(setFocusGoalCore("g1")).rejects.toThrow(/reopen it first|reopen_goal/i);
     expect(txMock.goal.updateMany).not.toHaveBeenCalled();
     expect(txMock.goal.update).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setFocusGoalProgramAwareCore (#280 — the set_active_goal Program shim)
+//
+// The fake db serves BOTH the shim's own reads (program.findFirst,
+// program.count, goal.findUnique with the program join) and the inner
+// setFocusGoalCore call (goal.findFirst for old focus + $transaction).
+// setProgramStatusCore is mocked (see the vi.mock above) — the shim must
+// REUSE set_program_status's mechanism, so the assertion is on the calls.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("setFocusGoalProgramAwareCore — Program blast-radius shim (#280)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let fakeDb: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let txMock: any;
+
+  const TARGET_BASE = {
+    id: "g-target",
+    kind: "fitness",
+    objective: "Handstand",
+    status: "active",
+  };
+
+  function wire({
+    activeProgram = null,
+    target = null,
+  }: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    activeProgram?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    target?: any;
+  }) {
+    txMock = {
+      goal: {
+        // inner setFocusGoalCore re-reads the target inside its transaction
+        findUnique: vi.fn().mockResolvedValue({ ...TARGET_BASE }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      plan: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    fakeDb = {
+      program: {
+        findFirst: vi.fn().mockResolvedValue(activeProgram),
+      },
+      goal: {
+        // shim's target lookup (with program join) AND inner core's old-focus
+        // findFirst
+        findUnique: vi.fn().mockResolvedValue(target),
+        findFirst: vi.fn().mockResolvedValue({ id: "g-old-focus" }),
+      },
+      $transaction: vi.fn().mockImplementation(async (cb) => cb(txMock)),
+    };
+    mockGetDb.mockResolvedValue(fakeDb);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(setProgramStatusCore).mockResolvedValue({
+      id: "x",
+      name: "x",
+      previousStatus: "active",
+      status: "archived",
+      changed: true,
+    });
+  });
+
+  it("no active Program (zero rows OR retired): legacy focus switch, Program state untouched", async () => {
+    wire({ activeProgram: null });
+
+    const r = await setFocusGoalProgramAwareCore("g-target");
+
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
+    expect(r.program).toEqual({ action: "none" });
+    expect(r.goal.id).toBe("g-target");
+    expect(r.previousFocusGoalId).toBe("g-old-focus");
+    // the legacy core actually ran (isFocus cleared + set)
+    expect(txMock.goal.updateMany).toHaveBeenCalledWith({ data: { isFocus: false } });
+    expect(txMock.goal.update).toHaveBeenCalledWith({
+      where: { id: "g-target" },
+      data: { isFocus: true, active: true },
+    });
+    // the shim's target pre-read is skipped entirely on the legacy path
+    expect(fakeDb.goal.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("same-Program switch: focus moves, Program.status untouched", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: { ...TARGET_BASE, programId: "prog-A", program: { id: "prog-A", name: "Phase 2A" } },
+    });
+
+    const r = await setFocusGoalProgramAwareCore("g-target");
+
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
+    expect(r.program).toEqual({ action: "none" });
+    expect(txMock.goal.update).toHaveBeenCalled(); // focus write happened
+  });
+
+  it("Program-less target while a Program is active: focus moves, Program untouched, warning attached", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: { ...TARGET_BASE, programId: null, program: null },
+    });
+
+    const r = await setFocusGoalProgramAwareCore("g-target");
+
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
+    expect(r.program.action).toBe("none");
+    expect(r.program.warning).toMatch(/still owns the day's rotation/);
+    expect(r.program.warning).toContain("Phase 2A");
+  });
+
+  it("cross-Program switch WITHOUT confirmProgramSwitch: refused with an error naming BOTH Programs, nothing written", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: { ...TARGET_BASE, programId: "prog-B", program: { id: "prog-B", name: "Winter Block" } },
+    });
+
+    await expect(setFocusGoalProgramAwareCore("g-target")).rejects.toThrow(
+      /Phase 2A[\s\S]*Winter Block|Winter Block[\s\S]*Phase 2A/,
+    );
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
+    expect(fakeDb.$transaction).not.toHaveBeenCalled(); // focus untouched too
+  });
+
+  it("cross-Program switch WITH confirmProgramSwitch: archives the current Program, activates the target's (set_program_status mechanism, in order), then focuses", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: { ...TARGET_BASE, programId: "prog-B", program: { id: "prog-B", name: "Winter Block" } },
+    });
+
+    const r = await setFocusGoalProgramAwareCore("g-target", { confirmProgramSwitch: true });
+
+    expect(vi.mocked(setProgramStatusCore).mock.calls).toEqual([
+      ["prog-A", "archived"], // archive first — one-active index forbids activate-first
+      ["prog-B", "active"],
+    ]);
+    expect(r.program).toEqual({
+      action: "switched",
+      previousProgram: { id: "prog-A", name: "Phase 2A", status: "archived" },
+      activatedProgram: { id: "prog-B", name: "Winter Block" },
+    });
+    expect(txMock.goal.update).toHaveBeenCalledWith({
+      where: { id: "g-target" },
+      data: { isFocus: true, active: true },
+    });
+  });
+
+  it("achieved target: refused BEFORE any Program write (the archive-then-discover trap)", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: { ...TARGET_BASE, status: "achieved", programId: "prog-B", program: { id: "prog-B", name: "Winter Block" } },
+    });
+
+    await expect(
+      setFocusGoalProgramAwareCore("g-target", { confirmProgramSwitch: true }),
+    ).rejects.toThrow(/reopen it first|reopen_goal/i);
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
+  });
+
+  it("unknown target goal: clean error, no Program writes", async () => {
+    wire({
+      activeProgram: { id: "prog-A", name: "Phase 2A" },
+      target: null,
+    });
+
+    await expect(setFocusGoalProgramAwareCore("g-missing")).rejects.toThrow(
+      "Goal not found: g-missing",
+    );
+    expect(setProgramStatusCore).not.toHaveBeenCalled();
   });
 });

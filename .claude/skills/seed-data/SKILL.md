@@ -49,6 +49,19 @@ npx tsx scripts/seed-goal.ts
 
 Read the script first (`scripts/seed-goal.ts`) and tell the user what it will create before running — goal seeding shapes what `get_today_plan` and the dashboard show. Related inspectors if verification is needed: `scripts/inspect-plan.ts`, `scripts/inspect-readiness.ts`.
 
+## Step 3b (optional) — Chewgether pure-project Program fixture (#305)
+
+```bash
+npx tsx prisma/seed-chewgether.ts
+```
+
+Provisions a **separate fixture tenant** (`usr_chewgether`, override via `CHEWGETHER_USER_ID`) with the Chewgether project goal attached to a `status='active'` Program that has **zero plans** — the live dev-DB reproduction of the "pure-project Program" scenario (Today must render "no rotation today", never an error or another tenant's plan). Guarded: refuses unless `DB_ENV=development`.
+
+- Idempotent — re-runs print "skipping" per step; safe alongside the founder's own active Program (the one-active constraint is **per-user**: partial unique index `program_one_active_per_user`).
+- The seed self-asserts through the real resolution path and must end with: `chewgether program active, rotation=null as expected`. If that line is missing, the fixture is broken — read the thrown assertion.
+- It does NOT touch the founder's goals/Programs, and does NOT seed ScheduledItems (Chewgether milestones are GitHub-first via `sync_github_milestones`).
+- Cleanup: delete the `usr_chewgether` User row (cascades the goal + Program).
+
 ## Step 4 — Verify + report
 
 ```bash

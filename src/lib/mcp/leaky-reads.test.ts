@@ -42,6 +42,7 @@ const {
   mockProgramFindFirst,
   mockProgramFindUnique,
   mockGoalFindMany,
+  mockActivityLinkFindMany,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -91,6 +92,10 @@ const {
   const mockProgramFindUnique = vi.fn().mockResolvedValue(null);
   const mockGoalFindMany = vi.fn().mockResolvedValue([]);
 
+  // #278 list_activity_links — dedicated spy so its select/where assertions
+  // inspect exactly the link query.
+  const mockActivityLinkFindMany = vi.fn().mockResolvedValue([]);
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
@@ -113,6 +118,7 @@ const {
       update: mockGoalUpdate,
     },
     program: { findFirst: mockProgramFindFirst, findUnique: mockProgramFindUnique },
+    activityGoalLink: { findMany: mockActivityLinkFindMany },
     savedMeal: {
       findMany: mockSavedMealFindMany,
       findFirst: mockSavedMealFindFirst,
@@ -155,6 +161,7 @@ const {
     mockProgramFindFirst,
     mockProgramFindUnique,
     mockGoalFindMany,
+    mockActivityLinkFindMany,
   };
 });
 
@@ -1481,6 +1488,99 @@ describe("get_program_overview — leaky-reads coverage (#311)", () => {
       { id: "g-2", objective: "Ship MVP", kind: "project", status: "active", hasActivePlan: false },
     ]);
     expect((payload.program as Record<string, unknown>).startedOn).toBe("2026-09-01"); // dateKey, not ISO instant
+    expect(result.content[0].text).not.toContain("userId");
+  });
+});
+
+// ── list_activity_links — leaky-reads coverage (#278) ────────────────────────
+// New READ tool → per repo convention it needs coverage here. Strategy per
+// the file header: assert on QUERY CALL ARGS — the link query must use an
+// explicit select WITHOUT userId (at both the link and joined-goal levels),
+// must range-filter on activityDate (never createdAt), and the tool must
+// never read Note at all.
+
+describe("list_activity_links — leaky-reads coverage (#278)", () => {
+  const LINK_ROW = {
+    id: "link-1",
+    activityType: "workout",
+    activityId: "w-1",
+    goalId: "g-1",
+    source: "auto",
+    note: null,
+    activityDate: new Date("2026-08-05T06:00:00.000Z"),
+    createdAt: new Date("2026-08-05T23:00:00.000Z"),
+    goal: { objective: "Handstand" },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockFindUnique).mockResolvedValue({ id: "g-1" }); // goal existence check
+    vi.mocked(mockProgramFindFirst).mockResolvedValue({ id: "prog-1", name: "Phase 2A" });
+    vi.mocked(mockGoalFindMany).mockResolvedValue([{ id: "g-1" }, { id: "g-2" }]);
+    vi.mocked(mockActivityLinkFindMany).mockResolvedValue([LINK_ROW]);
+  });
+
+  it("link query uses an explicit select WITHOUT userId — and the joined goal selects objective only", async () => {
+    const handler = fakeServer.getHandler("list_activity_links");
+    await handler({ goalId: "g-1" });
+
+    expect(vi.mocked(mockActivityLinkFindMany)).toHaveBeenCalledOnce();
+    const args = vi.mocked(mockActivityLinkFindMany).mock.calls[0][0] as Record<string, unknown>;
+    const select = args.select as Record<string, unknown>;
+    expect(select).toBeDefined();
+    expect(select.userId).toBeUndefined();
+    expect(select.id).toBe(true); // sanity: a projection, not a full-row read
+    expect(select.goal).toEqual({ select: { objective: true } }); // no goal.userId either
+  });
+
+  it("from/to filter on activityDate, NOT createdAt (retroactive-attribution trap)", async () => {
+    const handler = fakeServer.getHandler("list_activity_links");
+    await handler({ goalId: "g-1", from: "2026-08-01", to: "2026-08-07" });
+
+    const args = vi.mocked(mockActivityLinkFindMany).mock.calls[0][0] as Record<string, unknown>;
+    const where = args.where as Record<string, unknown>;
+    expect(where.activityDate).toBeDefined();
+    expect(where.createdAt).toBeUndefined();
+  });
+
+  it("omitted goalId resolves the ACTIVE Program's member goals (program.findFirst + goal.findMany id-projection)", async () => {
+    const handler = fakeServer.getHandler("list_activity_links");
+    await handler({});
+
+    expect(vi.mocked(mockProgramFindFirst)).toHaveBeenCalledOnce();
+    expect(
+      (vi.mocked(mockProgramFindFirst).mock.calls[0][0] as Record<string, unknown>).select,
+    ).toEqual({ id: true, name: true });
+    expect(vi.mocked(mockGoalFindMany)).toHaveBeenCalledWith({
+      where: { programId: "prog-1" },
+      select: { id: true },
+    });
+    const args = vi.mocked(mockActivityLinkFindMany).mock.calls[0][0] as Record<string, unknown>;
+    expect((args.where as Record<string, unknown>).goalId).toEqual({ in: ["g-1", "g-2"] });
+  });
+
+  it("issues NO Note reads at all (private note types cannot leak from this tool)", async () => {
+    const handler = fakeServer.getHandler("list_activity_links");
+    await handler({ goalId: "g-1" });
+
+    // mockFindMany backs workout/measurement/NOTE/baseline/hike/nutritionLog/
+    // bodyMetric — zero calls means zero Note reads.
+    expect(vi.mocked(mockFindMany)).not.toHaveBeenCalled();
+  });
+
+  it("payload: links carry goalObjective + dateKey activityDate, and no userId key anywhere", async () => {
+    const handler = fakeServer.getHandler("list_activity_links");
+    const result = (await handler({ goalId: "g-1" })) as {
+      content: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual(["count", "links", "scope", "truncated"]);
+    const links = payload.links as Array<Record<string, unknown>>;
+    expect(links[0].goalObjective).toBe("Handstand");
+    expect(links[0].activityDate).toBe("2026-08-05"); // dateKey, not ISO instant
     expect(result.content[0].text).not.toContain("userId");
   });
 });
