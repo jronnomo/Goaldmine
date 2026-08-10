@@ -31,18 +31,22 @@
 //       top-level create (Plan is scoped → extension injects userId;
 //       PlanRevision is non-scoped → safe to nest — gotchas §B.9/§B.10),
 //       then attachPlanToProgramCore + the masked-bug-trap re-read assert.
-//   7.  Scheduled checkpoints (DEXA ×3, practice-exam ×2, monthly photos ×4)
-//       — idempotent via ScheduledItem @@unique([goalId, externalRef]) — plus
-//       the weekly weigh-in cadence as ONE standing_rule Note (deliberately
-//       NOT 20 rows; standing rules are how recurring cadence works today).
+//   7.  Scheduled checkpoints (DEXA ×3, practice-exam ×2, monthly photos ×4,
+//       + the spec-v2 Sep 15 cluster-decision task on Goal 1) — idempotent via
+//       ScheduledItem @@unique([goalId, externalRef]) — plus the weekly
+//       weigh-in cadence as ONE standing_rule Note (deliberately NOT 20 rows;
+//       standing rules are how recurring cadence works today).
 //   8.  PlanDayOverrides: Mirror Lake Aug 14–15 (SACRED TIME — rest-day
 //       DayTemplate, never a deload label), deloads Sep 25–27 + Nov 26–29
 //       (Nov = maintenance-not-deficit), Sep 4–7 Virginia soft-break
-//       note-only overrides. PlanDayOverride is non-scoped — planId carries
-//       tenancy; written via the raw client (gotcha §B.9 table).
+//       note-only overrides, + the spec-v2 Oct 2–5 out-of-town TBD note-only
+//       overrides (uncertain window; no-retest/DEXA/practice-exam through
+//       Oct 8). PlanDayOverride is non-scoped — planId carries tenancy;
+//       written via the raw client (gotcha §B.9 table).
 //   9.  SavedMeals: Protein Brookie, Chipotle Protein Bowl (upsert-by-name
 //       semantics: existing name → skip).
-//   10. Nutrition standing rule (the descent block).
+//   10. Standing rules: nutrition descent block + the spec-v2 Sep 24 – Oct 5
+//       disruption-cluster rule (options a/b/c, decide by mid-September).
 //   11. Verification block, then — apply mode only — Program → ACTIVE (last).
 //   12. Post-import assertions: getActiveProgram().id === rotation plan id;
 //       getActiveProgramMembership() lists the 3 member goals.
@@ -90,6 +94,7 @@ import {
   buildG4AttributionRule,
   buildPhase2aOverrides,
   buildPhase2aRotationTemplate,
+  PHASE2A_CLUSTER_RULE,
   PHASE2A_GOAL1,
   PHASE2A_GOAL2,
   PHASE2A_GOAL3,
@@ -101,6 +106,7 @@ import {
   PHASE2A_WEIGHIN_RULE,
   PULLUP_CORRECTION_NOTE,
   standingRuleKey,
+  type Phase2aScheduledItem,
 } from "../src/lib/phase2a-spec";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -585,8 +591,9 @@ async function main(): Promise<void> {
     }
 
     // ── STEP 7 · Scheduled checkpoints + weigh-in standing rule ───────────
-    header("7", "Scheduled items (DEXA ×3 · practice exams ×2 · photos ×4) + weigh-in rule");
-    const goalIdFor = (key: "bodycomp" | "aws") => (key === "bodycomp" ? goal2Id : goal3Id);
+    header("7", "Scheduled items (DEXA ×3 · practice exams ×2 · photos ×4 · cluster decision ×1) + weigh-in rule");
+    const goalIdFor = (key: Phase2aScheduledItem["goalKey"]) =>
+      key === "bodycomp" ? goal2Id : key === "aws" ? goal3Id : goal1Id;
     for (const item of PHASE2A_SCHEDULED_ITEMS) {
       const gid = goalIdFor(item.goalKey);
       const existing =
@@ -637,7 +644,7 @@ async function main(): Promise<void> {
     }
 
     // ── STEP 8 · Plan-day overrides ───────────────────────────────────────
-    header("8", "Overrides · Mirror Lake (sacred) + deloads + Virginia soft break");
+    header("8", "Overrides · Mirror Lake (sacred) + deloads + soft break + Oct TBD trip");
     const overrides = buildPhase2aOverrides();
     for (const ov of overrides) {
       const date = parseDateKey(ov.dateKey);
@@ -697,8 +704,8 @@ async function main(): Promise<void> {
       }
     }
 
-    // ── STEP 10 · Nutrition standing rule (the descent) ───────────────────
-    header("10", "Nutrition standing rule · the descent");
+    // ── STEP 10 · Standing rules (the descent + the disruption cluster) ───
+    header("10", "Standing rules · the descent + Sep 24 – Oct 5 cluster");
     const nutriKey = standingRuleKey(PHASE2A_NUTRITION_RULE);
     const nutriExisting = await db.note.findFirst({
       where: { type: "standing_rule", body: { startsWith: nutriKey } },
@@ -714,6 +721,23 @@ async function main(): Promise<void> {
       say(`  ✓ descent standing rule created (${n.id}) — 1,500–1,600 floor · 150–155 g protein non-negotiable · unplanned high days · pull-up canary · 10-floor-day soft flag · no pre-peak deficit chasing`);
     } else {
       say(`  [dry-run] would create the descent standing rule (floor 1,500–1,600 · protein floor · unplanned high days · canary watch · 10-consecutive-floor-days soft flag · Greek-yogurt default · no pre-peak deficit chasing)`);
+    }
+    // Spec-v2 delta: the disruption-cluster rule (same first-line idempotency).
+    const clusterKey = standingRuleKey(PHASE2A_CLUSTER_RULE);
+    const clusterExisting = await db.note.findFirst({
+      where: { type: "standing_rule", body: { startsWith: clusterKey } },
+      select: { id: true },
+    });
+    if (clusterExisting) {
+      say(`  [skip] disruption-cluster standing rule already exists (${clusterExisting.id})`);
+    } else if (apply) {
+      const n = await db.note.create({
+        data: { body: PHASE2A_CLUSTER_RULE.body, type: "standing_rule", lastAcknowledgedAt: new Date() },
+        select: { id: true },
+      });
+      say(`  ✓ disruption-cluster standing rule created (${n.id}) — options a/b/c decide by mid-Sep · maintenance on travel days in BOTH windows · rolling-window rates provisional until 6 fresh sessions post-Oct 5`);
+    } else {
+      say(`  [dry-run] would create the Sep 24 – Oct 5 disruption-cluster standing rule (a: absorb / b: shift Deload #1 to Oct 2–5 / c: front-load Block 1 — decide by mid-September · maintenance on all travel days in BOTH windows · rolling-window caveat · Oct 2–8 scheduling exclusion)`);
     }
 
     // ── STEP 11 · Verification block, then activate LAST ──────────────────
