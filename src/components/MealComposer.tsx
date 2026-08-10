@@ -29,7 +29,12 @@ import {
   addMacroValues,
   buildQtyDisplay,
   unitsForFood,
+  withItemMacros,
 } from "@/lib/food-units";
+import { MACRO_KEYS } from "@/lib/nutrition-plan";
+import {
+  createSavedMealFromComposition,
+} from "@/lib/saved-meal-actions";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -286,6 +291,15 @@ export function MealComposer(props: MealComposerProps) {
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState("");
 
+  // ── "Save as meal" (bundle capture) ────────────────────────────────────────
+  // Small disclosure that snapshots the CURRENT composed items (food links,
+  // amounts, per-item macros) + totals as a reusable SavedMeal bundle —
+  // upsert-by-name, same contract as the coach's save_meal tool.
+  const [saveMealOpen, setSaveMealOpen] = useState(false);
+  const [saveMealName, setSaveMealName] = useState("");
+  const [saveMealPending, setSaveMealPending] = useState(false);
+  const [saveMealNote, setSaveMealNote] = useState<{ ok: boolean; text: string } | null>(null);
+
   // Exact-time disclosure
   const [showExactTime, setShowExactTime] = useState(false);
 
@@ -455,11 +469,14 @@ export function MealComposer(props: MealComposerProps) {
   // Full re-sum approach (B-1 fix): captures residual → rebuilds next → recomposes.
   // Sequential setters (B-2 fix): no setter inside another setter.
   function updateItemAmountUnit(idx: number, amount: number, unit: string): void {
-    // Build updated items array (refreshes qty display string too), then recompose
-    // the total from items while preserving the freehand/manual residual.
+    // Build updated items array (refreshes qty display string AND the per-item
+    // itemMacros snapshot — withItemMacros recomputes it at the new
+    // amount/unit, or drops it when the portion no longer resolves), then
+    // recompose the total from items while preserving the freehand/manual
+    // residual.
     const next = items.map((it, j) =>
       j === idx
-        ? { ...it, amount, unit, qty: buildQtyDisplay(amount, unit, it.source!) }
+        ? withItemMacros({ ...it, amount, unit, qty: buildQtyDisplay(amount, unit, it.source!) })
         : it,
     );
     const newMacros = recomposeWithResidual(macros, items, next);
@@ -485,9 +502,15 @@ export function MealComposer(props: MealComposerProps) {
   // ── Item ops ───────────────────────────────────────────────────────────────
   function updateItemQty(index: number, delta: number) {
     setItems((prev) =>
-      prev.map((it, i) =>
-        i === index ? { ...it, qty: bumpQty(it.qty, delta) } : it,
-      ),
+      prev.map((it, i) => {
+        if (i !== index) return it;
+        const bumped = { ...it, qty: bumpQty(it.qty, delta) };
+        // Freehand quantity changed → any bundle-carried per-item snapshot no
+        // longer describes the row; drop it rather than keep a stale number
+        // (the meal-total staleness flag already fires for the total).
+        if (bumped.itemMacros) delete bumped.itemMacros;
+        return bumped;
+      }),
     );
     // F5 — re-key the bumped numeral so its one-shot tick replays each tap.
     setBumpState((prev) => ({ idx: index, n: (prev?.n ?? 0) + 1 }));
@@ -539,6 +562,40 @@ export function MealComposer(props: MealComposerProps) {
     } else {
       setRawText(serializeItems(items));
       setRawMode(true);
+    }
+  }
+
+  // ── "Save as meal" submit ──────────────────────────────────────────────────
+  // Captures the current items (with foodIds/amounts/itemMacros where known)
+  // and the current macro totals under a user-chosen name. Server action does
+  // the defensive re-parse + upsert-by-name; this stays a dumb capture.
+  async function handleSaveAsMeal() {
+    const name = saveMealName.trim();
+    if (!name || saveMealPending) return;
+    setSaveMealPending(true);
+    setSaveMealNote(null);
+    try {
+      // Composer totals (nulls dropped) — describes 1 serving of the bundle.
+      const totals: Partial<Record<(typeof MACRO_KEYS)[number], number>> = {};
+      for (const k of MACRO_KEYS) {
+        const v = macros[k];
+        if (typeof v === "number" && Number.isFinite(v)) totals[k] = v;
+      }
+      const res = await createSavedMealFromComposition({
+        name,
+        items,
+        macros: Object.keys(totals).length > 0 ? totals : undefined,
+      });
+      if (res.ok) {
+        setSaveMealNote({ ok: true, text: res.message });
+        setSaveMealName("");
+      } else {
+        setSaveMealNote({ ok: false, text: res.error });
+      }
+    } catch {
+      setSaveMealNote({ ok: false, text: "Couldn't save the meal — try again." });
+    } finally {
+      setSaveMealPending(false);
     }
   }
 
@@ -861,14 +918,30 @@ export function MealComposer(props: MealComposerProps) {
         <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
           Items
         </span>
-        <button
-          type="button"
-          data-testid="items-raw-toggle"
-          onClick={toggleRawMode}
-          className="text-xs text-[var(--accent)]"
-        >
-          {rawMode ? "Structured rows" : "Edit as text"}
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Bundle capture — only when there are structured rows to capture. */}
+          {!rawMode && items.length > 0 && (
+            <button
+              type="button"
+              data-testid="save-as-meal-toggle"
+              onClick={() => {
+                setSaveMealOpen((o) => !o);
+                setSaveMealNote(null);
+              }}
+              className="text-xs text-[var(--accent)]"
+            >
+              Save as meal
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="items-raw-toggle"
+            onClick={toggleRawMode}
+            className="text-xs text-[var(--accent)]"
+          >
+            {rawMode ? "Structured rows" : "Edit as text"}
+          </button>
+        </div>
       </div>
 
       {rawMode ? (
@@ -1072,6 +1145,68 @@ export function MealComposer(props: MealComposerProps) {
             </ul>
           )}
         </>
+      )}
+
+      {/* ── Save-as-meal panel — the owner's bundle-creation path ────────────── */}
+      {saveMealOpen && !rawMode && items.length > 0 && (
+        <div
+          data-testid="save-as-meal-panel"
+          className="rounded-xl border border-[var(--border)] px-3 py-2.5 flex flex-col gap-2"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Save as meal
+            </span>
+            <input
+              type="text"
+              data-testid="save-as-meal-name"
+              value={saveMealName}
+              onChange={(e) => setSaveMealName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault(); // must NOT submit the host form
+                  handleSaveAsMeal();
+                }
+              }}
+              placeholder='Name it — e.g. "Protein Brookie"'
+              className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base min-h-[44px]"
+            />
+          </label>
+          <p className="text-xs text-[var(--muted)]">
+            Bundles these items — food links and per-item macros included — for
+            one-tap re-logging. Re-saving a name replaces that meal.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-testid="save-as-meal-save"
+              onClick={handleSaveAsMeal}
+              disabled={saveMealPending || !saveMealName.trim()}
+              className="flex-1 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent-fg)] min-h-[44px] disabled:opacity-50"
+            >
+              {saveMealPending ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              data-testid="save-as-meal-cancel"
+              onClick={() => {
+                setSaveMealOpen(false);
+                setSaveMealNote(null);
+              }}
+              className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] min-h-[44px]"
+            >
+              Close
+            </button>
+          </div>
+          {saveMealNote && (
+            <p
+              aria-live="polite"
+              className={`text-xs ${saveMealNote.ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}
+            >
+              {saveMealNote.text}
+            </p>
+          )}
+        </div>
       )}
 
       {/* ── Add item (chips / scan / estimate) — inside the form ─────────────── */}

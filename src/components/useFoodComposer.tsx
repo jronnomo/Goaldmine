@@ -21,13 +21,19 @@ import {
   deriveAmountFromServings,
   deriveAmountFromEstimate,
   buildQtyDisplay,
+  withItemMacros,
 } from "@/lib/food-units";
 import { parseFoodQuery } from "@/lib/food-parse";
-import { deriveSavedMealLog, type SavedMealLite } from "@/lib/saved-meal";
-import { listSavedMealsLite } from "@/lib/saved-meal-actions";
+import {
+  deriveSavedMealLog,
+  linkedFoodPortions,
+  type SavedMealLite,
+} from "@/lib/saved-meal";
+import { deleteSavedMeal, listSavedMealsLite } from "@/lib/saved-meal-actions";
 import type { NutritionMacros } from "@/lib/nutrition-plan";
 
 import { BottomSheet } from "@/components/BottomSheet";
+import { ConfirmButton } from "@/components/ConfirmButton";
 import { LibraryPickerOverlay } from "@/components/LibraryPickerOverlay";
 
 // Dynamic import: ScanFoodSheet + zxing-wasm are browser-only.
@@ -128,8 +134,16 @@ export function mergeEstimateIntoForm(
  * servings. Pure — delegates to src/lib/saved-meal.ts's deriveSavedMealLog,
  * the SAME helper log_nutrition(savedMealId, servings) runs server-side, so
  * the web composer and the coach's MCP channel converge on identical
- * NutritionLog content (items qty annotated "×0.5" etc., macros scaled by
- * servings ÷ defaultServings and rounded to 1 decimal).
+ * NutritionLog content:
+ *   • linked items (food-linked bundles) expand to full structured rows —
+ *     source snapshot + scaled amount/unit/itemMacros — exactly as if each
+ *     food had been picked individually;
+ *   • text items keep the "×0.5" qty annotation and lump-macros behavior.
+ *
+ * `macros` is the FULL scaled total (sheet preview); `creditMacros` is the
+ * lump the host must pass to addItem (the residual only) — linked items
+ * self-compute their contribution through the composer's recompose math, so
+ * crediting the full total as well would double-count them.
  *
  * ⚑ Deliberately NO savedMealId/servings form field on the web path
  * (UXR-PV-64): itemsJson stays the single structured channel; this expansion
@@ -138,12 +152,12 @@ export function mergeEstimateIntoForm(
 export function expandSavedMealForComposer(
   meal: SavedMealLite,
   servings: number,
-): { items: NutritionItem[]; macros?: NutritionMacros } {
+): { items: NutritionItem[]; macros?: NutritionMacros; creditMacros?: NutritionMacros } {
   const derived = deriveSavedMealLog(
     { items: meal.items, macros: meal.macros ?? null, defaultServings: meal.defaultServings },
     servings,
   );
-  return { items: derived.items, macros: derived.macros };
+  return { items: derived.items, macros: derived.macros, creditMacros: derived.residualMacros };
 }
 
 /**
@@ -291,7 +305,18 @@ export function useFoodComposer({
   // SavedMeal quick-pick state (#296). lazySavedMeals: null = not loaded yet
   // (row renders nothing — no empty-note flash), [] = loaded and empty.
   const [lazySavedMeals, setLazySavedMeals] = useState<SavedMealLite[] | null>(null);
-  const savedMealList = savedMeals ?? lazySavedMeals;
+  // Optimistically hidden after the sheet's quick-delete — server-provided
+  // lists (props) can't be mutated, so removals are filtered locally until the
+  // next RSC pass (deleteSavedMeal revalidates /nutrition).
+  const [removedSavedMealIds, setRemovedSavedMealIds] = useState<Set<string>>(() => new Set());
+  const savedMealListRaw = savedMeals ?? lazySavedMeals;
+  const savedMealList = useMemo(
+    () =>
+      savedMealListRaw === null
+        ? null
+        : savedMealListRaw.filter((m) => !removedSavedMealIds.has(m.id)),
+    [savedMealListRaw, removedSavedMealIds],
+  );
 
   // SavedMeal sheet state: which meal is open + the servings being composed.
   const [activeSavedMeal, setActiveSavedMeal] = useState<SavedMealLite | null>(null);
@@ -358,12 +383,52 @@ export function useFoodComposer({
   function handleSavedMealAdd() {
     if (!activeSavedMeal) return;
     // UXR-PV-63: through addItem(), never setItemsText — one call carrying
-    // the whole expansion (see the addItem prop doc) plus the scaled macros.
-    const { items, macros } = expandSavedMealForComposer(activeSavedMeal, savedServings);
-    if (items.length > 0 || macros) {
-      addItem(items, macros ? { macros } : undefined);
+    // the whole expansion (see the addItem prop doc). creditMacros is the
+    // RESIDUAL lump only: linked items carry source snapshots, so the host's
+    // recompose math credits them from the items themselves (identical to
+    // hand-adding each food); text-only meals credit the full scaled lump
+    // exactly as before.
+    const { items, creditMacros } = expandSavedMealForComposer(activeSavedMeal, savedServings);
+    if (items.length > 0 || creditMacros) {
+      addItem(items, creditMacros ? { macros: creditMacros } : undefined);
+    }
+    // Bundle expansion counts as a "use" of each linked food — the same
+    // fire-and-forget recordFoodUse contract as an individual chip pick
+    // (usage bump + last-portion memory at the scaled amount).
+    for (const p of linkedFoodPortions(items)) {
+      recordFoodUse(
+        p.foodId,
+        p.amount != null && p.unit ? { amount: p.amount, unit: p.unit } : undefined,
+      ).catch(() => {});
     }
     setActiveSavedMeal(null);
+  }
+
+  function handleSavedMealDelete() {
+    if (!activeSavedMeal) return;
+    const id = activeSavedMeal.id;
+    // Optimistic: hide the chip + close the sheet; the server delete is the
+    // existing scoped core (same write delete_saved_meal runs). On failure
+    // the chip comes back.
+    setRemovedSavedMealIds((prev) => new Set(prev).add(id));
+    setActiveSavedMeal(null);
+    deleteSavedMeal(id)
+      .then((res) => {
+        if (!res.ok) {
+          setRemovedSavedMealIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }
+      })
+      .catch(() => {
+        setRemovedSavedMealIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      });
   }
 
   // ── handleAdd ─────────────────────────────────────────────────────────────
@@ -380,7 +445,12 @@ export function useFoodComposer({
     const unit = snapshot.basis === "100g" ? "g" : defaultUnitForQuery(null, snapshot);
     const amount = deriveAmountFromServings(servings, unit, snapshot);
     const qty = buildQtyDisplay(amount, unit, snapshot);
-    const structuredItem: NutritionItem = { name: food.name, qty, amount, unit, source: snapshot };
+    // withItemMacros: snapshot the item's own macro contribution (itemMacros)
+    // so logged rows carry per-item macros — the same shape a SavedMeal
+    // bundle expansion produces, keeping "by hand" and "bundle" logs identical.
+    const structuredItem: NutritionItem = withItemMacros({
+      name: food.name, qty, amount, unit, source: snapshot,
+    });
 
     // 2. B-3: addItem, NEVER setItemsText from this path. The host recomputes the
     //    macro total from the items array (single source of truth) — this hook no
@@ -466,13 +536,15 @@ export function useFoodComposer({
     const unit = defaultUnitForQuery(parsedQuery, snapshot);
     const amount = deriveAmountFromEstimate(est.servings, unit, snapshot, parsedQuery);
     const qty = buildQtyDisplay(amount, unit, snapshot);
-    const structuredItem: NutritionItem = {
+    // withItemMacros — see handleAdd: per-item macro snapshot on every
+    // food-resolved add path.
+    const structuredItem: NutritionItem = withItemMacros({
       name: est.food.name,
       qty,
       amount,
       unit,
       source: snapshot,
-    };
+    });
 
     // B-3: addItem, NEVER setItemsText from this path. The host recomputes the macro
     //      total from the items array (single source of truth) — no setMacros here.
@@ -526,7 +598,8 @@ export function useFoodComposer({
           </p>
           {savedMealList.length === 0 ? (
             <p data-testid="saved-meal-empty" className="text-xs text-[var(--muted)]">
-              No saved meals yet — saved meals are created by your coach.
+              No saved meals yet — compose a meal below and tap “Save as meal”
+              (your coach can save them too).
             </p>
           ) : (
             <div className="relative">
@@ -983,6 +1056,16 @@ export function useFoodComposer({
                 >
                   Add to meal
                 </button>
+
+                {/* Quick delete — the same scoped core delete_saved_meal runs;
+                    past logs from this meal are untouched. Two-tap confirm. */}
+                <ConfirmButton
+                  label="Remove saved meal"
+                  confirmLabel="Remove saved meal · confirm"
+                  variant="danger"
+                  onConfirm={handleSavedMealDelete}
+                  className="w-full min-h-[44px] rounded-lg border border-[var(--danger)]/40 px-4 py-2 text-sm text-[var(--danger)]"
+                />
               </div>
             );
           })()}

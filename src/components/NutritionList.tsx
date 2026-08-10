@@ -8,6 +8,7 @@ import { deleteNutrition, type NutritionSnapshot } from "@/lib/workout-actions";
 import type { MealDeleteSnapshot } from "@/components/MealComposer";
 import type { LibraryFood } from "@/lib/food-types";
 import type { NutritionItem } from "@/lib/nutrition-log-ops";
+import { formatItemMacroLine } from "@/lib/nutrition-macros";
 
 // ── Serialized row + group shape (built server-side in nutrition/page.tsx) ──────
 
@@ -171,7 +172,28 @@ export function NutritionList({
                       Edit
                     </button>
                   </div>
-                  <p className="text-sm">{row.summary}</p>
+                  {row.items.some((i) => formatItemMacroLine(i.itemMacros) != null) ? (
+                    // Per-item breakdown when items carry macro snapshots
+                    // (food-linked adds / bundle expansions) — each item with
+                    // its own compact, muted macro line.
+                    <div data-testid="meal-item-breakdown" className="text-sm space-y-0.5">
+                      {row.items.map((i, idx) => {
+                        const line = formatItemMacroLine(i.itemMacros);
+                        return (
+                          <p key={idx} className="min-w-0">
+                            {i.qty ? `${i.name} (${i.qty})` : i.name}
+                            {line && (
+                              <span className="ml-1.5 font-mono text-[11px] text-[var(--muted)]">
+                                {line}
+                              </span>
+                            )}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm">{row.summary}</p>
+                  )}
                   {row.notes && (
                     <p className="text-xs text-[var(--muted)] italic mt-0.5">{row.notes}</p>
                   )}

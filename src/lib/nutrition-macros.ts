@@ -170,3 +170,27 @@ export function formatDayMacros(m: DayMacros): string {
   if (m.fatG > 0) parts.push(`${Math.round(m.fatG)}f`);
   return parts.join(" · ");
 }
+
+/** Minimum per-item macro snapshot shape (NutritionItem.itemMacros). */
+export type ItemMacrosLike = {
+  calories?: number;
+  proteinG?: number;
+  carbsG?: number;
+  fatG?: number;
+};
+
+/**
+ * Compact per-item macro line for logged-meal item rows —
+ * "226 cal · 41P · 3C · 5F", absent fields skipped, rounded for the muted
+ * inline readout. null when the snapshot has none of the four headline
+ * fields (row renders exactly as before).
+ */
+export function formatItemMacroLine(m: ItemMacrosLike | undefined): string | null {
+  if (!m) return null;
+  const parts: string[] = [];
+  if (m.calories != null) parts.push(`${Math.round(m.calories)} cal`);
+  if (m.proteinG != null) parts.push(`${Math.round(m.proteinG)}P`);
+  if (m.carbsG != null) parts.push(`${Math.round(m.carbsG)}C`);
+  if (m.fatG != null) parts.push(`${Math.round(m.fatG)}F`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}

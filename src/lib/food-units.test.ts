@@ -8,6 +8,8 @@ import {
   recomposeWithResidual,
   deriveAmountFromServings,
   servingsFromLastPortion,
+  computeItemMacros,
+  withItemMacros,
 } from "@/lib/food-units";
 
 type MacroValues = Partial<Record<MacroKey, number | null>>;
@@ -173,5 +175,58 @@ describe("servingsFromLastPortion seeds the stepper from the last log", () => {
       const amount = deriveAmountFromServings(s, "g", POTATO);
       expect(servingsFromLastPortion(POTATO_FOOD, amount, "g")).toBe(s);
     }
+  });
+});
+
+// ── computeItemMacros / withItemMacros — the per-item snapshot (bundles) ─────
+
+describe("computeItemMacros — recalcItemMacros with null keys dropped", () => {
+  it("returns the item's own contribution as present-keys-only", () => {
+    expect(computeItemMacros(potatoGramsItem(2))).toEqual({
+      calories: 154, proteinG: 4, carbsG: 35, fatG: 0.2, fiberG: 4.4, sodiumMg: 12,
+    });
+  });
+
+  it("null perBasis keys are omitted, not zeroed", () => {
+    const partial: ItemFoodSnapshot = {
+      basis: "serving",
+      perBasis: { calories: 200, proteinG: 30, carbsG: null, fatG: null, fiberG: null, sodiumMg: null },
+      portions: [],
+    };
+    expect(
+      computeItemMacros({ name: "Bar", amount: 1, unit: "serving", source: partial }),
+    ).toEqual({ calories: 200, proteinG: 30 });
+  });
+
+  it("freehand / unresolvable items → undefined", () => {
+    expect(computeItemMacros({ name: "mystery stew" })).toBeUndefined();
+    expect(computeItemMacros({ name: "Potato", amount: 0, unit: "g", source: POTATO })).toBeUndefined();
+    expect(computeItemMacros({ name: "Potato", amount: 1, unit: "bogus-unit", source: POTATO })).toBeUndefined();
+  });
+});
+
+describe("withItemMacros — attach / refresh / drop-stale semantics", () => {
+  it("attaches itemMacros to a food-resolved item (copy, original untouched)", () => {
+    const raw = potatoGramsItem(1);
+    const out = withItemMacros(raw);
+    expect(out.itemMacros).toEqual(computeItemMacros(raw));
+    expect(raw.itemMacros).toBeUndefined();
+  });
+
+  it("refresh: an existing snapshot is overwritten at the new amount", () => {
+    const stale = { ...potatoGramsItem(1), itemMacros: { calories: 1 } };
+    const edited = withItemMacros({ ...stale, amount: 200 });
+    expect(edited.itemMacros!.calories).toBe(154);
+  });
+
+  it("structured item whose portion no longer resolves DROPS the stale snapshot", () => {
+    const item = { ...potatoGramsItem(1), itemMacros: { calories: 77 } };
+    const cleared = withItemMacros({ ...item, amount: 0 });
+    expect(cleared.itemMacros).toBeUndefined();
+  });
+
+  it("freehand item with a bundle-carried snapshot passes through unchanged", () => {
+    const textRow: NutritionItem = { name: "Chipotle bowl", qty: "1 bowl", itemMacros: { calories: 670 } };
+    expect(withItemMacros(textRow)).toEqual(textRow);
   });
 });
