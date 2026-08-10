@@ -7,6 +7,7 @@ import { Bullseye } from "@/components/Bullseye";
 import { BottomSheet } from "@/components/BottomSheet";
 import { LogLauncher } from "@/components/LogLauncher";
 import { MoreSheet } from "@/components/MoreSheet";
+import { OPEN_LOG_SHEET_EVENT } from "@/lib/log-sheet-events";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tab definitions
@@ -106,6 +107,19 @@ export function BottomNav({
     setLogOpen(false);
     setMoreOpen(false);
   }, [pathname]);
+
+  // One-tap log affordances elsewhere on the page (FuelRail's "Log meal",
+  // today-page-ia) open THIS sheet — the existing Log surface — via a window
+  // event, instead of rebuilding a composer of their own. Same behavior as
+  // tapping the Log tab.
+  useEffect(() => {
+    const openLog = () => {
+      setLogOpen(true);
+      setMoreOpen(false);
+    };
+    window.addEventListener(OPEN_LOG_SHEET_EVENT, openLog);
+    return () => window.removeEventListener(OPEN_LOG_SHEET_EVENT, openLog);
+  }, []);
 
   return (
     <>
