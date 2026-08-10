@@ -15,6 +15,47 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-09 — M1 deploy note (no tool-shape change): `Program` → `LegacyProgram` rename + fallback deletion
+
+**Issues:** #267 / #268 / #269 (Sprint 15 — Legacy retirement, epic #257)
+
+**Not a wire change** — no MCP tool input/output shape changed; recorded here
+as the deploy runbook for the M1 schema rename.
+
+**Deploy order (binding):** apply the rename migration
+(`prisma/migrations/20260810022840_legacy_program_rename`) to **prod BEFORE
+merging the code deploy** (plan-critique #13's warm-lambda race, resolved in
+this direction because the build-time migration-status gate from #263 is live:
+`npm run build` fails while the migration is pending, so a code-first deploy
+cannot ship at all):
+
+1. `neonctl`/`psql` against prod → `npx prisma migrate deploy` (prod
+   migrations are manual; Vercel never runs them).
+2. Merge/deploy the code immediately after. **Warm-lambda window:** between
+   the migration landing and the new deploy rolling over, old lambdas still
+   querying `"Program"` will error if they hit the legacy fallback
+   (`getActiveProgram` with zero active Plans) or the settings data-export.
+   With an active Plan present (the normal state) the fallback path never
+   fires; keep the window short regardless.
+3. No connector reconnect needed for this change (no tool-list/shape delta).
+
+**Pre-deletion gate (permanent):** `npx tsx
+scripts/verify-legacy-program-coverage.ts` must report PASS (exit 0)
+immediately before #269-style fallback removals — and stays as the
+no-legacy-dependence invariant check. Ran clean pre- and post-deletion
+(100/100 founder dates via Plan candidates, zero legacy hits).
+
+**Remaining `db.legacyProgram` readers (intentional):**
+`src/lib/export-data.ts` (user data export includes the user's own legacy
+rows; payload key stays `program` for `goaldmine-export-v1` stability) and
+audit/archaeology scripts (`founder-cutover.ts`, `verify-no-null-userid.ts`,
+`verify-tenant-isolation-full.ts`). Nothing else in the app reads the table;
+`getActiveProgram`/`getMostRecentProgram` now return `null` when no Plan rows
+match — the stale-active-legacy-row shadowing bug class (analysis §2.2.3) is
+dead.
+
+---
+
 ## 2026-08-09 — `export_workout`: exercise/set `id`s (+ set `rpe`/`notes`) added to the export shape
 
 **Issue:** #265 (B2, Sprint 14 — Deploy safety & fixes)

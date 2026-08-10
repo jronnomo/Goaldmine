@@ -108,10 +108,13 @@ describe("auditLegacyProgramCoverage", () => {
     }
   });
 
-  it("synthetic legacy-only date is flagged (viaLegacy + regresses), while a SMOKE-1-rescued date stays clean", () => {
-    // Legacy Program-table row (id absent from candidates) covering all of
-    // January; one archived real Plan covering only Jan 1-7. Jan 5 is rescued
-    // by SMOKE-1 (covering candidate wins) — Jan 10 is legacy-only.
+  it("synthetic legacy-sourced activeProgram: every date it serves is flagged; the after-simulation shows archived-Plan vs null fallout per date", () => {
+    // Legacy-table row (id absent from candidates) covering all of January;
+    // one archived real Plan covering only Jan 1-7. Post-#269 semantics:
+    // a covering activeProgram wins step 1 unconditionally (the old SMOKE-1
+    // rescue is deleted), so ALL legacy-covered dates are flagged — the
+    // after-arm distinguishes dates a real Plan would absorb (Jan 5 →
+    // archived plan-a) from dates that would resolve to nothing (Jan 10).
     const legacy = snapshot({ id: "program-legacy", template: template(4) });
     const planA = candidate({ id: "plan-a", template: template(1) }); // covers 01-01..01-07
     const audit = auditLegacyProgramCoverage({
@@ -125,13 +128,14 @@ describe("auditLegacyProgramCoverage", () => {
     expect(audit.activeProgramId).toBe("program-legacy");
 
     const [jan5, jan10, jan20] = audit.findings;
-    // Rescued: the covering real Plan already wins today AND after removal.
+    // Covered by BOTH: legacy serves it today; a real archived Plan would
+    // take over after removal — still a flagged change (source + id flip).
     expect(jan5).toEqual({
       dateKey: "2026-01-05",
-      before: { id: "plan-a", source: "archived" },
+      before: { id: "program-legacy", source: "active" },
       after: { id: "plan-a", source: "archived" },
-      viaLegacy: false,
-      regresses: false,
+      viaLegacy: true,
+      regresses: true,
     });
     // Legacy-only past date: currently served by the legacy row, null after.
     expect(jan10).toEqual({
@@ -141,7 +145,8 @@ describe("auditLegacyProgramCoverage", () => {
       viaLegacy: true,
       regresses: true,
     });
-    // Today: SMOKE-1 never applies to non-past dates — legacy row serves it now.
+    // Today: candidates are never consulted for non-past dates — legacy row
+    // serves it now, nothing after.
     expect(jan20).toEqual({
       dateKey: "2026-01-20",
       before: { id: "program-legacy", source: "active" },
@@ -150,8 +155,16 @@ describe("auditLegacyProgramCoverage", () => {
       regresses: true,
     });
 
-    expect(audit.legacyDates.map((f) => f.dateKey)).toEqual(["2026-01-10", "2026-01-20"]);
-    expect(audit.regressingDates.map((f) => f.dateKey)).toEqual(["2026-01-10", "2026-01-20"]);
+    expect(audit.legacyDates.map((f) => f.dateKey)).toEqual([
+      "2026-01-05",
+      "2026-01-10",
+      "2026-01-20",
+    ]);
+    expect(audit.regressingDates.map((f) => f.dateKey)).toEqual([
+      "2026-01-05",
+      "2026-01-10",
+      "2026-01-20",
+    ]);
     expect(audit.clean).toBe(false);
   });
 

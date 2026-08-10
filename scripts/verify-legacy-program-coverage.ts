@@ -10,11 +10,12 @@
 // resolves each through the REAL production path — getActiveProgram() +
 // getPlanWindowCandidates() feeding pickProgramForDate() (the pure core that
 // getProgramForDate() wraps) — flagging any date currently served by the
-// legacy Program table (winner id absent from the Plan candidates, the same
-// id-membership signal pickProgramForDate's SMOKE-1 doc comment describes)
-// and any date whose resolution would CHANGE once the fallback is deleted
-// (simulated by re-running the same pure picker with a legacy-sourced
-// activeProgram nulled out, which is what post-#269 getActiveProgram returns).
+// legacy LegacyProgram table (winner id absent from the Plan candidates —
+// the id-membership signal, formerly SMOKE-1) and any date whose resolution
+// would CHANGE once the fallback is deleted (simulated by re-running the same
+// pure picker with a legacy-sourced activeProgram nulled out, which is what
+// post-#269 getActiveProgram returns). With #269 shipped this doubles as a
+// permanent no-legacy-dependence invariant check.
 //
 // Safe to run on any DB — read-only, no writes. Prints DB_ENV + host first.
 //
@@ -148,7 +149,7 @@ async function main() {
     console.log(
       `PASS — ${audit.findings.length}/${audit.findings.length} dates resolve via Plan candidates, zero legacy fallback hits.`,
     );
-    console.log("Safe to proceed with #269 (fallback-branch deletion).");
+    console.log("No-legacy-dependence invariant holds (pre-#269 gate / post-#269 guard).");
     return 0;
   }
 

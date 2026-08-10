@@ -303,8 +303,9 @@ describe("R1: streak gap-guard for a stale program-fallback plan", () => {
 describe("program fallback: no active AND no historical plan -> emptyState()", () => {
   it("computeGameStateFresh returns emptyState() when getActiveProgram and getMostRecentProgram both resolve null", async () => {
     vi.mocked(getDb).mockResolvedValue({
+      // M1/#269: no legacyProgram accessor — getActiveProgram/getMostRecentProgram
+      // resolve null from the Plan table alone; a legacy read would throw here.
       plan: { findFirst: vi.fn().mockResolvedValue(null) },
-      legacyProgram: { findFirst: vi.fn().mockResolvedValue(null) },
     } as never);
 
     const state = await computeGameStateFresh();

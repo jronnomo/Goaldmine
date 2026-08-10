@@ -13,16 +13,20 @@
 // every date is resolved through pickProgramForDate() (the pure core that
 // getProgramForDate() wraps), fed the same inputs the wrapper fetches:
 // getPlanWindowCandidates() output + getActiveProgram() output. The
-// legacy-fallback signal is the exact id-membership check pickProgramForDate's
-// SMOKE-1 doc comment describes: a legacy Program-table snapshot's id can
-// never appear among the Plan-table candidates, while a real active Plan's id
-// always does (getPlanWindowCandidates fetches EVERY Plan row, active or not).
+// legacy-fallback signal is the id-membership check (formerly SMOKE-1): a
+// legacy Program-table snapshot's id can never appear among the Plan-table
+// candidates, while a real active Plan's id always does
+// (getPlanWindowCandidates fetches EVERY Plan row, active or not).
 //
 // The post-removal world is simulated by re-running pickProgramForDate with
-// `activeProgram` nulled out whenever it was legacy-sourced — byte-equivalent
-// to the #269 code (with no legacy fallback, getActiveProgram returns null in
-// exactly those cases; pickProgramForDate's SMOKE-1 branch is a no-op for any
-// non-legacy activeProgram, so the current function doubles as the simulator).
+// `activeProgram` nulled out whenever it was legacy-sourced — with no legacy
+// fallback, getActiveProgram returns null in exactly those cases.
+//
+// #269 shipped: getActiveProgram no longer reads the LegacyProgram table, so
+// on current code this audit's before/after arms coincide and it PASSes by
+// construction unless a regression reintroduces a non-Plan snapshot. It stays
+// as the permanent guard for that invariant (and as the pre-check any future
+// legacy-data archaeology should re-run).
 
 import {
   pickProgramForDate,
@@ -46,12 +50,12 @@ export type DateFinding = {
 
 export type CoverageAudit = {
   /**
-   * getActiveProgram()'s fallback branch fired: an activeProgram snapshot
-   * exists whose id is absent from the Plan-table candidates (SMOKE-1's
-   * id-membership signal). Detected directly, independent of any per-date
-   * outcome — even if every historical date is rescued by a covering
-   * candidate, a legacy-sourced activeProgram means Today itself is being
-   * served from the legacy table.
+   * getActiveProgram() returned a legacy-sourced snapshot: its id is absent
+   * from the Plan-table candidates (the id-membership signal, formerly
+   * SMOKE-1). Detected directly, independent of any per-date outcome — even
+   * if every historical date is rescued by a covering candidate, a
+   * legacy-sourced activeProgram means Today itself is being served from the
+   * legacy table.
    */
   legacyFallbackActive: boolean;
   activeProgramId: string | null;
