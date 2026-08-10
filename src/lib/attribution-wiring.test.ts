@@ -22,9 +22,13 @@ const { mockGetDb, mockGetMembership, mockGetRotationOwner, mockPrisma } = vi.ho
 }));
 vi.mock("@/lib/db", () => ({ getDb: mockGetDb, prisma: mockPrisma }));
 // #298: logHikeCore resolves its default attribution through the
-// rotation-owner seam now — both program exports are mocked per-test.
+// rotation-owner seam now — membership (program) and the rotation owner
+// (goal-focus, post-consolidation) are mocked per-test.
 vi.mock("@/lib/program", () => ({
   getActiveProgramMembership: mockGetMembership,
+}));
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
   getRotationOwnerGoal: mockGetRotationOwner,
 }));
 // recordsSetInWorkout would hit the DB — stub it; everything else in records

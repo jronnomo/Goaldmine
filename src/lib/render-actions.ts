@@ -8,7 +8,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { parseDateKey, dateKey as toDateKey } from "@/lib/calendar";
-import { getRotationOwnerGoal } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 
 // Status groups — mirrors render-tools.ts
 const TERMINAL_STATUSES = new Set(["rendered", "failed"]);

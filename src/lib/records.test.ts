@@ -16,10 +16,10 @@ vi.mock("@/lib/db", () => ({
 
 // #298: getBaselineSchedule resolves its plan through the rotation-owner seam.
 // Partial mock — only getRotationOwnerGoal is stubbed (its own contract lives
-// in program.test.ts); everything else in @/lib/program stays real for the
-// transitive importers (game/engine).
-vi.mock("@/lib/program", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/program")>()),
+// in goal-focus.test.ts since the consolidation); everything else in
+// @/lib/goal-focus stays real for the transitive importers (game/engine).
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
   getRotationOwnerGoal: vi.fn(),
 }));
 
@@ -34,7 +34,7 @@ import {
   getBaselineSchedule,
   getBaselineScheduleForPlan,
 } from "@/lib/records";
-import { getRotationOwnerGoal } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 
 import { mapBaselineToSet } from "@/lib/baseline-workout";
 import { computeGameStateFromData } from "@/lib/game/engine";

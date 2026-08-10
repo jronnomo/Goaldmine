@@ -19,7 +19,10 @@ const { mockGetDb, mockGetRotationOwnerGoal } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db", () => ({ getDb: mockGetDb }));
-vi.mock("@/lib/program", () => ({ getRotationOwnerGoal: mockGetRotationOwnerGoal }));
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
+  getRotationOwnerGoal: mockGetRotationOwnerGoal,
+}));
 
 import { queueRenderJob } from "@/lib/render-actions";
 

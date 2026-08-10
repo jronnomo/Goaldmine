@@ -1040,7 +1040,7 @@ async function _computeGameState(): Promise<GameState> {
     //    paused would silently re-gate attributes. Revisit when single-ledger
     //    v1 gains multi-goal awareness (Backlog: engine multi-goal ledger).
     (async () => {
-      const owner = await getRotationOwnerGoal();
+      const { goal: owner } = await getRotationOwnerGoal();
       if (owner) return { id: owner.id, kind: owner.kind };
       return db.goal.findFirst({
         where: { isFocus: true },

@@ -655,7 +655,7 @@ function registerReadTools(server: McpServer) {
       safe(async () => {
         const db = await getDb();
         const now = new Date();
-        const [r, standingRules, activeGoalRow] = await Promise.all([
+        const [r, standingRules, ownerResolution] = await Promise.all([
           resolveDay(now),
           db.note.findMany({
             where: { type: "standing_rule", resolvedAt: null },
@@ -677,6 +677,7 @@ function registerReadTools(server: McpServer) {
           // carries the member context then; no goal is silently guessed.
           getRotationOwnerGoal(),
         ]);
+        const activeGoalRow = ownerResolution.goal;
         const activeGoal = activeGoalRow
           ? {
               id: activeGoalRow.id,
@@ -822,12 +823,13 @@ function registerReadTools(server: McpServer) {
         // resolveDay via ctx.membership — never 7 redundant lookups.
         // #297: same batching for the day-driving goal (rotation owner under a
         // Program, legacy focus goal for zero-Program tenants) via ctx.dayGoal.
-        const [activeProgram, membership, candidates, dayGoalRow] = await Promise.all([
+        const [activeProgram, membership, candidates, weekOwnerResolution] = await Promise.all([
           getActiveProgram(),
           getActiveProgramMembership(),
           getPlanWindowCandidates(),
           getRotationOwnerGoal(),
         ]);
+        const dayGoalRow = weekOwnerResolution.goal;
         const dayGoal = dayGoalRow
           ? { id: dayGoalRow.id, targetDate: dayGoalRow.targetDate, objective: dayGoalRow.objective }
           : null;
@@ -1251,7 +1253,7 @@ function registerReadTools(server: McpServer) {
         // owner under a Program; legacy focus goal for zero-Program tenants).
         const goal = goalId
           ? await db.goal.findUniqueOrThrow({ where: { id: goalId } })
-          : await getRotationOwnerGoal();
+          : (await getRotationOwnerGoal()).goal;
         if (!goal) {
           throw new Error(
             "No current goal to default to — the active Program has no rotation (or no goal is focused). Pass goalId explicitly (use list_goals to discover ids).",
@@ -1606,7 +1608,7 @@ function registerReadTools(server: McpServer) {
         const [
           resolved,
           program,
-          activeGoal,
+          briefOwnerResolution,
           standingRules,
           recentWorkouts,
           recentHikes,
@@ -1667,6 +1669,7 @@ function registerReadTools(server: McpServer) {
         ]);
 
         // --- goal ---
+        const activeGoal = briefOwnerResolution.goal;
         let goal: {
           id: string;
           objective: string;
@@ -4603,7 +4606,7 @@ function registerWriteTools(server: McpServer) {
         //    goal the day actually served. (The old query's extra
         //    `active: true` belt is covered by invariant: the focus goal
         //    cannot be untracked, and a rotation owner's plan is active.)
-        const focusGoal = await getRotationOwnerGoal();
+        const focusGoal = (await getRotationOwnerGoal()).goal;
 
         // 5. Footage markers — highlight-first, then capturedAt asc, then createdAt asc
         const rawMarkers = await db.footageMarker.findMany({
@@ -5380,7 +5383,7 @@ function registerWriteTools(server: McpServer) {
         //    engine's own goal-context uses (#299), so a granted attribute is
         //    always valid for the pack the ledger will render it under.
         const goal =
-          (await getRotationOwnerGoal()) ??
+          (await getRotationOwnerGoal()).goal ??
           (await db.goal.findFirst({
             where: { isFocus: true },
             orderBy: { updatedAt: "desc" },

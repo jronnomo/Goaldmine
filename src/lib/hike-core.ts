@@ -15,8 +15,8 @@ import { prisma, getDb } from "@/lib/db";
 import { startOfDay, endOfDay } from "@/lib/calendar";
 import { ACTIVITY_LINK_TYPE } from "@/lib/activity-links";
 import { mirrorActivityGoalLink, swallowAutoLinkError } from "@/lib/attribution-hooks";
-import { getRotationOwnerGoal, getActiveProgramMembership } from "@/lib/program";
-import { getFocusGoal } from "@/lib/goal-focus";
+import { getActiveProgramMembership } from "@/lib/program";
+import { getFocusGoal, getRotationOwnerGoal } from "@/lib/goal-focus";
 
 // ---------------------------------------------------------------------------
 // logHikeCore — verbatim lift of tools.ts:2404-2549 handler logic

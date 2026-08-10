@@ -14,13 +14,21 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/readiness", () => ({ computeReadiness: vi.fn() }));
 vi.mock("@/lib/game/engine", () => ({ computeGameState: vi.fn() }));
 // #298: the goal-list ordering goes through the rotation-owner seam. Partial
-// mock — orderMembersFirst stays REAL (it's the subject composing the final
+// mocks — orderMembersFirst stays REAL (it's the subject composing the final
 // order); factory defaults model a zero-Program tenant with no focus goal,
 // which reproduces the pre-#298 order for every earlier test in this file
 // (no lift, DB order preserved). The #298 describe at the bottom overrides
-// per-test.
+// per-test. (getRotationOwnerGoal lives in @/lib/goal-focus since the
+// consolidation.)
 vi.mock("@/lib/program", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/program")>();
+  return {
+    ...actual,
+    getActiveProgramMembership: vi.fn().mockResolvedValue(null),
+  };
+});
+vi.mock("@/lib/goal-focus", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/goal-focus")>();
   return {
     ...actual,
     getRotationOwnerGoal: vi.fn().mockResolvedValue({
@@ -28,15 +36,16 @@ vi.mock("@/lib/program", async (importOriginal) => {
       goalId: null,
       goalKind: null,
       planId: null,
+      goal: null,
     }),
-    getActiveProgramMembership: vi.fn().mockResolvedValue(null),
   };
 });
 
 import { prisma, getDb } from "@/lib/db";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGameState } from "@/lib/game/engine";
-import { getRotationOwnerGoal, getActiveProgramMembership } from "@/lib/program";
+import { getActiveProgramMembership } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeComparison } from "@/lib/compare";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

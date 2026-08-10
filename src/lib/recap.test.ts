@@ -45,9 +45,14 @@ vi.mock("@/lib/records", () => ({
 
 vi.mock("@/lib/program", () => ({
   getActiveProgram: vi.fn(),
-  // #298: computeWeeklyRecap's no-goalId default goes through the
-  // rotation-owner seam now; the top-level beforeEach below wires a legacy
-  // default whose id the pm.goal.findFirst catch-alls resolve.
+}));
+// #298: computeWeeklyRecap's no-goalId default goes through the
+// rotation-owner seam now (consolidated into @/lib/goal-focus); the
+// top-level beforeEach below wires a legacy default whose id the
+// pm.goal.findFirst catch-alls resolve. Partial mock — the module's other
+// exports stay real for transitive importers (calendar/goal-events).
+vi.mock("@/lib/goal-focus", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/goal-focus")>()),
   getRotationOwnerGoal: vi.fn(),
 }));
 
@@ -61,7 +66,8 @@ import { resolveStatSlot, computeWeeklyRecap } from "@/lib/recap";
 import { FITNESS_PRESENTATION, PROJECT_PRESENTATION } from "@/lib/goal-presentation";
 import { prisma } from "@/lib/db";
 import { getExerciseSummaries } from "@/lib/records";
-import { getActiveProgram, getRotationOwnerGoal } from "@/lib/program";
+import { getActiveProgram } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { computeGameState } from "@/lib/game/engine";
 
 // Runs BEFORE each describe-level beforeEach (outer hooks first) — the

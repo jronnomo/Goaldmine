@@ -245,12 +245,13 @@ export async function getCalendarMonth(opts: { year: number; month: number /* 0-
   // list before Phase 2 can generalize the ScheduledItem query to all member
   // goals. null for zero-Program tenants (every #291 addition below is inert
   // then — cells/payload stay byte-identical).
-  const [ownerGoal, program, membership, allCandidates] = await Promise.all([
+  const [ownerResolution, program, membership, allCandidates] = await Promise.all([
     getRotationOwnerGoal(),
     getActiveProgram(),
     getActiveProgramMembership(),
     getPlanWindowCandidates(),
   ]);
+  const ownerGoal = ownerResolution.goal;
   const memberIds = membership ? membership.memberGoals.map((g) => g.id) : [];
   const memberIdSet = new Set(memberIds);
   // Preserve the exact pre-#297 field shape (REQ-003 select: kind for
@@ -1344,7 +1345,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     // range callers batch this to one lookup per week.
     ctx?.dayGoal !== undefined
       ? Promise.resolve(ctx.dayGoal)
-      : getRotationOwnerGoal().then((g) =>
+      : getRotationOwnerGoal().then(({ goal: g }) =>
           g ? { id: g.id, targetDate: g.targetDate, objective: g.objective } : null,
         ),
     db.nutritionLog.findMany({

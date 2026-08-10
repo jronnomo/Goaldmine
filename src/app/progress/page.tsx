@@ -11,7 +11,7 @@ import { StatTile } from "@/components/StatTile";
 import { ProgramReadinessSection } from "@/components/progress/ProgramReadinessSection";
 import { getDb } from "@/lib/db";
 import type { GoalTarget } from "@/lib/goal-targets";
-import { getRotationOwnerGoal } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import {
   getProgressProgramData,
   nonMemberGoals,

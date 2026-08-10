@@ -17,14 +17,13 @@ import { getGoalEvents } from "@/lib/goal-events";
 import {
   getActiveProgram,
   getActiveProgramMembership,
-  getRotationOwnerGoal,
   orderMembersFirst,
   phaseForWeekIndex,
   splitDayForRotationDay,
 } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
-import { getFocusGoal } from "@/lib/goal-focus";
+import { getFocusGoal, getRotationOwnerGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
 import { getQuickPickFoods } from "@/lib/food-actions";

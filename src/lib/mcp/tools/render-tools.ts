@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { prisma, getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
-import { getRotationOwnerGoal } from "@/lib/program";
+import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 
 // Status groups
