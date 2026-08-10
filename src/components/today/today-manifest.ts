@@ -15,17 +15,25 @@
 
 import type { ReactNode } from "react";
 
+// The "Fuel Rail + Weight Ladder" order (today-page-ia §2.2, with the
+// FuelRail at the owner-directed position immediately AFTER the timeline —
+// the report's own A′ variant — so the approved centerpiece keeps its rows
+// above the fold). ACT zone through "session"; TRACK zone after the divider.
+// CUT from the manifest (UXR-TIA-14/25): the FeasibilityReadout Card (Reach
+// survives as the Tier-4 chip riding the hero eyeline), the Nutrition Card
+// (its scalar IS the FuelRail; detail lives at /nutrition + the Log sheet),
+// and Recent workouts (strict subset of /history take:50).
 export const TODAY_SECTION_ORDER = [
   "character",
   "other-goals",
   "hero",
   "timeline",
-  "feasibility",
+  "fuel-rail",
   "baseline-prominent",
-  "day-task",
-  "baselines-completed",
-  "nutrition-card",
-  "recent-workouts",
+  "session",
+  "zone-divider",
+  "deferred-lid",
+  "baselines-completed-lid",
 ] as const;
 
 export type TodaySectionKey = (typeof TODAY_SECTION_ORDER)[number];
