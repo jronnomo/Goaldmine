@@ -7,7 +7,7 @@
 //   • the rotation template passes lintTemplate() CLEAN (no errors, no
 //     warnings) against the plan metadata the import writes
 //   • phases map to spec Blocks 0–3 and tile weeks 1..20 exactly
-//   • the week table, A/B/C skill rotation, and Session-1 baseline battery
+//   • the week table, A/B/C skill rotation, and S1–S3 baseline split
 //     match the spec
 //   • overrides land inside the plan window and honor the Mirror Lake
 //     sacred-time language (never a deload)
@@ -15,6 +15,17 @@
 //     workoutJson → never a calendar band), the Sep 15 cluster-decision item
 //     + disruption-cluster standing rule exist, and NO scheduled item or
 //     baseline retest week touches the Oct 2–8 exclusion
+//   • spec v4 delta (handstand repeatability merge) + the ROLLING FLIP:
+//     Goal 1 carries the 9-row table verbatim (gates exactly
+//     {rolling:hs_triple20_of6, Wall HSPU}; the three rolling:hs_* rows are
+//     ENGINE-NATIVE trackers whose RollingParams are pinned verbatim and
+//     validate through GoalTargetSchema — the cumulative flag is irrelevant
+//     on them), the baseline battery is the S1/S2/S3 split (days 1/3/4,
+//     every test exactly once, retests keep the split), the chest-to-wall
+//     protocol carries the binding hand-distance/line/brush language, and
+//     the reconcile helpers (stableJson compare — including the nested
+//     rolling params, snapshot builder, milestone + duplicate-goal
+//     constants) behave idempotently
 //
 // lintTemplate is imported from plan-lint (pure entry — no DB access in the
 // template rules); vitest.config supplies a placeholder DATABASE_URL so the
@@ -31,19 +42,30 @@ import {
   deriveCalendarWindows,
 } from "@/lib/calendar-windows";
 import {
+  appendDuplicateGoalNote,
+  baselineWeekNeedsReconcile,
+  buildBaselineWeekRevisionSnapshot,
   buildG4AttributionRule,
   buildPhase2aOverrides,
   buildPhase2aRotationTemplate,
+  PHASE2A_BASELINE_SPLIT_REASONING,
+  PHASE2A_BASELINE_SPLIT_SUMMARY,
+  PHASE2A_BASELINE_WEEK,
   PHASE2A_CLUSTER_RULE,
+  PHASE2A_DUPLICATE_GOAL,
   PHASE2A_GOAL1,
+  PHASE2A_GOAL1_ID,
   PHASE2A_GOAL2,
   PHASE2A_GOAL3,
+  PHASE2A_MILESTONE_BASELINE,
   PHASE2A_NUTRITION_RULE,
   PHASE2A_PLAN,
   PHASE2A_PROGRAM,
+  PHASE2A_RETEST_CONSISTENCY_RULE,
   PHASE2A_SAVED_MEALS,
   PHASE2A_SCHEDULED_ITEMS,
   PHASE2A_WEIGHIN_RULE,
+  stableJson,
   standingRuleKey,
 } from "@/lib/phase2a-spec";
 
@@ -72,21 +94,83 @@ describe("phase2a-spec · goal targets", () => {
     expect(Math.abs(sum - 1)).toBeLessThanOrEqual(0.01);
   });
 
-  it("Goal 1 carries the spec's 6-target table with exactly the two gating rungs", () => {
-    expect(PHASE2A_GOAL1.targets).toHaveLength(6);
+  it("Goal 1 carries the spec v4 9-row table VERBATIM (metric/label/start/target/units/dir/weight/gating + rolling params), in spec order", () => {
+    // The spec table (lines 63–73) post-rolling-flip, row for row. rationale
+    // is free doc text and deliberately not pinned; everything the readiness
+    // engine reads is — INCLUDING the RollingParams the resolver computes
+    // from (toEqual treats `rolling: undefined` on non-rolling rows as
+    // absent, so the same projection pins all nine).
+    expect(
+      PHASE2A_GOAL1.targets.map((t) => ({
+        metric: t.metric,
+        label: t.label,
+        start: t.start,
+        target: t.target,
+        units: t.units,
+        direction: t.direction,
+        weight: t.weight,
+        gating: t.gating === true,
+        rolling: t.rolling,
+      })),
+    ).toEqual([
+      { metric: "baseline:Freestanding Handstand Hold", label: "Max freestanding hold", start: 10, target: 20, units: "sec", direction: "increase", weight: 0.12, gating: false },
+      { metric: "rolling:hs_sessions_10s_of6", label: "≥10s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.08, gating: false, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6 } },
+      { metric: "rolling:hs_sessions_20s_of6", label: "≥20s hold — sessions hit, last 6", start: 0, target: 4, units: "of 6", direction: "increase", weight: 0.15, gating: false, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 1, window: 6 } },
+      { metric: "rolling:hs_triple20_of6", label: "3× ≥20s in one session — sessions hit, last 6", start: 0, target: 1, units: "of 6", direction: "increase", weight: 0.2, gating: true, rolling: { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6 } },
+      { metric: "baseline:Wall Handstand Push-Up", label: "Wall handstand push-up (full ROM)", start: 0, target: 5, units: "reps", direction: "increase", weight: 0.2, gating: true },
+      { metric: "baseline:Chest-to-Wall Handstand Hold", label: "Chest-to-wall handstand hold", start: 30, target: 120, units: "sec", direction: "increase", weight: 0.08, gating: false },
+      { metric: "baseline:Pull-Up Max Reps", label: "Pull-up max (lean-mass canary)", start: 25, target: 25, units: "reps", direction: "increase", weight: 0.07, gating: false },
+      { metric: "baseline:Floating Pike Push-Up", label: "Floating pike push-up", start: 5, target: 10, units: "reps", direction: "increase", weight: 0.05, gating: false },
+      { metric: "baseline:L-Sit (Parallettes)", label: "L-sit hold (parallettes)", start: 30, target: 60, units: "sec", direction: "increase", weight: 0.05, gating: false },
+    ]);
+  });
+
+  it("Goal 1 gates are EXACTLY {rolling:hs_triple20_of6, baseline:Wall Handstand Push-Up} and weights sum to 1.00", () => {
     const gates = PHASE2A_GOAL1.targets.filter((t) => t.gating);
     expect(gates.map((t) => t.metric).sort()).toEqual([
-      "baseline:Freestanding Handstand Hold",
       "baseline:Wall Handstand Push-Up",
+      "rolling:hs_triple20_of6",
     ]);
-    // Spec table values, spot-checked exactly.
-    const byMetric = Object.fromEntries(PHASE2A_GOAL1.targets.map((t) => [t.metric, t]));
-    expect(byMetric["baseline:Freestanding Handstand Hold"]).toMatchObject({ start: 0, target: 20, weight: 0.35, units: "sec", direction: "increase" });
-    expect(byMetric["baseline:Wall Handstand Push-Up"]).toMatchObject({ start: 0, target: 5, weight: 0.25 });
-    expect(byMetric["baseline:Chest-to-Wall Handstand Hold"]).toMatchObject({ start: 30, target: 60, weight: 0.12 });
-    expect(byMetric["baseline:Pull-Up Max Reps"]).toMatchObject({ start: 25, target: 25, weight: 0.1 });
-    expect(byMetric["baseline:Floating Pike Push-Up"]).toMatchObject({ start: 5, target: 10, weight: 0.09 });
-    expect(byMetric["baseline:L-Sit (Parallettes)"]).toMatchObject({ start: 30, target: 60, weight: 0.09 });
+    // The gate came off the max in the v4 merge — triple20 subsumes it.
+    expect(
+      PHASE2A_GOAL1.targets.find((t) => t.metric === "baseline:Freestanding Handstand Hold")!.gating,
+    ).not.toBe(true);
+    const sum = PHASE2A_GOAL1.targets.reduce((acc, t) => acc + t.weight, 0);
+    expect(sum).toBeCloseTo(1.0, 9);
+  });
+
+  it("Goal 1's three rolling:hs_* rows are ENGINE-NATIVE trackers — params verbatim, validating through GoalTargetSchema (regression is window-inherent; cumulative is irrelevant)", () => {
+    const rollingMetrics = ["rolling:hs_sessions_10s_of6", "rolling:hs_sessions_20s_of6", "rolling:hs_triple20_of6"];
+    const expectedParams: Record<string, unknown> = {
+      "rolling:hs_sessions_10s_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 10, hitsPerSession: 1, window: 6 },
+      "rolling:hs_sessions_20s_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 1, window: 6 },
+      "rolling:hs_triple20_of6": { exercise: "Freestanding Handstand Hold", minSeconds: 20, hitsPerSession: 3, attemptCap: 5, window: 6 },
+    };
+    for (const metric of rollingMetrics) {
+      const t = PHASE2A_GOAL1.targets.find((x) => x.metric === metric)!;
+      expect(t, metric).toBeDefined();
+      // The params ARE the semantics (the slug is opaque) — pin them verbatim.
+      expect(t.rolling, metric).toEqual(expectedParams[metric]);
+      // GoalTargetSchema's cross-field refinement: rolling params + the
+      // rolling: prefix travel together — these rows must parse clean.
+      const parsed = GoalTargetSchema.safeParse(t);
+      expect(parsed.success, `${metric}: ${JSON.stringify(parsed.success ? null : parsed.error.issues)}`).toBe(true);
+      // Regression is ENGINE-INHERENT now (window roll-out) — the cumulative
+      // flag is irrelevant to the rolling resolver and stays off the rows.
+      expect(t.cumulative, metric).toBeUndefined();
+    }
+    // Exactly these three rolling:* metrics on Goal 1 — and the flip left no
+    // log:* strays behind (the old coach-computed keys are fully retired).
+    expect(PHASE2A_GOAL1.targets.filter((t) => t.metric.startsWith("rolling:")).map((t) => t.metric)).toEqual(rollingMetrics);
+    expect(PHASE2A_GOAL1.targets.some((t) => t.metric.startsWith("log:"))).toBe(false);
+  });
+
+  it("Goal 1 start values carry the spec's corrections (max starts at 10 from the video-verified hold, NOT 0)", () => {
+    const max = PHASE2A_GOAL1.targets.find((t) => t.metric === "baseline:Freestanding Handstand Hold")!;
+    expect(max.start).toBe(10); // 0 would assert he can't hold a freestanding handstand at all — false
+    expect(max.rationale).toContain("never auto-overwritten"); // fatigued-S1 warning is binding
+    const ctw = PHASE2A_GOAL1.targets.find((t) => t.metric === "baseline:Chest-to-Wall Handstand Hold")!;
+    expect(ctw.target).toBe(120); // raised 60 → 120 (2026-08-09)
   });
 
   it("Goal 2 omits bodyFatPct start (auto-captured at DEXA #1) and carries the canary", () => {
@@ -223,33 +307,98 @@ describe("phase2a-spec · rotation template", () => {
     expect(labels(byDay[4]!).some((l) => l.includes("failure"))).toBe(true);
   });
 
-  it("baselineWeek is the 7-test Session-1 battery on Day 1 with retests at weeks 10 & 19", () => {
-    expect(template.baselineWeek).toHaveLength(1);
-    const day = template.baselineWeek[0]!;
-    expect(day.dayOfWeek).toBe(1);
-    expect(day.tests.map((t) => t.testName)).toEqual([
-      "Freestanding Handstand Hold",
-      "Wall Handstand Push-Up",
-      "L-Sit (Parallettes)",
-      "Floating Pike Push-Up",
-      "Floating Pike Push-Up Press",
-      "Chest-to-Wall Handstand Hold",
-      "Pull-Up Max Reps",
+  it("baselineWeek is the v4 three-session split: S1 day 1 · S2 day 3 · S3 day 4, with the spec's test pairs", () => {
+    expect(template.baselineWeek).toBe(PHASE2A_BASELINE_WEEK); // builder wires the constant through
+    expect(template.baselineWeek).toHaveLength(3);
+    expect(
+      template.baselineWeek.map((d) => ({ dayOfWeek: d.dayOfWeek, tests: d.tests.map((t) => t.testName) })),
+    ).toEqual([
+      // S1 · Mon Aug 10 (day 1) — Balance, fully fresh
+      { dayOfWeek: 1, tests: ["Freestanding Handstand Hold", "L-Sit (Parallettes)"] },
+      // S2 · Wed Aug 12 (day 3) — Vertical press: gate first, cheapest absorbs the fatigue
+      { dayOfWeek: 3, tests: ["Wall Handstand Push-Up", "Floating Pike Push-Up"] },
+      // S3 · Thu Aug 13 (day 4) — Support isometric + admin
+      { dayOfWeek: 4, tests: ["Chest-to-Wall Handstand Hold", "Pull-Up Max Reps"] },
     ]);
-    for (const t of day.tests) {
-      expect(t.retestWeeks).toEqual([10, 19]); // Block-1 end + pre-Christmas rung-2 window
-      expect(t.initialWeek ?? 1).toBe(1);
+    // Session identity + the spec's session-level rules live in the titles.
+    expect(template.baselineWeek[0]!.title).toContain("S1");
+    expect(template.baselineWeek[0]!.title).toContain("fully fresh");
+    expect(template.baselineWeek[1]!.title).toContain("S2");
+    expect(template.baselineWeek[1]!.title).toContain("gate first");
+    expect(template.baselineWeek[1]!.title).toContain("cheapest target absorbs the fatigue");
+    expect(template.baselineWeek[2]!.title).toContain("S3");
+    expect(template.baselineWeek[2]!.title).toContain("its own slot");
+  });
+
+  it("every test name appears exactly once across the split, and every test keeps retests {10, 19} + initialWeek 1 (the retest weeks inherit the same S-split structure)", () => {
+    const allTests = template.baselineWeek.flatMap((d) => d.tests);
+    const names = allTests.map((t) => t.testName);
+    expect(names).toHaveLength(6);
+    expect(new Set(names).size).toBe(6); // exactly once each — no test duplicated across sessions
+    for (const t of allTests) {
+      expect(t.retestWeeks, t.testName).toEqual([10, 19]); // Block-1 end + pre-Christmas rung-2 window
+      expect(t.initialWeek ?? 1, t.testName).toBe(1);
+    }
+    // Retests derive placement from the SAME BaselineDay dayOfWeek (rotation-
+    // core matches baselineWeek.find(d => d.dayOfWeek === rotationDay) in any
+    // due week), so weeks 10 & 19 land the same tests on days 1/3/4 — the
+    // per-day shape above IS the retest shape.
+  });
+
+  it("S1/S2 protocols carry the binding session rules (attempt caps, record-every-attempt, ordering, press indicator, pull-up re-log)", () => {
+    const byName = Object.fromEntries(template.baselineWeek.flatMap((d) => d.tests).map((t) => [t.testName, t]));
+    const freestanding = byName["Freestanding Handstand Hold"]!;
+    expect(freestanding.protocol).toContain("3–4 attempts");
+    expect(freestanding.protocol).toContain("2–3 min FULL rest");
+    expect(freestanding.protocol).toContain("stop at 4");
+    expect(freestanding.protocol).toContain("Record EVERY attempt");
+    const hspu = byName["Wall Handstand Push-Up"]!;
+    expect(hspu.protocol).toContain("FIRST in S2");
+    expect(hspu.protocol).toContain("FULL-ROM");
+    expect(hspu.protocol).toContain("note if assisted");
+    const pike = byName["Floating Pike Push-Up"]!;
+    expect(pike.protocol).toContain("after 5+ min rest");
+    // The press is a tracked indicator NOTE inside S2 — not a scheduled test row.
+    expect(pike.protocol).toContain("Floating Pike Push-Up Press");
+    expect(pike.protocol).toContain("tracked indicator");
+    expect(pike.protocol).toContain("NOT a scored target");
+    const pullup = byName["Pull-Up Max Reps"]!;
+    expect(pullup.protocol).toContain("DO NOT TEST");
+    expect(pullup.protocol).toContain("re-log at the true max 25");
+  });
+
+  it("chest-to-wall protocol preserves every binding rule: hand distance, position standard, toe brush, line breaks, back-to-wall exclusion", () => {
+    const ctw = template.baselineWeek
+      .flatMap((d) => d.tests)
+      .find((t) => t.testName === "Chest-to-Wall Handstand Hold")!;
+    expect(ctw.protocol).toContain("hand distance"); // measure + record, identical at every retest
+    expect(ctw.protocol).toContain("IDENTICAL distance at every retest");
+    expect(ctw.protocol).toContain("ribs down, glutes engaged"); // position standard
+    expect(ctw.protocol).toContain("not a banana");
+    expect(ctw.protocol).toContain("brush"); // toe contact is a brush, not a lean
+    expect(ctw.protocol).toContain("line breaks"); // hold ends when the line breaks, not at wall-fall
+    expect(ctw.protocol).toContain("Back-to-wall");
+    expect(ctw.protocol).toContain("does not substitute");
+  });
+
+  it("every test's protocol carries the retest protocol-consistency rule (identical order / same rests / time of day)", () => {
+    expect(PHASE2A_RETEST_CONSISTENCY_RULE).toContain("IDENTICAL order");
+    expect(PHASE2A_RETEST_CONSISTENCY_RULE).toContain("rest intervals actually taken");
+    expect(PHASE2A_RETEST_CONSISTENCY_RULE).toContain("time of day");
+    expect(PHASE2A_RETEST_CONSISTENCY_RULE).toContain("phantom progress or phantom regression");
+    for (const t of template.baselineWeek.flatMap((d) => d.tests)) {
+      expect(t.protocol, t.testName).toContain(PHASE2A_RETEST_CONSISTENCY_RULE);
     }
   });
 
-  it("every baseline:* target metric on Goals 1–2 has a scheduled Session-1 test", () => {
-    const scheduled = new Set(template.baselineWeek[0]!.tests.map((t) => t.testName));
+  it("every baseline:* target metric on Goals 1–2 has a scheduled test somewhere in the S1–S3 split", () => {
+    const scheduled = new Set(template.baselineWeek.flatMap((d) => d.tests).map((t) => t.testName));
     const baselineMetrics = [...PHASE2A_GOAL1.targets, ...PHASE2A_GOAL2.targets]
       .map((t) => t.metric)
       .filter((m) => m.startsWith("baseline:"))
       .map((m) => m.slice("baseline:".length));
     for (const name of baselineMetrics) {
-      expect(scheduled.has(name), `missing Session-1 test for baseline:${name}`).toBe(true);
+      expect(scheduled.has(name), `missing scheduled test for baseline:${name}`).toBe(true);
     }
   });
 });
@@ -483,5 +632,133 @@ describe("phase2a-spec · v2 Oct 2–8 scheduling exclusion (trip + 3 days after
     // Pin the spec's own arithmetic: week 10 = Oct 12–18, safely after Oct 8.
     expect(dateKey(addDays(startedOn, 63))).toBe("2026-10-12");
     expect(dateKey(addDays(startedOn, 69))).toBe("2026-10-18");
+  });
+});
+
+describe("phase2a-spec · v4 reconcile helpers (baselineWeek revision, milestone, duplicate goal)", () => {
+  /** Simulate a Postgres jsonb round-trip: same content, different object
+   *  key order (jsonb normalizes key order, so a DB read-back never
+   *  guarantees insertion order). */
+  function reorderKeysDeep(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(reorderKeysDeep);
+    if (value !== null && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(obj).sort().reverse()) out[k] = reorderKeysDeep(obj[k]);
+      return out;
+    }
+    return value;
+  }
+
+  it("stableJson is key-order-insensitive (jsonb round-trip safe) but content-sensitive", () => {
+    expect(stableJson({ a: 1, b: [{ x: 1, y: 2 }] })).toBe(stableJson({ b: [{ y: 2, x: 1 }], a: 1 }));
+    expect(stableJson({ a: 1 })).not.toBe(stableJson({ a: 2 }));
+    expect(stableJson([1, 2])).not.toBe(stableJson([2, 1])); // arrays keep order
+    expect(stableJson({ a: 1, b: undefined })).toBe(stableJson({ a: 1 })); // undefined keys dropped, like JSON.stringify
+  });
+
+  it("the import's targets deep-compare handles the NESTED rolling params: jsonb key-reorder → identical; a param edit → different (step-3b idempotency)", () => {
+    // The step-3b skip check is stableJson(goal1.targets) === stableJson(desired).
+    // Goal 1's targets now carry a nested RollingParams object two levels
+    // down (targets[] → target → rolling) — a jsonb round-trip reorders keys
+    // at EVERY depth, so the compare must recurse. Reordered copy → equal:
+    const roundTripped = reorderKeysDeep(JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)));
+    expect(stableJson(roundTripped)).toBe(stableJson(PHASE2A_GOAL1.targets));
+    // ...and a change INSIDE the nested params must register as different —
+    // otherwise a future param edit (e.g. loosening the triple's attempt cap)
+    // would silently [skip] on re-import:
+    const tweaked = JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)) as typeof PHASE2A_GOAL1.targets;
+    const triple = tweaked.find((t) => t.metric === "rolling:hs_triple20_of6")!;
+    triple.rolling!.attemptCap = 6;
+    expect(stableJson(tweaked)).not.toBe(stableJson(PHASE2A_GOAL1.targets));
+    // Dropping the params object entirely also registers (never re-skips).
+    const dropped = JSON.parse(JSON.stringify(PHASE2A_GOAL1.targets)) as typeof PHASE2A_GOAL1.targets;
+    delete dropped.find((t) => t.metric === "rolling:hs_sessions_10s_of6")!.rolling;
+    expect(stableJson(dropped)).not.toBe(stableJson(PHASE2A_GOAL1.targets));
+  });
+
+  it("baselineWeekNeedsReconcile: false on identical AND on a jsonb-style key-reordered copy; true against the old single-session battery", () => {
+    const template = buildPhase2aRotationTemplate();
+    expect(baselineWeekNeedsReconcile(template)).toBe(false); // fresh import → step-6 create already carries v4
+    const reordered = {
+      ...template,
+      baselineWeek: reorderKeysDeep(JSON.parse(JSON.stringify(PHASE2A_BASELINE_WEEK))),
+    } as typeof template;
+    expect(baselineWeekNeedsReconcile(reordered)).toBe(false); // idempotent re-run after apply
+    const oldBattery = {
+      ...template,
+      baselineWeek: [
+        {
+          dayOfWeek: 1 as const,
+          title: "Session-1 Baseline Test — run FRESH, before other work (the first skill session)",
+          tests: template.baselineWeek.flatMap((d) => d.tests).map((t) => ({ ...t, protocol: "old" })),
+        },
+      ],
+    };
+    expect(baselineWeekNeedsReconcile(oldBattery)).toBe(true); // prod state → revision owed
+  });
+
+  it("buildBaselineWeekRevisionSnapshot replaces ONLY baselineWeek — every other live-template field is preserved by reference", () => {
+    const live = buildPhase2aRotationTemplate();
+    live.name = "live-edited name";
+    live.baselineWeek = []; // stand-in for a live template that pre-dates the split
+    const snapshot = buildBaselineWeekRevisionSnapshot(live);
+    expect(snapshot.baselineWeek).toBe(PHASE2A_BASELINE_WEEK);
+    expect(snapshot.name).toBe("live-edited name");
+    expect(snapshot.weeklySplit).toBe(live.weeklySplit);
+    expect(snapshot.phases).toBe(live.phases);
+    expect(snapshot.hikingSuperset).toBe(live.hikingSuperset);
+    expect(snapshot.dailyMobility).toBe(live.dailyMobility);
+    expect(snapshot.totalWeeks).toBe(live.totalWeeks);
+    // And the snapshot still lints CLEAN against the import's plan metadata.
+    const findings = lintTemplate(snapshot, {
+      weeks: PHASE2A_PLAN.weeks,
+      startedOn: parseDateKey(PHASE2A_PLAN.startedOnKey),
+      endsOn: parseDateKey(PHASE2A_PLAN.endsOnKey),
+      goalTargetDate: parseDateKey(PHASE2A_GOAL1.targetDateKey),
+    });
+    expect(findings).toEqual([]);
+  });
+
+  it("revision summary fits apply_plan_revision's ≤200-char contract and the reasoning quotes the spec's why-split paragraph", () => {
+    expect(PHASE2A_BASELINE_SPLIT_SUMMARY.length).toBeGreaterThan(0);
+    expect(PHASE2A_BASELINE_SPLIT_SUMMARY.length).toBeLessThanOrEqual(200);
+    expect(PHASE2A_BASELINE_SPLIT_SUMMARY).toContain("spec v4");
+    expect(PHASE2A_BASELINE_SPLIT_REASONING).toContain("Five of the six tests load the same shoulder complex");
+    expect(PHASE2A_BASELINE_SPLIT_REASONING).toContain("accumulated fatigue");
+    expect(PHASE2A_BASELINE_SPLIT_REASONING).toContain("80-ceiling math wrong for months");
+    expect(PHASE2A_BASELINE_SPLIT_REASONING).toContain("Block 0 runs two full weeks");
+  });
+
+  it("milestone data point: 10 s / sec / 2026-08-09 — dated BEFORE plan start so it can never credit the S1 initial checkpoint", () => {
+    expect(PHASE2A_MILESTONE_BASELINE).toMatchObject({
+      testName: "Freestanding Handstand Hold",
+      value: 10,
+      units: "sec",
+      dateKey: "2026-08-09",
+    });
+    expect(PHASE2A_MILESTONE_BASELINE.dateKey < PHASE2A_PLAN.startedOnKey).toBe(true); // data point, not S1
+    expect(PHASE2A_MILESTONE_BASELINE.value).toBeGreaterThan(0); // never a phantom-completion row
+    expect(PHASE2A_MILESTONE_BASELINE.notes).toContain("video-verified");
+    expect(PHASE2A_MILESTONE_BASELINE.notes).toContain("2nd occurrence ever");
+    expect(PHASE2A_MILESTONE_BASELINE.notes).toContain("data point per spec v4");
+    // Agrees with the target's explicit start (earliest-row auto-start would
+    // land on the same number if start were ever omitted).
+    const max = PHASE2A_GOAL1.targets.find((t) => t.metric === "baseline:Freestanding Handstand Hold")!;
+    expect(max.start).toBe(PHASE2A_MILESTONE_BASELINE.value);
+  });
+
+  it("duplicate-goal resolution targets the spec's id, points at Goal 1, and the note append is idempotent", () => {
+    expect(PHASE2A_DUPLICATE_GOAL.id).toBe("cmq8pz7xp000304ic0wux6r2a");
+    expect(PHASE2A_DUPLICATE_GOAL.id).not.toBe(PHASE2A_GOAL1_ID); // never the keeper
+    expect(PHASE2A_DUPLICATE_GOAL.note).toContain(PHASE2A_GOAL1_ID); // superseded-by points at the rung goal
+    expect(PHASE2A_DUPLICATE_GOAL.note).toContain("delete manually if desired"); // never deleted by the import
+    // Idempotency of the pure append:
+    expect(appendDuplicateGoalNote(null)).toBe(PHASE2A_DUPLICATE_GOAL.note);
+    expect(appendDuplicateGoalNote("")).toBe(PHASE2A_DUPLICATE_GOAL.note);
+    expect(appendDuplicateGoalNote("existing owner note")).toBe(`existing owner note\n${PHASE2A_DUPLICATE_GOAL.note}`);
+    const once = appendDuplicateGoalNote("existing owner note");
+    expect(appendDuplicateGoalNote(once)).toBe(once); // re-run → unchanged
+    expect(appendDuplicateGoalNote(PHASE2A_DUPLICATE_GOAL.note)).toBe(PHASE2A_DUPLICATE_GOAL.note);
   });
 });

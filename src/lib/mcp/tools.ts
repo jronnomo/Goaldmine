@@ -116,6 +116,7 @@ import {
   resolveBodyMetric,
   resolveTemplateTargets,
 } from "@/lib/metrics-registry";
+import { canonicalizeRollingTargets } from "@/lib/rolling-metrics";
 import { registerProjectTools } from "@/lib/mcp/tools/project-tools";
 import { registerProgramTools } from "@/lib/mcp/tools/program-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
@@ -4025,7 +4026,11 @@ function registerWriteTools(server: McpServer) {
       description:
         "Replace the readiness-targets array — the weighted metrics that define 'ready for the goal' (e.g. body weight ≤ 175 lb, 1.5-mi run ≤ 11:30, max pull-ups ≥ 12). " +
         "Use when adjusting the success criteria / rubric / scoring weights for the goal. " +
-        "Each target = { metric, label, target, weight, units, direction, rationale?, gating? }. Weights should sum near 1. " +
+        "Each target = { metric, label, target, weight, units, direction, rationale?, gating?, rolling? }. Weights should sum near 1. " +
+        "Metric families: weightLb / bodyFatPct / baseline:<test> / hike:* / workout:count / log:<key> / exercise:<canonical name> / rolling:<slug>. " +
+        "rolling:* = engine-computed session-consistency window over logged attempt sets (completed workouts with timed sets of rolling.exercise); " +
+        "the `rolling` params object ({exercise, minSeconds, hitsPerSession?, attemptCap?, window?}) is REQUIRED for rolling:* metrics and forbidden elsewhere. " +
+        "These are snapshots that can REGRESS as old hit-sessions roll out of the window — never re-log them via log_metric; the engine computes them from workout sets. " +
         "Set gating:true on a target to make it a hard gate — readiness is capped at 80 until that target reaches progress ≥ 1; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data). " +
         "Read the current targets via get_goal first; this is a full-replace, not a patch.",
       inputSchema: {
@@ -4035,8 +4040,8 @@ function registerWriteTools(server: McpServer) {
         // Optional fields (start, rationale) are already optional in the schema,
         // so existing stored targets validate cleanly.
         targets: z.array(GoalTargetSchema).min(1).describe(
-          "Full replacement targets array. Each entry: { metric, label, units, direction, target, weight, start?, rationale?, gating? }. " +
-          "Weights should sum near 1. Use get_goal to read current targets before replacing.",
+          "Full replacement targets array. Each entry: { metric, label, units, direction, target, weight, start?, rationale?, gating?, rolling? }. " +
+          "Weights should sum near 1. rolling:* metrics require the rolling params object. Use get_goal to read current targets before replacing.",
         ),
       },
     },
@@ -4045,7 +4050,9 @@ function registerWriteTools(server: McpServer) {
         const db = await getDb();
         await db.goal.update({
           where: { id: goalId },
-          data: { targets: targets as Prisma.InputJsonValue },
+          // rolling:* params.exercise canonicalized on write (same doctrine as
+          // createGoalCore's attributionHints canonicalization).
+          data: { targets: canonicalizeRollingTargets(targets) as Prisma.InputJsonValue },
         });
         return { message: "Targets updated" };
       }),
@@ -4929,7 +4936,9 @@ function registerWriteTools(server: McpServer) {
           .describe(
             "Readiness targets captured during the intake interview (weights summing ~1). " +
               "Each target drives a per-target progress bar in compute_readiness. " +
-              "Set gating:true on a target to make it a hard gate — score capped at 80 until cleared; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data).",
+              "Set gating:true on a target to make it a hard gate — score capped at 80 until cleared; also floors the rarity/Reach tier to no easier than 'rare' while the gate is unrated (no data). " +
+              "rolling:<slug> metrics are engine-computed session-consistency windows over logged attempt sets " +
+              "(params required via the target's `rolling` object; snapshots that can regress — never log them by hand).",
           ),
         coachFeasibility: z
           .object({

@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   computeTargetFeasibility,
   aggregateGoalTier,
+  metricFamilyFor,
   FITNESS_NORM_PACK,
   RARITY_RULES,
 } from "@/lib/rarity-core";
@@ -417,5 +418,102 @@ describe("B2 — aggregateGoalTier gate floor", () => {
     const result = aggregateGoalTier([unratedGate()]);
     expect(result.tier).toBeNull();
     expect(result.ratio).toBeNull();
+  });
+});
+
+// ─── rolling:* family — conservative no-rate treatment ───────────────────────
+// The rolling family gets NO norm and NO observed series (observedSeriesFor
+// has no rolling branch — same class as the bodyFatPct gap): feasibility
+// never estimates a "hit-sessions per week" rate. Verdict stays 'unknown'
+// until the target is met; a gating rolling target floors the tier via the
+// B2 mechanism above.
+
+describe("rolling:* family — conservative no-rate feasibility", () => {
+  const ROLLING_GATE: GoalTarget = {
+    metric: "rolling:hs_triple20_of6",
+    label: "3× ≥20s in one session — last 6",
+    units: "of 6",
+    direction: "increase",
+    target: 1,
+    weight: 0.2,
+    gating: true,
+    rolling: {
+      exercise: "Freestanding Handstand Hold",
+      minSeconds: 20,
+      hitsPerSession: 3,
+      attemptCap: 5,
+      window: 6,
+    },
+  };
+
+  it("metricFamilyFor maps the rolling: prefix to 'rolling'", () => {
+    expect(metricFamilyFor("rolling:hs_triple20_of6", "of 6", "increase")).toBe("rolling");
+    // Neighboring prefixes are untouched.
+    expect(metricFamilyFor("log:hs_triple20_of6", "of 6", "increase")).toBe("log");
+  });
+
+  it("has data but no observed rate → verdict 'unknown', rateBasis 'none', no plausible rate, gating propagated", () => {
+    // current 0 = tested-and-zero (≥1 session, no hits) — NOT the never-measured guard.
+    const r = computeTargetFeasibility({
+      target: ROLLING_GATE,
+      current: 0,
+      weeksRemaining: 10,
+      observedWeeklyRate: null,
+      observedPoints: 0,
+      normPack: FITNESS_NORM_PACK,
+    });
+
+    expect(r.verdict).toBe("unknown");
+    expect(r.rateBasis).toBe("none");
+    expect(r.plausibleRate).toBeNull();
+    expect(r.ratio).toBeNull();
+    expect(r.countsTowardTier).toBe(false);
+    expect(r.gating).toBe(true);
+    // requiredRate IS computed (gap 1 over 10 weeks) — only the plausible side is withheld.
+    expect(r.requiredRate).toBeCloseTo(0.1);
+  });
+
+  it("met rolling target rates cleanly: current ≥ target → 'met', ratio 0, counts toward tier", () => {
+    const r = computeTargetFeasibility({
+      target: ROLLING_GATE,
+      current: 1,
+      weeksRemaining: 10,
+      observedWeeklyRate: null,
+      observedPoints: 0,
+      normPack: FITNESS_NORM_PACK,
+    });
+
+    expect(r.verdict).toBe("met");
+    expect(r.ratio).toBe(0);
+    expect(r.countsTowardTier).toBe(true);
+  });
+
+  it("never-measured rolling target (null current, no start) fires the unknown guard", () => {
+    const r = computeTargetFeasibility({
+      target: ROLLING_GATE,
+      current: null,
+      weeksRemaining: 10,
+      observedWeeklyRate: null,
+      observedPoints: 0,
+      normPack: FITNESS_NORM_PACK,
+    });
+
+    expect(r.verdict).toBe("unknown");
+    expect(r.countsTowardTier).toBe(false);
+    expect(r.currentValue).toBeNull();
+  });
+
+  it("an unrated GATING rolling target floors the goal tier to 'rare' (B2 mechanism, real feasibility output)", () => {
+    const unratedRollingGate = computeTargetFeasibility({
+      target: ROLLING_GATE,
+      current: 0,
+      weeksRemaining: 10,
+      observedWeeklyRate: null,
+      observedPoints: 0,
+      normPack: FITNESS_NORM_PACK,
+    });
+
+    const result = aggregateGoalTier([ratedTarget(), unratedRollingGate]);
+    expect(result.tier).toBe("rare");
   });
 });
