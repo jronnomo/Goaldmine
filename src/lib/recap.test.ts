@@ -45,6 +45,10 @@ vi.mock("@/lib/records", () => ({
 
 vi.mock("@/lib/program", () => ({
   getActiveProgram: vi.fn(),
+  // #298: computeWeeklyRecap's no-goalId default goes through the
+  // rotation-owner seam now; the top-level beforeEach below wires a legacy
+  // default whose id the pm.goal.findFirst catch-alls resolve.
+  getRotationOwnerGoal: vi.fn(),
 }));
 
 // computeGameState is wrapped with React cache() in engine.ts; mocking the
@@ -57,8 +61,23 @@ import { resolveStatSlot, computeWeeklyRecap } from "@/lib/recap";
 import { FITNESS_PRESENTATION, PROJECT_PRESENTATION } from "@/lib/goal-presentation";
 import { prisma } from "@/lib/db";
 import { getExerciseSummaries } from "@/lib/records";
-import { getActiveProgram } from "@/lib/program";
+import { getActiveProgram, getRotationOwnerGoal } from "@/lib/program";
 import { computeGameState } from "@/lib/game/engine";
+
+// Runs BEFORE each describe-level beforeEach (outer hooks first) — the
+// describe hooks' vi.clearAllMocks() clears call history but NOT this
+// implementation, so every no-goalId test resolves a legacy default whose
+// row the pm.goal.findFirst catch-all then returns. Program-mode specifics
+// are overridden inside the #298 describe below.
+beforeEach(() => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (getRotationOwnerGoal as any).mockResolvedValue({
+    mode: "legacy",
+    goalId: "goal-default",
+    goalKind: "fitness",
+    planId: null,
+  });
+});
 
 // ─── Cast helpers ─────────────────────────────────────────────────────────────
 // At runtime prisma is our vi.fn() mock object; TypeScript still sees the
@@ -656,5 +675,77 @@ describe("computeWeeklyRecap — mrr-bearing project goal: statSlotsForGoal fall
     // ("$"-less value) — assert the currency rendering came through instead.
     const mrrSlot = recap.statSlots.find((s) => s.key === "mrr")!;
     expect(mrrSlot.value.startsWith("$")).toBe(true);
+  });
+});
+
+// ─── #298: default-goal resolution goes through the rotation-owner seam ──────
+// The no-goalId default is the ROTATION-OWNING goal under a Program; a
+// Program with no rotation owner renders the existing no-goal shape (never a
+// legacy focus regression); zero-Program tenants resolve the legacy focus
+// winner inside the seam (covered by the top-level beforeEach default every
+// pre-#298 test in this file now runs through).
+
+describe("computeWeeklyRecap — #298 rotation-owner default goal", () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockGetRotationOwnerGoal = getRotationOwnerGoal as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pm.goal.findFirst.mockResolvedValue(MOCK_FITNESS_GOAL);
+    pm.workout.findMany.mockResolvedValue([]);
+    pm.hike.findMany.mockResolvedValue([]);
+    pm.baseline.findMany.mockResolvedValue([]);
+    mockGetExerciseSummaries.mockResolvedValue([]);
+    mockGetActiveProgram.mockResolvedValue(null);
+    mockComputeGameState.mockResolvedValue(MOCK_GAME_STATE_FITNESS);
+  });
+
+  it("Program tenant: the rotation owner's id drives the goal fetch (fetch-by-id, no focus filter)", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "program",
+      goalId: "goal-owner-1",
+      goalKind: "fitness",
+      planId: "plan-rot",
+    });
+
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+
+    expect(pm.goal.findFirst).toHaveBeenCalledWith({ where: { id: "goal-owner-1" } });
+    expect(recap.goalState).not.toBe("no-goal");
+  });
+
+  it("Program tenant with NO rotation owner: no goal fetched at all → the existing no-goal shape", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "program",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+    });
+
+    const recap = await computeWeeklyRecap(RECAP_AS_OF);
+
+    expect(pm.goal.findFirst).not.toHaveBeenCalled();
+    expect(recap.goalState).toBe("no-goal");
+    expect(recap.goal).toBeNull();
+  });
+
+  it("explicit opts.goalId skips the seam entirely (unchanged escape hatch)", async () => {
+    await computeWeeklyRecap(RECAP_AS_OF, { goalId: "goal-explicit" });
+
+    expect(mockGetRotationOwnerGoal).not.toHaveBeenCalled();
+    expect(pm.goal.findFirst).toHaveBeenCalledWith({ where: { id: "goal-explicit" } });
+  });
+
+  it("zero-Program tenant: the seam's legacy focus winner id drives the fetch (byte-identical goal pick)", async () => {
+    mockGetRotationOwnerGoal.mockResolvedValue({
+      mode: "legacy",
+      goalId: "goal-legacy-focus",
+      goalKind: "fitness",
+      planId: null,
+    });
+
+    await computeWeeklyRecap(RECAP_AS_OF);
+
+    expect(pm.goal.findFirst).toHaveBeenCalledWith({ where: { id: "goal-legacy-focus" } });
   });
 });

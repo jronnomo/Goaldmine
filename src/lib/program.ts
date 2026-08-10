@@ -173,6 +173,117 @@ export async function getActiveProgramMembership(): Promise<ActiveProgramMembers
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// #298/#301 (isFocus sweep) — the ROTATION-OWNING GOAL + membership-first
+// ordering. Pure additions; nothing above changes.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of getRotationOwnerGoal(). Callers branch on `mode`, never on
+ * goalId truthiness:
+ *
+ *  - mode "program": Program rows exist for this tenant — resolution is
+ *    Program-semantics and must NEVER regress to isFocus. `goalId`/`planId`
+ *    name the rotation-owning goal and the Plan that makes it so (the active
+ *    Program's attached active Plan — Plan.goalId is non-nullable, so the
+ *    pair is always both-set or both-null). Both null means "no rotation
+ *    owner today": an active Program with no attached active Plan (pure-
+ *    project Programs, mid-transition) or Program rows that are all
+ *    retired/draft — same reasoning as getActiveProgram branches 1 and 3.
+ *  - mode "legacy": ZERO Program rows (the per-tenant rollout gate, same as
+ *    the seam). `goalId` is the legacy focus-goal winner — isFocus=true,
+ *    findFirst(updatedAt desc), goal-focus.ts's documented deterministic-
+ *    winner idiom for the (DB-unconstrained) multi-focus state — or null
+ *    when no goal holds focus. `planId` is always null here.
+ *
+ * `goalKind` carries the resolved goal's kind (both modes) so single-goal
+ * consumers that route on kind (hike attribution) don't need a second fetch.
+ */
+export type RotationOwnerResolution = {
+  mode: "program" | "legacy";
+  goalId: string | null;
+  goalKind: string | null;
+  planId: string | null;
+};
+
+/**
+ * #298/#301: "the goal whose prescription drives today" — the single-goal
+ * replacement for direct `isFocus: true` reads. Mirrors getActiveProgram's
+ * three branches exactly (active Program → its attached active Plan's goal;
+ * Program rows but none active → no owner; zero rows → legacy isFocus
+ * resolution), so this and the seam can never disagree about which Plan owns
+ * the day. See RotationOwnerResolution above for the contract.
+ */
+export async function getRotationOwnerGoal(): Promise<RotationOwnerResolution> {
+  const db = await getDb();
+
+  const program = await db.program.findFirst({ where: { status: "active" } });
+  if (program) {
+    // Same selection as getActiveProgram branch 1: ONLY a Plan attached to
+    // THIS Program may own the day; most-recently-updated wins. No unscoped
+    // fall-through (the founding cross-goal leak — plan-critique Critical #1).
+    const plan = await db.plan.findFirst({
+      where: { active: true, programId: program.id },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, goalId: true, goal: { select: { kind: true } } },
+    });
+    return {
+      mode: "program",
+      goalId: plan?.goalId ?? null,
+      goalKind: plan?.goal.kind ?? null,
+      planId: plan?.id ?? null,
+    };
+  }
+
+  // No ACTIVE Program. "Retired" (rows exist) stays Program-semantics with no
+  // owner — never a silent regression to isFocus (getActiveProgram branch 3).
+  const programRowCount = await db.program.count();
+  if (programRowCount > 0) {
+    return { mode: "program", goalId: null, goalKind: null, planId: null };
+  }
+
+  // Zero Program rows: the legacy focus-goal winner, centralized here so the
+  // #298 domain files carry no direct isFocus filters of their own.
+  const focusGoal = await db.goal.findFirst({
+    where: { isFocus: true },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, kind: true },
+  });
+  return {
+    mode: "legacy",
+    goalId: focusGoal?.id ?? null,
+    goalKind: focusGoal?.kind ?? null,
+    planId: null,
+  };
+}
+
+/**
+ * #298/#301: membership-first ordering for multi-goal LIST contexts ("what's
+ * in play") — the rotation-owning goal first, then the active Program's other
+ * member goals, then non-members. Pure + stable: rows within the same tier
+ * keep their incoming order, so callers express secondary tiebreaks via the
+ * DB orderBy they fetched with (exactly how `isFocus: "desc"` used to compose
+ * with them).
+ *
+ * Also expresses the legacy single-goal lift: an empty `memberGoalIds` plus
+ * the legacy focus-goal id as `rotationOwnerGoalId` reproduces the healthy-
+ * state `orderBy: [{ isFocus: "desc" }, ...rest]` result (one focus row to
+ * the front, everything else in DB order).
+ */
+export function orderMembersFirst<T extends { id: string }>(
+  rows: readonly T[],
+  memberGoalIds: ReadonlySet<string>,
+  rotationOwnerGoalId: string | null,
+): T[] {
+  const tier = (id: string): number =>
+    rotationOwnerGoalId !== null && id === rotationOwnerGoalId
+      ? 0
+      : memberGoalIds.has(id)
+        ? 1
+        : 2;
+  return [...rows].sort((a, b) => tier(a.id) - tier(b.id));
+}
+
 /**
  * Fallback for the game engine (engine.ts's program-fallback, REQ-004c):
  * the most-recently-updated Plan regardless of `active`. Used ONLY when

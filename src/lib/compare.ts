@@ -7,6 +7,11 @@
 // matches records.ts convention exactly).
 
 import { getDb, prisma } from "@/lib/db";
+import {
+  getActiveProgramMembership,
+  getRotationOwnerGoal,
+  orderMembersFirst,
+} from "@/lib/program";
 import { computeReadiness } from "@/lib/readiness";
 import { computeGameState } from "@/lib/game/engine";
 import { levelFromXp, OVERALL_LEVEL_BASE } from "@/lib/game/rules";
@@ -50,13 +55,32 @@ export async function computeComparison(aKeyRaw: string, bKeyRaw: string): Promi
   // life. The window-relevance filter below decides which achieved rows are
   // actually relevant to [dateA, dateB].
   const db = await getDb();
-  const rawGoals = await db.goal.findMany({
-    where: { OR: [{ active: true }, { status: "achieved" }] },
-    // status: "desc" is a trivial tie-break addition — "active" > "achieved"
-    // lexicographically, so this keeps active goals ahead of achieved ones
-    // within the same isFocus tier (achieved-after-active, per the fix spec).
-    orderBy: [{ isFocus: "desc" }, { status: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
-  });
+  // #298: this is a multi-goal LIST context ("what's in play"), so the lead
+  // ordering key is Program membership, not a single-goal resolution: member
+  // goals of the active Program sort ahead of non-member goals, the
+  // rotation-owning goal first among them. Zero-Program tenants keep the
+  // legacy focus-goal lift (getRotationOwnerGoal's legacy branch resolves
+  // the same deterministic focus winner the old focus-desc orderBy key put
+  // first).
+  // status: "desc" is a trivial tie-break — "active" > "achieved"
+  // lexicographically, so it keeps active goals ahead of achieved ones
+  // within the same membership tier (achieved-after-active, per the fix
+  // spec) — and the window-relevance filter below is untouched.
+  const resolution = await getRotationOwnerGoal();
+  const memberGoalIds =
+    resolution.mode === "program"
+      ? new Set(
+          ((await getActiveProgramMembership())?.memberGoals ?? []).map((g) => g.id),
+        )
+      : new Set<string>();
+  const rawGoals = orderMembersFirst(
+    await db.goal.findMany({
+      where: { OR: [{ active: true }, { status: "achieved" }] },
+      orderBy: [{ status: "desc" }, { targetDate: { sort: "asc", nulls: "last" } }],
+    }),
+    memberGoalIds,
+    resolution.goalId,
+  );
 
   // Window-relevance filter: an achieved goal is included only if its life
   // [createdAt, completedAt] overlaps [dateA, dateB] — completed before A or

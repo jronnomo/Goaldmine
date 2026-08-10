@@ -11,6 +11,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { prisma, getDb } from "@/lib/db";
 import { dateKey as toDateKey, startOfDay, endOfDay } from "@/lib/calendar";
+import { getRotationOwnerGoal } from "@/lib/program";
 import { safe, parseDateInput } from "@/lib/mcp/tool-helpers";
 
 // Status groups
@@ -35,8 +36,9 @@ export function registerRenderTools(server: McpServer): void {
         "  updates clipforgeProjectId to the new value). " +
         "• If a job exists in any non-terminal state (pending | claimed | drafted | approved | rendering) " +
         "  → return it as-is with a descriptive message (never clobber an in-flight job). " +
-        "goalId defaults to the current FOCUS goal (isFocus=true) when omitted — " +
-        "error returned if no focus goal is set.",
+        "goalId defaults to the DAY-DRIVING goal when omitted: under an active Program that is " +
+        "the rotation-owning goal (the goal whose active plan drives the day); tenants without " +
+        "Programs default to the focus goal. Error returned if no default goal resolves.",
       inputSchema: {
         date: z
           .string()
@@ -56,7 +58,8 @@ export function registerRenderTools(server: McpServer): void {
           .string()
           .optional()
           .describe(
-            "Goal to attach this render job to. Omit to use the current FOCUS goal. " +
+            "Goal to attach this render job to. Omit to use the default day-driving goal " +
+            "(rotation owner under a Program; focus goal otherwise). " +
             "Use list_goals to discover goal ids.",
           ),
       },
@@ -65,7 +68,10 @@ export function registerRenderTools(server: McpServer): void {
       safe(async () => {
         const db = await getDb();
 
-        // 1. Resolve goalId — default to focus goal
+        // 1. Resolve goalId — default is the day-driving goal (#298): the
+        // ROTATION-OWNING goal under a Program; zero-Program tenants keep
+        // the legacy focus-goal default, byte-identical (resolved inside
+        // getRotationOwnerGoal's legacy branch).
         let resolvedGoalId: string;
         if (input.goalId) {
           const goal = await db.goal.findUnique({
@@ -75,17 +81,15 @@ export function registerRenderTools(server: McpServer): void {
           if (!goal) throw new Error(`Goal not found: ${input.goalId}`);
           resolvedGoalId = goal.id;
         } else {
-          const focusGoal = await db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-            select: { id: true },
-          });
-          if (!focusGoal) {
+          const resolution = await getRotationOwnerGoal();
+          if (resolution.goalId === null) {
             throw new Error(
-              "No focus goal is set. Pass goalId explicitly, or set a goal to focus with set_active_goal first.",
+              resolution.mode === "program"
+                ? "The active Program has no rotation plan, so there is no default goal for this job. Pass goalId explicitly (list_goals shows ids)."
+                : "No focus goal is set. Pass goalId explicitly, or set a goal to focus with set_active_goal first.",
             );
           }
-          resolvedGoalId = focusGoal.id;
+          resolvedGoalId = resolution.goalId;
         }
 
         // 2. Parse date as USER_TZ midnight

@@ -12,15 +12,21 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetDb, mockGetMembership, mockPrisma } = vi.hoisted(() => ({
+const { mockGetDb, mockGetMembership, mockGetRotationOwner, mockPrisma } = vi.hoisted(() => ({
   mockGetDb: vi.fn(),
   mockGetMembership: vi.fn(),
+  mockGetRotationOwner: vi.fn(),
   mockPrisma: {
     workoutExercise: { create: vi.fn(async () => ({ id: "we-new" })) },
   },
 }));
 vi.mock("@/lib/db", () => ({ getDb: mockGetDb, prisma: mockPrisma }));
-vi.mock("@/lib/program", () => ({ getActiveProgramMembership: mockGetMembership }));
+// #298: logHikeCore resolves its default attribution through the
+// rotation-owner seam now — both program exports are mocked per-test.
+vi.mock("@/lib/program", () => ({
+  getActiveProgramMembership: mockGetMembership,
+  getRotationOwnerGoal: mockGetRotationOwner,
+}));
 // recordsSetInWorkout would hit the DB — stub it; everything else in records
 // stays real (baseline-workout needs metricKindFor/canonicalExerciseName).
 vi.mock("@/lib/records", async () => {
@@ -56,12 +62,13 @@ function makeFakeDb() {
       findFirst: vi.fn(async () => null as unknown),
     },
     goal: {
-      // Hint fetch for autoLinkWorkout; logHikeCore's focus lookup uses
-      // findFirst, its target validation uses findUnique.
+      // Hint fetch for autoLinkWorkout; logHikeCore's explicit-goalId target
+      // validation uses findUnique. (#298: the default-goal lookup moved into
+      // the mocked getRotationOwnerGoal — no focus findFirst here anymore.)
       findMany: vi.fn(async () => [
         { id: "g-handstand", attributionHints: ["Wall Handstand Hold", "Pull-Up"] },
       ]),
-      findFirst: vi.fn(async () => ({ id: "g-focus" }) as unknown),
+      findFirst: vi.fn(async () => null as unknown),
       findUnique: vi.fn(async () => null as unknown),
     },
     hike: {
@@ -297,6 +304,18 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
     durationMin: 240,
   };
 
+  beforeEach(() => {
+    // #298 default: a Program tenant whose fitness rotation owner is
+    // g-handstand (an active member in MEMBERSHIP) — the omitted-goalId
+    // default the pre-sweep focus lookup used to provide.
+    mockGetRotationOwner.mockResolvedValue({
+      mode: "program",
+      goalId: "g-handstand",
+      goalKind: "fitness",
+      planId: "plan-rot",
+    });
+  });
+
   it("create path mirrors the resolved goalId (explicit goalId)", async () => {
     mockGetMembership.mockResolvedValue(MEMBERSHIP);
     const { db, links } = makeFakeDb();
@@ -317,10 +336,9 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
     ]);
   });
 
-  it("focus-fallback: goalId omitted mirrors the CURRENT focus goal when it is an active member", async () => {
+  it("rotation-owner default: goalId omitted mirrors the ROTATION-OWNING goal when it is an active member (#298)", async () => {
     mockGetMembership.mockResolvedValue(MEMBERSHIP);
-    const { db, links } = makeFakeDb();
-    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" }); // focus goal
+    const { links } = makeFakeDb();
 
     await logHikeCore(HIKE_INPUT);
 
@@ -340,10 +358,16 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
     expect(links).toHaveLength(0);
   });
 
-  it("no active Program → hike logged, zero links", async () => {
+  it("no active Program → hike logged (legacy focus default), zero links", async () => {
     mockGetMembership.mockResolvedValue(null);
     const { db, links } = makeFakeDb();
-    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
+    // Zero-Program tenant: the seam resolves the legacy focus winner itself.
+    mockGetRotationOwner.mockResolvedValue({
+      mode: "legacy",
+      goalId: "g-handstand",
+      goalKind: "fitness",
+      planId: null,
+    });
 
     await logHikeCore(HIKE_INPUT);
 
@@ -354,11 +378,10 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
   it("planned-dedup path (existing planned row updated in place) mirrors the row's goal", async () => {
     mockGetMembership.mockResolvedValue(MEMBERSHIP);
     const { db, links } = makeFakeDb();
-    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
     db.hike.findFirst.mockResolvedValue({ id: "h-planned", goalId: null, date: HIKE_INPUT.date });
     db.hike.update.mockResolvedValue({
       id: "h-planned",
-      goalId: null, // legacy null-attributed row — focus fallback applies
+      goalId: null, // legacy null-attributed row — the default-goal fallback applies
       date: HIKE_INPUT.date,
     });
 
@@ -375,10 +398,18 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
     ]);
   });
 
-  it("finalize-in-place path (replacesPlannedHikeId) mirrors on completion", async () => {
+  it("finalize-in-place path (replacesPlannedHikeId) mirrors on completion — even when the default is ambiguous", async () => {
     mockGetMembership.mockResolvedValue(MEMBERSHIP);
     const { db, links } = makeFakeDb();
-    db.goal.findFirst.mockResolvedValue({ id: "g-focus-nonmember" });
+    // #298 hardening: no rotation owner + two active fitness members = an
+    // AMBIGUOUS default. Finalize must still succeed (the planned row's
+    // stored goalId is authoritative) — only NEW attribution writes reject.
+    mockGetRotationOwner.mockResolvedValue({
+      mode: "program",
+      goalId: null,
+      goalKind: null,
+      planId: null,
+    });
     db.hike.findUnique.mockResolvedValue({
       id: "h-planned",
       status: "planned",
@@ -403,7 +434,6 @@ describe("logHikeCore mirror-link wiring (#308)", () => {
   it("mirror re-run is idempotent (finalizing an already-linked planned hike adds nothing)", async () => {
     mockGetMembership.mockResolvedValue(MEMBERSHIP);
     const { db, links } = makeFakeDb();
-    db.goal.findFirst.mockResolvedValue({ id: "g-handstand" });
 
     // First: plan it (creates h-created + link).
     await logHikeCore({ ...HIKE_INPUT, status: "planned" });

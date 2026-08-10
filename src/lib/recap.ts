@@ -24,7 +24,7 @@ import {
   DEFAULT_PRESENTATION,
   type StatSlot,
 } from "@/lib/goal-presentation";
-import { getActiveProgram } from "@/lib/program";
+import { getActiveProgram, getRotationOwnerGoal } from "@/lib/program";
 import { computeReadiness } from "@/lib/readiness";
 import type { TargetProgress } from "@/lib/readiness";
 import { getExerciseSummaries } from "@/lib/records";
@@ -311,15 +311,22 @@ export async function computeWeeklyRecap(
     const sunday = endOfWeekSunday(monday);
 
     // ── 2. Goal-first fetch ────────────────────────────────────────────────
+    // #298: the no-goalId default is the ROTATION-OWNING goal under a Program
+    // (null when the Program has no rotation — the recap then renders its
+    // existing null-goal shape); zero-Program tenants keep the legacy
+    // focus-goal default, resolved inside getRotationOwnerGoal's legacy
+    // branch (same deterministic winner, byte-identical for healthy tenants).
+    // Multi-goal weekly recap — recapping ALL Program member goals in one
+    // card — is an explicit NON-GOAL of this sprint, tracked separately;
+    // this stays a single-goal resolution.
     const db = await getDb();
-    const goal = await (
-      opts?.goalId
-        ? db.goal.findFirst({ where: { id: opts.goalId } })
-        : db.goal.findFirst({
-            where: { isFocus: true },
-            orderBy: { updatedAt: "desc" },
-          })
-    );
+    const goal = await (async () => {
+      if (opts?.goalId) return db.goal.findFirst({ where: { id: opts.goalId } });
+      const resolution = await getRotationOwnerGoal();
+      return resolution.goalId
+        ? db.goal.findFirst({ where: { id: resolution.goalId } })
+        : null;
+    })();
 
     // ── 3. Presentation + slot keys ────────────────────────────────────────
     // presentation is still needed for headerStyle (step 10); the slot ARRAY
