@@ -304,7 +304,7 @@ describe("program fallback: no active AND no historical plan -> emptyState()", (
   it("computeGameStateFresh returns emptyState() when getActiveProgram and getMostRecentProgram both resolve null", async () => {
     vi.mocked(getDb).mockResolvedValue({
       plan: { findFirst: vi.fn().mockResolvedValue(null) },
-      program: { findFirst: vi.fn().mockResolvedValue(null) },
+      legacyProgram: { findFirst: vi.fn().mockResolvedValue(null) },
     } as never);
 
     const state = await computeGameStateFresh();

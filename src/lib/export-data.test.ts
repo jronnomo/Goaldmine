@@ -20,6 +20,29 @@ const EXPECTED_MODELS = [
   "nutritionLog",
   "mobilityCheckin",
   "goal",
+  "legacyProgram", // M1 (#268): client accessor renamed from `program`
+  "gameBonusXp",
+  "bodyMetric",
+  "scheduledItem",
+  "logEntry",
+  "plan",
+  "dayRenderJob",
+  "foodUsage",
+] as const;
+
+// Keys under `payload.models` — identical to EXPECTED_MODELS except the legacy
+// table: the client accessor is `legacyProgram` (M1/#268 rename) while the
+// exported key stays `program` for goaldmine-export-v1 format stability.
+const EXPECTED_PAYLOAD_KEYS = [
+  "workout",
+  "measurement",
+  "footageMarker",
+  "baseline",
+  "note",
+  "hike",
+  "nutritionLog",
+  "mobilityCheckin",
+  "goal",
   "program",
   "gameBonusXp",
   "bodyMetric",
@@ -137,7 +160,7 @@ describe("buildExportPayload", () => {
     expect(payload.format).toBe("goaldmine-export-v1");
     expect(typeof payload.exportedAt).toBe("string");
     expect(() => new Date(payload.exportedAt).toISOString()).not.toThrow();
-    for (const model of EXPECTED_MODELS) {
+    for (const model of EXPECTED_PAYLOAD_KEYS) {
       expect(payload.models[model]).toEqual([]);
     }
   });

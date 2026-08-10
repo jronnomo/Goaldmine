@@ -73,9 +73,9 @@ async function main() {
         prisma.goal.count({ where: { userId: null } }),
     },
     {
-      label: "program",
+      label: "legacyProgram",
       count: () =>
-        prisma.program.count({ where: { userId: null } }),
+        prisma.legacyProgram.count({ where: { userId: null } }),
     },
     {
       label: "gameBonusXp",

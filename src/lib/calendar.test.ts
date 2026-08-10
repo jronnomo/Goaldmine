@@ -73,7 +73,7 @@ function mkDb(overrides: Record<string, any> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    program: { findFirst: vi.fn().mockResolvedValue(null) },
+    legacyProgram: { findFirst: vi.fn().mockResolvedValue(null) },
     workout: { findMany: vi.fn().mockResolvedValue([]) },
     note: { findMany: vi.fn().mockResolvedValue([]) },
     goal: { findFirst: vi.fn().mockResolvedValue(null) },

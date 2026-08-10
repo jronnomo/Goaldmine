@@ -73,7 +73,7 @@ function mkScopedDb(overrides: Record<string, any> = {}) {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
-    program: {
+    legacyProgram: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
     ...overrides,

@@ -41,7 +41,7 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
       confirmedThroughDate: plan.confirmedThroughDate ?? null,
     };
   }
-  const program = await db.program.findFirst({
+  const program = await db.legacyProgram.findFirst({
     where: { active: true },
     orderBy: { createdAt: "desc" },
   });
@@ -51,7 +51,7 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
     name: program.name,
     startedOn: program.startedOn,
     template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
+    // LegacyProgram table has no confirmedThroughDate column — always null.
     confirmedThroughDate: null,
   };
 }
@@ -87,7 +87,7 @@ export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | nu
       confirmedThroughDate: plan.confirmedThroughDate ?? null,
     };
   }
-  const program = await db.program.findFirst({
+  const program = await db.legacyProgram.findFirst({
     orderBy: { updatedAt: "desc" },
   });
   if (!program) return null;
@@ -96,7 +96,7 @@ export async function getMostRecentProgram(): Promise<ActiveProgramSnapshot | nu
     name: program.name,
     startedOn: program.startedOn,
     template: program.planJson as unknown as ProgramTemplate,
-    // Program table has no confirmedThroughDate column — always null.
+    // LegacyProgram table has no confirmedThroughDate column — always null.
     confirmedThroughDate: null,
   };
 }

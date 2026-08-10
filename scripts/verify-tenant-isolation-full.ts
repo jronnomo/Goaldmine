@@ -58,7 +58,7 @@ const B_USER_ID = "usr_e9_b";
 const ISO_STARTED_AT = new Date("2000-03-15T12:00:00.000Z");
 const ISO_DATE = new Date("2000-03-15T00:00:00.000Z");
 
-// Minimal planJson template for Plan and Program rows
+// Minimal planJson template for Plan and LegacyProgram rows
 const MINIMAL_PLAN_JSON = {
   totalWeeks: 1,
   phases: [{ name: "Test", weeks: [1] }],
@@ -139,7 +139,7 @@ const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
   { label: "nutritionLog",    accessor: "nutritionLog" },
   { label: "mobilityCheckin", accessor: "mobilityCheckin" },
   { label: "goal",            accessor: "goal" },
-  { label: "program",         accessor: "program" },
+  { label: "legacyProgram",   accessor: "legacyProgram" },
   { label: "gameBonusXp",     accessor: "gameBonusXp" },
   { label: "bodyMetric",      accessor: "bodyMetric" },
   { label: "scheduledItem",   accessor: "scheduledItem" },
@@ -166,7 +166,7 @@ async function founderSnapshot(): Promise<ModelCounts> {
     prisma.nutritionLog.count(w),
     prisma.mobilityCheckin.count(w),
     prisma.goal.count(w),
-    prisma.program.count(w),
+    prisma.legacyProgram.count(w),
     prisma.gameBonusXp.count(w),
     prisma.bodyMetric.count(w),
     prisma.scheduledItem.count(w),
@@ -436,8 +436,8 @@ async function main() {
     });
     console.log(`  DayRenderJob:        ${bRenderJob.id}`);
 
-    // --- Program (legacy owned) ---
-    const bProgram = await dbB.program.create({
+    // --- LegacyProgram (legacy owned; renamed from Program in M1/#268) ---
+    const bProgram = await dbB.legacyProgram.create({
       data: {
         name: "e9b-program",
         startedOn: ISO_DATE,
@@ -445,7 +445,7 @@ async function main() {
         planJson: MINIMAL_PLAN_JSON,
       },
     });
-    console.log(`  Program:             ${bProgram.id}`);
+    console.log(`  LegacyProgram:       ${bProgram.id}`);
 
     // --- FoodLibrary (shared catalog — NOT userId-scoped) + FoodUsage (per-user, E-1) ---
     // #245: seeded specifically to exercise the shared-vs-owned FK boundary — FoodUsage.user
