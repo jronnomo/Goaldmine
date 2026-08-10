@@ -14,7 +14,7 @@ import { getCurrentUserId } from "@/lib/auth/current-user";
 import { getGoalCount } from "@/lib/goal-count";
 import { computeGameState } from "@/lib/game/engine";
 import { getGoalEvents } from "@/lib/goal-events";
-import { getActiveProgram, getTodayContext } from "@/lib/program";
+import { getActiveProgram, phaseForWeekIndex, splitDayForRotationDay } from "@/lib/program";
 import type { Block, ExercisePrescription } from "@/lib/program-template";
 import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
 import { getFocusGoal } from "@/lib/goal-focus";
@@ -151,7 +151,8 @@ export default async function HomePage() {
   // [v2] program is guaranteed non-null at this point:
   // if it were null, one of the two guards above would have returned.
   // Truth table: (null + project) → early return; (null + fitness/null) → NoActiveProgram.
-  const ctx = getTodayContext(program!);
+  // #285: getTodayContext deleted — resolveDay (below) is the single
+  // day-resolver; week/phase/split-day derive from its output further down.
   // now/todayStart/todayEnd/todayDateKey are computed above, before the
   // between-goals branch — shared by both paths, computed exactly once.
 
@@ -211,6 +212,17 @@ export default async function HomePage() {
           timeZone: USER_TZ,
         }).format(goalForFeas.targetDate)
       : null;
+
+  // #285: getTodayContext's fields, now derived from resolveDay's output +
+  // pure template lookups (field mapping, in-plan byte-identical):
+  //   ctx.weekIndex → resolved.weekIndex           (already a ResolvedDay field)
+  //   ctx.phase     → phaseForWeekIndex(template, resolved.weekIndex)
+  //   ctx.day       → splitDayForRotationDay(template, resolved.rotationDay)
+  // Out-of-plan dates (before startedOn / past totalWeeks) now render honestly:
+  // weekIndex/phase/split-day are null, so the header shows "Off plan" instead
+  // of the old function's clamped phantom rotation copy.
+  const todayPhase = phaseForWeekIndex(program!.template, resolved.weekIndex);
+  const rotationDayTemplate = splitDayForRotationDay(program!.template, resolved.rotationDay);
 
   const baselinesDue = resolved.baselinesDue;
   // Authoritative, deferral-aware split (single source of truth — see deriveTodayTask):
@@ -283,12 +295,12 @@ export default async function HomePage() {
   }).format(new Date());
 
   // Summary copy — REQ-D4: no leaked dev string at old line 98. Driven by the
-  // ACTIVE workout (on a deferred day there is none → fall back to ctx.day / null).
+  // ACTIVE workout (on a deferred day there is none → fall back to the rotation split day / null).
   let summaryText: string | null = null;
   if (activeTemplate?.summary) {
     summaryText = activeTemplate.summary;
-  } else if (ctx.day?.summary) {
-    summaryText = ctx.day.summary;
+  } else if (rotationDayTemplate?.summary) {
+    summaryText = rotationDayTemplate.summary;
   }
   // When neither is available, summaryText stays null.
   // Previously this fell through to a dev-facing error string — removed (REQ-D4).
@@ -307,7 +319,7 @@ export default async function HomePage() {
         ? "Baseline Testing"
         : resolved.todayTask === "hike"
           ? "Hike Day"
-          : ctx.day?.title);
+          : rotationDayTemplate?.title);
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -333,8 +345,9 @@ export default async function HomePage() {
         {/* Eyeline: week / phase */}
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs uppercase tracking-wide text-[var(--muted)]">
-            Week {ctx.weekIndex}
-            {ctx.phase ? ` · Phase ${ctx.phase.index} · ${ctx.phase.name}` : ""}
+            {resolved.weekIndex !== null
+              ? `Week ${resolved.weekIndex}${todayPhase ? ` · Phase ${todayPhase.index} · ${todayPhase.name}` : ""}`
+              : "Off plan"}
           </p>
         </div>
 
@@ -382,7 +395,7 @@ export default async function HomePage() {
       {/* ── Baselines due — only when something is still outstanding (a completed
              retest is demoted below the workout). ── */}
       {showProminentBaseline && (
-        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={resolved.weekIndex} />
       )}
 
       {/* ── The day's workout. Once a session is logged we show the COMPLETED workout
@@ -434,7 +447,7 @@ export default async function HomePage() {
       {/* ── Completed baselines — demoted below the workout as a quiet "done"
              reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
       {showCompletedBaseline && (
-        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={ctx.weekIndex} />
+        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
       )}
 
       {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}

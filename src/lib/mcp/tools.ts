@@ -50,6 +50,7 @@ import type { GoalTarget } from "@/lib/goal-targets";
 import { LegendSchema } from "@/lib/legend";
 import {
   getActiveProgram,
+  getActiveProgramMembership,
   getPlanWindowCandidates,
   pickProgramForDate,
   type ActiveProgramSnapshot,
@@ -96,7 +97,7 @@ import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
-import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
+import { RARITY_TIERS, parseCoachFeasibility, type GoalFeasibility } from "@/lib/rarity-core";
 import {
   GoalTargetSchema,
   normalizeMetricKey,
@@ -110,7 +111,10 @@ import { registerProgramTools } from "@/lib/mcp/tools/program-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
-import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import {
+  shapeProgramTodayPayload,
+  shapeLegacyProjectTodayPayload,
+} from "@/lib/mcp/today-shapers";
 import { deriveSavedMealLog } from "@/lib/saved-meal";
 import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 
@@ -632,15 +636,10 @@ function registerReadTools(server: McpServer) {
         "AUTHORITATIVE TASK FIELDS: `todayTask` is one of 'workout' | 'rest' | 'baseline' | 'hike' | 'out_of_plan' — the single source of truth for what today actually is. `activeWorkout` is the session to do (null on baseline/hike/out_of_plan); `deferredWorkout` is the rotation session that stepped aside (non-null only on baseline/hike). On a baseline day the tests in `baselinesDue` ARE the session — do NOT prescribe `deferredWorkout` as today's work. For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. `workoutDeferredForBaseline`/`workoutDeferredForHike` are deprecated booleans kept for one release (they equal todayTask === 'baseline'/'hike'). " +
         "Also surfaces plannedHikeToday (hike detail if planned today) and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
-        "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
+        "focusGoal is the isFocus=true goal; activeGoal is a duplicate kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
-        "When focusGoal.kind === 'project', the payload is project-shaped: todayTask is null, " +
-        "activeWorkout/deferredWorkout/nutrition/baselines/mobility and all fitness scalars are null/false/[], " +
-        "todayItems contains today's ScheduledItems (id, type, title, status, completedAt) for that project goal, " +
-        "and feasibility carries the project's computed Reach tier (null if unrated/error). " +
-        "goalObjective is always populated from the focus goal's objective. " +
-        "When the focus goal is fitness or no focus goal is set, todayItems is [], feasibility is absent, " +
-        "and all fitness fields are fully populated as usual.",
+        "PROGRAM-SHAPED MERGE (when the user has an active Program): the payload is ONE merged shape, never a fitness-vs-project fork. Rotation fields above reflect the PROGRAM's plan only (isInPlan/confidence describe that plan's window — never some other goal's plan); an active Program with no rotation plan yields todayTask 'out_of_plan' with null/[] fitness fields — that is the normal 'no rotation today' state for a pure-project Program, NOT an error. On top: `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (today's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), `goalMarks` (per-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition), `todayItems` (same union, saved-prompt-compatible shape + goalId/goalObjective), and `goalSections` keyed by goalId ({objective, kind, status, todayItems, feasibility}) — feasibility computed per ACTIVE project-kind member goal (null if unrated/error). A day can carry BOTH a rotation session and project work — read both. " +
+        "LEGACY (no Program): behavior is unchanged. focusGoal.kind === 'project' → the old project-shaped payload (todayTask null, fitness scalars null/false/[], todayItems + feasibility for that goal only); fitness or no focus goal → fitness fields fully populated, todayItems [], feasibility absent, and `program` is null with scheduledItemsToday/goalMarks [].",
     },
     async () =>
       safe(async () => {
@@ -675,6 +674,34 @@ function registerReadTools(server: McpServer) {
               githubRepo: activeGoalRow.githubRepo,
             }
           : null;
+
+        // ── #283: program-shaped merge — ANY user with an active Program ────
+        // No kind branching here: rotation fields pass through from r (already
+        // Program-scoped by the seam — isInPlan/confidence can no longer leak
+        // an unrelated plan's window), plus program/scheduledItemsToday/
+        // goalMarks/goalSections. One feasibility computation per ACTIVE
+        // project-kind member goal.
+        if (r.program) {
+          const projectMemberIds = r.program.memberGoals
+            .filter((g) => g.kind === "project" && g.status === "active")
+            .map((g) => g.id);
+          const feasibilityByGoalId = new Map<string, GoalFeasibility | null>();
+          if (projectMemberIds.length > 0) {
+            const projectGoalRows = await db.goal.findMany({
+              where: { id: { in: projectMemberIds } },
+              select: { id: true, kind: true, targetDate: true, targets: true },
+            });
+            await Promise.all(
+              projectGoalRows.map(async (row) => {
+                feasibilityByGoalId.set(row.id, await computeGoalFeasibility(row).catch(() => null));
+              }),
+            );
+          }
+          return shapeProgramTodayPayload(r, activeGoal, standingRules, feasibilityByGoalId);
+        }
+
+        // ── Zero-Program legacy paths — byte-identical to pre-#283 (the #282
+        //    keys ride along as null/[]/[]) ─────────────────────────────────
         let todayItems: {
           id: string;
           type: string;
@@ -704,7 +731,7 @@ function registerReadTools(server: McpServer) {
             targets: activeGoalRow.targets,
             kind: activeGoalRow.kind,
           }).catch(() => null);
-          return shapeProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
+          return shapeLegacyProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
         }
         return {
           ...r,
@@ -727,7 +754,8 @@ function registerReadTools(server: McpServer) {
         "Resolve a specific date the same way as get_today_plan. Past dates surface logged workouts; future dates surface the planned rotation + any override. Use to scope a coaching turn to one date. " +
         "Read the authoritative task fields `todayTask` ('workout'|'rest'|'baseline'|'hike'|'out_of_plan'), `activeWorkout` (the session to do; null when deferred), and `deferredWorkout` (the stepped-aside rotation session). For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. The deprecated workoutDeferredFor* flags equal todayTask === 'baseline'/'hike'. " +
         "Also surfaces plannedHikeToday and longEffortConflict. " +
-        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date.",
+        "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on that date. crossGoalConflicts surfaces cross-goal collision kinds for that date. " +
+        "PROGRAM CONTEXT (when the user has an active Program — null/[] otherwise): `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (that date's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), and `goalMarks` (per-member-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition) — for past AND future dates alike, so member-goal work is never invisible on a day scan.",
       inputSchema: { date: DateKeyShape },
     },
     async ({ date }) =>
@@ -752,7 +780,8 @@ function registerReadTools(server: McpServer) {
         "Use for a weekly maintenance scan or when the coach needs the full week picture at once. " +
         "Snaps to the rotation week (anchored to plan.startedOn) — NOT necessarily calendar Mon–Sun. " +
         "REQ-007a (time-aware): past weeks resolve against whichever plan covered them, INCLUDING a completed goal's now-archived plan — each day resolves independently, so a week straddling a plan transition (e.g. the week a goal was completed) can show archived-plan days alongside active-plan/out-of-plan days in the same response. Read days[].resolvedPlan ({id,name,source:'active'|'archived'}, or null) per day to see which plan governed it. " +
-        "Goal events assembled once for the week (~3 extra queries total) and passed to each resolveDay via ctx (zero extra queries per day).",
+        "PROGRAM CONTEXT (when the user has an active Program — null/[] otherwise): each days[] entry also carries `program` (Program id/name/status/window/memberGoals), `scheduledItemsToday` (that day's ScheduledItems unioned across ALL member goals, with goalId+goalObjective per row), and `goalMarks` (per-goal day-service claims) — so the weekly scan surfaces member-goal work, not just the rotation. " +
+        "Goal events + Program membership assembled once for the week and passed to each resolveDay via ctx (zero extra event/membership queries per day).",
       inputSchema: {
         startDate: z
           .string()
@@ -778,14 +807,20 @@ function registerReadTools(server: McpServer) {
         // complete_goal) must resolve each day against its OWN covering plan,
         // via the same pure pickProgramForDate the month view and resolveDay's
         // own internal lookup use — so this can never disagree with them.
-        const activeProgram = await getActiveProgram();
-        const candidates = await getPlanWindowCandidates();
+        // #284: Program membership fetched ONCE here too and threaded to every
+        // resolveDay via ctx.membership — never 7 redundant lookups.
+        const [activeProgram, membership, candidates] = await Promise.all([
+          getActiveProgram(),
+          getActiveProgramMembership(),
+          getPlanWindowCandidates(),
+        ]);
 
         // Anchor pick: identifies which plan's rotation the requested week
         // snaps to (rotation weeks are plan-relative — anchored on that plan's
-        // startedOn, never calendar Mon–Sun). `null` only when there has never
-        // been any program in the system at all (not even a fallback active
-        // one) — the legacy "create a goal" empty state.
+        // startedOn, never calendar Mon–Sun). `null` only when NO plan exists
+        // to anchor on — either the legacy "create a goal" empty state, or an
+        // active Program that owns no rotation plan (pure-project Programs:
+        // there is no plan-relative week to resolve).
         const baseDayKey = toDateKey(baseDate);
         const anchorPick = pickProgramForDate(candidates, baseDayKey, todayKey, activeProgram);
         if (!anchorPick) {
@@ -797,7 +832,25 @@ function registerReadTools(server: McpServer) {
             days: [],
             otherGoalEvents: [],
             crossGoalConflicts: [],
-            message: "No active program yet — create a goal with a target date to generate a plan.",
+            // #284: an active Program with no rotation plan is a normal state
+            // — don't tell a Program user to "create a goal". Rotation weeks
+            // are plan-relative, so with no plan there is no week to resolve;
+            // point at the per-day tools, which DO carry the item union.
+            ...(membership
+              ? {
+                  program: {
+                    id: membership.id,
+                    name: membership.name,
+                    status: membership.status,
+                    memberGoals: membership.memberGoals,
+                  },
+                  message:
+                    `Active Program '${membership.name}' has no rotation plan, so there is no rotation week to resolve. ` +
+                    "Use get_today_plan / get_day for scheduled items across member goals.",
+                }
+              : {
+                  message: "No active program yet — create a goal with a target date to generate a plan.",
+                }),
           };
         }
 
@@ -842,6 +895,9 @@ function registerReadTools(server: McpServer) {
           crossGoalConflicts: weekCrossConflicts,
           focusGoalId: eventsResult.focusGoalId,
           program: pick,
+          // #284: membership fetched once above — explicit value (including
+          // null) short-circuits resolveDay's own lookup on all 7 days.
+          membership,
         }));
 
         const days = await Promise.all(
@@ -1505,6 +1561,7 @@ function registerReadTools(server: McpServer) {
         "(currentWeekConflicts — long-effort phantom + retest-on-hike collisions + cross-goal conflict kinds: " +
         "event-on-hard-day, key-events-same-week, event-near-long-effort), " +
         "and slim stackRarity {tier, baseTier, loadBump}. " +
+        "PROGRAM BLOCK (when the user has an active Program — null otherwise): `program` {name, status, memberGoalCount, memberGoals[], rotationOwnerObjective (which member goal's plan drives today's rotation, null when no rotation), scheduledItemsToday (compact cross-goal item list: goalId/goalObjective/type/title/status)} — so session-start context is never blind to non-fitness member-goal work. " +
         "otherActiveGoals: non-focus active goals with their next event in a 30-day window; isSomeday:true when targetDate is null. " +
         "Call this after get_today_plan in a fresh FITNESS chat — it is the rich second call that delivers history, weight trend, standing-rule headers, latest review, open items, week conflicts, and rarity stack; equivalent routing signal to get_today_plan for fitness session context. See COACH_INSTRUCTIONS for the full two-call session-start sequence. " +
         "For today's full workout/nutrition/baselines use get_today_plan; " +
@@ -1786,10 +1843,35 @@ function registerReadTools(server: McpServer) {
           loadBump: stackRarityResult.loadBump,
         };
 
+        // --- #284: compact Program-membership block — derived entirely from
+        // resolveDay's #282 fields (program/goalMarks/scheduledItemsToday), so
+        // this adds ZERO extra queries to the cold-start call. rotationOwner =
+        // the member goal whose goalMarks carry the "rotation" claim (the
+        // goal whose plan drives today's prescription); null when the Program
+        // has no rotation today. null program = no active Program.
+        const programBrief = resolved.program
+          ? {
+              name: resolved.program.name,
+              status: resolved.program.status,
+              memberGoalCount: resolved.program.memberGoals.length,
+              memberGoals: resolved.program.memberGoals,
+              rotationOwnerObjective:
+                resolved.goalMarks.find((m) => m.claims.includes("rotation"))?.objective ?? null,
+              scheduledItemsToday: resolved.scheduledItemsToday.map((it) => ({
+                goalId: it.goalId,
+                goalObjective: it.goalObjective,
+                type: it.type,
+                title: it.title,
+                status: it.status,
+              })),
+            }
+          : null;
+
         return {
           today: toDateKey(now),
           goal,
           plan,
+          program: programBrief,
           recentSessions: sessions,
           weightTrend,
           standingRules: standingRulesOut,

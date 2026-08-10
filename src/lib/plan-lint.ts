@@ -292,7 +292,7 @@ export async function lintActivePlan(opts?: { now?: Date }): Promise<{
   }
 
   // Rule: day overrides on dates outside the plan range. Same daysDelta math as
-  // resolveDay/getTodayContext. (warning)
+  // resolveDay. (warning)
   const overrides = await prisma.planDayOverride.findMany({ where: { planId: plan.id } });
   const startMid = startOfDay(plan.startedOn);
   const planSpanDays = template.totalWeeks * 7;

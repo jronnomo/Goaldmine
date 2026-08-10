@@ -82,7 +82,10 @@ function mkDb(overrides: Record<string, any> = {}) {
     },
     workout: { findMany: vi.fn().mockResolvedValue([]) },
     note: { findMany: vi.fn().mockResolvedValue([]) },
-    goal: { findFirst: vi.fn().mockResolvedValue(null) },
+    // #282: goal.findMany serves getActiveProgramMembership (member list) and
+    // resolveDay's member-goal detail query — only reached when program.findFirst
+    // returns an active Program row, so the default [] is inert for legacy fixtures.
+    goal: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) },
     nutritionLog: { findMany: vi.fn().mockResolvedValue([]) },
     hike: { findMany: vi.fn().mockResolvedValue([]) },
     baseline: { findMany: vi.fn().mockResolvedValue([]) },
@@ -145,6 +148,291 @@ describe("resolveDay — today, ctx-absent (Today-page regression, risk #1)", ()
     expect(mockFindUnique).toHaveBeenCalledWith({
       where: { planId_date: { planId: "plan-active", date: startOfDay(today) } },
     });
+    // #282 regression guard: a ZERO-Program-rows tenant (this fixture) gets the
+    // additive keys as null/[]/[], never a synthesized program from the legacy
+    // isFocus path — and every pre-existing key above stayed byte-identical.
+    expect(r.program).toBeNull();
+    expect(r.scheduledItemsToday).toEqual([]);
+    expect(r.goalMarks).toEqual([]);
+  });
+
+  it("#282: zero-Program tenant never triggers the scheduledItem/member-goal queries", async () => {
+    const today = parseDateKey("2026-06-01");
+    const scheduledItemFindMany = vi.fn().mockResolvedValue([]);
+    const goalFindMany = vi.fn().mockResolvedValue([]);
+    mockGetDb.mockResolvedValue(
+      mkDb({
+        scheduledItem: { findMany: scheduledItemFindMany },
+        goal: { findFirst: vi.fn().mockResolvedValue(null), findMany: goalFindMany },
+      }),
+    );
+
+    const r = await resolveDay(today, { goalEvents: [], focusGoalId: null });
+
+    expect(r.program).toBeNull();
+    expect(scheduledItemFindMany).not.toHaveBeenCalled();
+    expect(goalFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── resolveDay — #282: program-shaped keys (Phase-2A fixture) ───────────────
+//
+// Fixture models the founder's Phase 2A: an active Program whose rotation is
+// owned by the handstand goal (its Plan is the Program-attached active plan),
+// plus two non-rotation members — a fitness cut goal (baseline target, no
+// plan) and a project AWS goal (scheduled item today, no plan).
+describe("resolveDay — #282 program + scheduledItemsToday + goalMarks", () => {
+  const TODAY = () => parseDateKey("2026-06-01"); // pinned system time's USER_TZ day
+
+  const PROGRAM_ROW = {
+    id: "prog-1",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: parseDateKey("2026-05-25"),
+    endsOn: null,
+    notes: null,
+    attributionRules: null,
+  };
+
+  const MEMBER_GOAL_ROWS = [
+    { id: "g-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+    { id: "g-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+    { id: "g-aws", objective: "AWS SAA cert", kind: "project", status: "active" },
+  ];
+
+  // Detail query rows (select: { id, targets, plans }): handstand owns the
+  // active rotation plan; cut carries a baseline:<testName> target metric.
+  const MEMBER_GOAL_DETAIL_ROWS = [
+    { id: "g-handstand", targets: [], plans: [{ id: "plan-active" }] },
+    { id: "g-cut", targets: [{ metric: "baseline:Plank Max Hold", targetValue: 120 }], plans: [] },
+    { id: "g-aws", targets: [{ metric: "log:practice_exams", targetValue: 6 }], plans: [] },
+  ];
+
+  const ACTIVE_PLAN_ROW = {
+    id: "plan-active",
+    name: "Handstand Block",
+    startedOn: parseDateKey("2026-06-01"),
+    planJson: template({
+      weeklySplit: [
+        { dayOfWeek: 1, title: "Handstand Skill A", category: "upper", summary: "", blocks: [] },
+      ],
+      baselineWeek: [
+        {
+          dayOfWeek: 1,
+          title: "Baseline check",
+          tests: [
+            {
+              testName: "Plank Max Hold",
+              units: "sec",
+              protocol: "Max-duration front plank.",
+              retestWeeks: [6],
+            },
+          ],
+        },
+      ],
+    }),
+    confirmedThroughDate: null,
+  };
+
+  const AWS_ITEM_ROW = {
+    id: "si-1",
+    goalId: "g-aws",
+    type: "task",
+    title: "Practice exam #3",
+    detail: "Domains 1-2 focus",
+    status: "planned",
+    completedAt: null,
+  };
+
+  /** Wires mkDb for the Phase-2A shape. goal.findMany serves BOTH the
+   *  membership query (select has no `plans`) and the member-detail query
+   *  (select includes `plans`) — switch on the select shape. */
+  function mkPhase2ADb() {
+    const scheduledItemFindMany = vi.fn().mockResolvedValue([AWS_ITEM_ROW]);
+    const goalFindMany = vi.fn().mockImplementation((args: { select?: { plans?: unknown } }) =>
+      Promise.resolve(args?.select?.plans ? MEMBER_GOAL_DETAIL_ROWS : MEMBER_GOAL_ROWS),
+    );
+    const db = mkDb({
+      program: {
+        findFirst: vi.fn().mockResolvedValue(PROGRAM_ROW),
+        count: vi.fn().mockResolvedValue(1),
+      },
+      plan: {
+        findFirst: vi.fn().mockResolvedValue(ACTIVE_PLAN_ROW),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      goal: { findFirst: vi.fn().mockResolvedValue(null), findMany: goalFindMany },
+      scheduledItem: { findMany: scheduledItemFindMany },
+    });
+    return { db, scheduledItemFindMany, goalFindMany };
+  }
+
+  it("program carries the Program row's own id/name/status/window + all member goals", async () => {
+    const { db } = mkPhase2ADb();
+    mockGetDb.mockResolvedValue(db);
+
+    const r = await resolveDay(TODAY(), { goalEvents: [], focusGoalId: null });
+
+    expect(r.program).toEqual({
+      id: "prog-1",
+      name: "Phase 2A",
+      status: "active",
+      startedOn: PROGRAM_ROW.startedOn,
+      endsOn: null,
+      memberGoals: MEMBER_GOAL_ROWS,
+    });
+    // resolvedPlan is UNTOUCHED by #282 — still the rotation-plan pointer.
+    expect(r.resolvedPlan).toEqual({ id: "plan-active", name: "Handstand Block", source: "active" });
+  });
+
+  it("scheduledItemsToday unions items across member goals — including a goal that owns no Plan — with goalId + goalObjective per row", async () => {
+    const { db, scheduledItemFindMany } = mkPhase2ADb();
+    mockGetDb.mockResolvedValue(db);
+
+    const r = await resolveDay(TODAY(), { goalEvents: [], focusGoalId: null });
+
+    expect(r.scheduledItemsToday).toEqual([
+      {
+        id: "si-1",
+        goalId: "g-aws",
+        goalObjective: "AWS SAA cert",
+        type: "task",
+        title: "Practice exam #3",
+        detail: "Domains 1-2 focus",
+        status: "planned",
+        completedAt: null,
+      },
+    ]);
+    // Single findMany over ALL member ids, this date's window, explicit
+    // userId-free select (leaky-reads guarantee lives at the query shape).
+    const args = scheduledItemFindMany.mock.calls[0]![0];
+    expect(args.where.goalId.in).toEqual(["g-handstand", "g-cut", "g-aws"]);
+    expect(args.select).toEqual({
+      id: true,
+      goalId: true,
+      type: true,
+      title: true,
+      detail: true,
+      status: true,
+      completedAt: true,
+    });
+    expect(Object.keys(args.select)).not.toContain("userId");
+  });
+
+  it("goalMarks: rotation claim on the plan-owning goal, baseline:<testName> via target-metric match, scheduled_item on the project goal, nutrition on fitness kinds", async () => {
+    const { db, goalFindMany } = mkPhase2ADb();
+    mockGetDb.mockResolvedValue(db);
+
+    const r = await resolveDay(TODAY(), { goalEvents: [], focusGoalId: null });
+
+    expect(r.goalMarks).toEqual([
+      { goalId: "g-handstand", objective: "Freestanding handstand", kind: "fitness", claims: ["rotation", "nutrition"] },
+      { goalId: "g-cut", objective: "10% body fat", kind: "fitness", claims: ["baseline:Plank Max Hold", "nutrition"] },
+      { goalId: "g-aws", objective: "AWS SAA cert", kind: "project", claims: ["scheduled_item"] },
+    ]);
+    // The member-detail query stays a userId-free projection.
+    const detailCall = goalFindMany.mock.calls.find(
+      (c) => (c[0] as { select?: { plans?: unknown } })?.select?.plans,
+    );
+    expect(detailCall).toBeDefined();
+    expect((detailCall![0] as { select: Record<string, unknown> }).select).toEqual({
+      id: true,
+      targets: true,
+      plans: { select: { id: true } },
+    });
+  });
+
+  it("non-active member goals appear in goalMarks with claims: [] (defensive filter mirroring attribution.ts)", async () => {
+    const pausedMember = { id: "g-paused", objective: "Paused goal", kind: "fitness", status: "paused" };
+    const { db } = mkPhase2ADb();
+    (db.goal.findMany as ReturnType<typeof vi.fn>).mockImplementation(
+      (args: { select?: { plans?: unknown } }) =>
+        Promise.resolve(
+          args?.select?.plans
+            ? [...MEMBER_GOAL_DETAIL_ROWS, { id: "g-paused", targets: [], plans: [] }]
+            : [...MEMBER_GOAL_ROWS, pausedMember],
+        ),
+    );
+    mockGetDb.mockResolvedValue(db);
+
+    const r = await resolveDay(TODAY(), { goalEvents: [], focusGoalId: null });
+
+    expect(r.goalMarks.find((m) => m.goalId === "g-paused")).toEqual({
+      goalId: "g-paused",
+      objective: "Paused goal",
+      kind: "fitness",
+      claims: [],
+    });
+  });
+
+  it("chewgether shape: active Program with zero active Plans — program populated, rotation fields stay 'no rotation', no cross-goal plan leak", async () => {
+    const { db } = mkPhase2ADb();
+    // No Plan attached to the Program: the seam returns null ("no rotation").
+    (db.plan.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    mockGetDb.mockResolvedValue(db);
+
+    const r = await resolveDay(TODAY(), { goalEvents: [], focusGoalId: null });
+
+    expect(r.program?.id).toBe("prog-1");
+    expect(r.isInPlan).toBe(false);
+    expect(r.todayTask).toBe("out_of_plan");
+    expect(r.rotationDay).toBeNull();
+    expect(r.weekIndex).toBeNull();
+    expect(r.resolvedPlan).toBeNull();
+    // Items still surface — the day is program-shaped even with no rotation.
+    expect(r.scheduledItemsToday).toHaveLength(1);
+    // No member goal owns the (absent) rotation → no rotation claim anywhere.
+    expect(r.goalMarks.every((m) => !m.claims.includes("rotation"))).toBe(true);
+  });
+
+  it("ctx.membership (explicit value) short-circuits the lookup; ctx.membership null skips the program-shaped work entirely", async () => {
+    const { db, scheduledItemFindMany } = mkPhase2ADb();
+    const programFindFirst = db.program.findFirst as ReturnType<typeof vi.fn>;
+    mockGetDb.mockResolvedValue(db);
+
+    const membership = {
+      id: "prog-1",
+      name: "Phase 2A",
+      status: "active",
+      startedOn: PROGRAM_ROW.startedOn,
+      endsOn: null,
+      notes: null,
+      attributionRules: null,
+      memberGoals: MEMBER_GOAL_ROWS,
+    };
+    const programForDate = {
+      id: "plan-active",
+      name: "Handstand Block",
+      startedOn: ACTIVE_PLAN_ROW.startedOn,
+      template: ACTIVE_PLAN_ROW.planJson,
+      confirmedThroughDate: null,
+      source: "active" as const,
+    };
+
+    const r = await resolveDay(TODAY(), {
+      goalEvents: [],
+      focusGoalId: null,
+      program: programForDate,
+      membership,
+    });
+    // Both program resolution AND membership came from ctx — the Program table
+    // was never consulted (get_week's 7-day batching contract).
+    expect(programFindFirst).not.toHaveBeenCalled();
+    expect(r.program?.id).toBe("prog-1");
+    expect(r.scheduledItemsToday).toHaveLength(1);
+
+    scheduledItemFindMany.mockClear();
+    const r2 = await resolveDay(TODAY(), {
+      goalEvents: [],
+      focusGoalId: null,
+      program: programForDate,
+      membership: null,
+    });
+    // Explicit null = caller already determined "no active Program".
+    expect(r2.program).toBeNull();
+    expect(r2.scheduledItemsToday).toEqual([]);
+    expect(r2.goalMarks).toEqual([]);
+    expect(scheduledItemFindMany).not.toHaveBeenCalled();
   });
 });
 

@@ -43,6 +43,7 @@ const {
   mockProgramFindUnique,
   mockGoalFindMany,
   mockActivityLinkFindMany,
+  mockScheduledItemFindMany,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -96,10 +97,17 @@ const {
   // inspect exactly the link query.
   const mockActivityLinkFindMany = vi.fn().mockResolvedValue([]);
 
+  // #284 — dedicated spy: proves scheduledItemsToday reaches read tools ONLY
+  // through resolveDay (mocked here), never via a duplicate handler query.
+  // (The zero-Program legacy project branch of get_today_plan still queries it
+  // directly — that pre-#283 path keeps its own coverage below.)
+  const mockScheduledItemFindMany = vi.fn().mockResolvedValue([]);
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
-    note: { findMany: mockFindMany },
+    // findFirst: get_session_brief's latestReviewNote lookup (#284 coverage).
+    note: { findMany: mockFindMany, findFirst: mockFindFirst },
     baseline: {
       findMany: mockFindMany,
       findFirst: mockBaselineFindFirst,
@@ -114,11 +122,14 @@ const {
     goal: {
       findUniqueOrThrow: mockFindUniqueOrThrow,
       findUnique: mockFindUnique,
+      // findFirst: the isFocus lookup in get_today_plan/get_session_brief (#283/#284).
+      findFirst: mockFindFirst,
       findMany: mockGoalFindMany,
       update: mockGoalUpdate,
     },
     program: { findFirst: mockProgramFindFirst, findUnique: mockProgramFindUnique },
     activityGoalLink: { findMany: mockActivityLinkFindMany },
+    scheduledItem: { findMany: mockScheduledItemFindMany },
     savedMeal: {
       findMany: mockSavedMealFindMany,
       findFirst: mockSavedMealFindFirst,
@@ -162,6 +173,7 @@ const {
     mockProgramFindUnique,
     mockGoalFindMany,
     mockActivityLinkFindMany,
+    mockScheduledItemFindMany,
   };
 });
 
@@ -185,7 +197,12 @@ vi.mock("@/lib/calendar", () => ({
   startOfWeekMonday: (d: Date) => d,
   parseDateKey: (s: string) => new Date(s),
   dateKey: (d: Date) => d.toISOString().slice(0, 10),
-  resolveDay: vi.fn().mockResolvedValue({ todayTask: "rest" }),
+  // #282: the static default models a zero-Program tenant (program null,
+  // empty item union / marks) so every pre-existing test keeps the legacy
+  // handler paths; Program-shaped tests override per-block.
+  resolveDay: vi
+    .fn()
+    .mockResolvedValue({ todayTask: "rest", program: null, scheduledItemsToday: [], goalMarks: [] }),
   rotationBaselineNamesForDate: vi.fn().mockReturnValue([]),
   templateForRotationDay: vi.fn().mockReturnValue(null),
   weekConflicts: vi.fn().mockResolvedValue([]),
@@ -243,6 +260,9 @@ vi.mock("@/lib/program", async () => {
   const actual = await vi.importActual<typeof import("@/lib/program")>("@/lib/program");
   return {
     getActiveProgram: vi.fn().mockResolvedValue(null),
+    // #284: get_week batches membership ONCE per call and threads it via
+    // ctx.membership — the call-count assertion below depends on this spy.
+    getActiveProgramMembership: vi.fn().mockResolvedValue(null),
     getPlanWindowCandidates: vi.fn().mockResolvedValue([]),
     pickProgramForDate: actual.pickProgramForDate,
   };
@@ -324,7 +344,12 @@ vi.mock("@/lib/mcp/tools/project-tools", () => ({ registerProjectTools: vi.fn() 
 vi.mock("@/lib/mcp/tools/github-tools", () => ({ registerGitHubTools: vi.fn() }));
 vi.mock("@/lib/mcp/tools/render-tools", () => ({ registerRenderTools: vi.fn() }));
 vi.mock("@/lib/footage-core", () => ({ resolveWorkoutIdForDay: vi.fn().mockResolvedValue(null) }));
-vi.mock("@/lib/mcp/today-shapers", () => ({ shapeProjectTodayPayload: vi.fn().mockReturnValue({}) }));
+vi.mock("@/lib/mcp/today-shapers", () => ({
+  // #283: the merger (Program users) + the legacy nuller (zero-Program
+  // project tenants). Both stubbed — this file asserts QUERY ARGS, not shapes.
+  shapeProgramTodayPayload: vi.fn().mockReturnValue({}),
+  shapeLegacyProjectTodayPayload: vi.fn().mockReturnValue({}),
+}));
 vi.mock("@/lib/recap", () => ({
   computeWeeklyRecap: vi.fn().mockResolvedValue({}),
   resolveHighlight: vi.fn().mockReturnValue(null),
@@ -339,7 +364,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Prisma } from "@/generated/prisma/client";
 import { registerAll } from "@/lib/mcp/tools";
 import { resolveDay } from "@/lib/calendar";
-import { getActiveProgram, getPlanWindowCandidates } from "@/lib/program";
+import { getActiveProgram, getActiveProgramMembership, getPlanWindowCandidates } from "@/lib/program";
 import { getGoalStory } from "@/lib/goal-story";
 import { getGoalEventsResult } from "@/lib/goal-events";
 
@@ -873,7 +898,12 @@ describe("get_week — time-aware per-day resolution (REQ-007a/S1)", () => {
     // Restore the file-wide static default so later describe blocks (if any
     // were ever appended after this one) don't inherit this block's
     // isInPlan-aware implementation.
-    vi.mocked(resolveDay).mockResolvedValue({ todayTask: "rest" } as never);
+    vi.mocked(resolveDay).mockResolvedValue({
+      todayTask: "rest",
+      program: null,
+      scheduledItemsToday: [],
+      goalMarks: [],
+    } as never);
   });
 
   it("resolves a week under an ARCHIVED plan — no 'active plan window' error", async () => {
@@ -1582,5 +1612,242 @@ describe("list_activity_links — leaky-reads coverage (#278)", () => {
     expect(links[0].goalObjective).toBe("Handstand");
     expect(links[0].activityDate).toBe("2026-08-05"); // dateKey, not ISO instant
     expect(result.content[0].text).not.toContain("userId");
+  });
+});
+
+// ── #283/#284: program-shaped day — leaky-reads coverage ─────────────────────
+//
+// The four read tools' program context flows OUT of resolveDay's #282 fields
+// (calendar.ts). resolveDay is mocked file-wide here, so the query-arg
+// coverage for its internal scheduledItem/goal member queries lives in
+// src/lib/calendar.test.ts (userId-free select assertions on the mocked
+// scoped db) — this block covers what the TOOLS add on top:
+//   - get_today_plan's per-goal feasibility query (the only NEW Prisma query
+//     issued directly by a handler in this sprint) projects without userId,
+//   - get_week batches getActiveProgramMembership ONCE and threads it via
+//     ctx.membership to all 7 resolveDay calls,
+//   - get_day / get_session_brief derive their program context from resolveDay
+//     alone (no duplicate scheduledItem query) and leak no userId.
+describe("program-shaped day — #283/#284 coverage", () => {
+  const PROGRAM_DAY = {
+    todayTask: "workout",
+    isInPlan: true,
+    weekIndex: 2,
+    program: {
+      id: "prog-1",
+      name: "Phase 2A",
+      status: "active",
+      startedOn: new Date("2026-05-25"),
+      endsOn: null,
+      memberGoals: [
+        { id: "g-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+        { id: "g-aws", objective: "AWS SAA cert", kind: "project", status: "active" },
+      ],
+    },
+    scheduledItemsToday: [
+      {
+        id: "si-1",
+        goalId: "g-aws",
+        goalObjective: "AWS SAA cert",
+        type: "task",
+        title: "Practice exam #3",
+        detail: null,
+        status: "planned",
+        completedAt: null,
+      },
+    ],
+    goalMarks: [
+      { goalId: "g-handstand", objective: "Freestanding handstand", kind: "fitness", claims: ["rotation", "nutrition"] },
+      { goalId: "g-aws", objective: "AWS SAA cert", kind: "project", claims: ["scheduled_item"] },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(mockFindMany).mockResolvedValue([]);
+    vi.mocked(mockFindFirst).mockResolvedValue(null);
+    vi.mocked(getActiveProgram).mockResolvedValue(null);
+    vi.mocked(getActiveProgramMembership).mockResolvedValue(null);
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([]);
+    // Full GoalEventsResult shape — get_session_brief maps otherGoalsMeta.
+    vi.mocked(getGoalEventsResult).mockResolvedValue({
+      events: [],
+      focusGoalId: null,
+      otherGoalsMeta: [],
+    } as never);
+    vi.mocked(resolveDay).mockResolvedValue({
+      todayTask: "rest",
+      program: null,
+      scheduledItemsToday: [],
+      goalMarks: [],
+    } as never);
+  });
+
+  it("get_today_plan (Program path): per-goal feasibility query projects {id, kind, targetDate, targets} — no userId", async () => {
+    vi.mocked(resolveDay).mockResolvedValue(PROGRAM_DAY as never);
+    vi.mocked(mockGoalFindMany).mockResolvedValue([
+      { id: "g-aws", kind: "project", targetDate: null, targets: [] },
+    ]);
+
+    const handler = fakeServer.getHandler("get_today_plan");
+    await handler({});
+
+    const feasCall = vi.mocked(mockGoalFindMany).mock.calls.find(
+      (c) => (c[0] as { where?: { id?: { in?: string[] } } })?.where?.id?.in !== undefined,
+    );
+    expect(feasCall).toBeDefined();
+    const args = feasCall![0] as { where: { id: { in: string[] } }; select: Record<string, unknown> };
+    // Only ACTIVE project-kind member goals are fetched.
+    expect(args.where.id.in).toEqual(["g-aws"]);
+    expect(args.select).toEqual({ id: true, kind: true, targetDate: true, targets: true });
+    expect(Object.keys(args.select)).not.toContain("userId");
+    // The handler adds no duplicate scheduledItem query — the union came from resolveDay.
+    expect(vi.mocked(mockScheduledItemFindMany)).not.toHaveBeenCalled();
+  });
+
+  it("get_today_plan (zero-Program fitness path): no feasibility query, no scheduledItem query — legacy behavior intact", async () => {
+    const handler = fakeServer.getHandler("get_today_plan");
+    const result = (await handler({})) as { content: Array<{ type: string; text: string }> };
+
+    expect(vi.mocked(mockGoalFindMany)).not.toHaveBeenCalled();
+    expect(vi.mocked(mockScheduledItemFindMany)).not.toHaveBeenCalled();
+    // The additive #282 keys ride along as null/[] for legacy tenants.
+    const payload = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(payload.program).toBeNull();
+    expect(payload.scheduledItemsToday).toEqual([]);
+    expect(payload.goalMarks).toEqual([]);
+  });
+
+  it("get_day passes resolveDay's program fields through verbatim, with no userId anywhere", async () => {
+    vi.mocked(resolveDay).mockResolvedValue(PROGRAM_DAY as never);
+
+    const handler = fakeServer.getHandler("get_day");
+    const result = (await handler({ date: "2026-06-01" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    const payload = JSON.parse(result.content[0].text) as {
+      program: { id: string; memberGoals: unknown[] };
+      scheduledItemsToday: Array<{ goalId: string }>;
+      goalMarks: Array<{ claims: string[] }>;
+    };
+    expect(payload.program.id).toBe("prog-1");
+    expect(payload.program.memberGoals).toHaveLength(2);
+    expect(payload.scheduledItemsToday[0].goalId).toBe("g-aws");
+    expect(payload.goalMarks[0].claims).toContain("rotation");
+    expect(result.content[0].text).not.toContain("userId");
+    expect(vi.mocked(mockScheduledItemFindMany)).not.toHaveBeenCalled();
+  });
+
+  it("get_week fetches membership ONCE and threads it to all 7 resolveDay calls via ctx.membership", async () => {
+    const membership = {
+      id: "prog-1",
+      name: "Phase 2A",
+      status: "active",
+      startedOn: new Date("2026-05-25"),
+      endsOn: null,
+      notes: null,
+      attributionRules: null,
+      memberGoals: PROGRAM_DAY.program.memberGoals,
+    };
+    vi.mocked(getActiveProgramMembership).mockResolvedValue(membership as never);
+    vi.mocked(getActiveProgram).mockResolvedValue({
+      id: "plan-active",
+      name: "Handstand Block",
+      startedOn: new Date("2026-05-25"),
+      template: { totalWeeks: 4, phases: [], weeklySplit: [] },
+      confirmedThroughDate: null,
+    } as never);
+    vi.mocked(getGoalEventsResult).mockResolvedValue({ events: [], focusGoalId: null } as never);
+    vi.mocked(resolveDay).mockResolvedValue({ ...PROGRAM_DAY, isInPlan: true } as never);
+
+    const handler = fakeServer.getHandler("get_week");
+    await handler({ startDate: "2026-05-27" });
+
+    expect(vi.mocked(getActiveProgramMembership)).toHaveBeenCalledTimes(1);
+    const calls = vi.mocked(resolveDay).mock.calls;
+    expect(calls).toHaveLength(7);
+    for (const call of calls) {
+      const ctx = call[1] as { membership?: unknown };
+      expect(ctx.membership).toBe(membership);
+    }
+  });
+
+  it("get_week (pure-project Program, no rotation plan): honest message + program block instead of 'create a goal'", async () => {
+    vi.mocked(getActiveProgramMembership).mockResolvedValue({
+      id: "prog-chew",
+      name: "chewgether $1k/mo",
+      status: "active",
+      startedOn: new Date("2026-07-01"),
+      endsOn: null,
+      notes: null,
+      attributionRules: null,
+      memberGoals: [
+        { id: "g-chewgether", objective: "Launch Chewgether to $1k MRR", kind: "project", status: "active" },
+      ],
+    } as never);
+    // No plans at all: getActiveProgram null + zero candidates → anchorPick null.
+    vi.mocked(getActiveProgram).mockResolvedValue(null);
+    vi.mocked(getPlanWindowCandidates).mockResolvedValue([]);
+
+    const handler = fakeServer.getHandler("get_week");
+    const result = (await handler({ startDate: "2026-07-06" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    const payload = JSON.parse(result.content[0].text) as {
+      days: unknown[];
+      program?: { name: string };
+      message?: string;
+    };
+    expect(payload.days).toEqual([]);
+    expect(payload.program?.name).toBe("chewgether $1k/mo");
+    expect(payload.message).toContain("no rotation plan");
+    expect(payload.message).not.toContain("create a goal");
+    expect(result.content[0].text).not.toContain("userId");
+  });
+
+  it("get_week (zero-Program empty state): legacy 'create a goal' message byte-identical", async () => {
+    const handler = fakeServer.getHandler("get_week");
+    const result = (await handler({ startDate: "2026-07-06" })) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    const payload = JSON.parse(result.content[0].text) as { message?: string; program?: unknown };
+    expect(payload.message).toBe(
+      "No active program yet — create a goal with a target date to generate a plan.",
+    );
+    expect(payload.program).toBeUndefined();
+  });
+
+  it("get_session_brief derives its program block from resolveDay alone — no extra queries, rotation owner from goalMarks, no userId", async () => {
+    vi.mocked(resolveDay).mockResolvedValue(PROGRAM_DAY as never);
+
+    const handler = fakeServer.getHandler("get_session_brief");
+    const result = (await handler({})) as { content: Array<{ type: string; text: string }> };
+
+    const payload = JSON.parse(result.content[0].text) as {
+      program: {
+        name: string;
+        memberGoalCount: number;
+        rotationOwnerObjective: string | null;
+        scheduledItemsToday: Array<{ goalId: string; title: string }>;
+      } | null;
+    };
+    expect(payload.program).not.toBeNull();
+    expect(payload.program!.name).toBe("Phase 2A");
+    expect(payload.program!.memberGoalCount).toBe(2);
+    expect(payload.program!.rotationOwnerObjective).toBe("Freestanding handstand");
+    expect(payload.program!.scheduledItemsToday).toEqual([
+      { goalId: "g-aws", goalObjective: "AWS SAA cert", type: "task", title: "Practice exam #3", status: "planned" },
+    ]);
+    expect(vi.mocked(mockScheduledItemFindMany)).not.toHaveBeenCalled();
+    expect(result.content[0].text).not.toContain("userId");
+  });
+
+  it("get_session_brief: zero-Program tenants get program: null (legacy shape + one additive key)", async () => {
+    const handler = fakeServer.getHandler("get_session_brief");
+    const result = (await handler({})) as { content: Array<{ type: string; text: string }> };
+    const payload = JSON.parse(result.content[0].text) as { program: unknown };
+    expect(payload.program).toBeNull();
   });
 });

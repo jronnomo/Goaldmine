@@ -197,7 +197,11 @@ vi.mock("@/lib/mcp/tools/project-tools", () => ({ registerProjectTools: vi.fn() 
 vi.mock("@/lib/mcp/tools/github-tools", () => ({ registerGitHubTools: vi.fn() }));
 vi.mock("@/lib/mcp/tools/render-tools", () => ({ registerRenderTools: vi.fn() }));
 vi.mock("@/lib/footage-core", () => ({ resolveWorkoutIdForDay: vi.fn().mockResolvedValue(null) }));
-vi.mock("@/lib/mcp/today-shapers", () => ({ shapeProjectTodayPayload: vi.fn().mockReturnValue({}) }));
+vi.mock("@/lib/mcp/today-shapers", () => ({
+  // #283 rename: tools.ts now imports the merger + the legacy nuller.
+  shapeProgramTodayPayload: vi.fn().mockReturnValue({}),
+  shapeLegacyProjectTodayPayload: vi.fn().mockReturnValue({}),
+}));
 vi.mock("@/lib/recap", () => ({
   computeWeeklyRecap: vi.fn().mockResolvedValue({}),
   resolveHighlight: vi.fn().mockReturnValue(null),

@@ -15,6 +15,111 @@ Newest entries at the top.
 
 ---
 
+## 2026-08-10 — #282/#283/#284: the program-shaped day — `get_today_plan` merger + program context on `get_day` / `get_week` / `get_session_brief`
+
+**Issues:** #282 (ResolvedDay keys) · #283 (merger) · #284 (three read tools) — Sprint 18 "Program-shaped day", epic #260. Documented per #286.
+
+**Connector reconnect REQUIRED after deploy** — FOUR read-tool descriptions
+changed (`get_today_plan`, `get_day`, `get_week`, `get_session_brief`) and
+`get_today_plan`'s output shape changed for Program users; the claude.ai
+connector caches the old schemas/descriptions until reconnected (Settings →
+Connectors → Goaldmine → reconnect). `COACH_INSTRUCTIONS` also changed
+(goal-kind routing block) — re-paste `docs/server-instructions/goaldmine-rules.md`
+into the deployed connector text (three-places rule, gotcha §B.6).
+
+### ⚠️ The behavior change most likely to surprise an in-flight session
+
+**`isInPlan` / `confidence` no longer reflect an unrelated plan's window on a
+project-focus day.** Pre-#283, `get_today_plan` with a project-kind focus goal
+CARRIED `resolveDay`'s `isInPlan`/`confidence` — which, pre-seam, could come
+from a *different* goal's active Plan (the RFC-cited leak: a project day
+showing a fitness plan's window). For Program users these now describe ONLY
+the Program's plan — or `isInPlan:false` / `confidence:null` when the Program
+has no rotation plan. A saved prompt that read `isInPlan:true` as "there is a
+plan somewhere" will now see `false` on plan-less Program days.
+
+Also surprising: for a Program user with a project-kind focus goal, the
+payload is **no longer the nulled project shape** — `todayTask` is a real
+TodayTask again (the rotation lives alongside project work). An active
+Program with zero active Plans yields `todayTask:'out_of_plan'` with null/[]
+fitness fields — that is the normal "no rotation today" state (chewgether),
+NOT an error, and never a fall-through to another goal's plan.
+
+### `get_today_plan` — before → after
+
+- **Before:** payload shape forked on `focusGoal.kind` — fitness-shaped
+  (full rotation fields, `todayItems: []`, no `feasibility`) XOR
+  project-shaped (`shapeProjectTodayPayload` nulled every fitness field;
+  `todayItems`/`feasibility` for the focus goal only). Cross-goal work on a
+  fitness day was invisible.
+- **After (user has an active Program):** ONE merged shape
+  (`shapeProgramTodayPayload`) for every case — program-with-plan,
+  program-without-plan, any focus kind:
+  - full ResolvedDay passes through untouched (rotation fields reflect the
+    Program's plan only), PLUS
+  - `program {id, name, status, startedOn, endsOn, memberGoals[{id, objective,
+    kind, status}]}`,
+  - `scheduledItemsToday [{id, goalId, goalObjective, type, title, detail,
+    status, completedAt}]` — today's ScheduledItems unioned across ALL member
+    goals,
+  - `goalMarks [{goalId, objective, kind, claims[]}]` — per-goal day-service
+    claims: `rotation` / `scheduled_item` / `baseline:<testName>` /
+    `nutrition` (plan-side only; logged-side fill state lands with the Today
+    UI story),
+  - `todayItems` — same union in the saved-prompt-compatible shape, each row
+    + `goalId`/`goalObjective`,
+  - `goalSections` — Record keyed by goalId: `{goalId, objective, kind,
+    status, todayItems, feasibility}` with ONE feasibility computation per
+    ACTIVE project-kind member goal.
+- **After (zero-Program legacy tenant):** byte-identical to before — the old
+  kind fork survives as `shapeLegacyProjectTodayPayload` / the fitness spread
+  — plus the three additive keys as `program:null`,
+  `scheduledItemsToday:[]`, `goalMarks:[]`.
+- Description rewritten: the "project-shaped vs fitness-shaped" branching
+  language is gone, replaced by the merged-shape description.
+
+### `get_day` — before → after
+
+- **Before:** raw ResolvedDay; no Program awareness.
+- **After:** ResolvedDay's new `program` / `scheduledItemsToday` / `goalMarks`
+  pass through verbatim, for past AND future dates (additive; null/[] for
+  zero-Program tenants). Description updated.
+
+### `get_week` — before → after
+
+- **Before:** days[] had no Program context; an anchorless call always said
+  "No active program yet — create a goal with a target date…".
+- **After:** each days[] entry carries `program`/`scheduledItemsToday`/
+  `goalMarks` (membership fetched ONCE per call and threaded via
+  `ResolveDayCtx.membership` — not 7 lookups). Anchorless call for a
+  pure-project Program (active Program, no rotation plan) now returns an
+  honest message + compact `program` block instead of "create a goal";
+  the zero-Program empty-state message is byte-identical. The
+  isInPlan-based "Date is outside any plan window" short-circuit is
+  unchanged. Description updated.
+
+### `get_session_brief` — before → after
+
+- **Before:** no Program awareness (blind to non-fitness member-goal work).
+- **After:** new `program` block — `{name, status, memberGoalCount,
+  memberGoals[], rotationOwnerObjective, scheduledItemsToday[{goalId,
+  goalObjective, type, title, status}]}` — derived entirely from resolveDay's
+  fields (zero extra queries); `null` for zero-Program tenants. Existing
+  `plan` (week/phase) block unchanged. Description updated.
+
+**Three-places rule (§B.6):** tool descriptions (this sprint's #283/#284
+commits) · this TOOL-DIFFS entry · `COACH_INSTRUCTIONS` goal-kind routing
+block + `docs/server-instructions/goaldmine-rules.md` mirror (#286 commit).
+Deployed connector text is the fourth copy — update at deploy time.
+
+**Tests:** `calendar.test.ts` (#282 keys, Phase-2A fixture, zero-Program
+regression, ctx.membership short-circuit) · `today-shapers.test.ts` (merger
++ chewgether invariant DA#10 + legacy byte-compat) · `leaky-reads.test.ts`
+(feasibility query projection, membership batched once, no-userId payloads,
+zero-Program legacy paths).
+
+---
+
 ## 2026-08-10 — #280: `set_active_goal` Program-aware shim + `confirmProgramSwitch` — cross-Program blast radius
 
 **Issue:** #280 (Sprint 17 — Seam flip, epic #259; depends on #277/#310)

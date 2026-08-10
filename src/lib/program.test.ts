@@ -32,6 +32,8 @@ import {
   getMostRecentProgram,
   getProgramForDate,
   pickProgramForDate,
+  phaseForWeekIndex,
+  splitDayForRotationDay,
   type ActiveProgramSnapshot,
   type PlanWindowCandidate,
 } from "@/lib/program";
@@ -762,5 +764,64 @@ describe("getActiveProgramMembership (#277)", () => {
 
     expect(result?.attributionRules).toBeNull();
     expect(result?.memberGoals).toEqual([]);
+  });
+});
+
+// ─── #285: phaseForWeekIndex / splitDayForRotationDay (pure) ─────────────────
+//
+// The getTodayContext replacement check (issue #285 AC): for an IN-PLAN
+// fixture date, the deleted function's phase/day outputs are reproduced
+// byte-identically by resolveDay's weekIndex/rotationDay + these pure
+// template lookups. Field mapping (Today page, src/app/page.tsx):
+//   ctx.weekIndex → resolved.weekIndex
+//   ctx.phase     → phaseForWeekIndex(template, resolved.weekIndex)
+//   ctx.day       → splitDayForRotationDay(template, resolved.rotationDay)
+describe("phaseForWeekIndex / splitDayForRotationDay (#285 — getTodayContext strict-subset check)", () => {
+  const RICH_TEMPLATE = {
+    totalWeeks: 12,
+    phases: [
+      { index: 1, name: "Foundation", weeks: [1, 2, 3, 4] },
+      { index: 2, name: "Strength + Capacity", weeks: [5, 6, 7, 8] },
+      { index: 3, name: "Performance", weeks: [9, 10, 11, 12] },
+    ],
+    weeklySplit: [
+      { dayOfWeek: 1, title: "Lower A", category: "lower", summary: "Squat focus", blocks: [] },
+      { dayOfWeek: 3, title: "Upper A", category: "upper", summary: "Press focus", blocks: [] },
+      { dayOfWeek: 6, title: "Long Effort", category: "long-endurance", summary: "Zone 2", blocks: [] },
+    ],
+  } as unknown as ProgramTemplate;
+
+  it("in-plan equivalence: reproduces the deleted getTodayContext's phase/day for a mid-plan date", () => {
+    // Fixture: plan started 2026-05-25; "today" = 2026-06-10 → 16 days since
+    // start. The old getTodayContext computed:
+    //   daysSinceStart = max(0, round(16)) = 16
+    //   weekIndex      = min(12, floor(16/7)+1) = 3
+    //   dayOfWeek      = (16 % 7) + 1 = 3
+    //   phase          = the phase whose weeks include 3 → Foundation
+    //   day            = weeklySplit entry with dayOfWeek 3 → Upper A
+    // resolveDay's floor-based math yields the SAME weekIndex 3 / rotationDay 3
+    // for this in-plan date — feed those through the lookups:
+    const phase = phaseForWeekIndex(RICH_TEMPLATE, 3);
+    const day = splitDayForRotationDay(RICH_TEMPLATE, 3);
+
+    expect(phase).toEqual({ index: 1, name: "Foundation", weeks: [1, 2, 3, 4] });
+    expect(day).toMatchObject({ dayOfWeek: 3, title: "Upper A", summary: "Press focus" });
+  });
+
+  it("fallbacks preserved: unmatched weekIndex → first phase; unmatched rotationDay → first split day (getTodayContext's ?? [0] semantics)", () => {
+    expect(phaseForWeekIndex(RICH_TEMPLATE, 99)?.name).toBe("Foundation");
+    // rotationDay 2 has no split entry (rest day gap) → first split day.
+    expect(splitDayForRotationDay(RICH_TEMPLATE, 2)?.title).toBe("Lower A");
+  });
+
+  it("out-of-plan (null weekIndex/rotationDay) → null: the clamped phantom rotation copy is gone", () => {
+    expect(phaseForWeekIndex(RICH_TEMPLATE, null)).toBeNull();
+    expect(splitDayForRotationDay(RICH_TEMPLATE, null)).toBeNull();
+  });
+
+  it("malformed template (non-array phases/weeklySplit) → null, page never crashes", () => {
+    const malformed = { totalWeeks: 12, phases: "oops", weeklySplit: undefined } as unknown as ProgramTemplate;
+    expect(phaseForWeekIndex(malformed, 3)).toBeNull();
+    expect(splitDayForRotationDay(malformed, 3)).toBeNull();
   });
 });

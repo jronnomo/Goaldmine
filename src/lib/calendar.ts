@@ -5,10 +5,12 @@ import { prisma, getDb } from "@/lib/db";
 import { matchingMirrorKind } from "@/lib/override-integrity";
 import {
   getActiveProgram,
+  getActiveProgramMembership,
   getProgramForDate,
   pickProgramForDate,
   getPlanWindowCandidates,
   type ActiveProgramSnapshot,
+  type ActiveProgramMembership,
   type ProgramForDate,
   type PlanWindowCandidate,
 } from "@/lib/program";
@@ -819,6 +821,58 @@ export type ResolvedDay = {
    *  (out_of_plan). Drives the "Archived plan · {name}" badge + write-form
    *  suppression on /days/[dateKey] (REQ-004). */
   resolvedPlan: { id: string; name: string; source: "active" | "archived" } | null;
+  /** #282 (plan §4.2): the active multi-domain Program's membership context,
+   *  from getActiveProgramMembership(). DISTINCT from `resolvedPlan` (which
+   *  stays the rotation-plan pointer, untouched): this is the Program row's
+   *  OWN id + member goals. null when the user has no ACTIVE Program row —
+   *  resolveDay never synthesizes one from the legacy isFocus path, so
+   *  zero-Program tenants see null here and identical values everywhere else. */
+  program: {
+    id: string;
+    name: string;
+    status: string;
+    startedOn: Date;
+    endsOn: Date | null;
+    memberGoals: { id: string; objective: string; kind: string; status: string }[];
+  } | null;
+  /** #282: today's ScheduledItem rows unioned across EVERY member goal of the
+   *  active Program (not just the rotation-owning goal) — single findMany,
+   *  goalId IN memberIds, this date's USER_TZ window, scoped db. Each row
+   *  carries its owning goalId + objective so a per-item goal badge renders
+   *  without a second lookup (RFC D5 point 2). Always present; [] when there
+   *  is no active Program or no member goal has items today. */
+  scheduledItemsToday: {
+    id: string;
+    goalId: string;
+    goalObjective: string | null;
+    type: string;
+    title: string;
+    detail: string | null;
+    status: string;
+    completedAt: Date | null;
+  }[];
+  /** #282: per-member-goal day-service claims for badging — the PLAN side of
+   *  "which goals does today serve", derived cheaply from data resolveDay
+   *  already has (no ActivityGoalLink reads). Claim vocabulary:
+   *    - "rotation"            — this goal owns the plan the day resolved
+   *                              against and the date is in that plan's window
+   *    - "scheduled_item"      — ≥1 ScheduledItem for this goal today
+   *    - "baseline:<testName>" — a baseline due today matches one of this
+   *                              goal's `baseline:<testName>` target metrics
+   *    - "nutrition"           — fitness-kind goal (a meal logged today would
+   *                              auto-link to it — mirrors evaluateNutritionLinks)
+   *  Claims are computed for status==="active" member goals only (defensive
+   *  filter mirroring attribution.ts's activeMembers); non-active members
+   *  appear with claims: []. The LOGGED-side fill state (which claims were
+   *  actually satisfied, via ActivityGoalLink rows) is deliberately NOT here —
+   *  it lands with the unified-Today UI story, which reads links. Always
+   *  present; [] when there is no active Program. */
+  goalMarks: {
+    goalId: string;
+    objective: string;
+    kind: string;
+    claims: string[];
+  }[];
 };
 
 /**
@@ -858,6 +912,18 @@ export type ResolveDayCtx = {
    *     date" — resolveDay must not override that with its own guess.
    */
   program?: ProgramForDate | null;
+  /**
+   * #282: the active Program's membership context, pre-fetched by callers
+   * that resolve a RANGE of days (get_week) so 7 resolveDay calls don't issue
+   * 7 redundant getActiveProgramMembership() queries. Same key-presence
+   * semantics as `program` above:
+   *   - key absent / `undefined` → resolveDay looks up
+   *     getActiveProgramMembership() itself (joined to the internal
+   *     Promise.all — one extra parallel query).
+   *   - explicitly provided (including `null`) → used as-is, no lookup.
+   *     `null` means "caller already determined there is no active Program".
+   */
+  membership?: ActiveProgramMembership | null;
 };
 
 /**
@@ -947,6 +1013,26 @@ export function deriveDayDisplay(input: {
   return { state, primaryTitle: plannedTitle, plannedTitle, primaryWorkoutId: null };
 }
 
+/**
+ * #282: extract the test names from a goal's `baseline:<testName>` target
+ * metrics. Pure + defensive — targets is untrusted Json (same trust boundary
+ * as planJson), so anything non-array / non-{metric:string} is skipped rather
+ * than thrown. Deliberately a minimal inline parse instead of importing
+ * goal-targets.ts (server-only readiness plumbing stays out of calendar.ts —
+ * CLAUDE.md: no readiness imports here).
+ */
+function baselineTestNamesFromTargets(targets: unknown): string[] {
+  if (!Array.isArray(targets)) return [];
+  const out: string[] = [];
+  for (const t of targets) {
+    const metric = (t as { metric?: unknown } | null)?.metric;
+    if (typeof metric === "string" && metric.startsWith("baseline:")) {
+      out.push(metric.slice("baseline:".length));
+    }
+  }
+  return out;
+}
+
 export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<ResolvedDay> {
   // REQ-003: `ctx.program` explicitly provided (including `null`) short-circuits
   // the lookup — the caller (get_week's per-day pick, the month view) already
@@ -982,7 +1068,7 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     }
   }
 
-  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents] = await Promise.all([
+  const [workouts, override, notesForDate, goal, nutrition, plannedHikesThisWeek, preloadedGoalEvents, membership] = await Promise.all([
     db.workout.findMany({
       where: { startedAt: { gte: dayStart, lte: dayEnd } },
       include: { exercises: { select: { id: true } } },
@@ -1055,6 +1141,13 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
             start: addDays(startOfWeekMonday(date), -CROSS_GOAL_RULES.raceProximityDays),
             end: addDays(endOfWeekSunday(date), CROSS_GOAL_RULES.raceProximityDays),
           }),
+    // #282 (8th item): the active Program's membership — one extra parallel
+    // query, or zero when the caller pre-fetched it (get_week's per-week ctx).
+    // Key-presence semantics match ctx.program: explicitly-provided null means
+    // "caller already determined there is no active Program".
+    ctx?.membership !== undefined
+      ? Promise.resolve(ctx.membership)
+      : getActiveProgramMembership(),
   ]);
 
   // REQ-104: cross-goal event + conflict computation.
@@ -1200,6 +1293,79 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     }));
   }
 
+  // ── #282: program-shaped context (scheduledItemsToday union + goalMarks) ──
+  // Runs ONLY for users with an active Program (membership non-null with
+  // members) — zero-Program tenants pay nothing beyond the membership lookup
+  // already in the Promise.all above. Sits after the in-plan block because
+  // goalMarks' baseline claims read the finished baselinesDue list; the two
+  // queries here are one serial round-trip for Program users only (same
+  // pattern as the serial baseline.findMany above).
+  let scheduledItemsToday: ResolvedDay["scheduledItemsToday"] = [];
+  let goalMarks: ResolvedDay["goalMarks"] = [];
+  if (membership && membership.memberGoals.length > 0) {
+    const memberIds = membership.memberGoals.map((g) => g.id);
+    const [itemRows, memberGoalDetails] = await Promise.all([
+      db.scheduledItem.findMany({
+        where: { goalId: { in: memberIds }, date: { gte: dayStart, lte: dayEnd } },
+        orderBy: { date: "asc" },
+        select: {
+          id: true,
+          goalId: true,
+          type: true,
+          title: true,
+          detail: true,
+          status: true,
+          completedAt: true,
+        },
+      }),
+      // Per-goal detail the claims need: baseline target metrics + which plans
+      // each member goal owns (identifies the rotation-owning goal without a
+      // separate Plan lookup; includes non-active plans so a past date resolved
+      // against an archived member plan still gets its rotation claim).
+      db.goal.findMany({
+        where: { id: { in: memberIds } },
+        select: { id: true, targets: true, plans: { select: { id: true } } },
+      }),
+    ]);
+
+    const objectiveById = new Map(membership.memberGoals.map((g) => [g.id, g.objective]));
+    scheduledItemsToday = itemRows.map((row) => ({
+      id: row.id,
+      goalId: row.goalId,
+      goalObjective: objectiveById.get(row.goalId) ?? null,
+      type: row.type,
+      title: row.title,
+      detail: row.detail,
+      status: row.status,
+      completedAt: row.completedAt ?? null,
+    }));
+
+    const rotationOwnerGoalId =
+      program !== null
+        ? memberGoalDetails.find((g) => g.plans.some((p) => p.id === program.id))?.id ?? null
+        : null;
+    const baselineTargetsByGoal = new Map(
+      memberGoalDetails.map((g) => [g.id, baselineTestNamesFromTargets(g.targets)]),
+    );
+    const goalsWithItemsToday = new Set(itemRows.map((r) => r.goalId));
+
+    goalMarks = membership.memberGoals.map((g) => {
+      const claims: string[] = [];
+      if (g.status === "active") {
+        if (isInPlan && rotationOwnerGoalId === g.id) claims.push("rotation");
+        if (goalsWithItemsToday.has(g.id)) claims.push("scheduled_item");
+        const baselineTargets = baselineTargetsByGoal.get(g.id) ?? [];
+        for (const due of baselinesDue) {
+          if (baselineTargets.includes(due.test.testName)) {
+            claims.push(`baseline:${due.test.testName}`);
+          }
+        }
+        if (g.kind === "fitness") claims.push("nutrition");
+      }
+      return { goalId: g.id, objective: g.objective, kind: g.kind, claims };
+    });
+  }
+
   const isGoalDate = !!goal && !!goal.targetDate && dateKey(goal.targetDate) === dateKey(date);
 
   // On a test day the benchmark replaces the prescribed session. Only defer a
@@ -1243,6 +1409,24 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
   // REQ-003: additive — which plan this date resolved against, if any.
   const resolvedPlan: ResolvedDay["resolvedPlan"] = program
     ? { id: program.id, name: program.name, source: program.source }
+    : null;
+
+  // #282: additive — the active Program's own context (id here is the PROGRAM
+  // row id, never a Plan id; the rotation-plan pointer stays `resolvedPlan`).
+  const programMembership: ResolvedDay["program"] = membership
+    ? {
+        id: membership.id,
+        name: membership.name,
+        status: membership.status,
+        startedOn: membership.startedOn,
+        endsOn: membership.endsOn,
+        memberGoals: membership.memberGoals.map((g) => ({
+          id: g.id,
+          objective: g.objective,
+          kind: g.kind,
+          status: g.status,
+        })),
+      }
     : null;
 
   return {
@@ -1320,6 +1504,10 @@ export async function resolveDay(date: Date, ctx?: ResolveDayCtx): Promise<Resol
     otherGoalEvents: otherEventsForDate,
     crossGoalConflicts: cgConflicts,
     resolvedPlan, // REQ-003: new
+    // #282: program-shaped additions (additive; null/[]/[] for zero-Program tenants).
+    program: programMembership,
+    scheduledItemsToday,
+    goalMarks,
   };
 }
 
