@@ -1,7 +1,10 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { BaselineBlockCard } from "@/components/BaselineBlockCard";
+import { BlockCard } from "@/components/today/BlockCard";
+import { orderedTodaySections } from "@/components/today/today-manifest";
 import { Card } from "@/components/Card";
 import { OtherGoalsStrip } from "@/components/OtherGoalsStrip";
 import { NutritionToday } from "@/components/NutritionToday";
@@ -21,8 +24,7 @@ import {
   phaseForWeekIndex,
   splitDayForRotationDay,
 } from "@/lib/program";
-import type { Block, ExercisePrescription } from "@/lib/program-template";
-import { blockTypeLabel, formatSecs } from "@/lib/plan-format";
+import type { Block } from "@/lib/program-template";
 import { getFocusGoal, getRotationOwnerGoal } from "@/lib/goal-focus";
 import { ProjectTodayView } from "@/components/ProjectTodayView";
 import { BetweenGoalsToday } from "@/components/BetweenGoalsToday";
@@ -464,27 +466,30 @@ export default async function HomePage() {
           ? "Hike Day"
           : rotationDayTemplate?.title);
 
-  return (
-    <div className="max-w-md mx-auto p-4 space-y-4">
-      {/* ── RPG Character Header — above hero; hidden when no active program ── */}
-      {gameState.goalKind !== null && (
-        <CharacterHeader state={gameState} />
-      )}
+  // ── Section manifest ({key, node} in TODAY_SECTION_ORDER — UXR-TIA-05/06).
+  // Keys are stable string literals; absent sections are null, never spliced,
+  // so a conditional section appearing/disappearing can't re-key its siblings.
+  const sections = orderedTodaySections({
+    // RPG Character Header — above hero; hidden when no active program
+    character: gameState.goalKind !== null ? <CharacterHeader state={gameState} /> : null,
 
-      {/* REQ-106: Other-goals strip — between CharacterHeader and hero.
-          UXR-62-05: PRD-fixed placement honored. Server component renders null
-          when no non-focus events exist within the 7-day window.
-          UXR-PV-91 (approved): for Program users the "Also today" block is
-          suppressed — the timeline's mark lane already carries today's
-          claims — while the 7-day lookahead + conflict rows stay. */}
+    // REQ-106: Other-goals strip — between CharacterHeader and hero.
+    // UXR-62-05: PRD-fixed placement honored. Server component renders null
+    // when no non-focus events exist within the 7-day window.
+    // UXR-PV-91 (approved): for Program users the "Also today" block is
+    // suppressed — the timeline's mark lane already carries today's
+    // claims — while the 7-day lookahead + conflict rows stay.
+    "other-goals": (
       <OtherGoalsStrip
         events={weekGoalEvents}
         conflicts={resolved.crossGoalConflicts}
         todayKey={todayDateKey}
         suppressTodayBlock={isProgramUser}
       />
+    ),
 
-      {/* ── Hero: visually dominant workout card (REQ-D2) ── */}
+    // Hero: visually dominant workout card (REQ-D2)
+    hero: (
       <section
         className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm space-y-3"
         aria-label="Today's workout"
@@ -541,84 +546,87 @@ export default async function HomePage() {
           </p>
         )}
       </section>
+    ),
 
-      {/* ── #288: Unified Today timeline — Program users only. ONE list for
-             the whole Program: rhythm-ladder order, every row carrying every
-             goal claim it serves in the mark lane (RFC §7 — never per-goal
-             sections). Renders null for zero-Program tenants, keeping their
-             page byte-identical to the pre-timeline render. ── */}
-      <TodayTimeline identities={identities} entries={timelineEntries} />
+    // #288: Unified Today timeline — Program users only. ONE list for the
+    // whole Program: rhythm-ladder order, every row carrying every goal claim
+    // it serves in the mark lane (RFC §7 — never per-goal sections). Renders
+    // null for zero-Program tenants, keeping their page byte-identical to the
+    // pre-timeline render. UXR-TIA-31: never wrap this in a CollapsibleCard —
+    // its aria-live region must stay in the accessibility tree.
+    timeline: <TodayTimeline identities={identities} entries={timelineEntries} />,
 
-      {/* ── Feasibility (Reach) card — server-rendered from computeGoalFeasibility.
-             Null when focusGoal is null (no focus goal set). Fitness hero above is
-             byte-identical whether or not focusGoal is null. ── */}
-      {feasibility && (
-        <FeasibilityReadout
-          feasibility={feasibility}
-          targetDateLabel={targetDateLabel}
-          coach={coachFeas}
-        />
-      )}
+    // Feasibility (Reach) card — server-rendered from computeGoalFeasibility.
+    // Null when focusGoal is null (no focus goal set). Fitness hero above is
+    // byte-identical whether or not focusGoal is null.
+    feasibility: feasibility ? (
+      <FeasibilityReadout
+        feasibility={feasibility}
+        targetDateLabel={targetDateLabel}
+        coach={coachFeas}
+      />
+    ) : null,
 
-      {/* ── Baselines due — only when something is still outstanding (a completed
-             retest is demoted below the workout). ── */}
-      {showProminentBaseline && (
-        <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={resolved.weekIndex} />
-      )}
+    // Baselines due — only when something is still outstanding (a completed
+    // retest is demoted below the workout).
+    "baseline-prominent": showProminentBaseline ? (
+      <BaselineBlockCard index={0} tests={baselinesDue} weekIndex={resolved.weekIndex} />
+    ) : null,
 
-      {/* ── The day's workout. Once a session is logged we show the COMPLETED workout
-             (deriveDayDisplay — same source the calendar + detail use), so a swap shows
-             what was actually done. Otherwise: the active prescription, or the dimmed
-             deferred session on a baseline/hike day. ── */}
-      {isCompletedDay ? (
-        <>
-          {display.plannedTitle && display.plannedTitle !== display.primaryTitle && (
-            <p className="text-xs text-[var(--muted)] px-1">
-              Planned: {display.plannedTitle} → logged: {display.primaryTitle}
-            </p>
-          )}
-          {todayCompletedDetails.map((w) => (
-            <CompletedWorkoutCard key={w.id} workout={w} />
-          ))}
-        </>
-      ) : (
-        <>
-          {dayBlocks.length === 0 ? (
-            <p className="text-sm text-[var(--muted)] px-1">Nothing scheduled today.</p>
-          ) : (
-            dayBlocks.map((block, i) => (
-              <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
-            ))
-          )}
+    // The day's workout. Once a session is logged we show the COMPLETED workout
+    // (deriveDayDisplay — same source the calendar + detail use), so a swap shows
+    // what was actually done. Otherwise: the active prescription, or the dimmed
+    // deferred session on a baseline/hike day.
+    "day-task": isCompletedDay ? (
+      <>
+        {display.plannedTitle && display.plannedTitle !== display.primaryTitle && (
+          <p className="text-xs text-[var(--muted)] px-1">
+            Planned: {display.plannedTitle} → logged: {display.primaryTitle}
+          </p>
+        )}
+        {todayCompletedDetails.map((w) => (
+          <CompletedWorkoutCard key={w.id} workout={w} />
+        ))}
+      </>
+    ) : (
+      <>
+        {dayBlocks.length === 0 ? (
+          <p className="text-sm text-[var(--muted)] px-1">Nothing scheduled today.</p>
+        ) : (
+          dayBlocks.map((block, i) => (
+            <BlockCard key={i} block={block} index={i + (showProminentBaseline ? 1 : 0)} />
+          ))
+        )}
 
-          {/* Deferred rotation workout — stepped aside for today's baseline test or hike.
-              Dimmed + labelled so it reads as "normally here, not today", never the task. */}
-          {deferredTemplate && deferredBlocks.length > 0 && (
-            <>
-              <Card title={`Deferred today — ${deferredTemplate.title}`}>
-                <p className="text-xs text-[var(--warning)]">
-                  {resolved.todayTask === "baseline"
-                    ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
-                    : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
-                </p>
-              </Card>
-              <div className="opacity-60 space-y-4">
-                {deferredBlocks.map((block, i) => (
-                  <BlockCard key={i} block={block} index={i} />
-                ))}
-              </div>
-            </>
-          )}
-        </>
-      )}
+        {/* Deferred rotation workout — stepped aside for today's baseline test or hike.
+            Dimmed + labelled so it reads as "normally here, not today", never the task. */}
+        {deferredTemplate && deferredBlocks.length > 0 && (
+          <>
+            <Card title={`Deferred today — ${deferredTemplate.title}`}>
+              <p className="text-xs text-[var(--warning)]">
+                {resolved.todayTask === "baseline"
+                  ? "Baseline testing day — the tests above are today's session. Your regular workout steps aside; a max-effort test is itself a hard day. Warm up thoroughly, then test."
+                  : "Hike day — the planned hike is today's session. Your regular workout steps aside. If the hike doesn't happen, ask Claude whether to pick this up instead."}
+              </p>
+            </Card>
+            <div className="opacity-60 space-y-4">
+              {deferredBlocks.map((block, i) => (
+                <BlockCard key={i} block={block} index={i} />
+              ))}
+            </div>
+          </>
+        )}
+      </>
+    ),
 
-      {/* ── Completed baselines — demoted below the workout as a quiet "done"
-             reference (no "N." prefix), so a finished retest isn't the day's lead. ── */}
-      {showCompletedBaseline && (
-        <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
-      )}
+    // Completed baselines — demoted below the workout as a quiet "done"
+    // reference (no "N." prefix), so a finished retest isn't the day's lead.
+    "baselines-completed": showCompletedBaseline ? (
+      <BaselineBlockCard index={null} tests={baselinesDue} weekIndex={resolved.weekIndex} />
+    ) : null,
 
-      {/* ── Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it) ── */}
+    // Nutrition summary (REQ-D2: keep; suppress inline log form — Log sheet owns it)
+    "nutrition-card": (
       <Card
         title="Nutrition"
         action={
@@ -629,9 +637,11 @@ export default async function HomePage() {
       >
         <NutritionToday logs={resolved.loggedNutrition} plan={resolved.nutritionPlan} showLogForm={false} quickPickFoods={quickPickFoods} />
       </Card>
+    ),
 
-      {/* ── Recent workouts ── */}
-      {recentWorkouts.length > 0 && (
+    // Recent workouts
+    "recent-workouts":
+      recentWorkouts.length > 0 ? (
         <Card
           title="Recent workouts"
           action={
@@ -653,61 +663,14 @@ export default async function HomePage() {
             ))}
           </ul>
         </Card>
-      )}
+      ) : null,
+  });
+
+  return (
+    <div className="max-w-md mx-auto p-4 space-y-4">
+      {sections.map(({ key, node }) => (
+        <Fragment key={key}>{node}</Fragment>
+      ))}
     </div>
   );
-}
-
-function BlockCard({ block, index }: { block: Block; index: number }) {
-  const blockTitle = block.label ?? defaultBlockLabel(block.type);
-  return (
-    <Card title={`${index + 1}. ${blockTitle}`}>
-      <p className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
-        {blockTypeLabel(block.type)}
-        {block.rounds ? ` · ${block.rounds} rounds` : ""}
-        {block.restSec ? ` · ${block.restSec}s rest` : ""}
-      </p>
-      <ul className="space-y-2">
-        {block.exercises.map((ex, i) => (
-          <ExerciseRow key={i} ex={ex} />
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
-function ExerciseRow({ ex }: { ex: ExercisePrescription }) {
-  const parts: string[] = [];
-  if (ex.sets) parts.push(`${ex.sets} set${ex.sets === 1 ? "" : "s"}`);
-  if (ex.reps !== undefined) parts.push(`× ${ex.reps}`);
-  if (ex.durationSec) parts.push(formatSecs(ex.durationSec));
-  if (ex.weightHint) parts.push(ex.weightHint);
-
-  return (
-    <li>
-      <p className="font-medium">
-        {ex.name}
-        {ex.equipment ? (
-          <span className="text-[var(--muted)] font-normal"> · {ex.equipment}</span>
-        ) : null}
-      </p>
-      {parts.length > 0 && <p className="text-sm text-[var(--muted)]">{parts.join(" · ")}</p>}
-      {ex.notes && <p className="text-xs text-[var(--muted)] italic">{ex.notes}</p>}
-    </li>
-  );
-}
-
-function defaultBlockLabel(t: Block["type"]): string {
-  switch (t) {
-    case "straight":
-      return "Strength";
-    case "superset":
-      return "Superset";
-    case "finisher":
-      return "Finisher";
-    case "mobility":
-      return "Mobility";
-    case "cardio":
-      return "Cardio";
-  }
 }
