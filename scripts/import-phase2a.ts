@@ -15,8 +15,15 @@
 //       goal steps because goalIds are filled at runtime.
 //   3.  Goal 1 (Handstand, cmsmi9k20000004laub50psio) — MUST already exist
 //       (identity matters; never re-created): re-parent under the Program,
-//       replace targets with the spec's 6-target table, set attributionHints /
-//       legend / targetDate, and set its auto-scaffolded plan(s) inactive.
+//       replace targets with the spec v4 9-row repeatability table (gates:
+//       log:hs_triple20_of6 + Wall HSPU; the three log:hs_* rows are
+//       SNAPSHOTS — cumulative omitted, they must be able to regress), set
+//       attributionHints / legend / targetDate, and set its auto-scaffolded
+//       plan(s) inactive.
+//   3b. Duplicate-goal resolution (spec v4 header ⚠): the old someday
+//       "Handstand" goal (cmq8pz7xp000304ic0wux6r2a) → status "abandoned" +
+//       active false + a superseded-by note appended. NEVER deleted (the
+//       owner may want the history). Skips when already abandoned.
 //   4.  Goal 2 (Reach 10% body fat) — created fresh, fitness, NO plan.
 //       createGoalCore has no skip-scaffold option (checked 2026-08-10:
 //       CreateGoalCoreInput carries no such flag), so the fitness+targetDate
@@ -26,11 +33,24 @@
 //       (readiness-gated) → no scaffold by construction.
 //   6.  The Goal-1 rotation plan (20 weeks from 2026-08-10): planJson from
 //       buildPhase2aRotationTemplate() (7-day split + A/B/C PM skill rotation
-//       + Session-1 baseline battery as SCHEDULED tests + Blocks 0–3 phases +
-//       per-block descent nutrition), Plan + initial PlanRevision in one
+//       + the S1/S2/S3 baseline split as SCHEDULED tests + Blocks 0–3 phases
+//       + per-block descent nutrition), Plan + initial PlanRevision in one
 //       top-level create (Plan is scoped → extension injects userId;
 //       PlanRevision is non-scoped → safe to nest — gotchas §B.9/§B.10),
 //       then attachPlanToProgramCore + the masked-bug-trap re-read assert.
+//   6b. SPEC V4 RECONCILE: when the LIVE plan's planJson.baselineWeek differs
+//       from the builder's S1/S2/S3 split, apply a proper PlanRevision (full
+//       snapshot = live planJson with only baselineWeek replaced;
+//       triggerSource "manual"; reasoning quotes the spec's why-split
+//       paragraph) via the same tx pattern apply_plan_revision uses —
+//       lintTemplate first (errors refuse), then planRevision.create +
+//       plan.update(planJson) in ONE transaction. Skips when content-equal
+//       (stableJson — jsonb normalizes key order, so a plain stringify
+//       compare would re-revise forever).
+//   6c. Milestone DATA POINT: Baseline row "Freestanding Handstand Hold" =
+//       10 sec on 2026-08-09 (video-verified; the day BEFORE plan start, so
+//       it can never credit the S1 initial checkpoint). Idempotent by
+//       (testName, calendar-day) existence check. NOT an S1 result.
 //   7.  Scheduled checkpoints (DEXA ×3, practice-exam ×2, monthly photos ×4,
 //       + the spec-v2 Sep 15 cluster-decision task on Goal 1) — idempotent via
 //       ScheduledItem @@unique([goalId, externalRef]) — plus the weekly
@@ -51,14 +71,19 @@
 //   12. Post-import assertions: getActiveProgram().id === rotation plan id;
 //       getActiveProgramMembership() lists the 3 member goals.
 //
-// Session-1 baselines are NOT pre-seeded (spec: log actual results). The
-// stale Pull-Up 25 correction is a printed NOTE, not a write.
+// S1–S3 baseline RESULTS are NOT pre-seeded (spec: log actual results) — the
+// 2026-08-09 milestone row (6c) is a historical data point on record, not a
+// session result. The stale Pull-Up 25 correction is a printed NOTE, not a
+// write.
 //
 // IDEMPOTENCY: every step re-checks state and SKIPS what already exists
 // (Program by name, goals by id/objective, plan by name under Goal 1,
 // scheduled items by externalRef, overrides by (planId, date), meals by
-// case-insensitive name, standing rules by body first-line). Re-running is a
-// no-op pass that prints [skip] lines. Partial runs self-repair on re-run.
+// case-insensitive name, standing rules by body first-line, the baselineWeek
+// revision by key-order-insensitive content compare, the milestone Baseline
+// by (testName, calendar day), the duplicate goal by status=abandoned).
+// Re-running is a no-op pass that prints [skip] lines. Partial runs
+// self-repair on re-run.
 //
 // GUARD (mirrors scripts/db-guard.ts semantics — that file self-executes on
 // import, so the check is inlined, same as founder-program-backfill.ts):
@@ -76,7 +101,8 @@ import "dotenv/config";
 import { parseArgs } from "node:util";
 import { prisma, runWithUser, getDb } from "../src/lib/db";
 import { Prisma } from "../src/generated/prisma/client";
-import { parseDateKey, dateKey } from "../src/lib/calendar-core";
+import { parseDateKey, dateKey, startOfDay, endOfDay } from "../src/lib/calendar-core";
+import { parseDateInput } from "../src/lib/mcp/tool-helpers";
 import { canonicalExerciseName } from "../src/lib/exercise-canonical";
 import { createGoalCore } from "../src/lib/goal-core";
 import {
@@ -90,14 +116,24 @@ import { getActiveProgram, getActiveProgramMembership } from "../src/lib/program
 import { lintTemplate } from "../src/lib/plan-lint";
 import { parseAttributionRules, type AttributionRule } from "../src/lib/attribution-rules";
 import {
+  appendDuplicateGoalNote,
+  BASELINE_RESOLUTION_FACT,
+  baselineWeekNeedsReconcile,
   BODYFAT_VERIFY_NOTE,
+  buildBaselineWeekRevisionSnapshot,
   buildG4AttributionRule,
   buildPhase2aOverrides,
   buildPhase2aRotationTemplate,
+  LOG_SNAPSHOT_IMPORT_STATE_FACT,
+  PHASE2A_BASELINE_SPLIT_REASONING,
+  PHASE2A_BASELINE_SPLIT_SUMMARY,
+  PHASE2A_BASELINE_WEEK,
   PHASE2A_CLUSTER_RULE,
+  PHASE2A_DUPLICATE_GOAL,
   PHASE2A_GOAL1,
   PHASE2A_GOAL2,
   PHASE2A_GOAL3,
+  PHASE2A_MILESTONE_BASELINE,
   PHASE2A_NUTRITION_RULE,
   PHASE2A_PLAN,
   PHASE2A_PROGRAM,
@@ -105,9 +141,11 @@ import {
   PHASE2A_SCHEDULED_ITEMS,
   PHASE2A_WEIGHIN_RULE,
   PULLUP_CORRECTION_NOTE,
+  stableJson,
   standingRuleKey,
   type Phase2aScheduledItem,
 } from "../src/lib/phase2a-spec";
+import type { ProgramTemplate } from "../src/lib/program-template";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Args + guard
@@ -169,9 +207,14 @@ function header(step: string, title: string): void {
   say(`  ── STEP ${step} · ${title} ${"─".repeat(Math.max(0, 46 - title.length))}`);
 }
 
-/** Stable JSON compare for "already in desired state" skips. */
+/** Content compare for "already in desired state" skips. Key-order
+ *  INSENSITIVE (stableJson sorts object keys): Goal.targets / Goal.legend /
+ *  Plan.planJson are Postgres jsonb, which normalizes object key order on
+ *  write — a plain JSON.stringify compare of a jsonb round-trip against a
+ *  freshly built object can differ on key order alone, which would make
+ *  re-runs re-write content-identical state forever. */
 function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableJson(a) === stableJson(b);
 }
 
 function ruleMatchesG4(rule: AttributionRule, g4: AttributionRule): boolean {
@@ -304,18 +347,21 @@ async function main(): Promise<void> {
         say(`  [dry-run] would attach to Program${goal1.programId ? ` (MOVE from ${goal1.programId})` : ""}`);
       }
 
-      // 3b. targets — the spec's 6-target table, exactly (full replace)
+      // 3b. targets — the spec v4 9-row repeatability table, exactly (full
+      // replace; the deep-compare correctly sees prod's 6-row table as
+      // different). The three log:hs_* rows are SNAPSHOTS (cumulative
+      // omitted — spec: they must be able to REGRESS).
       const desiredTargets = PHASE2A_GOAL1.targets;
       if (sameJson(goal1.targets, desiredTargets)) {
-        say(`  [skip] targets already match the spec's 6-target table`);
+        say(`  [skip] targets already match the spec v4 9-row table`);
       } else if (apply) {
         await db.goal.update({
           where: { id: goal1.id },
           data: { targets: desiredTargets as unknown as Prisma.InputJsonValue },
         });
-        say(`  ✓ targets ← spec 6-target table (2 gates: 20 s hold, 5 wall HSPU; weights sum 1.00)`);
+        say(`  ✓ targets ← spec v4 9-row table (max demoted to 0.12; rolling log:hs_* snapshots carry 0.43; gates: triple20-of-6 + wall HSPU; chest-to-wall → 120 s; weights sum 1.00)`);
       } else {
-        say(`  [dry-run] would replace targets with the spec's 6-target table (2 gates; weights sum 1.00)`);
+        say(`  [dry-run] would replace targets with the spec v4 9-row table (was ${Array.isArray(goal1.targets) ? (goal1.targets as unknown[]).length : 0} rows): max demoted to 0.12, three log:hs_* rolling SNAPSHOTS (cumulative omitted — must regress), gates triple20-of-6 + wall HSPU, chest-to-wall 30→120 s, canary 0.07; weights sum 1.00`);
       }
 
       // 3c. attributionHints (canonicalized on write, same as update_goal)
@@ -381,6 +427,38 @@ async function main(): Promise<void> {
       say(`  [blocked] Goal-1 sub-steps (attach / targets / hints / legend / targetDate / scaffold-deactivate) previewed against a MISSING goal — resolved above as a hard-fail.`);
     }
     const goal1Id = goal1?.id ?? "(missing-goal1)";
+
+    // ── STEP 3b · Duplicate-goal resolution (spec v4 header ⚠) ────────────
+    // Two handstand goals exist: Goal 1 (KEEP) and the old someday
+    // "Handstand" (cmq8pz7xp…) — abandon the latter, NEVER delete it (the
+    // owner may want the history). Idempotent: skips when already abandoned.
+    header("3b", "Duplicate-goal resolution · old someday Handstand (abandon, never delete)");
+    const dupGoal = await db.goal.findUnique({
+      where: { id: PHASE2A_DUPLICATE_GOAL.id },
+      select: { id: true, objective: true, status: true, active: true, isFocus: true, notes: true },
+    });
+    if (!dupGoal) {
+      say(`  [skip] duplicate goal ${PHASE2A_DUPLICATE_GOAL.id} not found under this user — nothing to resolve`);
+    } else if (dupGoal.status === "abandoned") {
+      say(`  [skip] "${dupGoal.objective}" (${dupGoal.id}) already abandoned (active=${dupGoal.active}) — resolved on a previous run`);
+    } else {
+      if (dupGoal.isFocus) {
+        say(`  ⚠ the duplicate goal currently holds isFocus — status/active/notes are still updated; isFocus is left for the owner to move deliberately.`);
+      }
+      if (apply) {
+        await db.goal.update({
+          where: { id: dupGoal.id },
+          data: {
+            status: "abandoned",
+            active: false,
+            notes: appendDuplicateGoalNote(dupGoal.notes),
+          },
+        });
+        say(`  ✓ "${dupGoal.objective}" (${dupGoal.id}) [was ${dupGoal.status}/active=${dupGoal.active}] → status "abandoned", active=false; superseded-by note appended. NOT deleted — history preserved; delete manually if desired.`);
+      } else {
+        say(`  [dry-run] would resolve "${dupGoal.objective}" (${dupGoal.id}) [currently ${dupGoal.status}/active=${dupGoal.active}]: status → "abandoned", active → false, append note "${PHASE2A_DUPLICATE_GOAL.note}" — never deleted`);
+      }
+    }
 
     // Focus snapshot — the import must not change which goal is focused.
     const focusBefore = await db.goal.findFirst({ where: { isFocus: true }, select: { id: true, objective: true } });
@@ -549,7 +627,7 @@ async function main(): Promise<void> {
               reasoning:
                 "Materialized by scripts/import-phase2a.ts from examples/phase2a-goals-import-spec.md: " +
                 "7-day week (upper anchor / lower+GTG / mobility / HSPU builder / lower+explosive / long-endurance / recovery) " +
-                "with the daily PM A/B/C skill rotation, Session-1 baseline battery as scheduled week-1 tests " +
+                "with the daily PM A/B/C skill rotation, the S1/S2/S3 baseline split as scheduled week-1 tests on days 1/3/4 " +
                 "(results logged when performed, never pre-seeded), phases mapped to Blocks 0–3, and the descent " +
                 "nutrition (1,500–1,600 floor, 150–155 g protein non-negotiable, no scheduled refeeds).",
               snapshotJson: template as unknown as Prisma.InputJsonValue,
@@ -562,7 +640,7 @@ async function main(): Promise<void> {
       say(`  ✓ created plan ${created.id} + initial PlanRevision (startedOn ${PHASE2A_PLAN.startedOnKey}, ${PHASE2A_PLAN.weeks} weeks, endsOn ${PHASE2A_PLAN.endsOnKey}, active)`);
     } else {
       say(`  [dry-run] would create Plan + initial PlanRevision: startedOn ${PHASE2A_PLAN.startedOnKey}, weeks ${PHASE2A_PLAN.weeks}, endsOn ${PHASE2A_PLAN.endsOnKey}, active:true`);
-      say(`            planJson: 7 DayTemplates + A/B/C PM skill rotation, baselineWeek = 7 Session-1 tests (retests wk 10 & 19), 4 phases = Blocks 0–3, descent nutrition per block`);
+      say(`            planJson: 7 DayTemplates + A/B/C PM skill rotation, baselineWeek = S1/S2/S3 split (6 tests on days 1/3/4; retests wk 10 & 19 keep the split), 4 phases = Blocks 0–3, descent nutrition per block`);
     }
     const planId = plan?.id ?? "(new-plan)";
 
@@ -588,6 +666,103 @@ async function main(): Promise<void> {
       }
     } else {
       say(`  [dry-run] would attach plan to Program, then RE-READ Plan.programId and hard-fail if null (masked-bug trap)`);
+    }
+
+    // ── STEP 6b · Plan baselineWeek reconcile — S1/S2/S3 split (spec v4) ──
+    // Prod carries the single-session 7-test battery; the spec v4 split is
+    // applied as a PROPER PlanRevision (full snapshot = live planJson with
+    // only baselineWeek replaced — protocol text lives inside it), using the
+    // same tx pattern as the apply_plan_revision tool: lintTemplate first
+    // (errors refuse), then planRevision.create + plan.update(planJson) in
+    // ONE transaction. Content-equal → skip (idempotent re-run).
+    header("6b", "Plan baselineWeek reconcile · S1–S3 split (spec v4, PlanRevision)");
+    if (!plan) {
+      say(`  [dry-run] plan doesn't exist yet — the step-6 create already carries the v4 S1/S2/S3 baselineWeek; no reconcile revision needed on first import.`);
+    } else {
+      const planFull = await db.plan.findUniqueOrThrow({
+        where: { id: plan.id },
+        select: { id: true, planJson: true, weeks: true, startedOn: true, endsOn: true },
+      });
+      const liveTemplate = planFull.planJson as unknown as ProgramTemplate;
+      if (!baselineWeekNeedsReconcile(liveTemplate)) {
+        say(`  [skip] live planJson.baselineWeek already matches the v4 S1/S2/S3 split (content compare, key-order-insensitive)`);
+      } else {
+        const snapshot = buildBaselineWeekRevisionSnapshot(liveTemplate);
+        const revLint = lintTemplate(snapshot, {
+          weeks: planFull.weeks,
+          startedOn: planFull.startedOn,
+          endsOn: planFull.endsOn,
+          goalTargetDate: parseDateKey(PHASE2A_GOAL1.targetDateKey),
+        });
+        const revLintErrors = revLint.filter((f) => f.severity === "error");
+        say(`  lintTemplate(reconcile snapshot): ${revLint.length === 0 ? "CLEAN (0 findings)" : `${revLint.length} finding(s)`}`);
+        for (const f of revLint) say(`    [${f.severity}] ${f.rule}: ${f.message}`);
+        const liveDayCount = Array.isArray(liveTemplate.baselineWeek) ? liveTemplate.baselineWeek.length : 0;
+        const liveTestCount = (liveTemplate.baselineWeek ?? []).reduce((n, d) => n + (d.tests?.length ?? 0), 0);
+        const newTestCount = PHASE2A_BASELINE_WEEK.reduce((n, d) => n + d.tests.length, 0);
+        if (revLintErrors.length > 0) {
+          fatal(
+            `baselineWeek reconcile snapshot fails lintTemplate with ${revLintErrors.length} error(s) — refusing to write a broken revision: ` +
+              revLintErrors.map((f) => `[${f.rule}] ${f.message}`).join(" "),
+          );
+        } else if (apply) {
+          const revision = await db.$transaction(async (tx) => {
+            const r = await tx.planRevision.create({
+              data: {
+                planId: planFull.id,
+                triggerSource: "manual",
+                summary: PHASE2A_BASELINE_SPLIT_SUMMARY,
+                reasoning: PHASE2A_BASELINE_SPLIT_REASONING,
+                snapshotJson: snapshot as unknown as Prisma.InputJsonValue,
+              },
+            });
+            await tx.plan.update({
+              where: { id: planFull.id },
+              data: { planJson: snapshot as unknown as Prisma.InputJsonValue },
+            });
+            return r;
+          });
+          say(`  ✓ PlanRevision ${revision.id} applied — baselineWeek ${liveDayCount} day(s)/${liveTestCount} test(s) → S1 (day 1) / S2 (day 3) / S3 (day 4), ${newTestCount} tests; Plan.planJson updated in the same tx`);
+          say(`    summary: "${PHASE2A_BASELINE_SPLIT_SUMMARY}"  triggerSource: manual`);
+        } else {
+          say(`  [dry-run] would apply PlanRevision "${PHASE2A_BASELINE_SPLIT_SUMMARY}" (triggerSource manual):`);
+          say(`            baselineWeek ${liveDayCount} day(s)/${liveTestCount} test(s) → S1 Mon (day 1: Freestanding Hold + L-Sit) / S2 Wed (day 3: Wall HSPU + Floating Pike) / S3 Thu (day 4: Chest-to-Wall + Pull-Up re-log), ${newTestCount} tests, retests wk 10 & 19 keep the split`);
+          say(`            full snapshot = live planJson with only baselineWeek replaced (chest-to-wall hand-distance protocol + retest consistency rule ride inside it); reasoning quotes the spec's why-split paragraph; planRevision.create + plan.update in ONE tx`);
+        }
+      }
+    }
+
+    // ── STEP 6c · Milestone data point — 2026-08-09 video-verified hold ───
+    // A DATA POINT on record, NOT an S1 result and NOT pre-seeding: dated
+    // the day BEFORE plan start so it can never credit the S1 initial
+    // checkpoint window. Idempotent by (testName, calendar day).
+    header("6c", "Milestone data point · Freestanding Handstand Hold 10 s (2026-08-09)");
+    const msDate = parseDateInput(PHASE2A_MILESTONE_BASELINE.dateKey);
+    const msExisting = await db.baseline.findFirst({
+      where: {
+        testName: PHASE2A_MILESTONE_BASELINE.testName,
+        date: { gte: startOfDay(msDate), lte: endOfDay(msDate) },
+      },
+      select: { id: true, value: true, units: true },
+    });
+    if (msExisting) {
+      say(`  [skip] a "${PHASE2A_MILESTONE_BASELINE.testName}" row already exists on ${PHASE2A_MILESTONE_BASELINE.dateKey} (${msExisting.id}: ${msExisting.value} ${msExisting.units}) — milestone already on record`);
+    } else if (apply) {
+      const created = await db.baseline.create({
+        data: {
+          testName: PHASE2A_MILESTONE_BASELINE.testName,
+          value: PHASE2A_MILESTONE_BASELINE.value,
+          units: PHASE2A_MILESTONE_BASELINE.units,
+          date: msDate,
+          notes: PHASE2A_MILESTONE_BASELINE.notes,
+        },
+        select: { id: true },
+      });
+      say(`  ✓ Baseline ${created.id}: "${PHASE2A_MILESTONE_BASELINE.testName}" = ${PHASE2A_MILESTONE_BASELINE.value} ${PHASE2A_MILESTONE_BASELINE.units} on ${PHASE2A_MILESTONE_BASELINE.dateKey} (USER_TZ) — data point, not S1; S1 confirms or raises it`);
+    } else {
+      say(`  [dry-run] would create Baseline "${PHASE2A_MILESTONE_BASELINE.testName}" = ${PHASE2A_MILESTONE_BASELINE.value} ${PHASE2A_MILESTONE_BASELINE.units} on ${PHASE2A_MILESTONE_BASELINE.dateKey} (USER_TZ via parseDateInput)`);
+      say(`            notes: "${PHASE2A_MILESTONE_BASELINE.notes}"`);
+      say(`            idempotent by (testName, date) — a DATA POINT, not an S1 result (dated before plan start; cannot credit the S1 checkpoint window)`);
     }
 
     // ── STEP 7 · Scheduled checkpoints + weigh-in standing rule ───────────
@@ -780,7 +955,7 @@ async function main(): Promise<void> {
       const status = await setProgramStatusCore(program.id, "active");
       say(`  ✓ Program status: ${status.previousStatus} → ${status.status}  (activation LAST, after all content landed)`);
     } else {
-      say(`  [dry-run] would verify: Program + 3 member goals w/ target counts (6/3/3), plan.programId assert,`);
+      say(`  [dry-run] would verify: Program + 3 member goals w/ target counts (9/3/3), plan.programId assert,`);
       say(`            ${buildPhase2aOverrides().length} override dates, ${PHASE2A_SCHEDULED_ITEMS.length} scheduled items, ${PHASE2A_SAVED_MEALS.length} saved meals —`);
       say(`            then setProgramStatusCore(program, "active") as the FINAL write.`);
     }
@@ -815,6 +990,11 @@ async function main(): Promise<void> {
     say("  ── NOTES (printed, never written) ──────────────────────────────");
     say(`  • ${PULLUP_CORRECTION_NOTE}`);
     say(`  • ${BODYFAT_VERIFY_NOTE}`);
+    // Spec v4 ⚠ verification answers — stated as FACTS (verified against
+    // src/lib/goal-targets.ts resolveMetricValue/resolveMetricStart and
+    // src/lib/readiness.ts computeReadiness, not guessed).
+    say(`  • ${BASELINE_RESOLUTION_FACT}`);
+    say(`  • ${LOG_SNAPSHOT_IMPORT_STATE_FACT}`);
     say(
       "  • Rotation horizon: 20 weeks ends Dec 27 (endsOn 2026-12-28 = startedOn + 140 d, lint-clean); the Program window runs to Dec 31 — " +
         "the spec's own Christmas-travel tension (rung-2 test preferred ~Dec 20–22, BEFORE traveling).",

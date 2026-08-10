@@ -744,14 +744,24 @@ describe("#287 (3) — compute_readiness moves independently for all three goals
     const before = parseDateKey(SUNDAY_KEY);
     const after = parseDateKey(MONDAY_KEY);
 
-    // Handstand (Goal 1): the 5s hold moves the gated rung-1 target; the
-    // 25-rep pull-up clears its maintain target.
+    // Handstand (Goal 1), spec v4 9-row table: the 5 s hold is TESTED but
+    // reads 0 progress — it sits below the explicit start:10 (video-verified
+    // 2026-08-09), and computeReadiness never auto-overwrites an explicit
+    // start (a fatigued sub-10 reading is a fatigue reading, not a corrected
+    // baseline). The movement comes from the 25-rep lean-mass canary
+    // clearing its maintain target at weight 0.07.
     const g1Before = await computeReadiness(PHASE2A_GOAL1.targets, before, PHASE2A_GOAL1_ID);
     const g1After = await computeReadiness(PHASE2A_GOAL1.targets, after, PHASE2A_GOAL1_ID);
     expect(g1Before.score).toBe(0);
-    expect(g1After.score).toBe(19); // 0.35·(5/20) + 0.1·1 → raw 18.75 → 19
-    expect(g1After.ceiling).toBe(80); // both rungs still gating
-    expect(g1After.coverage).toEqual({ tested: 2, total: 6 });
+    expect(g1After.score).toBe(7); // 0.12·0 + 0.07·1 → raw 7 (log:hs_* rows untested → 0 at full denominator weight)
+    expect(g1After.ceiling).toBe(80); // both v4 gates open: triple20-of-6 untested + wall HSPU untested
+    expect(g1After.coverage).toEqual({ tested: 2, total: 9 });
+    const holdAfter = g1After.breakdown.find(
+      (b) => b.target.metric === "baseline:Freestanding Handstand Hold",
+    )!;
+    expect(holdAfter.current).toBe(5); // most-recent-by-date wins the CURRENT…
+    expect(holdAfter.start).toBe(10); // …but the explicit start is never auto-overwritten
+    expect(holdAfter.progress).toBe(0); // clamped — honest regression handling
 
     // Cut (Goal 2): weigh-in 152 vs explicit 155→143 proxy + DEXA-ish 22%
     // (auto-captured start — tested at 0 progress) + the lean-mass canary.
