@@ -324,7 +324,12 @@ vi.mock("@/lib/mcp/tools/project-tools", () => ({ registerProjectTools: vi.fn() 
 vi.mock("@/lib/mcp/tools/github-tools", () => ({ registerGitHubTools: vi.fn() }));
 vi.mock("@/lib/mcp/tools/render-tools", () => ({ registerRenderTools: vi.fn() }));
 vi.mock("@/lib/footage-core", () => ({ resolveWorkoutIdForDay: vi.fn().mockResolvedValue(null) }));
-vi.mock("@/lib/mcp/today-shapers", () => ({ shapeProjectTodayPayload: vi.fn().mockReturnValue({}) }));
+vi.mock("@/lib/mcp/today-shapers", () => ({
+  // #283: the merger (Program users) + the legacy nuller (zero-Program
+  // project tenants). Both stubbed — this file asserts QUERY ARGS, not shapes.
+  shapeProgramTodayPayload: vi.fn().mockReturnValue({}),
+  shapeLegacyProjectTodayPayload: vi.fn().mockReturnValue({}),
+}));
 vi.mock("@/lib/recap", () => ({
   computeWeeklyRecap: vi.fn().mockResolvedValue({}),
   resolveHighlight: vi.fn().mockReturnValue(null),

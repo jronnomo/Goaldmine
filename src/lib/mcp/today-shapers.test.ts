@@ -1,11 +1,16 @@
 // src/lib/mcp/today-shapers.test.ts
 //
-// Unit tests for shapeProjectTodayPayload — story #135.
-// Pure function: no DB, no mocking required.
+// Unit tests for the get_today_plan shapers — story #135 (the legacy project
+// nuller, still byte-covered because zero-Program tenants keep receiving that
+// exact shape) and #283 (shapeProgramTodayPayload, the merged program-shaped
+// payload). Pure functions: no DB, no mocking required.
 // Conventions mirror rarity-core.test.ts / food-units.test.ts.
 
 import { describe, it, expect } from "vitest";
-import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import {
+  shapeLegacyProjectTodayPayload,
+  shapeProgramTodayPayload,
+} from "@/lib/mcp/today-shapers";
 import type { ResolvedDay } from "@/lib/calendar";
 import type { GoalFeasibility } from "@/lib/rarity-core";
 
@@ -123,8 +128,8 @@ const TODAY_ITEMS = [
 
 // ─── 1. Fitness fields are null / false / [] ──────────────────────────────────
 
-describe("shapeProjectTodayPayload — fitness fields suppressed", () => {
-  const result = shapeProjectTodayPayload(
+describe("shapeLegacyProjectTodayPayload — fitness fields suppressed", () => {
+  const result = shapeLegacyProjectTodayPayload(
     MOCK_DAY,
     PROJECT_GOAL,
     STANDING_RULES,
@@ -215,9 +220,9 @@ describe("shapeProjectTodayPayload — fitness fields suppressed", () => {
 
 // ─── 2. goalObjective is populated from activeGoal ────────────────────────────
 
-describe("shapeProjectTodayPayload — goalObjective", () => {
+describe("shapeLegacyProjectTodayPayload — goalObjective", () => {
   it("goalObjective equals activeGoal.objective", () => {
-    const result = shapeProjectTodayPayload(
+    const result = shapeLegacyProjectTodayPayload(
       MOCK_DAY,
       PROJECT_GOAL,
       STANDING_RULES,
@@ -228,7 +233,7 @@ describe("shapeProjectTodayPayload — goalObjective", () => {
   });
 
   it("goalObjective is null when activeGoal is null", () => {
-    const result = shapeProjectTodayPayload(
+    const result = shapeLegacyProjectTodayPayload(
       MOCK_DAY,
       null,
       STANDING_RULES,
@@ -241,8 +246,8 @@ describe("shapeProjectTodayPayload — goalObjective", () => {
 
 // ─── 3. focusGoal and activeGoal ─────────────────────────────────────────────
 
-describe("shapeProjectTodayPayload — focusGoal and activeGoal", () => {
-  const result = shapeProjectTodayPayload(
+describe("shapeLegacyProjectTodayPayload — focusGoal and activeGoal", () => {
+  const result = shapeLegacyProjectTodayPayload(
     MOCK_DAY,
     PROJECT_GOAL,
     STANDING_RULES,
@@ -265,8 +270,8 @@ describe("shapeProjectTodayPayload — focusGoal and activeGoal", () => {
 
 // ─── 4. Carry-through fields ─────────────────────────────────────────────────
 
-describe("shapeProjectTodayPayload — carry-through from ResolvedDay", () => {
-  const result = shapeProjectTodayPayload(
+describe("shapeLegacyProjectTodayPayload — carry-through from ResolvedDay", () => {
+  const result = shapeLegacyProjectTodayPayload(
     MOCK_DAY,
     PROJECT_GOAL,
     STANDING_RULES,
@@ -305,8 +310,8 @@ describe("shapeProjectTodayPayload — carry-through from ResolvedDay", () => {
 
 // ─── 5. notesAboutDate filtering ─────────────────────────────────────────────
 
-describe("shapeProjectTodayPayload — notesAboutDate filtering", () => {
-  const result = shapeProjectTodayPayload(
+describe("shapeLegacyProjectTodayPayload — notesAboutDate filtering", () => {
+  const result = shapeLegacyProjectTodayPayload(
     MOCK_DAY,
     PROJECT_GOAL,
     STANDING_RULES,
@@ -336,8 +341,8 @@ describe("shapeProjectTodayPayload — notesAboutDate filtering", () => {
 
 // ─── 6. Project fields passed through ────────────────────────────────────────
 
-describe("shapeProjectTodayPayload — project fields", () => {
-  const result = shapeProjectTodayPayload(
+describe("shapeLegacyProjectTodayPayload — project fields", () => {
+  const result = shapeLegacyProjectTodayPayload(
     MOCK_DAY,
     PROJECT_GOAL,
     STANDING_RULES,
@@ -358,7 +363,256 @@ describe("shapeProjectTodayPayload — project fields", () => {
   });
 
   it("feasibility is null when null is passed", () => {
-    const r2 = shapeProjectTodayPayload(MOCK_DAY, PROJECT_GOAL, STANDING_RULES, TODAY_ITEMS, null);
+    const r2 = shapeLegacyProjectTodayPayload(MOCK_DAY, PROJECT_GOAL, STANDING_RULES, TODAY_ITEMS, null);
     expect(r2.feasibility).toBeNull();
+  });
+});
+
+// ─── 7. Legacy shaper carries the #282 keys (zero-Program: null/[]/[]) ───────
+
+describe("shapeLegacyProjectTodayPayload — #282 keys carried through", () => {
+  const result = shapeLegacyProjectTodayPayload(
+    MOCK_DAY,
+    PROJECT_GOAL,
+    STANDING_RULES,
+    TODAY_ITEMS,
+    FEASIBILITY,
+  );
+
+  it("program is null (zero-Program tenant by definition on this path)", () => {
+    expect(result.program).toBeNull();
+  });
+
+  it("scheduledItemsToday is []", () => {
+    expect(result.scheduledItemsToday).toEqual([]);
+  });
+
+  it("goalMarks is []", () => {
+    expect(result.goalMarks).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// shapeProgramTodayPayload (#283) — the merged, program-shaped payload
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Phase-2A-shaped ResolvedDay: handstand owns the rotation (fitness fields
+// live), cut is a fitness member with a baseline claim, AWS is a project
+// member with a scheduled item today.
+const PHASE_2A_DAY: ResolvedDay = {
+  ...MOCK_DAY,
+  program: {
+    id: "prog-1",
+    name: "Phase 2A",
+    status: "active",
+    startedOn: new Date("2026-05-25T06:00:00.000Z"),
+    endsOn: null,
+    memberGoals: [
+      { id: "g-handstand", objective: "Freestanding handstand", kind: "fitness", status: "active" },
+      { id: "g-cut", objective: "10% body fat", kind: "fitness", status: "active" },
+      { id: "g-aws", objective: "AWS SAA cert", kind: "project", status: "active" },
+    ],
+  },
+  scheduledItemsToday: [
+    {
+      id: "si-aws-1",
+      goalId: "g-aws",
+      goalObjective: "AWS SAA cert",
+      type: "task",
+      title: "Practice exam #3",
+      detail: "Domains 1-2 focus",
+      status: "planned",
+      completedAt: null,
+    },
+    {
+      id: "si-aws-2",
+      goalId: "g-aws",
+      goalObjective: "AWS SAA cert",
+      type: "review",
+      title: "Flashcards",
+      detail: null,
+      status: "done",
+      completedAt: new Date("2026-06-30T15:30:00.000Z"),
+    },
+  ],
+  goalMarks: [
+    { goalId: "g-handstand", objective: "Freestanding handstand", kind: "fitness", claims: ["rotation", "nutrition"] },
+    { goalId: "g-cut", objective: "10% body fat", kind: "fitness", claims: ["nutrition"] },
+    { goalId: "g-aws", objective: "AWS SAA cert", kind: "project", claims: ["scheduled_item"] },
+  ],
+};
+
+const AWS_FEASIBILITY: GoalFeasibility = { ...FEASIBILITY, goalId: "g-aws" };
+const FEAS_BY_GOAL = new Map<string, GoalFeasibility | null>([["g-aws", AWS_FEASIBILITY]]);
+
+describe("shapeProgramTodayPayload — rotation fields pass through UNCHANGED (the fitness/project fork dissolves)", () => {
+  const result = shapeProgramTodayPayload(PHASE_2A_DAY, PROJECT_GOAL, STANDING_RULES, FEAS_BY_GOAL);
+
+  it("todayTask stays the resolved TodayTask (not nulled)", () => {
+    expect(result.todayTask).toBe("workout");
+  });
+
+  it("activeWorkout passes through", () => {
+    expect(result.activeWorkout).toBe(PHASE_2A_DAY.activeWorkout);
+  });
+
+  it("rotationDay/weekIndex pass through", () => {
+    expect(result.rotationDay).toBe(2);
+    expect(result.weekIndex).toBe(5);
+  });
+
+  it("isInPlan/confidence reflect the Program's plan (carried from r, never another plan's window)", () => {
+    expect(result.isInPlan).toBe(true);
+    expect(result.confidence).toBe("confirmed");
+  });
+
+  it("resolvedPlan passes through (still the rotation-plan pointer)", () => {
+    expect(result.resolvedPlan).toEqual({ id: "plan-1", name: "Elbert Prep", source: "active" });
+  });
+
+  it("nutrition/mobility/workouts/loggedNutrition/notesAboutDate pass through unfiltered", () => {
+    expect(result.nutritionText).toBe(MOCK_DAY.nutritionText);
+    expect(result.mobilityText).toBe(MOCK_DAY.mobilityText);
+    expect(result.workouts).toBe(MOCK_DAY.workouts);
+    expect(result.loggedNutrition).toBe(MOCK_DAY.loggedNutrition);
+    expect(result.notesAboutDate).toBe(MOCK_DAY.notesAboutDate);
+  });
+
+  it("program/scheduledItemsToday/goalMarks pass through", () => {
+    expect(result.program).toBe(PHASE_2A_DAY.program);
+    expect(result.scheduledItemsToday).toBe(PHASE_2A_DAY.scheduledItemsToday);
+    expect(result.goalMarks).toBe(PHASE_2A_DAY.goalMarks);
+  });
+});
+
+describe("shapeProgramTodayPayload — todayItems union + goalSections keyed by goalId", () => {
+  const result = shapeProgramTodayPayload(PHASE_2A_DAY, PROJECT_GOAL, STANDING_RULES, FEAS_BY_GOAL);
+
+  it("todayItems is the union across member goals, ISO-string completedAt, with goalId + goalObjective per row", () => {
+    expect(result.todayItems).toEqual([
+      {
+        id: "si-aws-1",
+        type: "task",
+        title: "Practice exam #3",
+        status: "planned",
+        completedAt: null,
+        goalId: "g-aws",
+        goalObjective: "AWS SAA cert",
+      },
+      {
+        id: "si-aws-2",
+        type: "review",
+        title: "Flashcards",
+        status: "done",
+        completedAt: "2026-06-30T15:30:00.000Z",
+        goalId: "g-aws",
+        goalObjective: "AWS SAA cert",
+      },
+    ]);
+  });
+
+  it("goalSections has one section per member goal, keyed by goalId", () => {
+    expect(Object.keys(result.goalSections).sort()).toEqual(["g-aws", "g-cut", "g-handstand"]);
+  });
+
+  it("the project member's section carries its items + feasibility", () => {
+    expect(result.goalSections["g-aws"]).toEqual({
+      goalId: "g-aws",
+      objective: "AWS SAA cert",
+      kind: "project",
+      status: "active",
+      todayItems: [
+        { id: "si-aws-1", type: "task", title: "Practice exam #3", status: "planned", completedAt: null },
+        { id: "si-aws-2", type: "review", title: "Flashcards", status: "done", completedAt: "2026-06-30T15:30:00.000Z" },
+      ],
+      feasibility: AWS_FEASIBILITY,
+    });
+  });
+
+  it("fitness members' sections have empty todayItems and null feasibility", () => {
+    expect(result.goalSections["g-handstand"]?.todayItems).toEqual([]);
+    expect(result.goalSections["g-handstand"]?.feasibility).toBeNull();
+    expect(result.goalSections["g-cut"]?.feasibility).toBeNull();
+  });
+
+  it("standingRules / focusGoal / activeGoal ride on top like the legacy payloads", () => {
+    expect(result.standingRules).toBe(STANDING_RULES);
+    expect(result.focusGoal).toBe(PROJECT_GOAL);
+    expect(result.activeGoal).toBe(PROJECT_GOAL);
+  });
+});
+
+describe("shapeProgramTodayPayload — chewgether invariant (DA #10): active Program, zero active Plans", () => {
+  // 'No rotation today': resolveDay gives out_of_plan with null/[] fitness
+  // fields and NO resolvedPlan — never another goal's plan.
+  const CHEWGETHER_DAY: ResolvedDay = {
+    ...PHASE_2A_DAY,
+    isInPlan: false,
+    rotationDay: null,
+    weekIndex: null,
+    todayTask: "out_of_plan",
+    activeWorkout: null,
+    deferredWorkout: null,
+    resolvedPlan: null,
+    confidence: null,
+    nutritionText: null,
+    nutritionPlan: null,
+    mobilityText: null,
+    notes: null,
+    workouts: [],
+    loggedNutrition: [],
+    baselinesDue: [],
+    program: {
+      id: "prog-chew",
+      name: "chewgether $1k/mo",
+      status: "active",
+      startedOn: new Date("2026-07-01T06:00:00.000Z"),
+      endsOn: null,
+      memberGoals: [
+        { id: "g-chewgether", objective: "Launch Chewgether to $1k MRR", kind: "project", status: "active" },
+      ],
+    },
+    scheduledItemsToday: [
+      {
+        id: "si-chew-1",
+        goalId: "g-chewgether",
+        goalObjective: "Launch Chewgether to $1k MRR",
+        type: "milestone",
+        title: "Ship onboarding v2",
+        detail: null,
+        status: "planned",
+        completedAt: null,
+      },
+    ],
+    goalMarks: [
+      { goalId: "g-chewgether", objective: "Launch Chewgether to $1k MRR", kind: "project", claims: ["scheduled_item"] },
+    ],
+  };
+
+  const result = shapeProgramTodayPayload(
+    CHEWGETHER_DAY,
+    PROJECT_GOAL,
+    STANDING_RULES,
+    new Map([["g-chewgether", FEASIBILITY]]),
+  );
+
+  it("renders 'no rotation today': out_of_plan task, null workout, null rotationDay/weekIndex", () => {
+    expect(result.todayTask).toBe("out_of_plan");
+    expect(result.activeWorkout).toBeNull();
+    expect(result.deferredWorkout).toBeNull();
+    expect(result.rotationDay).toBeNull();
+    expect(result.weekIndex).toBeNull();
+  });
+
+  it("never leaks an unrelated plan: isInPlan false, resolvedPlan null, confidence null", () => {
+    expect(result.isInPlan).toBe(false);
+    expect(result.resolvedPlan).toBeNull();
+    expect(result.confidence).toBeNull();
+  });
+
+  it("program context + items still surface — the day is program-shaped, not empty", () => {
+    expect(result.program?.name).toBe("chewgether $1k/mo");
+    expect(result.todayItems).toHaveLength(1);
+    expect(result.goalSections["g-chewgether"]?.feasibility).toBe(FEASIBILITY);
   });
 });

@@ -96,7 +96,7 @@ import { computeComparison } from "@/lib/compare";
 import { rulePackForGoal } from "@/lib/game/attributes-registry";
 import { setGoalTrackedCore, setPlanActiveCore } from "@/lib/goal-core";
 import { computeGoalFeasibility, computeStackRarity } from "@/lib/rarity";
-import { RARITY_TIERS, parseCoachFeasibility } from "@/lib/rarity-core";
+import { RARITY_TIERS, parseCoachFeasibility, type GoalFeasibility } from "@/lib/rarity-core";
 import {
   GoalTargetSchema,
   normalizeMetricKey,
@@ -110,7 +110,10 @@ import { registerProgramTools } from "@/lib/mcp/tools/program-tools";
 import { registerGitHubTools } from "@/lib/mcp/tools/github-tools";
 import { registerRenderTools } from "@/lib/mcp/tools/render-tools";
 import { resolveWorkoutIdForDay } from "@/lib/footage-core";
-import { shapeProjectTodayPayload } from "@/lib/mcp/today-shapers";
+import {
+  shapeProgramTodayPayload,
+  shapeLegacyProjectTodayPayload,
+} from "@/lib/mcp/today-shapers";
 import { deriveSavedMealLog } from "@/lib/saved-meal";
 import { withWriteReceipt, RequestIdShape } from "@/lib/mcp/idempotency";
 
@@ -632,15 +635,10 @@ function registerReadTools(server: McpServer) {
         "AUTHORITATIVE TASK FIELDS: `todayTask` is one of 'workout' | 'rest' | 'baseline' | 'hike' | 'out_of_plan' — the single source of truth for what today actually is. `activeWorkout` is the session to do (null on baseline/hike/out_of_plan); `deferredWorkout` is the rotation session that stepped aside (non-null only on baseline/hike). On a baseline day the tests in `baselinesDue` ARE the session — do NOT prescribe `deferredWorkout` as today's work. For the full prescription regardless of deferral, read `activeWorkout ?? deferredWorkout`. `workoutDeferredForBaseline`/`workoutDeferredForHike` are deprecated booleans kept for one release (they equal todayTask === 'baseline'/'hike'). " +
         "Also surfaces plannedHikeToday (hike detail if planned today) and " +
         "longEffortConflict (if today is the Day-6 slot and a hike is elsewhere this week). " +
-        "focusGoal is the goal whose plan drives today's prescription (isFocus=true); activeGoal is a duplicate of focusGoal kept for one release (saved-prompt compatibility — remove next release). " +
+        "focusGoal is the isFocus=true goal; activeGoal is a duplicate kept for one release (saved-prompt compatibility — remove next release). " +
         "otherGoalEvents contains target dates, retest checkpoints, and planned hikes for non-focus active goals on today. crossGoalConflicts surfaces cross-goal collision kinds for today. " +
-        "When focusGoal.kind === 'project', the payload is project-shaped: todayTask is null, " +
-        "activeWorkout/deferredWorkout/nutrition/baselines/mobility and all fitness scalars are null/false/[], " +
-        "todayItems contains today's ScheduledItems (id, type, title, status, completedAt) for that project goal, " +
-        "and feasibility carries the project's computed Reach tier (null if unrated/error). " +
-        "goalObjective is always populated from the focus goal's objective. " +
-        "When the focus goal is fitness or no focus goal is set, todayItems is [], feasibility is absent, " +
-        "and all fitness fields are fully populated as usual.",
+        "PROGRAM-SHAPED MERGE (when the user has an active Program): the payload is ONE merged shape, never a fitness-vs-project fork. Rotation fields above reflect the PROGRAM's plan only (isInPlan/confidence describe that plan's window — never some other goal's plan); an active Program with no rotation plan yields todayTask 'out_of_plan' with null/[] fitness fields — that is the normal 'no rotation today' state for a pure-project Program, NOT an error. On top: `program` {id,name,status,startedOn,endsOn,memberGoals[]}, `scheduledItemsToday` (today's ScheduledItems unioned across ALL member goals, each with goalId+goalObjective), `goalMarks` (per-goal day-service claims: rotation / scheduled_item / baseline:<testName> / nutrition), `todayItems` (same union, saved-prompt-compatible shape + goalId/goalObjective), and `goalSections` keyed by goalId ({objective, kind, status, todayItems, feasibility}) — feasibility computed per ACTIVE project-kind member goal (null if unrated/error). A day can carry BOTH a rotation session and project work — read both. " +
+        "LEGACY (no Program): behavior is unchanged. focusGoal.kind === 'project' → the old project-shaped payload (todayTask null, fitness scalars null/false/[], todayItems + feasibility for that goal only); fitness or no focus goal → fitness fields fully populated, todayItems [], feasibility absent, and `program` is null with scheduledItemsToday/goalMarks [].",
     },
     async () =>
       safe(async () => {
@@ -675,6 +673,34 @@ function registerReadTools(server: McpServer) {
               githubRepo: activeGoalRow.githubRepo,
             }
           : null;
+
+        // ── #283: program-shaped merge — ANY user with an active Program ────
+        // No kind branching here: rotation fields pass through from r (already
+        // Program-scoped by the seam — isInPlan/confidence can no longer leak
+        // an unrelated plan's window), plus program/scheduledItemsToday/
+        // goalMarks/goalSections. One feasibility computation per ACTIVE
+        // project-kind member goal.
+        if (r.program) {
+          const projectMemberIds = r.program.memberGoals
+            .filter((g) => g.kind === "project" && g.status === "active")
+            .map((g) => g.id);
+          const feasibilityByGoalId = new Map<string, GoalFeasibility | null>();
+          if (projectMemberIds.length > 0) {
+            const projectGoalRows = await db.goal.findMany({
+              where: { id: { in: projectMemberIds } },
+              select: { id: true, kind: true, targetDate: true, targets: true },
+            });
+            await Promise.all(
+              projectGoalRows.map(async (row) => {
+                feasibilityByGoalId.set(row.id, await computeGoalFeasibility(row).catch(() => null));
+              }),
+            );
+          }
+          return shapeProgramTodayPayload(r, activeGoal, standingRules, feasibilityByGoalId);
+        }
+
+        // ── Zero-Program legacy paths — byte-identical to pre-#283 (the #282
+        //    keys ride along as null/[]/[]) ─────────────────────────────────
         let todayItems: {
           id: string;
           type: string;
@@ -704,7 +730,7 @@ function registerReadTools(server: McpServer) {
             targets: activeGoalRow.targets,
             kind: activeGoalRow.kind,
           }).catch(() => null);
-          return shapeProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
+          return shapeLegacyProjectTodayPayload(r, activeGoal!, standingRules, todayItems, feasibility);
         }
         return {
           ...r,
