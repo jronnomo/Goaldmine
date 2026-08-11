@@ -55,9 +55,14 @@ export function CollapsibleCard({
         {digest != null && (
           <span className="text-xs tabular-nums text-[var(--muted)] shrink-0">{digest}</span>
         )}
+        {/* UXR-PROG-92: the bare transition-transform silently shipped
+            Tailwind's cubic-bezier(0.4,0,0.2,1) — a THIRD easing against
+            globals.css's two-easing doctrine. Explicit ease-out brings the
+            chevron under the sanctioned pair (at 150ms the difference is
+            imperceptible; the doctrine is whole). */}
         <span
           aria-hidden
-          className="text-[var(--muted)] text-xs shrink-0 motion-safe:transition-transform group-open:rotate-180"
+          className="text-[var(--muted)] text-xs shrink-0 motion-safe:transition-transform motion-safe:ease-out group-open:rotate-180"
         >
           ▼
         </span>

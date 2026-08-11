@@ -132,6 +132,29 @@ input::placeholder, textarea::placeholder {
 }
 :root[data-theme="dark"] .seam-date-label { color: var(--foreground); }
 
+/* UXR-PROG-90 (⚑ resolved: add the rule; the ~20-string deletion sweep is
+   FORBIDDEN in this PR — separate follow-up). A global keyboard-focus
+   indicator for everything that never got a hand-rolled ring. Existing
+   `focus-visible:outline-none focus-visible:ring-2` utilities keep winning
+   on their own elements (their outline-none suppresses this outline), so
+   nothing shipped changes appearance — only the previously-naked targets
+   gain a visible ring. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* UXR-PROG-89 (⚑ resolved: SCOPED, the global layout.tsx line is NOT
+   approved). scroll-behavior is honored on the scrolling element — the
+   document — so scoping to /progress means gating the html rule on the
+   page's own marker attribute via :has(). The jump-chip anchor hops smooth-
+   scroll ONLY while /progress is mounted, motion-safe only. */
+@media (prefers-reduced-motion: no-preference) {
+  html:has([data-progress-page]) {
+    scroll-behavior: smooth;
+  }
+}
+
 /* Bullseye-pop: one-shot scale + opacity animation triggered by adding
    the `bullseye-pop` class to a freshly-logged Bullseye. Reduced-motion
    users see no animation. React plumbing for `justLogged` is intentionally
