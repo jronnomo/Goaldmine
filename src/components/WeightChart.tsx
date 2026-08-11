@@ -9,16 +9,29 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
-type Point = { date: string; weight: number };
+type Point = { date: string; weight: number; label?: string };
 
 export function WeightChart({ data, ariaLabel }: { data: Point[]; ariaLabel?: string }) {
+  // UXR-PROG-84 (A20 / UXR-PV-94 defect repair): Recharts' 1500ms mount
+  // animation ran under prefers-reduced-motion. Same guard ReadinessChart
+  // ships; useSyncExternalStore server snapshot is false → hydration-clean.
+  const reduce = usePrefersReducedMotion();
+
   const formatted = data.map((p) => ({
     ...p,
-    label: new Date(p.date).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    }),
+    // UXR-PROG-81 (A10): prefer the SERVER-formatted label when the caller
+    // provides one — toLocaleDateString(undefined,…) in a client component
+    // resolves the locale/TZ differently at SSR (UTC on Vercel) vs hydration
+    // (browser), a text-content hydration mismatch. The fallback stays for
+    // legacy callers.
+    label:
+      p.label ??
+      new Date(p.date).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
   }));
 
   const computedLabel =
@@ -64,6 +77,7 @@ export function WeightChart({ data, ariaLabel }: { data: Point[]; ariaLabel?: st
               strokeWidth={2}
               dot={{ r: 3 }}
               activeDot={{ r: 5 }}
+              isAnimationActive={!reduce}
             />
           </LineChart>
         </ResponsiveContainer>

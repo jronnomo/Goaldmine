@@ -51,10 +51,10 @@ export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
 
   const pct = total > 0 ? (done / total) * 100 : 0;
 
-  // [v2] LOW-2: Card does not accept data-testid — use wrapper div.
+  // UXR-PROG-94 (UXR-PV-98): Card accepts data-testid — the wrapper div was
+  // stale scaffolding from before it did.
   return (
-    <div data-testid="milestone-burndown-card">
-      <Card>
+    <Card data-testid="milestone-burndown-card">
         {/* Header (UXR-s4-12: "X of Y milestones complete" framing) */}
         <p className="text-base font-semibold mb-3">
           <span className="text-2xl">{done}</span>
@@ -104,7 +104,6 @@ export async function MilestoneBurnDown({ goalId }: { goalId: string }) {
             )}
           </div>
         )}
-      </Card>
-    </div>
+    </Card>
   );
 }

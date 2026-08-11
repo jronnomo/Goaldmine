@@ -30,6 +30,12 @@ import {
   rollingParamsFromTargets,
 } from "@/lib/rolling-metrics";
 
+/** UXR-PROG-16 ⚠[120–400]: row bound on the rolling workout scan. NOT
+ *  `window` — untimed workouts are not sessions, so the row depth needed to
+ *  fill a 6-session window is unknown. Shared with progress-asof.ts so the
+ *  direct resolver and the As-Of table stay in parity at the bound. */
+export const ROLLING_SCAN_TAKE = 200;
+
 /** Resolve the current value for a metric as of `asOf` (default: now).
  *  When `cumulative` is true (only meaningful for `log:*`), returns the SUM
  *  of all `LogEntry.value` rows up to the cutoff instead of the latest value.
@@ -52,7 +58,10 @@ export async function resolveMetricValue(
   if (metric === "weightLb") {
     const m = await db.measurement.findFirst({
       where: { date: { lte: cutoff }, weightLb: { not: null } },
-      orderBy: { date: "desc" },
+      // UXR-PROG-20a: id tiebreak — Prisma's tie order on equal dates is
+      // undefined; the As-Of table (progress-asof.ts) picks max-(date,id) in
+      // memory, so the direct path must be deterministic the same way.
+      orderBy: [{ date: "desc" }, { id: "desc" }],
     });
     return m?.weightLb ?? null;
   }
@@ -64,7 +73,7 @@ export async function resolveMetricValue(
   if (metric === "bodyFatPct") {
     const m = await db.measurement.findFirst({
       where: { date: { lte: cutoff }, bodyFatPct: { not: null } },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { id: "desc" }], // UXR-PROG-20a tiebreak
     });
     return m?.bodyFatPct ?? null;
   }
@@ -73,7 +82,7 @@ export async function resolveMetricValue(
     const testName = metric.slice("baseline:".length);
     const b = await db.baseline.findFirst({
       where: { testName, date: { lte: cutoff } },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { id: "desc" }], // UXR-PROG-20a tiebreak
     });
     return b?.value ?? null;
   }
@@ -148,7 +157,7 @@ export async function resolveMetricValue(
         date: { lte: cutoff },
         value: { not: null },
       },
-      orderBy: { date: "desc" },
+      orderBy: [{ date: "desc" }, { id: "desc" }], // UXR-PROG-20a tiebreak
     });
     return entry?.value ?? null;
   }
@@ -177,7 +186,15 @@ export async function resolveMetricValue(
         // id DESC tiebreak keeps window membership deterministic when two
         // sessions share a startedAt instant.
         orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+        // UXR-PROG-15/16: the scan was UNBOUNDED. take cannot be `window`
+        // (an untimed workout is not a session, so required row depth is
+        // unknown); a date bound changes values for sparse loggers and is a
+        // doctrine change filed separately (UXR-PROG-17, ⚑ resolved: ship
+        // the take). id + startedAt ride along for the Seam Strip assembler.
+        take: ROLLING_SCAN_TAKE,
         select: {
+          id: true,
+          startedAt: true,
           exercises: {
             orderBy: { orderIndex: "asc" },
             select: {
@@ -188,6 +205,12 @@ export async function resolveMetricValue(
         },
       }),
     ]);
+    if (process.env.NODE_ENV !== "production" && workouts.length === ROLLING_SCAN_TAKE) {
+      // UXR-PROG-16: provably-incomplete-window tell — surface in dev only.
+      console.warn(
+        `[rolling] workout scan hit ROLLING_SCAN_TAKE=${ROLLING_SCAN_TAKE} for ${metric}; trailing window may be incomplete`,
+      );
+    }
     const params = rollingParamsFromTargets(goal?.targets, metric);
     // No params (goal missing, legacy/hand-written JSON) → honest untested;
     // validated writes make this unrepresentable (GoalTargetSchema refinement).
@@ -222,7 +245,7 @@ export async function resolveMetricStart(
   if (metric === "weightLb") {
     const m = await db.measurement.findFirst({
       where: { weightLb: { not: null } },
-      orderBy: { date: "asc" },
+      orderBy: [{ date: "asc" }, { id: "asc" }], // UXR-PROG-20a tiebreak
     });
     return m?.weightLb ?? null;
   }
@@ -232,7 +255,7 @@ export async function resolveMetricStart(
   if (metric === "bodyFatPct") {
     const m = await db.measurement.findFirst({
       where: { bodyFatPct: { not: null } },
-      orderBy: { date: "asc" },
+      orderBy: [{ date: "asc" }, { id: "asc" }], // UXR-PROG-20a tiebreak
     });
     return m?.bodyFatPct ?? null;
   }
@@ -241,7 +264,7 @@ export async function resolveMetricStart(
     const testName = metric.slice("baseline:".length);
     const b = await db.baseline.findFirst({
       where: { testName },
-      orderBy: { date: "asc" },
+      orderBy: [{ date: "asc" }, { id: "asc" }], // UXR-PROG-20a tiebreak
     });
     return b?.value ?? null;
   }
@@ -274,7 +297,7 @@ export async function resolveMetricStart(
     const key = metric.slice(LOG_METRIC_PREFIX.length);
     const entry = await db.logEntry.findFirst({
       where: { goalId, metric: key },
-      orderBy: { date: "asc" },
+      orderBy: [{ date: "asc" }, { id: "asc" }], // UXR-PROG-20a tiebreak
     });
     return entry?.value ?? null;
   }

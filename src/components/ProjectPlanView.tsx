@@ -91,11 +91,11 @@ export async function ProjectPlanView({ goal }: { goal: GoalArg }) {
           const doneInGroup = groupItems.filter((i) => i.status === "done").length;
           const isCurrentMonth = groupKey === todayMonth;
 
-          // [v2] LOW-2/MIS-1: CollapsibleCard does not accept data-testid — use wrapper div.
-          // Do NOT pass data-testid to CollapsibleCard; the wrapper div is the E2E selector target.
+          // UXR-PROG-94: CollapsibleCard accepts data-testid — stale wrapper removed.
           return (
-            <div key={groupKey} data-testid={`plan-month-${groupKey}`}>
               <CollapsibleCard
+                key={groupKey}
+                data-testid={`plan-month-${groupKey}`}
                 title={`${monthLabel(groupKey)} · ${doneInGroup}/${groupItems.length} done`}
                 defaultOpen={isCurrentMonth}
               >
@@ -152,7 +152,6 @@ export async function ProjectPlanView({ goal }: { goal: GoalArg }) {
                   })}
                 </ul>
               </CollapsibleCard>
-            </div>
           );
         })
       )}

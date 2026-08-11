@@ -23,6 +23,7 @@ export function SeamLine({
   width = 96,
   height = 20,
   stroke = "var(--muted)",
+  rule,
   ariaLabel,
   "data-testid": testId,
 }: {
@@ -30,6 +31,16 @@ export function SeamLine({
   width?: number;
   height?: number;
   stroke?: string;
+  /**
+   * UXR-PROG-30 (capped, channel 2): a horizontal reference rule drawn at
+   * this VALUE (same domain as points) — the equipment ceiling. A horizontal
+   * line survives the non-uniform viewBox stretch where a terminal circle
+   * would become an ellipse. Drawn SOLID (a dash array's segment lengths are
+   * path-scaled under preserveAspectRatio="none" even with non-scaling
+   * stroke — solid avoids the hazard the ledger flags for verification).
+   * A flat series sitting ON a drawn ceiling reads as PINNED, not stalled.
+   */
+  rule?: number;
   ariaLabel: string;
   "data-testid"?: string;
 }) {
@@ -50,6 +61,19 @@ export function SeamLine({
           .map((v, i) => `${fmt((i / (points.length - 1)) * 100)},${fmt(y(v))}`)
           .join(" ");
 
+  // Cap-rule y: through the same scale, clamped into the box. On a collapsed
+  // scale (min === max) the rule sits above/below/on the flat line by sign.
+  const ruleY =
+    rule === undefined
+      ? null
+      : max === min
+        ? rule === points[0]
+          ? 50
+          : rule > points[0]!
+            ? PAD
+            : 100 - PAD
+        : Math.max(1, Math.min(99, y(rule)));
+
   return (
     <span
       role="img"
@@ -65,6 +89,18 @@ export function SeamLine({
         preserveAspectRatio="none"
         className="block"
       >
+        {ruleY !== null && (
+          <line
+            data-seam-rule=""
+            x1={0}
+            y1={fmt(ruleY)}
+            x2={100}
+            y2={fmt(ruleY)}
+            stroke={stroke}
+            strokeWidth={1}
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
         <polyline
           points={coords}
           fill="none"

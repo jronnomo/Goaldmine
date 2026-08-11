@@ -146,7 +146,10 @@ describe("resolveMetricValue — bodyFatPct (amendment 5)", () => {
     // The not-null filter + latest-first ordering — a weight-only row (with
     // bodyFatPct null) must not be selected over an older BF reading.
     expect(call.where.bodyFatPct).toEqual({ not: null });
-    expect(call.orderBy).toEqual({ date: "desc" });
+    // UXR-PROG-20a: latest-first ordering gained the deterministic id tiebreak
+    // (Prisma tie order on equal dates is undefined; the As-Of table picks
+    // max-(date,id) in memory, so both paths must agree on ties).
+    expect(call.orderBy).toEqual([{ date: "desc" }, { id: "desc" }]);
   });
 
   it("returns null when no measurement carries a bodyFatPct (honest no-data, not 0)", async () => {
@@ -168,7 +171,8 @@ describe("resolveMetricValue — bodyFatPct (amendment 5)", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const call = vi.mocked(prisma.measurement.findFirst).mock.calls[0]![0] as any;
     expect(call.where).toEqual({ bodyFatPct: { not: null } });
-    expect(call.orderBy).toEqual({ date: "asc" });
+    // UXR-PROG-20a: earliest-first ordering carries the id tiebreak too.
+    expect(call.orderBy).toEqual([{ date: "asc" }, { id: "asc" }]);
   });
 
   it("resolveMetricStart: null when the user has never logged a BF reading", async () => {

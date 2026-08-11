@@ -30,8 +30,11 @@ export function ReadinessBreakdown({
               </span>
             </div>
             <div className="h-1.5 bg-[var(--border)] rounded-full overflow-hidden">
+              {/* UXR-PROG-91: was `transition-all`, unguarded — `-all` also
+                  tweened background-color on a THEME TOGGLE, a real 150ms
+                  color slide under reduced motion. Narrowed + motion-safe. */}
               <div
-                className="h-full bg-[var(--accent)] transition-all"
+                className="h-full bg-[var(--accent)] motion-safe:transition-[width]"
                 style={{ width: `${pct ?? 0}%` }}
               />
             </div>

@@ -264,10 +264,9 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
 
       {/* ── Primary metric progress card (UXR-s4-03; hidden when no log: target) ── */}
       {/* D2: generalized from MRR-only — renders for any log: target on the goal.    */}
-      {/* [v2] LOW-2: Card does not accept data-testid — use wrapper div.             */}
+      {/* UXR-PROG-94: Card accepts data-testid — stale wrapper removed.              */}
       {primaryTarget != null && (
-        <div data-testid="primary-metric-card">
-          <Card>
+          <Card data-testid="primary-metric-card">
             <div className="flex items-baseline justify-between mb-2">
               <p className="text-4xl font-semibold tracking-tight">
                 {primaryCurrentValue != null
@@ -306,7 +305,6 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
             </div>
             <p className="mt-1 text-xs text-[var(--muted)]">{primaryTarget.label}</p>
           </Card>
-        </div>
       )}
 
       {/* ── Feasibility (Reach) card — between MRR and next-milestone. ── */}
@@ -321,10 +319,9 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
       )}
 
       {/* ── Next milestone card (UXR-s4-13; hidden when none) ── */}
-      {/* [v2] LOW-2: Card does not accept data-testid — use wrapper div. */}
+      {/* UXR-PROG-94: Card accepts data-testid — stale wrapper removed. */}
       {nextMilestone != null && (
-        <div data-testid="next-milestone-card">
-          <Card>
+          <Card data-testid="next-milestone-card">
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-[var(--muted)] uppercase tracking-wide mb-1">
@@ -340,7 +337,6 @@ export async function ProjectTodayView({ goal }: ProjectTodayViewProps) {
               )}
             </div>
           </Card>
-        </div>
       )}
     </div>
   );

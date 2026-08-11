@@ -168,7 +168,10 @@ function GateCopy({ goalId, snapshot }: { goalId: string; snapshot: ReadinessSna
   return (
     <div data-testid={`gate-copy-${goalId}`}>
       {copy.eyebrow && (
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--accent)]">
+        // UXR-PROG-106: was text-[10px] — --accent-class tokens on cream sit
+        // at the ~4.6:1 AA edge and the ReachMeter sibling documents a ≥12px
+        // floor for them. text-xs = the floor.
+        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--accent)]">
           {copy.eyebrow}
         </p>
       )}
