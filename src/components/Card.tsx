@@ -5,16 +5,20 @@ export function Card({
   action,
   children,
   className = "",
+  id,
   "data-testid": testId,
 }: {
   title?: ReactNode;
   action?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Anchor id (e.g. /progress jump-chip targets). */
+  id?: string;
   "data-testid"?: string;
 }) {
   return (
     <section
+      id={id}
       className={`rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm ${className}`}
       data-testid={testId}
     >

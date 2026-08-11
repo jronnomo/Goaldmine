@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 export type HistoryPoint = { date: string; value: number; tooltip?: string; label?: string };
 
@@ -23,6 +24,9 @@ export function HistoryChart({
   domain?: [number | string, number | string];
   ariaLabel?: string;
 }) {
+  // UXR-PROG-84 (A20 / UXR-PV-94 defect repair) — same guard as WeightChart.
+  const reduce = usePrefersReducedMotion();
+
   const formatted = data.map((p) => ({
     ...p,
     label: p.label ?? new Date(p.date).toLocaleDateString(undefined, {
@@ -77,6 +81,7 @@ export function HistoryChart({
               strokeWidth={2}
               dot={{ r: 3 }}
               activeDot={{ r: 5 }}
+              isAnimationActive={!reduce}
             />
           </LineChart>
         </ResponsiveContainer>

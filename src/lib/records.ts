@@ -175,30 +175,51 @@ export function isBetter(direction: MetricDirection, candidate: number, incumben
   return direction === "lower" ? candidate < incumbent : candidate > incumbent;
 }
 
-export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
-  const db = await getDb();
-  const groups = await db.baseline.groupBy({
-    by: ["testName"],
-    _count: { _all: true },
-  });
-
+/**
+ * Pure: baseline summaries from an already-fetched row set (any order).
+ * Earliest/latest picks use the (date, id) total order so two same-day
+ * results resolve deterministically (UXR-PROG-20a discipline).
+ */
+export function baselineSummariesFromRows(
+  rows: readonly { id: string; testName: string; units: string; value: number; capped: boolean; date: Date }[],
+): BaselineSummary[] {
+  const byName = new Map<string, { first: (typeof rows)[number]; last: (typeof rows)[number]; count: number }>();
+  const before = (a: (typeof rows)[number], b: (typeof rows)[number]) =>
+    a.date.getTime() !== b.date.getTime() ? a.date.getTime() < b.date.getTime() : a.id < b.id;
+  for (const r of rows) {
+    const cur = byName.get(r.testName);
+    if (!cur) {
+      byName.set(r.testName, { first: r, last: r, count: 1 });
+      continue;
+    }
+    if (before(r, cur.first)) cur.first = r;
+    if (before(cur.last, r)) cur.last = r;
+    cur.count++;
+  }
   const out: BaselineSummary[] = [];
-  for (const g of groups) {
-    const [first, last] = await Promise.all([
-      db.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "asc" } }),
-      db.baseline.findFirst({ where: { testName: g.testName }, orderBy: { date: "desc" } }),
-    ]);
-    if (!first || !last) continue;
+  for (const [testName, g] of byName) {
     out.push({
-      testName: g.testName,
-      units: last.units,
-      latest: { date: last.date, value: last.value, capped: last.capped },
-      earliest: { date: first.date, value: first.value },
-      count: g._count._all,
-      delta: last.value - first.value,
+      testName,
+      units: g.last.units,
+      latest: { date: g.last.date, value: g.last.value, capped: g.last.capped },
+      earliest: { date: g.first.date, value: g.first.value },
+      count: g.count,
+      delta: g.last.value - g.first.value,
     });
   }
   return out.sort((a, b) => a.testName.localeCompare(b.testName));
+}
+
+export async function getBaselineSummaries(): Promise<BaselineSummary[]> {
+  // UXR-PROG-25: was an N+1 (a groupBy + two findFirst per test — 19 queries
+  // for 9 tests). Now ONE findMany + one in-memory pass; this accessor backs
+  // Pillar 1, so the refactor was required before that pillar could ship.
+  const db = await getDb();
+  const rows = await db.baseline.findMany({
+    orderBy: [{ date: "asc" }, { id: "asc" }],
+    select: { id: true, testName: true, units: true, value: true, capped: true, date: true },
+  });
+  return baselineSummariesFromRows(rows);
 }
 
 export async function getBaselineHistory(testName: string) {
@@ -253,7 +274,13 @@ export function baselineCheckpointDates(
  */
 export async function getBaselineScheduleForPlan(
   plan: { planJson: unknown; startedOn: Date; weeks: number },
-  opts?: { now?: Date },
+  opts?: {
+    now?: Date;
+    /** UXR-PROG-98-adjacent: callers that already scanned the Baseline table
+     *  (the /progress assembler) pass rows here and this issues ZERO queries.
+     *  Must be date-asc, full table — same shape the internal query fetches. */
+    prefetchedBaselines?: { testName: string; date: Date; value: number; units: string; capped: boolean }[];
+  },
 ): Promise<{
   startedOn: Date | null;
   totalWeeks: number | null;
@@ -271,8 +298,13 @@ export async function getBaselineScheduleForPlan(
   }
 
   // Pull all baselines once and bucket by testName for efficiency.
-  const db = await getDb();
-  const allBaselines = await db.baseline.findMany({ orderBy: { date: "asc" } });
+  let allBaselines: { testName: string; date: Date; value: number; units: string; capped: boolean }[];
+  if (opts?.prefetchedBaselines) {
+    allBaselines = opts.prefetchedBaselines;
+  } else {
+    const db = await getDb();
+    allBaselines = await db.baseline.findMany({ orderBy: { date: "asc" } });
+  }
   const byName = new Map<string, typeof allBaselines>();
   for (const b of allBaselines) {
     const arr = byName.get(b.testName) ?? [];

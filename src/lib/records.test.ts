@@ -868,32 +868,32 @@ describe("getBaselineHistory — query passes omit: { userId: true }", () => {
 describe("#276 capped — getBaselineSummaries carries latest.capped", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mockGetDbLocal = getDb as any;
-  const groupBy = vi.fn();
-  const findFirst = vi.fn();
+  const findMany = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetDbLocal.mockResolvedValue({ baseline: { groupBy, findFirst } });
-    groupBy.mockResolvedValue([{ testName: "8-Rep DB Press", _count: { _all: 2 } }]);
-    const earliest = {
-      id: "b-0",
-      testName: "8-Rep DB Press",
-      date: new Date("2026-06-01"),
-      value: 55,
-      units: "lb",
-      capped: false,
-    };
-    const latest = {
-      id: "b-1",
-      testName: "8-Rep DB Press",
-      date: new Date("2026-08-01"),
-      value: 65,
-      units: "lb",
-      capped: true,
-    };
-    findFirst.mockImplementation(({ orderBy }: { orderBy: { date: "asc" | "desc" } }) =>
-      Promise.resolve(orderBy.date === "asc" ? earliest : latest),
-    );
+    // UXR-PROG-25: getBaselineSummaries is now ONE findMany + an in-memory
+    // pass (was a groupBy + two findFirst per test — the N+1 this overhaul
+    // removed). Same output contract; the mock reflects the new single scan.
+    mockGetDbLocal.mockResolvedValue({ baseline: { findMany } });
+    findMany.mockResolvedValue([
+      {
+        id: "b-0",
+        testName: "8-Rep DB Press",
+        date: new Date("2026-06-01"),
+        value: 55,
+        units: "lb",
+        capped: false,
+      },
+      {
+        id: "b-1",
+        testName: "8-Rep DB Press",
+        date: new Date("2026-08-01"),
+        value: 65,
+        units: "lb",
+        capped: true,
+      },
+    ]);
   });
 
   it("latest.capped = true flows into the summary row (delta math unchanged)", async () => {
@@ -903,6 +903,9 @@ describe("#276 capped — getBaselineSummaries carries latest.capped", () => {
     expect(out[0]!.latest).toEqual({ date: new Date("2026-08-01"), value: 65, capped: true });
     expect(out[0]!.earliest).toEqual({ date: new Date("2026-06-01"), value: 55 });
     expect(out[0]!.delta).toBe(10);
+    expect(out[0]!.count).toBe(2);
+    // ONE query, not 1 + 2N:
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });
 
