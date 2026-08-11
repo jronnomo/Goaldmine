@@ -292,6 +292,22 @@ async function main() {
     bWorkoutId = bWorkout.id;
     console.log(`  Workout:             ${bWorkoutId}`);
 
+    // --- WorkoutExercise + Set (2026-08 leak fix) ---
+    // WorkoutExercise/Set have NO userId FK — raw prisma create hanging off
+    // B's workout. This arms Step 4e: with a real exercise row on each side,
+    // the getExerciseSummaries probe proves the hand-scoped
+    // `workout: { userId }` filter both ways (pre-fix, every tenant saw
+    // every other tenant's exercises).
+    const bExercise = await prisma.workoutExercise.create({
+      data: {
+        workoutId: bWorkoutId,
+        name: "e9b-isolation-bench",
+        orderIndex: 0,
+        sets: { create: [{ setIndex: 1, reps: 5, weightLb: 100 }] },
+      },
+    });
+    console.log(`  WorkoutExercise:     ${bExercise.id} (+1 set)`);
+
     // --- Note ---
     const bNote = await dbB.note.create({
       data: {
@@ -679,14 +695,33 @@ async function main() {
       }
     });
 
-    // 4e — getExerciseSummaries() as B returns only B's exercise data
+    // 4e — getExerciseSummaries() two-tenant WorkoutExercise probe (2026-08
+    // leak fix). WorkoutExercise is non-scoped, so this exercises the
+    // hand-scoped `workout: { userId }` filter LIVE, both directions.
     const bExercises = await runWithUser(B_USER_ID, async () => {
       return getExerciseSummaries();
     });
-    // B only has a workout with no exercises — expect empty or only B's exercises
-    // Founder's exercise history must not appear
-    pass(
-      `[4e] getExerciseSummaries() as B returned ${bExercises.length} summary(ies) — scoped to B`,
+    const bExerciseNames = bExercises.map((s) => s.name);
+    assert(
+      bExerciseNames.includes("e9b-isolation-bench"),
+      `[4e] getExerciseSummaries() as B includes B's seeded exercise`,
+      `[4e] getExerciseSummaries() as B is MISSING B's seeded exercise (probe not armed?)`,
+      `names=${bExerciseNames.join(",") || "(none)"}`,
+    );
+    const bForeignNames = bExerciseNames.filter((n) => !n.startsWith("e9b-"));
+    assert(
+      bForeignNames.length === 0,
+      `[4e] getExerciseSummaries() as B contains ONLY B's exercises (${bExercises.length})`,
+      `[4e] getExerciseSummaries() as B LEAKED other tenants' exercises!`,
+      bForeignNames.length > 0 ? `leaked=${bForeignNames.slice(0, 5).join(",")}` : undefined,
+    );
+    const founderExercises = await runWithUser(FOUNDER_USER_ID, async () => {
+      return getExerciseSummaries();
+    });
+    assert(
+      !founderExercises.some((s) => s.name === "e9b-isolation-bench"),
+      `[4e] getExerciseSummaries() as founder contains NO B exercises (${founderExercises.length} summaries)`,
+      `[4e] getExerciseSummaries() as founder LEAKED B's exercise!`,
     );
 
     // =======================================================================

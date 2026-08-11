@@ -10,6 +10,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/db", () => ({
   prisma: { workoutExercise: { findMany: vi.fn() } },
   getDb: vi.fn(),
+  // Tenant-scope accessor used by buildStrengthEntries' workout:{userId} filter.
+  getScopedUserId: vi.fn(async () => "usr_test"),
 }));
 vi.mock("@/lib/readiness", () => ({ computeReadiness: vi.fn() }));
 vi.mock("@/lib/game/engine", () => ({ computeGameState: vi.fn() }));

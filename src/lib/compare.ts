@@ -3,10 +3,10 @@
 // Server-only assembly for the "Glance back, forge ahead" two-date snapshot
 // comparison: computeComparison(aKey, bKey). Reads existing logged history
 // only — no plan/override reads (see PRD §4.6). DB via getDb() for scoped
-// models; raw prisma for workoutExercise/Set (unscoped, no userId column —
-// matches records.ts convention exactly).
+// models; raw prisma for workoutExercise/Set (no userId column — hand-scoped
+// through the owning Workout via getScopedUserId, matching records.ts).
 
-import { getDb, prisma } from "@/lib/db";
+import { getDb, prisma, getScopedUserId } from "@/lib/db";
 import {
   getActiveProgramMembership,
   orderMembersFirst,
@@ -229,8 +229,11 @@ async function buildStrengthEntries(cutA: Date, cutB: Date): Promise<CompareEntr
   // ONE query. Completed-only + startedAt<=cutB filter is required here —
   // getExerciseSummaries()/getExerciseHistory() do NOT filter by status
   // (research §Risks item 3) — do not reuse them.
+  // Tenant scope: WorkoutExercise is non-scoped — `workout: { userId }` keeps
+  // /compare + compare_dates from aggregating other tenants' history.
+  const userId = await getScopedUserId();
   const exercises = await prisma.workoutExercise.findMany({
-    where: { workout: { status: "completed", startedAt: { lte: cutB } } },
+    where: { workout: { status: "completed", startedAt: { lte: cutB }, userId } },
     include: { sets: true, workout: { select: { startedAt: true } } },
   });
 

@@ -196,8 +196,8 @@ export async function resolveMetricValue(
   }
 
   // exercise:<canonical name> — latest best (est 1RM, max reps, or max duration)
-  // from workout history as of asOf. getExerciseHistory uses the raw prisma singleton
-  // internally (WorkoutExercise is non-scoped).
+  // from workout history as of asOf. getExerciseHistory hand-scopes its raw
+  // WorkoutExercise query to the active tenant via workout:{userId}.
   if (metric.startsWith("exercise:")) {
     const exerciseName = metric.slice("exercise:".length);
     const { history } = await getExerciseHistory(exerciseName);

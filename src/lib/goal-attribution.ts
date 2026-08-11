@@ -11,7 +11,7 @@
 //                            for day diffs (USER_TZ-safe, not raw getDate).
 //   relativeTrainedLabel   — "trained today" / "trained 3d ago" / "never trained"
 
-import { prisma } from "@/lib/db";
+import { prisma, getScopedUserId } from "@/lib/db";
 import { startOfDay, dateKey } from "@/lib/calendar";
 import { canonicalExerciseName, aliasVariantsFor } from "@/lib/records";
 
@@ -62,11 +62,15 @@ export async function lastTrainedForGoals(
 
   if (allVariants.size === 0) return result;
 
-  // Single batched query — mode:"insensitive" is supported on Postgres in Prisma 7
-  // non-scoped: WorkoutExercise has no userId FK — passes through ScopedClient untouched.
+  // Single batched query — mode:"insensitive" is supported on Postgres in Prisma 7.
+  // Tenant scope: WorkoutExercise has no userId FK, so the ScopedClient can't
+  // inject it — scope through the owning Workout or "last trained" reads every
+  // tenant's history (cross-tenant leak, fixed 2026-08).
+  const userId = await getScopedUserId();
   const rows = await prisma.workoutExercise.findMany({
     where: {
       name: { in: [...allVariants], mode: "insensitive" },
+      workout: { userId },
     },
     select: {
       name: true,

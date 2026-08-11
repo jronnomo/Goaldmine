@@ -12,6 +12,9 @@ vi.mock("@/lib/db", () => ({
     workoutExercise: { findMany: vi.fn() },
   },
   getDb: vi.fn(),
+  // Tenant-scope accessor used by getExerciseSummaries/getExerciseHistory/
+  // recordsSetInWorkout to build `workout: { userId }` filters.
+  getScopedUserId: vi.fn(async () => "usr_test"),
 }));
 
 // #298: getBaselineSchedule resolves its plan through the rotation-owner seam.

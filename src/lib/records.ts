@@ -2,7 +2,7 @@
 // "PR" here is the best single-set effort across all completed workouts.
 
 import { addDays as addDaysCal, endOfDay, startOfDay } from "@/lib/calendar";
-import { prisma, getDb } from "@/lib/db";
+import { prisma, getDb, getScopedUserId } from "@/lib/db";
 import { canonicalExerciseName } from "@/lib/exercise-canonical";
 import { getRotationOwnerGoal } from "@/lib/goal-focus";
 import type { BaselineDay, BaselineTest, ProgramTemplate } from "@/lib/program-template";
@@ -452,7 +452,12 @@ function statusFor(
 }
 
 export async function getExerciseSummaries(): Promise<ExerciseSummary[]> {
+  // Tenant scope: WorkoutExercise has no userId FK, so the ScopedClient can't
+  // inject it — scope through the owning Workout or this aggregates EVERY
+  // tenant's history (cross-tenant leak, fixed 2026-08).
+  const userId = await getScopedUserId();
   const exercises = await prisma.workoutExercise.findMany({
+    where: { workout: { userId } },
     include: { sets: true, workout: { select: { startedAt: true } } },
   });
 
@@ -508,7 +513,10 @@ export async function getExerciseHistory(name: string): Promise<{ summary: Exerc
   // Match every logged spelling that folds into this canonical movement
   // (equipment is descriptive, not part of identity).
   const canonical = canonicalExerciseName(name);
+  // Tenant scope: see getExerciseSummaries — WorkoutExercise is non-scoped.
+  const userId = await getScopedUserId();
   const all = await prisma.workoutExercise.findMany({
+    where: { workout: { userId } },
     include: { sets: true, workout: { select: { id: true, startedAt: true, title: true } } },
     orderBy: { workout: { startedAt: "asc" } },
   });
@@ -586,9 +594,14 @@ export async function getExerciseHistory(name: string): Promise<{ summary: Exerc
  *    prevents the just-created workout from inflating the prior baseline.
  */
 export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[]> {
+  // Tenant scope: WorkoutExercise is non-scoped — both queries below carry
+  // `workout: { userId }` so a foreign workoutId returns [] and the prior
+  // baseline never includes another tenant's history.
+  const userId = await getScopedUserId();
+
   // 1. Load all exercises (with sets) for this workout.
   const exercises = await prisma.workoutExercise.findMany({
-    where: { workoutId },
+    where: { workoutId, workout: { userId } },
     include: { sets: true },
   });
 
@@ -614,7 +627,7 @@ export async function recordsSetInWorkout(workoutId: string): Promise<RecordSet[
   //    instead of one per movement). The id filter keeps the just-logged workout
   //    out of its own prior baseline.
   const priorExercises = await prisma.workoutExercise.findMany({
-    where: { workout: { id: { not: workoutId } } },
+    where: { workout: { id: { not: workoutId }, userId } },
     include: { sets: true },
   });
   const priorByKey = new Map<string, typeof priorExercises[number]["sets"]>();
