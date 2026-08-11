@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goaldmine · /progress overhaul — pixel mockup (Frequency Stack, Ruled)</title>
+
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  FONTS — STAND-INS ONLY.
+  The real app loads Geist / Geist Mono / DM Serif Display through next/font
+  and exposes them as --font-sans / --font-mono / --font-display (see
+  @theme inline in src/app/globals.css). This file must render offline from
+  file:// with no CDN, so each face is replaced by a system stack. Every
+  --font-display usage below is annotated; metrics — and therefore every
+  wrap point — will shift once the real faces load.
+  ══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   1. TOKENS — copied byte-for-byte from src/app/globals.css:3-87.
+   This block and the dark block are the ONLY places a color literal
+   appears in this document. Everything downstream is var(--…).
+
+   NOTE: --target is #9A480F / #D97A3D (RUST). The stale UX profile file
+   lists the danger red here; it is wrong. --danger (#A82A1F / #C0392B) is
+   defined for completeness and is used NOWHERE in this artifact — banners
+   cap at --warning (UXR-63-13).
+
+   NOTE: the app also carries a byte-identical @media (prefers-color-scheme:
+   dark) block. It is deliberately omitted here so this artifact defaults to
+   LIGHT regardless of OS, per the review brief. The toggle writes
+   data-theme on :root exactly as ThemeToggle.tsx does.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #9A480F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
+
+  /* Stand-in faces. Real: var(--font-sans) / var(--font-mono) / var(--font-display). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: Georgia, "Times New Roman", serif;
+
+  /* Seam Strip geometry — every one of these is ⚠ provisional, see footer. */
+  --seam-col: 46px;   /* ⚠[44–52] */
+  --seam-gap: 8px;    /* ⚠[6–10]  */
+  --seam-h: 34px;     /* ⚠[28–40] */
+  --seam-stub: 5px;   /* ⚠[4–7]   */
+  --seam-base: 2px;   /* ⚠[2–3]   */
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #FAF3E3; --foreground: #1F1408; --muted: #7A5E3A; --card: #FFFBF0;
+  --border: #D9C8A2; --accent: #8A6212; --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14); --target: #9A480F; --target-fg: #FFFBF0;
+  --success: #4E6B36; --warning: #A8511A; --danger: #A82A1F;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0F0B07; --foreground: #F4E9D4; --muted: #9C8866; --card: #1A130C;
+  --border: #3A2E1F; --accent: #D4A437; --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12); --target: #D97A3D; --target-fg: #FFFFFF;
+  --success: #7FA45C; --warning: #E0915C; --danger: #C0392B;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. GALLERY CHROME (not product UI)
+   ══════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+html { scroll-behavior: auto; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+/* UXR-PV-97 — the app has no global :focus-visible. This artifact models the fix. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.toolbar {
+  position: fixed; top: 14px; right: 14px; z-index: 60;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.tbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; min-width: 44px; padding: 0 16px;
+  border-radius: 9999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--foreground);
+  font: inherit; font-size: 13px; cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.tbtn:hover { border-color: var(--accent); }
+.tbtn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.page-head { max-width: 1000px; margin: 0 auto; padding: 28px 20px 8px; }
+/* Display face below stands in for var(--font-display) (DM Serif Display). */
+.page-head h1 { font-family: var(--font-display); font-size: 27px; font-weight: 400; margin: 0 0 6px; }
+.page-head .meta { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+.page-head .guide { font-size: 13.5px; line-height: 1.62; max-width: 76ch; margin: 0 0 10px; }
+.page-head .guide b { font-weight: 600; }
+.page-head code, .note code, .provisional code { font-family: var(--font-mono); font-size: 11px; }
+
+.gallery { display: flex; flex-wrap: wrap; gap: 40px; padding: 22px 20px 10px; align-items: flex-start; justify-content: center; }
+.panel { display: flex; gap: 16px; align-items: flex-start; }
+.panel > .col-notes { width: 236px; padding-top: 34px; }
+@media (max-width: 760px) { .panel { flex-direction: column; } .panel > .col-notes { width: 390px; max-width: 100%; padding-top: 0; } }
+
+.panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px 4px; }
+.panel-title em { font-style: normal; color: var(--warning); }
+
+/* annotation layer — deliberately unlike any product surface */
+.note { font-size: 11.5px; line-height: 1.55; color: var(--muted); border-left: 2px dashed var(--muted); padding: 2px 0 2px 9px; margin: 0 0 11px; }
+.note b { color: var(--foreground); font-weight: 600; }
+.flag { color: var(--warning); font-weight: 600; }
+
+/* device frame */
+.phone {
+  width: 390px; flex: 0 0 390px;
+  background: var(--background); color: var(--foreground);
+  border: 1px solid var(--border); border-radius: 26px;
+  overflow: hidden; position: relative;
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+.phone.projected { border-color: var(--warning); }
+.phone.projected::before {
+  content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none;
+  border-radius: 26px;
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--warning) 55%, transparent);
+}
+/* AppHeader stand-in — sticky h-12 + border = 49px (AppHeader.tsx:31-32) */
+.apphdr {
+  height: 49px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+}
+.apphdr .wm { font-family: var(--font-display); font-weight: 400; font-size: 17px; } /* var(--font-display) */
+/* page shell — Tailwind: max-w-md mx-auto p-4 space-y-4 */
+.screen { position: relative; max-width: 28rem; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+/* BottomNav stand-in — 58px, the conservative of the two measurements (R-9) */
+.btmnav { height: 58px; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(5,1fr); background: color-mix(in srgb, var(--card) 95%, transparent); }
+.btmnav span { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
+.btmnav span.on { color: var(--accent); font-weight: 600; }
+
+/* the 737px fold (R-9) — measured from the top of the content column */
+.fold { position: absolute; left: 0; right: 0; top: 737px; border-top: 1px dashed var(--muted); pointer-events: none; z-index: 4; }
+.fold i { position: absolute; right: 6px; top: -13px; font-style: normal; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); background: var(--background); padding: 0 5px; }
+
+/* study boards (panels 5 & 6) */
+.board { background: var(--background); border: 1px solid var(--border); border-radius: 20px; padding: 20px; box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.board.w2 { width: 726px; }
+@media (max-width: 800px) { .board.w2 { width: 390px; } }
+.tframe { width: 326px; } /* Card interior at 390px (BRIEF §4.7) */
+.tseq { display: flex; gap: 34px; flex-wrap: wrap; }
+.tseq h4 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. SHIPPED CLASS GRAMMAR, HAND-COMPILED
+   ══════════════════════════════════════════════════════════════════════ */
+/* Card.tsx:18 — rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm */
+.card { border-radius: 16px; border: 1px solid var(--border); background: var(--card); padding: 16px; box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+
+/* Tier 2 compact strip — rounded-xl border px-3 py-2.5 space-y-1.5, NO h2 */
+.strip { border-radius: 12px; border: 1px solid var(--border); background: var(--card); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Tier 3 lid — CollapsibleCard variant="lid" */
+.lid { border-radius: 16px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.lid > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px; min-height: 44px; cursor: pointer; list-style: none; }
+.lid > summary::-webkit-details-marker { display: none; }
+.lid-title { font-size: 0.875rem; font-weight: 500; color: var(--muted); }
+.digest { font-size: 0.75rem; font-variant-numeric: tabular-nums; color: var(--muted); flex-shrink: 0; }
+.chev { color: var(--muted); font-size: 0.75rem; flex-shrink: 0; }
+@media (prefers-reduced-motion: no-preference) { .lid[open] .chev { transform: rotate(180deg); } .chev { transition: transform 140ms ease-out; } }
+.lid > div { padding: 0 16px 16px; }
+
+/* type scale */
+.h1 { font-size: 1.5rem; line-height: 2rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+.h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+.eyebrow { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0; }
+.subline { font-size: 0.8125rem; color: var(--muted); margin: 0; line-height: 1.45; }
+.body-sm { font-size: 0.8125rem; line-height: 1.5; margin: 0; }
+.tnum { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.succ { color: var(--success); }
+.warn { color: var(--warning); }
+
+/* the R-11 Tier-2 numeral: tabular-nums at full --foreground */
+.numeral { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.numeral small { font-size: 0.75rem; font-weight: 400; color: var(--muted); margin-left: 2px; }
+
+/* ReadinessBreakdown.tsx:22 — the GATE border chip. NOT a hue. */
+.gate-chip { display: inline-block; vertical-align: middle; margin-left: 6px; border-radius: 9999px; border: 1px solid var(--border); padding: 1px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.new-chip { display: inline-block; vertical-align: middle; border-radius: 9999px; border: 1px solid var(--accent); padding: 1px 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
+
+/* goal identity marks — GoalMark.tsx is a TEXT SPAN, aria-hidden, hue decorative */
+.mk { line-height: 1; font-size: 14px; }
+.mk.hs { color: var(--target); }   /* slot 0 ● Handstand */
+.mk.bc { color: var(--success); }  /* slot 1 ■ Body comp */
+.mk.aw { color: var(--accent); }   /* slot 2 ▲ AWS       */
+
+/* CappedMarker.tsx:10 — text-[10px] font-medium tracking-wide text-[var(--muted)] */
+.capped { margin-left: 4px; font-size: 10px; font-weight: 500; letter-spacing: 0.025em; color: var(--muted); }
+
+/* ── CeilingRule.tsx, reproduced faithfully ─────────────────────────────
+   py-1 wrapper + h-1.5 track + fill to the CAPPED score + a 2px --foreground
+   stile at the ceiling + the -45deg --muted hatch above it at opacity .6.
+   ceiling === 100 emits NEITHER stile NOR hatch. No transition, ever. */
+.rule { position: relative; padding: 4px 0; }
+.rule-track { position: relative; height: 6px; border-radius: 9999px; background: color-mix(in srgb, var(--border) 60%, transparent); overflow: hidden; }
+.rule-hatch { position: absolute; top: 0; bottom: 0; right: 0; opacity: .6; background-image: repeating-linear-gradient(-45deg, var(--muted) 0px, var(--muted) 1px, transparent 1px, transparent 4px); }
+.rule-fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 9999px; background: var(--accent); }
+.rule-stile { position: absolute; top: 0; bottom: 0; width: 2px; border-radius: 9999px; background: var(--foreground); }
+
+/* ── ProgramBlockBand.tsx — flexGrow: weight, flexBasis: 0 ────────────── */
+.band { display: flex; gap: 4px; }
+.band-seg { position: relative; height: 6px; border-radius: 9999px; background: color-mix(in srgb, var(--border) 60%, transparent); overflow: hidden; flex-basis: 0; }
+.band-seg > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 9999px; display: block; }
+.band-seg > i.cur { background: var(--accent); }
+.band-seg > i.past { background: color-mix(in srgb, var(--muted) 70%, transparent); }
+
+/* ── THE SEAM STRIP (R-17: DIVS, not SVG — CeilingRule/ReachMeter precedent)
+   Column HEIGHT encodes the nested tier. Oldest left → newest right (R-1).
+   Always-drawn baseline under all six columns. No positional threshold
+   marker (R-3) — the threshold is text in the tally rows below. */
+.seam-cols, .seam-baseline, .seam-dates { display: flex; gap: var(--seam-gap); }
+.seam-cols { align-items: flex-end; height: var(--seam-h); }
+.seam-col { width: var(--seam-col); display: flex; align-items: flex-end; }
+.seam-fill { width: 100%; border-radius: 2px 2px 0 0; background: var(--accent); }
+.seam-fill.t-gate { height: var(--seam-h); }
+.seam-fill.t-20   { height: calc(var(--seam-h) * 2 / 3); }
+.seam-fill.t-10   { height: calc(var(--seam-h) / 3); }
+.seam-fill.t-stub { height: var(--seam-stub); }
+.seam-baseline > span { width: var(--seam-col); height: var(--seam-base); border-radius: 1px; background: var(--border); display: block; }
+.seam-dates > span { width: var(--seam-col); font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: center; display: block; }
+/* alternate fill token, shown A/B in Panel 5 */
+.seam-alt .seam-fill { background: var(--foreground); }
+
+/* R-5 roll-off bracket — 1px --muted under-glyph pointer, aria-hidden,
+   omitted entirely when the window is not yet full */
+.rolloff { width: var(--seam-col); position: relative; height: 15px; }
+.rolloff .bar { position: absolute; top: 4px; left: 0; right: 0; height: 1px; background: var(--muted); }
+.rolloff .bar::before, .rolloff .bar::after { content: ""; position: absolute; top: -4px; width: 1px; height: 4px; background: var(--muted); }
+.rolloff .bar::before { left: 0; } .rolloff .bar::after { right: 0; }
+.rolloff .stem { position: absolute; top: 4px; left: 50%; margin-left: -1px; width: 2px; height: 10px; background: var(--muted); }
+
+/* tally rows — R-4: a TALLY, not a bar and not a status word alone */
+.tally { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-height: 26px; }
+.tally-l { font-size: 0.8125rem; }
+.tally-v { font-size: 0.875rem; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+/* Effort card — bars are max-normalized share in --muted, NOT --accent,
+   and carry NO role="progressbar" (the block is one role="img") */
+.effort-row { display: grid; grid-template-columns: 84px 1fr 68px; align-items: center; gap: 8px; min-height: 26px; }
+.effort-track { height: 6px; border-radius: 9999px; background: color-mix(in srgb, var(--border) 60%, transparent); overflow: hidden; }
+.effort-fill { height: 100%; border-radius: 9999px; background: var(--muted); }
+.effort-val { font-size: 0.8125rem; font-variant-numeric: tabular-nums; text-align: right; }
+
+/* rationale / Baseline.notes idiom — ReadinessBreakdown.tsx:47 */
+.rationale { font-size: 0.75rem; color: var(--muted); font-style: italic; border-left: 2px solid var(--border); padding-left: 8px; margin: 0; line-height: 1.45; }
+
+/* EmptyState.tsx — py-6 px-2 text-center, never an alarmed tone */
+.empty { padding: 24px 8px; text-align: center; }
+.empty p.t { font-weight: 500; margin: 0; font-size: 0.9375rem; }
+.empty div.b { font-size: 0.875rem; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+
+/* G1 section rule — ZoneDivider idiom: word + h-px flex-1 bg-[var(--border)] */
+.srule { display: flex; align-items: center; gap: 10px; min-height: 24px; }
+.srule span { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.srule i { display: block; flex: 1; height: 1px; background: var(--border); }
+
+/* interactive bits — all ≥44px */
+.pill { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 9999px; border: 1px solid var(--border); background: none; color: var(--foreground); font: inherit; font-size: 0.8125rem; text-decoration: none; cursor: pointer; }
+.pill:hover { border-color: var(--accent); }
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chips a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 9999px; border: 1px solid var(--border); font-size: 0.8125rem; color: var(--muted); text-decoration: none; }
+.chips a:hover { border-color: var(--accent); color: var(--accent); }
+.morelink { display: flex; align-items: center; justify-content: center; min-height: 44px; font-size: 0.875rem; color: var(--accent); text-decoration: none; }
+.cta { display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 12px; border: 1px solid var(--border); background: var(--card); font-size: 0.875rem; color: var(--foreground); text-decoration: none; }
+.cta:hover { border-color: var(--accent); }
+
+/* projected banner — UXR-63-13: banners cap at --warning, NEVER --danger.
+   --warning on the border/eyebrow only; body copy stays --foreground
+   (the 4.6:1 AA edge rule). */
+.projbanner { border: 1px solid var(--warning); border-left-width: 3px; border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--warning) 9%, var(--card)); }
+.projbanner p { margin: 0; }
+.projbanner .hd { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--warning); }
+.projbanner .bd { font-size: 0.75rem; margin-top: 3px; line-height: 1.45; }
+
+/* divided list */
+.divide { list-style: none; margin: 0; padding: 0; }
+.divide > li { padding: 10px 0; }
+.divide > li:first-child { padding-top: 0; }
+.divide > li:last-child { padding-bottom: 0; }
+.divide > li + li { border-top: 1px solid var(--border); }
+
+.rowline { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.recrow { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.recrow .g { flex: 0 0 24px; color: var(--muted); }
+.recrow .n { flex: 1 1 auto; font-size: 0.8125rem; }
+.recrow .v { font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+
+/* --font-display ceremony numeral (R-20: display serif is for numerals ≥20px
+   that mark a moment). Sanctioned use: the milestone card ONLY. */
+.ceremony { font-family: var(--font-display); font-size: 30px; line-height: 1.1; font-weight: 400; } /* ⚠[28–32] */
+
+/* ⚠ provisional marker — unobtrusive, and every one is listed in the footer */
+.pv { color: var(--warning); font-size: 9px; vertical-align: super; line-height: 0; cursor: help; }
+
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* GRAYSCALE CHECK — UXR-PV-05, the shipped acceptance test:
+   "a grayscale screenshot must lose nothing." The palette is iso-luminant
+   (--target↔--accent measures 1.16:1 light, --success↔--muted 1.00:1), so
+   any distinction that survives this button is carried by SHAPE or POSITION
+   and any distinction that dies was never real information. */
+body.gs .phone, body.gs .board { filter: grayscale(1); }
+
+.provisional { max-width: 1000px; margin: 30px auto 60px; padding: 22px 20px; border-top: 1px solid var(--border); }
+.provisional h2 { font-size: 15px; margin: 0 0 4px; }
+.provisional h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 22px 0 8px; }
+.provisional table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.provisional th, .provisional td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.provisional th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.provisional td.r { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--warning); font-weight: 600; }
+.provisional ol, .provisional ul { font-size: 12.5px; line-height: 1.6; padding-left: 20px; margin: 0; }
+.provisional li { margin-bottom: 7px; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="tbtn" id="themeBtn" type="button" aria-label="Theme: light (click to switch)">
+    <span aria-hidden="true" id="themeGlyph">☀</span><span id="themeLabel">light</span>
+  </button>
+  <button class="tbtn" id="gsBtn" type="button" aria-pressed="false">
+    <span aria-hidden="true">◑</span><span>grayscale check</span>
+  </button>
+</div>
+
+<header class="page-head">
+  <h1>Goaldmine · <code style="font-size:22px">/progress</code> complete overhaul</h1>
+  <p class="meta">Pixel mockup · 10 Aug 2026 · chosen direction: <b>Frequency Stack, Ruled</b> (Direction C + grafts G1/G2/G3) · every panel must be inspected in <b>both</b> themes <b>and</b> in grayscale</p>
+
+  <p class="guide">
+    <b>What this is.</b> Six 390px frames rendering the chosen <code>/progress</code> IA with the real
+    <code>globals.css</code> token block and the real Phase 2A fixtures. It is a <i>specification artifact</i>, not a
+    prototype: nothing fetches, nothing animates, and the only script is the two toggles. Card, strip, lid,
+    <code>CeilingRule</code>, <code>ProgramBlockBand</code>, <code>SeamLine</code>, <code>CappedMarker</code> and
+    <code>EmptyState</code> are hand-compiled from the shipped components so the chrome matches the markup that will
+    actually ship.
+  </p>
+  <p class="guide">
+    <b>Real vs projected.</b> <b>Panel 1 is the honest state on Program day 1</b> — every number in it is derived from
+    <code>phase2a-spec.ts</code> through <code>progressFor</code>, and where the engine returns <code>null</code> the
+    panel shows <i>no numeral at all</i>. <b>Panel 2 is a projection to ~20 Sep</b> and is marked as such on the frame,
+    in the panel title and in a banner; not one of its numbers is in the database today. <b>Panel 3 is a synthetic
+    legacy tenant</b> (no Program, one deadlift goal) drawn to prove the stack degrades by getting shorter rather than
+    by orphaning anything. <b>Panel 4 is a real zero-row invited user.</b> Panels 5 and 6 are component studies.
+  </p>
+  <p class="guide">
+    <b>The two toggles.</b> <b>Theme</b> (top right) cycles system → light → dark by writing <code>data-theme</code> on
+    <code>:root</code>, exactly as <code>ThemeToggle.tsx</code> does; the file defaults to light. Both themes are
+    normative — a mockup that is only correct in one is not correct. <b>Grayscale check</b> applies
+    <code>filter: grayscale(1)</code> to every frame. That is the shipped acceptance test
+    (<code>UXR-PV-05</code>): the palette is iso-luminant, so <i>a grayscale screenshot must lose nothing</i>. Press it
+    on every panel. If a distinction disappears, that distinction was never information.
+  </p>
+  <p class="guide">
+    <b>Reading the annotations.</b> Dashed-left grey text is annotation, never product UI. A small
+    <span class="pv" aria-hidden="true">⚠</span> beside a value means the px is <i>provisional</i> — the research gave a
+    range and this file picked a point inside it. Every one is listed with its range in the footer table. Do not read
+    any <span class="pv" aria-hidden="true">⚠</span> value as settled.
+  </p>
+</header>
+
+<main class="gallery">
+
+<!-- ══════════════════════════ PANEL 1 · DAY-1 TRUTH ══════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 1 · Day-1 truth · Mon 10 Aug 2026 · Program day 1 of 144</p>
+    <div class="phone">
+      <div class="apphdr"><span class="wm">goaldmine</span><span aria-hidden="true" class="muted">☀</span></div>
+      <div class="screen">
+        <div class="fold" aria-hidden="true"><i>fold · 737px<span class="pv">⚠</span></i></div>
+
+        <!-- [1] hero — R-19: the h1 stays "Progress" (it is the BottomNav tab label) -->
+        <section>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <h1 class="h1">Progress</h1>
+            <a class="pill" href="#p1">Program →</a>
+          </div>
+          <p class="subline" style="margin-top:6px">Phase 2A · Block 0 · day 1 of 144</p>
+        </section>
+
+        <!-- [2] jump chips — R-12: NOT sticky, scrolls away, <a href> only -->
+        <nav class="chips" aria-label="Jump to section">
+          <a href="#p1">Repeatability</a><a href="#p1">Effort</a><a href="#p1">Baselines</a>
+        </nav>
+
+        <!-- [3] program band — Tier 2. Never "Block 0 of 4". -->
+        <div class="strip">
+          <p class="eyebrow">Block 0</p>
+          <div class="band" aria-hidden="true">
+            <div class="band-seg" style="flex-grow:14"><i class="cur" style="width:7%"></i></div>
+            <div class="band-seg" style="flex-grow:56"></div>
+            <div class="band-seg" style="flex-grow:49"></div>
+            <div class="band-seg" style="flex-grow:21"></div>
+          </div>
+          <div class="rowline">
+            <p class="subline">Recovery + Baselines + DEXA Prep · week 1</p>
+            <span class="numeral" style="font-size:1rem">1</span>
+          </div>
+          <p class="sr">Block 0, Recovery plus Baselines plus DEXA Prep, week 1. Day 1 of 144.</p>
+        </div>
+
+        <!-- [4] G1 section rule -->
+        <div class="srule"><span>Repeatability</span><i aria-hidden="true"></i></div>
+
+        <!-- [5] THE SEAM STRIP — the only Tier-1 Card in the fold -->
+        <section class="card">
+          <header><h2 class="h2">Handstand repeatability</h2></header>
+          <p class="subline" style="margin-bottom:12px">Six most recent timed handstand sessions.</p>
+
+          <ol class="seam-cols" style="list-style:none;margin:0;padding:0" aria-label="Six most recent timed handstand sessions">
+            <li class="seam-col"><span class="sr">Slot 1: no session logged yet.</span></li>
+            <li class="seam-col"><span class="sr">Slot 2: no session logged yet.</span></li>
+            <li class="seam-col"><span class="sr">Slot 3: no session logged yet.</span></li>
+            <li class="seam-col"><span class="sr">Slot 4: no session logged yet.</span></li>
+            <li class="seam-col"><span class="sr">Slot 5: no session logged yet.</span></li>
+            <li class="seam-col"><span class="sr">Slot 6: no session logged yet.</span></li>
+          </ol>
+          <div class="seam-baseline" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <p class="body-sm" style="margin:12px 0 12px">No timed handstand session logged yet.</p>
+
+          <div class="tally"><span class="tally-l">≥10s hold</span><span class="tally-v">— of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">≥20s hold</span><span class="tally-v">— of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">3× ≥20s in one session<span class="gate-chip">gate</span></span><span class="tally-v">— of 6 · <span class="muted">needs 1</span></span></div>
+
+          <p class="subline" style="margin-top:12px">Gates are mastery checks — the score waits for them, it doesn't lose points.</p>
+          <p class="subline" style="margin-top:6px">Baselines re-test in weeks 10 and 19 — the strip moves in between.</p>
+        </section>
+
+        <!-- [6] goal strips ×3 -->
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk hs" aria-hidden="true">●</span> Handstand — Phase 2A</span>
+            <span class="numeral">0<small>/100</small></span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Handstand — Phase 2A readiness, 0 of 100, ceiling 80">
+            <div class="rule-track">
+              <div class="rule-hatch" aria-hidden="true" style="left:80%"></div>
+              <div class="rule-fill" aria-hidden="true" style="width:0%"></div>
+            </div>
+            <div class="rule-stile" aria-hidden="true" style="left:calc(80% - 1px)"></div>
+          </div>
+          <p class="subline">2 gates to clear before this can pass 80.</p>
+          <p class="subline">2 of 9 targets have a reading; neither has moved off its start yet.</p>
+        </div>
+
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk bc" aria-hidden="true">■</span> Reach 10% body fat</span>
+            <span class="numeral">0<small>/100</small></span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Reach 10% body fat readiness, 0 of 100">
+            <div class="rule-track"><div class="rule-fill" aria-hidden="true" style="width:0%"></div></div>
+          </div>
+          <p class="subline">1 of 3 targets has a reading.</p>
+        </div>
+
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk aw" aria-hidden="true">▲</span> Pass the AWS SAA exam</span>
+          </div>
+          <p class="body-sm">Not measured yet</p>
+          <p class="subline">0 of 3 targets have a reading. Log the first one and this starts moving.</p>
+        </div>
+
+        <!-- [7] next readings — the day-1 win, ScheduledCheckpoint data nothing reads today -->
+        <div class="strip">
+          <p class="eyebrow">Next readings</p>
+          <div class="rowline">
+            <p class="body-sm">S1 today · S2 Wed Aug 12 · S3 Thu Aug 13</p>
+            <span class="numeral" style="font-size:1rem">3</span>
+          </div>
+        </div>
+
+        <!-- [8] records — honest zero-state, R-25: NO invented numeral -->
+        <div class="strip">
+          <p class="eyebrow">Recent records · last 21 days<span class="pv">⚠</span></p>
+          <p class="body-sm">No records in the last 21 days</p>
+          <p class="subline">A record lands the first time a logged set beats your previous best.</p>
+        </div>
+
+        <!-- [9] G1 section rule -->
+        <div class="srule"><span>Effort</span><i aria-hidden="true"></i></div>
+
+        <!-- [10] effort — EmptyState, never four rows of "0 XP" -->
+        <section class="card">
+          <header><h2 class="h2">Effort this Program</h2></header>
+          <div class="empty">
+            <p class="t">No logged effort in this Program yet</p>
+            <div class="b">Counts XP earned since Aug 10. Effort, not outcome.</div>
+          </div>
+        </section>
+
+        <!-- [11] baselines — G2: OPEN Tier-1, not a lid -->
+        <section class="card">
+          <header>
+            <h2 class="h2">Baseline tests</h2>
+            <span class="digest">2 of 6 measured<span class="pv">⚠</span></span>
+          </header>
+          <ul class="divide">
+            <li>
+              <p class="eyebrow warn">Below floor · 20</p>
+              <div class="rowline" style="margin-top:4px"><span class="body-sm">Pull-up max (lean-mass canary)</span></div>
+              <p class="subline" style="margin-top:2px">20 reps · pre-program reading · floor 25</p>
+              <p class="subline">Re-tests Thu Aug 13 (S3).</p>
+              <div class="rowline" style="margin-top:6px">
+                <span class="eyebrow">Shared by 2 goals</span>
+                <span style="display:flex;gap:4px" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span></span>
+              </div>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Wall handstand push-up<span class="gate-chip">gate</span></span><span class="subline">Not tested</span></div>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Max freestanding hold</span><span class="body-sm tnum">10 sec · Aug 9</span></div>
+              <p class="subline" style="margin-top:2px">start 10 → target 20 · no gain yet</p>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Chest-to-wall handstand hold</span><span class="subline">Not tested</span></div>
+            </li>
+          </ul>
+          <a class="morelink" href="#p1">Show all 6 →</a>
+          <p class="subline">Retests are readings, not verdicts. A low retest under fatigue is still the honest number.</p>
+        </section>
+
+        <!-- [12] body composition — degrades to Tier 2 on day 1; see notes -->
+        <div class="strip">
+          <p class="eyebrow">Body composition</p>
+          <p class="body-sm">No reading yet</p>
+          <p class="subline">First DEXA is Sep 3.</p>
+        </div>
+
+        <!-- [13] metrics lid -->
+        <details class="lid">
+          <summary><span class="lid-title">Program-window metrics</span><span class="digest">2 of 14 measured<span class="pv">⚠</span></span><span class="chev" aria-hidden="true">▼</span></summary>
+          <div><p class="subline">A row per metric the Program's goals claim. Opens to the full list.</p></div>
+        </details>
+
+        <!-- [17] recap CTA — moved from position 2 to LAST (fixes P13) -->
+        <a class="cta" href="#p1">Share weekly recap →</a>
+      </div>
+      <div class="btmnav" aria-hidden="true"><span>Today</span><span>Plan</span><span class="on">Progress</span><span>Goals</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>Every number here is engine-derived.</b> ● is <code>2 of 9</code> tested with a rawScore of
+      <code>0</code> because the handstand hold reads 10 against a start of 10 and Pull-Up has
+      <code>start === target</code> — both return <b>0, not null</b>. That is <b>R-23</b>: the numeral is real, so it
+      renders, and the new fourth branch supplies the sentence that stops a bare <code>0/100</code> reading as failure.</p>
+    <p class="note"><b>▲ AWS has no numeral at all.</b> All three <code>log:*</code> targets are cumulative, so
+      <code>_sum.value</code> is <code>null</code> at zero rows — not <code>0</code>. <b>R-25</b> carves this out of
+      R-11: a strip in a documented zero-state stays distinguishable from a lid by having no <code>▼</code> and no
+      digest rail. Never invent a <code>0</code> to satisfy a layout rule.</p>
+    <p class="note"><b>All three rolling tiers read <code>— of 6</code>, and all three <code>needs N</code> labels
+      still render.</b> This is <code>CeilingRule</code>'s trick applied to rolling — the ladder, the bar and the fact
+      that the number can go <i>down</i> are all taught on day one, while none of it can cost anything yet.</p>
+    <p class="note"><b>Zero charts.</b> The readiness series has one cursor ("a trend needs two") and there are no
+      measurements, so no <code>SeamLine</code>, no Recharts. Body composition therefore degrades from its Tier-1
+      chart card to a Tier-2 no-reading strip — an empty chart frame is forbidden.</p>
+    <p class="note">Deleted, visibly: the <b>Totals</b> card (P19) and the top-of-page 64px <b>Share weekly recap</b>
+      pill, which now sits last (P13).</p>
+    <p class="note"><span class="flag">⚠</span> The fold line is real, not drawn — it sits at a true 737px below the
+      content top. Check that the ▲ strip still clears it after the real Geist metrics land.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════ PANEL 2 · PROJECTED ══════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 2 · <em>Projected</em> · ~Sun 20 Sep 2026 · day 42 of 144 · <em>illustrative, not real data</em></p>
+    <div class="phone projected">
+      <div class="apphdr"><span class="wm">goaldmine</span><span aria-hidden="true" class="muted">☀</span></div>
+      <div class="screen">
+        <div class="fold" aria-hidden="true"><i>fold · 737px<span class="pv">⚠</span></i></div>
+
+        <div class="projbanner">
+          <p class="hd">Projected — illustrative, not real data</p>
+          <p class="bd">Nothing on this frame is in the database. It walks the S1–S3 battery forward plus six handstand
+            sessions and one DEXA, to show the page with content. Panel 1 is the truth.</p>
+        </div>
+
+        <section>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <h1 class="h1">Progress</h1>
+            <a class="pill" href="#p2">Program →</a>
+          </div>
+          <p class="subline" style="margin-top:6px">Phase 2A · Block 1 · day 42 of 144</p>
+        </section>
+
+        <nav class="chips" aria-label="Jump to section">
+          <a href="#p2">Repeatability</a><a href="#p2">Effort</a><a href="#p2">Baselines</a><a href="#p2">Body comp</a>
+        </nav>
+
+        <div class="strip">
+          <p class="eyebrow">Block 1</p>
+          <div class="band" aria-hidden="true">
+            <div class="band-seg" style="flex-grow:14"><i class="past" style="width:100%"></i></div>
+            <div class="band-seg" style="flex-grow:56"><i class="cur" style="width:50%"></i></div>
+            <div class="band-seg" style="flex-grow:49"></div>
+            <div class="band-seg" style="flex-grow:21"></div>
+          </div>
+          <div class="rowline">
+            <p class="subline">Skill Acquisition + Moderate Deficit · week 6</p>
+            <span class="numeral" style="font-size:1rem">42</span>
+          </div>
+        </div>
+
+        <div class="srule"><span>Repeatability</span><i aria-hidden="true"></i></div>
+
+        <section class="card">
+          <header><h2 class="h2">Handstand repeatability</h2></header>
+          <p class="subline" style="margin-bottom:12px">Six most recent timed handstand sessions.</p>
+
+          <ol class="seam-cols" style="list-style:none;margin:0;padding:0" aria-label="Six most recent timed handstand sessions">
+            <li class="seam-col"><span class="seam-fill t-10" aria-hidden="true"></span><span class="sr">Aug 26: reached 10 seconds.</span></li>
+            <li class="seam-col"><span class="seam-fill t-stub" aria-hidden="true"></span><span class="sr">Sep 1: attempted, no hold reached 10 seconds.</span></li>
+            <li class="seam-col"><span class="seam-fill t-10" aria-hidden="true"></span><span class="sr">Sep 5: reached 10 seconds.</span></li>
+            <li class="seam-col"><span class="seam-fill t-20" aria-hidden="true"></span><span class="sr">Sep 9: reached 20 seconds.</span></li>
+            <li class="seam-col"><span class="seam-fill t-20" aria-hidden="true"></span><span class="sr">Sep 14: reached 20 seconds.</span></li>
+            <li class="seam-col"><span class="seam-fill t-20" aria-hidden="true"></span><span class="sr">Sep 18: reached 20 seconds.</span></li>
+          </ol>
+          <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="seam-dates" aria-hidden="true">
+            <span>Aug 26<span class="pv">⚠</span></span><span>Sep 1</span><span>Sep 5</span><span>Sep 9</span><span>Sep 14</span><span>Sep 18</span>
+          </div>
+
+          <!-- R-5 roll-off bracket: an EXPLANATION, never a countdown. aria-hidden. -->
+          <div class="rolloff" aria-hidden="true"><span class="bar"></span><span class="stem"></span></div>
+          <p class="subline" style="margin-bottom:12px">Aug 26 is the oldest session in the window. It leaves when the next timed session is logged.</p>
+
+          <div class="tally"><span class="tally-l">≥10s hold</span><span class="tally-v">5 of 6 · <span class="succ">HOLDING</span></span></div>
+          <div class="tally"><span class="tally-l">≥20s hold</span><span class="tally-v">3 of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">3× ≥20s in one session<span class="gate-chip">gate</span></span><span class="tally-v">0 of 6 · <span class="muted">needs 1</span></span></div>
+
+          <p class="subline" style="margin-top:12px">2 handstand sessions in this stretch logged no hold time — untimed sets aren't attempts.</p>
+          <p class="subline" style="margin-top:6px">Gates are mastery checks — the score waits for them, it doesn't lose points.</p>
+          <p class="subline" style="margin-top:6px">Baselines re-test in weeks 10 and 19 — the strip moves in between.</p>
+        </section>
+
+        <!-- ● Handstand -->
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk hs" aria-hidden="true">●</span> Handstand — Phase 2A</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span role="img" aria-label="Readiness trend, 7 weekly readings, rising from 0 to 22." style="display:inline-block;line-height:0">
+                <svg aria-hidden="true" width="96" height="20" viewBox="0 0 100 100" preserveAspectRatio="none" style="display:block">
+                  <polyline points="0,92 16.67,92 33.33,76.73 50,57.64 66.67,42.36 83.33,23.27 100,8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+                </svg></span>
+              <span class="numeral">22<small>/100</small></span>
+            </span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="22" aria-valuemin="0" aria-valuemax="100" aria-label="Handstand — Phase 2A readiness, 22 of 100, ceiling 80">
+            <div class="rule-track">
+              <div class="rule-hatch" aria-hidden="true" style="left:80%"></div>
+              <div class="rule-fill" aria-hidden="true" style="width:22%"></div>
+            </div>
+            <div class="rule-stile" aria-hidden="true" style="left:calc(80% - 1px)"></div>
+          </div>
+          <p class="subline">2 gates to clear before this can pass 80.</p>
+        </div>
+
+        <!-- ■ Body comp -->
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk bc" aria-hidden="true">■</span> Reach 10% body fat</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span role="img" aria-label="Readiness trend, 7 weekly readings, rising from 0 to 16." style="display:inline-block;line-height:0">
+                <svg aria-hidden="true" width="96" height="20" viewBox="0 0 100 100" preserveAspectRatio="none" style="display:block">
+                  <polyline points="0,92 16.67,92 33.33,92 50,50 66.67,50 83.33,8 100,8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+                </svg></span>
+              <span class="numeral">16<small>/100</small></span>
+            </span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="16" aria-valuemin="0" aria-valuemax="100" aria-label="Reach 10% body fat readiness, 16 of 100">
+            <div class="rule-track"><div class="rule-fill" aria-hidden="true" style="width:16%"></div></div>
+          </div>
+          <p class="subline">Measured score 29 · 16 counting body fat as 0.</p>
+        </div>
+
+        <!-- ▲ AWS -->
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk aw" aria-hidden="true">▲</span> Pass the AWS SAA exam</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span role="img" aria-label="Readiness trend, 7 weekly readings, rising from 0 to 22." style="display:inline-block;line-height:0">
+                <svg aria-hidden="true" width="96" height="20" viewBox="0 0 100 100" preserveAspectRatio="none" style="display:block">
+                  <polyline points="0,92 16.67,80.55 33.33,65.27 50,50 66.67,34.73 83.33,19.45 100,8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+                </svg></span>
+              <span class="numeral">22<small>/100</small></span>
+            </span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="22" aria-valuemin="0" aria-valuemax="100" aria-label="Pass the AWS SAA exam readiness, 22 of 100, ceiling 80">
+            <div class="rule-track">
+              <div class="rule-hatch" aria-hidden="true" style="left:80%"></div>
+              <div class="rule-fill" aria-hidden="true" style="width:22%"></div>
+            </div>
+            <div class="rule-stile" aria-hidden="true" style="left:calc(80% - 1px)"></div>
+          </div>
+          <p class="subline">Measured score 29 · 22 counting the untested target as 0.</p>
+          <p class="subline">1 gate to clear before this can pass 80.</p>
+        </div>
+
+        <div class="strip">
+          <p class="eyebrow">Next readings</p>
+          <div class="rowline">
+            <p class="body-sm">Photos Oct 1 · Retest week Oct 12–18 · DEXA #2 Oct 18</p>
+            <span class="numeral" style="font-size:1rem">3</span>
+          </div>
+        </div>
+
+        <!-- records — R-26: glyph column DROPPED, this feed is single-kind -->
+        <div class="strip">
+          <p class="eyebrow">Recent records · last 21 days<span class="pv">⚠</span></p>
+          <div class="recrow"><span class="n">L-sit (parallettes)</span><span class="v">30 → 38 sec</span><span class="v muted">Sep 12</span></div>
+          <div class="recrow"><span class="n">Pike push-up</span><span class="v">8 → 10 reps</span><span class="v muted">Sep 9</span></div>
+          <div class="recrow"><span class="n">Freestanding handstand <span class="new-chip">new</span></span><span class="v" style="color:var(--accent)">18 → 22 sec</span><span class="v muted">Sep 18</span></div>
+          <div class="rowline"><span class="subline">Ranked by relative improvement.</span><span class="numeral" style="font-size:1rem">3</span></div>
+        </div>
+
+        <div class="srule"><span>Effort</span><i aria-hidden="true"></i></div>
+
+        <!-- Effort — the ONE game signal that moves (R-7). Bars are --muted, not --accent.
+             No role="progressbar" anywhere: the block is one role="img". -->
+        <section class="card">
+          <header><h2 class="h2">Effort this Program</h2></header>
+          <div role="img" aria-label="Effort this Program: Strength 1,240 XP, Mobility 880 XP, Conditioning 420 XP, Endurance 310 XP.">
+            <div class="effort-row" aria-hidden="true"><span class="body-sm">Strength</span><span class="effort-track"><span class="effort-fill" style="width:100%"></span></span><span class="effort-val">1,240 XP</span></div>
+            <div class="effort-row" aria-hidden="true"><span class="body-sm">Mobility</span><span class="effort-track"><span class="effort-fill" style="width:71%"></span></span><span class="effort-val">880 XP</span></div>
+            <div class="effort-row" aria-hidden="true"><span class="body-sm">Conditioning</span><span class="effort-track"><span class="effort-fill" style="width:34%"></span></span><span class="effort-val">420 XP</span></div>
+            <div class="effort-row" aria-hidden="true"><span class="body-sm">Endurance</span><span class="effort-track"><span class="effort-fill" style="width:25%"></span></span><span class="effort-val">310 XP</span></div>
+          </div>
+          <p class="subline" style="margin-top:10px">Effort, not outcome.</p>
+        </section>
+
+        <!-- Baselines — G2, open, weight-desc with the BELOW FLOOR canary pinned to 1 -->
+        <section class="card">
+          <header>
+            <h2 class="h2">Baseline tests</h2>
+            <span class="digest">6 of 6 measured<span class="pv">⚠</span></span>
+          </header>
+          <ul class="divide">
+            <li>
+              <p class="eyebrow warn">Below floor · 23</p>
+              <div class="rowline" style="margin-top:4px"><span class="body-sm">Pull-up max (lean-mass canary)</span></div>
+              <p class="subline" style="margin-top:2px">23 reps · Sep 14 · 25 reps on Aug 13</p>
+              <p class="rationale" style="margin-top:6px">tested at the end of a deficit week, 3rd movement in the order — not the S3 sequence</p>
+              <div class="rowline" style="margin-top:6px">
+                <span class="eyebrow">Shared by 2 goals</span>
+                <span style="display:flex;gap:4px" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span></span>
+              </div>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Wall handstand push-up<span class="gate-chip">gate</span></span><span class="body-sm tnum">0 reps · Aug 12</span></div>
+              <p class="subline" style="margin-top:2px">measured at 0 full-ROM reps · target 5</p>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Max freestanding hold</span><span class="body-sm tnum">12 sec · Aug 10</span></div>
+              <p class="subline" style="margin-top:2px">start 10 → target 20 · next reading in retest week 10</p>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Chest-to-wall handstand hold</span><span class="body-sm tnum">30 sec · Aug 13</span></div>
+              <p class="subline" style="margin-top:2px">start 30 → target 120 · no gain yet</p>
+            </li>
+          </ul>
+          <a class="morelink" href="#p2">Show all 6 →</a>
+          <p class="subline">Retests are readings, not verdicts. A low retest under fatigue is still the honest number.</p>
+        </section>
+
+        <!-- Body composition — the page's ONE Recharts mount (G3: it has an owner) -->
+        <section class="card">
+          <header><h2 class="h2">Body composition</h2></header>
+          <div class="rowline" style="margin-bottom:8px">
+            <span class="numeral">150.2<small> lb · Sep 19</small></span>
+            <span class="subline tnum">155 lb on Aug 24</span>
+          </div>
+          <!-- Stands in for WeightChart (Recharts LineChart, h-48, margin {8,8,-16,0}).
+               Grid --border 3 3 · axes --muted 11px, no tickLine, no axisLine ·
+               line --accent 2px · dot r=3 · isAnimationActive guarded (UXR-PV-94). -->
+          <div role="img" aria-label="Weight, Aug 24 to Sep 19: 155.0, 154.1, 153.4, 152.6, 152.9, 151.8, 151.0, 150.2 lb.">
+            <svg aria-hidden="true" width="326" height="192" viewBox="0 0 326 192" style="display:block;max-width:100%">
+              <g stroke="var(--border)" stroke-dasharray="3 3" stroke-width="1">
+                <line x1="34" y1="8" x2="318" y2="8"/><line x1="34" y1="53.71" x2="318" y2="53.71"/>
+                <line x1="34" y1="99.43" x2="318" y2="99.43"/><line x1="34" y1="145.14" x2="318" y2="145.14"/>
+                <line x1="34" y1="8" x2="34" y2="168"/><line x1="115.14" y1="8" x2="115.14" y2="168"/>
+                <line x1="196.29" y1="8" x2="196.29" y2="168"/><line x1="277.43" y1="8" x2="277.43" y2="168"/>
+              </g>
+              <g fill="var(--muted)" font-size="11" font-family="system-ui, sans-serif">
+                <text x="28" y="11.5" text-anchor="end">156</text><text x="28" y="57.2" text-anchor="end">154</text>
+                <text x="28" y="102.9" text-anchor="end">152</text><text x="28" y="148.6" text-anchor="end">150</text>
+                <text x="34" y="184">Aug 24</text><text x="115.14" y="184" text-anchor="middle">Sep 1</text>
+                <text x="230" y="184" text-anchor="middle">Sep 12</text><text x="318" y="184" text-anchor="end">Sep 19</text>
+              </g>
+              <polyline points="34,30.86 74.57,51.43 115.14,67.43 155.71,85.71 196.29,78.86 236.86,104 277.43,122.29 318,140.57"
+                        fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <g fill="var(--accent)">
+                <circle cx="34" cy="30.86" r="3"/><circle cx="74.57" cy="51.43" r="3"/><circle cx="115.14" cy="67.43" r="3"/>
+                <circle cx="155.71" cy="85.71" r="3"/><circle cx="196.29" cy="78.86" r="3"/><circle cx="236.86" cy="104" r="3"/>
+                <circle cx="277.43" cy="122.29" r="3"/><circle cx="318" cy="140.57" r="3"/>
+              </g>
+            </svg>
+          </div>
+          <p class="body-sm" style="margin-top:8px">Body fat 16.4% · Sep 3 DEXA · target 10%</p>
+          <p class="subline" style="margin-top:4px">Body fat is logged but not scored yet — it counts as 0 at weight 45.</p>
+        </section>
+
+        <details class="lid">
+          <summary><span class="lid-title">Program-window metrics</span><span class="digest">5 of 14 measured<span class="pv">⚠</span></span><span class="chev" aria-hidden="true">▼</span></summary>
+          <div><p class="subline">A row per metric the Program's goals claim. Opens to the full list.</p></div>
+        </details>
+
+        <!-- Milestone — R-13 conditional, R-27: renders null until a FootageMarker exists -->
+        <section class="card">
+          <header><h2 class="h2">First video-verified freestanding hold</h2></header>
+          <p class="ceremony">10 s<span class="pv">⚠</span></p>
+          <p class="subline" style="margin-top:6px">Aug 9 · frame est 10.7s, conservative floor 10.0 · 2nd occurrence ever</p>
+        </section>
+
+        <a class="cta" href="#p2">Share weekly recap →</a>
+      </div>
+      <div class="btmnav" aria-hidden="true"><span>Today</span><span>Plan</span><span class="on">Progress</span><span>Goals</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>The projection reconciles.</b> ● rawScore 22 = ≥10s at 5/6 (met, w.08) + ≥20s at 3/4 (w.15) +
+      the hold at 12 sec (w.12 × 0.2), with every other baseline sitting on its start. ■ 16 = weight 155→150.2 against
+      a 143 target at w.40. ▲ 22 with a measured score of 29 = 34/120 study hours and 7/23 sections, practice exam
+      untested. Body fat scores <b><code>null</code>, not a value</b> — <code>start</code> is deliberately omitted in
+      the fixture, so it never reaches the numerator.</p>
+    <p class="note"><b>R-24, the most valuable thing on the page.</b> The strip shows three ≥20s sessions while the
+      baseline row still reads <code>12 sec</code>, because baselines are protocol-gated to weeks 10 and 19. One
+      sentence on the strip footer makes that read as design rather than as a bug, and it is what lets baselines sit
+      six sections lower without losing the insight.</p>
+    <p class="note"><b>The roll-off is an explanation, not a countdown</b> — and it cannot become one, because the
+      oldest column falls off when the <i>next qualifying session</i> is logged, not on a date. The anxiety framing is
+      structurally unavailable.</p>
+    <p class="note"><b>Wall HSPU shows <code>0 reps · Aug 12</code>, not "Not tested".</b> The date is the whole tell:
+      a real measured 0 carries a date, an unmeasured one carries the words. <span class="flag">⚠ playtest</span> —
+      this is the thinnest distinction in the file and it is exactly the "a 0 that means unmeasured" hazard, inverted.</p>
+    <p class="note"><b>One Recharts mount.</b> Readiness trends are <code>SeamLine</code> — server SVG,
+      <code>preserveAspectRatio="none"</code>, <code>non-scaling-stroke</code>, <b>no terminal circle</b> (it would
+      render as an ellipse). The adjacent tabular numeral is the endpoint cue.</p>
+    <p class="note"><span class="flag">⚠</span> The milestone card is drawn as it <i>would</i> render. Today it returns
+      <code>null</code>: zero <code>FootageMarker</code> rows exist. One <code>log_footage</code> call with
+      <code>highlight: true</code> is the entire fix — a launch-checklist item, not code (R-27).</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 3 · ZERO-PROGRAM LEGACY TENANT ══════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 3 · Zero-Program legacy tenant · synthetic, not Phase 2A</p>
+    <div class="phone">
+      <div class="apphdr"><span class="wm">goaldmine</span><span aria-hidden="true" class="muted">☀</span></div>
+      <div class="screen">
+        <section>
+          <h1 class="h1">Progress</h1>
+          <p class="subline" style="margin-top:6px">Deadlift 405 lb · target Mar 1, 2027</p>
+        </section>
+
+        <!-- No band strip: no Program. No Seam Strip: no rolling:* target.
+             No section rules: neither of the two sections they label renders.
+             Nothing is orphaned and no label points at emptiness. -->
+
+        <div class="strip">
+          <div class="rowline">
+            <span><span class="mk hs" aria-hidden="true">●</span> Deadlift 405 lb</span>
+            <span style="display:flex;align-items:center;gap:8px">
+              <span role="img" aria-label="Readiness trend, 7 readings, rising from 22 to 41." style="display:inline-block;line-height:0">
+                <svg aria-hidden="true" width="96" height="20" viewBox="0 0 100 100" preserveAspectRatio="none" style="display:block">
+                  <polyline points="0,92 16.67,74.32 33.33,56.63 50,43.37 66.67,30.11 83.33,16.84 100,8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+                </svg></span>
+              <span class="numeral">41<small>/100</small></span>
+            </span>
+          </div>
+          <div class="rule" role="progressbar" aria-valuenow="41" aria-valuemin="0" aria-valuemax="100" aria-label="Deadlift 405 lb readiness, 41 of 100">
+            <div class="rule-track"><div class="rule-fill" aria-hidden="true" style="width:41%"></div></div>
+          </div>
+          <p class="subline succ">All gates cleared.</p>
+        </div>
+
+        <!-- R-26: HERE the glyph column earns its keep — the kinds actually interleave.
+             24px is a hard floor: `ruler` is 4 hairlines at 1.4px plus a rotate. -->
+        <div class="strip">
+          <p class="eyebrow">Recent records · last 21 days<span class="pv">⚠</span></p>
+          <div class="recrow">
+            <span class="g" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" style="display:block;color:var(--muted)">
+                <path d="M7 3h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5V3z" fill="currentColor"/>
+                <path d="M7 4.5H4.5A2.5 2.5 0 0 0 7 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <path d="M17 4.5h2.5A2.5 2.5 0 0 1 17 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <rect x="10.5" y="12" width="3" height="4" fill="currentColor"/>
+                <rect x="6.5" y="18.5" width="11" height="2.2" rx="1.1" fill="currentColor"/>
+                <path d="M8.5 16.2h7l1.2 2.3h-9.4l1.2-2.3z" fill="currentColor"/>
+              </svg></span>
+            <span class="n">Deadlift</span><span class="v">365 → 375 lb</span><span class="v muted">Aug 2</span>
+          </div>
+          <div class="recrow">
+            <span class="g" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" style="display:block;color:var(--muted)">
+                <path d="M2 19.5L8.5 7l3.2 5.6 2-3 8.3 10.9H2z" fill="currentColor"/>
+              </svg></span>
+            <span class="n">Mission Peak</span><span class="v">2,517 ft · 6.4 mi</span><span class="v muted">Jul 30</span>
+          </div>
+          <div class="rowline"><span class="subline">A PR and a hike, in one feed.</span><span class="numeral" style="font-size:1rem">2</span></div>
+        </div>
+
+        <!-- Effort card renders null: no Program window, so no window-scoped delta.
+             Do NOT substitute a rolling 30-day window — that breaks R-SPLIT. -->
+
+        <section class="card">
+          <header>
+            <h2 class="h2">Baseline tests</h2>
+            <span class="digest">6 of 8 measured · 1 capped</span>
+          </header>
+          <ul class="divide">
+            <li>
+              <div class="rowline">
+                <span class="body-sm">Goblet squat 5RM</span>
+                <span class="body-sm tnum">65 lb<span class="capped" title="Capped by equipment ceiling — a plateau at this value is expected" aria-label="capped by equipment ceiling">▲cap</span> · Jul 28</span>
+              </div>
+              <!-- CHANNEL 2: SeamLine gains rule?: number — a horizontal line survives the
+                   non-uniform scale undistorted where a terminal circle would become an ellipse.
+                   A flat series sitting ON a drawn ceiling reads PINNED, not stalled. -->
+              <div style="margin-top:8px" role="img" aria-label="Goblet squat 5RM history: 45, 50, 55, 60, then flat at the 65 lb equipment cap for four readings.">
+                <svg aria-hidden="true" width="120" height="24" viewBox="0 0 100 100" preserveAspectRatio="none" style="display:block">
+                  <line x1="0" y1="8" x2="100" y2="8" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+                  <polyline points="0,92 14.29,71 28.57,50 42.86,29 57.14,8 71.43,8 85.71,8 100,8" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+                </svg>
+              </div>
+              <p class="subline" style="margin-top:4px">cap 65 lb · dumbbell maximum</p>
+
+              <!-- CHANNEL 3: the first time capped ever reaches a chart (fixes audit P6).
+                   ReferenceLine y=cap in --muted 4 4 + capped points drawn as flat-topped
+                   6×2px bars instead of r=3 — a SHAPE channel, grayscale-safe, no new color. -->
+              <div style="margin-top:10px" role="img" aria-label="Goblet squat 5RM, 12 months: 45, 50, 55, 60, then 65 lb at the equipment cap for the last three readings.">
+                <svg aria-hidden="true" width="290" height="160" viewBox="0 0 326 160" style="display:block;max-width:100%">
+                  <g stroke="var(--border)" stroke-dasharray="3 3" stroke-width="1">
+                    <line x1="34" y1="8" x2="318" y2="8"/><line x1="34" y1="50.67" x2="318" y2="50.67"/>
+                    <line x1="34" y1="93.33" x2="318" y2="93.33"/><line x1="34" y1="136" x2="318" y2="136"/>
+                  </g>
+                  <line x1="34" y1="29.33" x2="318" y2="29.33" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1"/>
+                  <text x="318" y="25" text-anchor="end" fill="var(--muted)" font-size="11" font-family="system-ui, sans-serif">equipment cap</text>
+                  <g fill="var(--muted)" font-size="11" font-family="system-ui, sans-serif">
+                    <text x="28" y="11.5" text-anchor="end">70</text><text x="28" y="54.2" text-anchor="end">60</text>
+                    <text x="28" y="96.8" text-anchor="end">50</text><text x="28" y="139.5" text-anchor="end">40</text>
+                    <text x="34" y="154">Sep</text><text x="176" y="154" text-anchor="middle">Mar</text><text x="318" y="154" text-anchor="end">Jul</text>
+                  </g>
+                  <polyline points="34,114.67 81.33,93.33 128.67,72 176,50.67 223.33,29.33 270.67,29.33 318,29.33"
+                            fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <g fill="var(--accent)">
+                    <circle cx="34" cy="114.67" r="3"/><circle cx="81.33" cy="93.33" r="3"/>
+                    <circle cx="128.67" cy="72" r="3"/><circle cx="176" cy="50.67" r="3"/>
+                    <rect x="220.33" y="28.33" width="6" height="2"/><rect x="267.67" y="28.33" width="6" height="2"/><rect x="315" y="28.33" width="6" height="2"/>
+                  </g>
+                </svg>
+              </div>
+            </li>
+            <li>
+              <div class="rowline"><span class="body-sm">Barbell row 5RM</span><span class="body-sm tnum">135 lb · Jul 21</span></div>
+            </li>
+          </ul>
+          <a class="morelink" href="#p3">Show all 8 →</a>
+          <p class="subline">Retests are readings, not verdicts. A low retest under fatigue is still the honest number.</p>
+        </section>
+
+        <a class="cta" href="#p3">Share weekly recap →</a>
+      </div>
+      <div class="btmnav" aria-hidden="true"><span>Today</span><span>Plan</span><span class="on">Progress</span><span>Goals</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>The whole argument for Direction C is this panel.</b> Five sections simply do not render — band,
+      Seam Strip, both rules, Effort — and the stack just gets shorter. No section label points at emptiness, no chip
+      row anchors to one target, nothing is orphaned. Compare the alternatives, where a named-section page collapses to
+      one section and a Program-container page degrades to exactly the page that ships today.</p>
+    <p class="note"><b>The three-channel <code>▲cap</code>.</b> (1) <code>CappedMarker</code>'s <code>▲cap</code> text
+      on the row; (2) <code>SeamLine</code> gains <code>rule?: number</code>, ~6 lines, drawing a dashed horizontal at
+      the cap so the flat tail reads as <i>pinned</i>, not stalled; (3) the Recharts
+      <code>ReferenceLine</code> plus capped points rendered as flat-topped 6×2px bars instead of
+      <code>r=3</code> — a shape channel, so it survives the grayscale check. Channel 3 is the first time capped has
+      ever reached a chart (audit P6).</p>
+    <p class="note"><b>Rule: never place a <code>CappedMarker</code> inside a <code>MarkLane</code>.</b>
+      <code>▲cap</code> reuses <code>▲</code>, the AWS goal mark. It survives only because <code>▲cap</code> is a
+      compound token always adjacent to its word, while a goal mark is always alone in a 64px lane.</p>
+    <p class="note"><b>This is the one tenant where the glyph column earns its keep</b> — a PR and a hike interleave, so
+      the shapes disambiguate. On Panel 2 all three rows are the same kind and the column is dropped (R-26); a glyph on
+      every row of a single-kind list is the "three trophies read as clip-art" failure.</p>
+    <p class="note"><span class="flag">⚠</span> Numbers on this panel are a synthetic legacy tenant, invented to
+      exercise the degradation path. They are not Phase 2A and must not be read as real.</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 4 · ZERO-ROW INVITED USER ══════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 4 · Zero-row invited user · first login</p>
+    <div class="phone">
+      <div class="apphdr"><span class="wm">goaldmine</span><span aria-hidden="true" class="muted">☀</span></div>
+      <div class="screen">
+        <section><h1 class="h1">Progress</h1></section>
+        <section class="card">
+          <div class="empty">
+            <p class="t">Nothing measured yet</p>
+            <div class="b">Ask your coach in Claude to add a goal with targets. This page fills in as you log.</div>
+          </div>
+        </section>
+      </div>
+      <div class="btmnav" aria-hidden="true"><span>Today</span><span>Plan</span><span class="on">Progress</span><span>Goals</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>No zeros anywhere.</b> Today this user's most concrete content is <code>0 / 0 / 0</code> from the
+      <code>Totals</code> card (audit P17). That card is deleted outright (P19) — fitness-only, lifetime-scoped,
+      anchored to no goal, and three wasted <code>count()</code> queries.</p>
+    <p class="note"><b>No export button.</b> The manifest says <code>recap-cta</code> renders "always"; on a zero-row
+      tenant it must not. There is nothing to recap, and leaving it in would make an export CTA the only content on
+      the page — the exact inversion P13 exists to fix. <span class="flag">⚠ manifest amendment needed.</span></p>
+    <p class="note">This is the shared <code>EmptyState</code> (<code>UXR-PV-81</code>) — <code>/progress</code> is one
+      of its six unmigrated sites. Quiet title, muted body, no action link, <b>never an alarmed tone</b>: an empty
+      state is a normal day-one condition, not an error.</p>
+    <p class="note"><span class="flag">⚠</span> Total height <b>⚠[380–450px]</b>, down from ~4,000–5,000px today.</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 5 · SEAM STRIP DETAIL STUDY ══════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 5 · Seam Strip · every state, labelled</p>
+    <div class="phone">
+      <div class="screen">
+
+        <section class="card">
+          <header><h2 class="h2">A · the five column states</h2></header>
+          <p class="subline" style="margin-bottom:14px">One 6-column time axis, oldest left. Column <b>height</b> is
+            the channel: because the three thresholds strictly nest, every column is bottom-filled and the figure is
+            always a descending skyline with no legend.</p>
+
+          <div class="seam-cols" aria-hidden="true">
+            <span class="seam-col"><span class="seam-fill t-gate"></span></span>
+            <span class="seam-col"><span class="seam-fill t-20"></span></span>
+            <span class="seam-col"><span class="seam-fill t-10"></span></span>
+            <span class="seam-col"><span class="seam-fill t-stub"></span></span>
+            <span class="seam-col"></span>
+            <span class="seam-col"></span>
+          </div>
+          <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="seam-dates" aria-hidden="true">
+            <span>gate</span><span>≥20s</span><span>≥10s</span><span>stub</span><span>—</span><span>—</span>
+          </div>
+
+          <ol class="divide" style="margin-top:14px;list-style:none">
+            <li><div class="rowline"><span class="body-sm"><b>full height</b> · 34px<span class="pv">⚠</span></span><span class="subline">3× ≥20s in ≤5 attempts — the gate</span></div></li>
+            <li><div class="rowline"><span class="body-sm"><b>2/3</b> · 23px</span><span class="subline">a hold reached ≥20s</span></div></li>
+            <li><div class="rowline"><span class="body-sm"><b>1/3</b> · 11px</span><span class="subline">a hold reached ≥10s</span></div></li>
+            <li><div class="rowline"><span class="body-sm"><b>stub</b> · 5px<span class="pv">⚠</span></span><span class="subline">attempted, nothing qualified — real, honest, common</span></div></li>
+            <li><div class="rowline"><span class="body-sm"><b>empty slot</b> · 0px</span><span class="subline">no session yet — the window is not full</span></div></li>
+          </ol>
+          <p class="subline" style="margin-top:10px">The always-drawn 2px baseline<span class="pv">⚠</span> under all
+            six columns is what makes the empty slot read as <i>absence</i> rather than as a faint mark. A ghost
+            outline would measure 1.59:1 — below the 3:1 non-text threshold.</p>
+        </section>
+
+        <section class="card">
+          <header><h2 class="h2">B · anatomy, at 2×</h2></header>
+          <div style="--seam-col:92px;--seam-gap:16px;--seam-h:68px;--seam-stub:10px;--seam-base:4px;display:flex;gap:16px;align-items:flex-end">
+            <div>
+              <div class="seam-cols" aria-hidden="true">
+                <span class="seam-col"><span class="seam-fill t-gate"></span></span>
+                <span class="seam-col"><span class="seam-fill t-20"></span></span>
+              </div>
+              <div class="seam-baseline" aria-hidden="true"><span></span><span></span></div>
+              <div class="seam-dates" aria-hidden="true"><span>Sep 18</span><span>Sep 22</span></div>
+            </div>
+            <div style="padding-bottom:6px">
+              <p class="subline">column <b>46px</b><span class="pv">⚠</span></p>
+              <p class="subline">gap <b>8px</b><span class="pv">⚠</span></p>
+              <p class="subline">6×46 + 5×8 = <b>316</b> in a 326px interior</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header><h2 class="h2">C · roll-off bracket + tally</h2></header>
+          <div class="seam-cols" aria-hidden="true">
+            <span class="seam-col"><span class="seam-fill t-10"></span></span>
+            <span class="seam-col"><span class="seam-fill t-stub"></span></span>
+            <span class="seam-col"><span class="seam-fill t-10"></span></span>
+            <span class="seam-col"><span class="seam-fill t-20"></span></span>
+            <span class="seam-col"><span class="seam-fill t-20"></span></span>
+            <span class="seam-col"><span class="seam-fill t-20"></span></span>
+          </div>
+          <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="seam-dates" aria-hidden="true"><span>Aug 26</span><span>Sep 1</span><span>Sep 5</span><span>Sep 9</span><span>Sep 14</span><span>Sep 18</span></div>
+          <div class="rolloff" aria-hidden="true"><span class="bar"></span><span class="stem"></span></div>
+          <p class="subline" style="margin-bottom:12px">Aug 26 is the oldest session in the window. It leaves when the
+            next timed session is logged.</p>
+          <div class="tally"><span class="tally-l">≥10s hold</span><span class="tally-v">5 of 6 · <span class="succ">HOLDING</span></span></div>
+          <div class="tally"><span class="tally-l">≥20s hold</span><span class="tally-v">3 of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">3× ≥20s in one session<span class="gate-chip">gate</span></span><span class="tally-v">0 of 6 · <span class="muted">needs 1</span></span></div>
+          <p class="subline" style="margin-top:10px">No positional marker on the time axis (R-3). The x-axis is
+            <b>time</b>; the threshold is a count on a different axis, and a rule after slot 4 would assert "the 4 most
+            recent must be hits" — which is not what the engine computes.</p>
+        </section>
+
+        <section class="card">
+          <header><h2 class="h2">D · the day-1 empty variant</h2></header>
+          <div class="seam-cols" aria-hidden="true">
+            <span class="seam-col"></span><span class="seam-col"></span><span class="seam-col"></span>
+            <span class="seam-col"></span><span class="seam-col"></span><span class="seam-col"></span>
+          </div>
+          <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <p class="body-sm" style="margin:12px 0">No timed handstand session logged yet.</p>
+          <div class="tally"><span class="tally-l">≥10s hold</span><span class="tally-v">— of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">≥20s hold</span><span class="tally-v">— of 6 · <span class="muted">needs 4</span></span></div>
+          <div class="tally"><span class="tally-l">3× ≥20s in one session<span class="gate-chip">gate</span></span><span class="tally-v">— of 6 · <span class="muted">needs 1</span></span></div>
+          <p class="subline" style="margin-top:10px">No roll-off bracket: the window is not full, so it is omitted
+            entirely. <b>Never <code>0 of 6</code></b> — a 0 that means "unmeasured" must never render as a 0.</p>
+        </section>
+
+        <section class="card">
+          <header><h2 class="h2">E · fill token — open decision</h2></header>
+          <p class="subline" style="margin-bottom:12px">Neither the synthesis nor the chosen direction names the fill
+            token. Both candidates are drawn. Press the grayscale button: they are indistinguishable in weight, so this
+            is a <b>grammar</b> decision, not a legibility one.</p>
+          <p class="eyebrow" style="margin-bottom:6px">var(--accent) — per the ASCII key</p>
+          <div class="seam-cols" aria-hidden="true" style="--seam-h:24px">
+            <span class="seam-col"><span class="seam-fill t-10"></span></span><span class="seam-col"><span class="seam-fill t-stub"></span></span>
+            <span class="seam-col"><span class="seam-fill t-10"></span></span><span class="seam-col"><span class="seam-fill t-20"></span></span>
+            <span class="seam-col"><span class="seam-fill t-20"></span></span><span class="seam-col"><span class="seam-fill t-20"></span></span>
+          </div>
+          <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          <p class="eyebrow" style="margin:14px 0 6px">var(--foreground) — per R-2, "not a progress grammar"</p>
+          <div class="seam-alt">
+            <div class="seam-cols" aria-hidden="true" style="--seam-h:24px">
+              <span class="seam-col"><span class="seam-fill t-10"></span></span><span class="seam-col"><span class="seam-fill t-stub"></span></span>
+              <span class="seam-col"><span class="seam-fill t-10"></span></span><span class="seam-col"><span class="seam-fill t-20"></span></span>
+              <span class="seam-col"><span class="seam-fill t-20"></span></span><span class="seam-col"><span class="seam-fill t-20"></span></span>
+            </div>
+            <div class="seam-baseline" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>Divs, not SVG (R-17).</b> <code>CeilingRule</code> is divs by explicit sign-off and
+      <code>ReachMeter</code> renders five discrete segments as spans. <code>SeamLine</code> is SVG only because it
+      draws an arbitrary polyline into a non-uniformly stretched box; six fixed-size discrete marks have neither an
+      arbitrary path nor a non-uniform scale.</p>
+    <p class="note"><b>Do NOT use the <code>● ■ ▲</code> triad here.</b> That is the goal-identity vocabulary; these
+      slots are sessions <i>within one goal's target</i>. Reusing it would collide with goal identity on a page that
+      renders three goals.</p>
+    <p class="note"><b>Not a progress grammar.</b> <code>GateArc</code> and <code>ReadinessLadder</code> were rejected
+      as "a third progress grammar next to Bullseye and ReachMeter." The Seam Strip shows no progress toward any
+      target — it shows the categorical outcome of six past sessions. Its kin are <code>MarkLane</code>,
+      <code>BadgeWall</code>, <code>StatusPill</code>. Spec it that way so nobody re-litigates it.</p>
+    <p class="note"><b>A11y deviates deliberately.</b> An <code>&lt;ol&gt;</code> with an <code>sr-only</code> span per
+      slot, not <code>role="img"</code> and never <code>role="progressbar"</code>: a progress bar semantically implies
+      monotonic advance, and this metric's defining property is that it can go <b>down</b>. The count and target are
+      real DOM text, not an <code>aria-label</code> — findable, translatable, and structurally incapable of drifting
+      out of sync with the pixels.</p>
+    <p class="note"><span class="flag">⚠ device check</span> — the single number most in need of one is the 10px date
+      micro-label in <code>--muted</code> on coal. If it undershoots, bump to 11px or
+      <code>--foreground</code> <b>before</b> shrinking the column.</p>
+    <p class="note"><b>Zero motion.</b> No transition on any part of this component, ever — a band is a fact, not an
+      event. And the one candidate strike moment, a tier crossing its target, is rejected <i>on meaning</i>: the value
+      can un-cross tomorrow, and celebrating it converts the mirror into a slot machine.</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 6 · THE t= MAINTENANCE SEQUENCE ══════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 6 · Maintenance cliff · <code>t=</code> sequence · frames are 326px (Card interior)</p>
+    <div class="board w2">
+      <div class="tseq">
+        <div class="tframe">
+          <h4>t = Aug 13 · S3 re-log</h4>
+          <div class="strip">
+            <p class="eyebrow succ">Holding 25</p>
+            <p class="body-sm">Pull-up max (lean-mass canary)</p>
+            <p class="subline tnum">25 reps · Aug 13</p>
+            <p class="subline tnum">floor 25</p>
+            <div class="rowline" style="margin-top:4px">
+              <span class="eyebrow">Shared by 2 goals</span>
+              <span style="display:flex;gap:4px" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span></span>
+            </div>
+          </div>
+        </div>
+        <div class="tframe">
+          <h4>t = Sep 14 · deficit week</h4>
+          <div class="strip">
+            <p class="eyebrow warn">Below floor · 23</p>
+            <p class="body-sm">Pull-up max (lean-mass canary)</p>
+            <p class="subline tnum">23 reps · Sep 14 · 25 reps on Aug 13</p>
+            <p class="rationale" style="margin-top:4px">tested at the end of a deficit week, 3rd movement in the order — not the S3 sequence</p>
+            <div class="rowline" style="margin-top:4px">
+              <span class="eyebrow">Shared by 2 goals</span>
+              <span style="display:flex;gap:4px" aria-hidden="true"><span class="mk hs">●</span><span class="mk bc">■</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="subline" style="margin-top:20px;max-width:62ch">Both frames: <b>no bar</b> (a cliff metric never gets
+        one — the engine returns 1 at exactly 25 and 0 the instant it drops below, so a bar would render 24 and 3
+        identically), <b>no arrow</b>, <b>no <code>--danger</code></b>, <b>no ↓</b>. The eyebrow carries
+        <code>--warning</code>; the copy stays <code>--foreground</code>, because <code>--warning</code> as body text is
+        a 4.6:1 AA edge.</p>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>The absence of a color is the message.</b> A reading that goes down is stated as a reading, with
+      both dates and both numbers. Nothing about the presentation says "you failed" — the canary's job is to report,
+      and the coach's job is to interpret.</p>
+    <p class="note"><b>The cheapest strong idea in Pillar 1:</b> render <code>Baseline.notes</code> on the row
+      <i>only</i> when the delta is negative. This is not a "conditions matched ✓" indicator — the schema cannot
+      support one; <code>Baseline</code> has exactly one free-text field and no <code>rpe</code>,
+      <code>testOrder</code> or <code>fatigued</code>. It is simply displaying the field that exists, and it is the
+      app's <b>only</b> fatigue channel. It also creates the right loop: the coach starts writing conditions into
+      notes because they get read.</p>
+    <p class="note"><b>Maintenance is not a stored flag.</b> It is derived exactly once, as
+      <code>start !== null &amp;&amp; start === target.target</code>. There is no <code>kind</code>, no
+      <code>direction: "maintenance"</code>.</p>
+    <p class="note"><b>Sort exception.</b> Baseline rows sort by <code>weight</code> descending — except a maintenance
+      row in <code>BELOW FLOOR</code>, which pins to position 1. That is a state-dependent <i>sort</i>, not a
+      state-dependent <code>defaultOpen</code>; the banned hazard is a lid flipping under the finger on
+      <code>revalidate</code>, not content reordering. <span class="flag">⚠ verify.</span></p>
+  </div>
+</section>
+
+</main>
+
+<footer class="provisional">
+  <h2>⚠ Provisional / verify-visually</h2>
+  <p class="subline" style="margin-bottom:14px">Every value this file committed to that the research gave as a range.
+    None of these are settled. Each is marked inline with a small <span class="pv">⚠</span>.</p>
+
+  <h3>Geometry — the Seam Strip</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Column width</td><td class="r">46px</td><td class="r">⚠[44–52]</td><td>6×46 + 5×8 = 316px in a 326px Card interior. 52px overflows (352px).</td></tr>
+      <tr><td>Column gap</td><td class="r">8px</td><td class="r">⚠[6–10]</td><td>Coupled to column width — the two must be tuned together against 326px.</td></tr>
+      <tr><td>Full column height</td><td class="r">34px</td><td class="r">⚠[28–40]</td><td>Tier heights derive: 2/3 = 23px, 1/3 = 11px.</td></tr>
+      <tr><td>Stub height</td><td class="r">5px</td><td class="r">⚠[4–7]</td><td>Must stay clearly above the 2px baseline and clearly below the 11px 1/3 tier.</td></tr>
+      <tr><td>Always-drawn baseline</td><td class="r">2px</td><td class="r">⚠[2–3]</td><td>Not in the spec — this file's own commitment. 1px risks vanishing in dark.</td></tr>
+      <tr><td>Roll-off stem</td><td class="r">2×10px</td><td class="r">⚠[2×8–12]</td><td>Bracket rule and risers are 1px <code>--muted</code>, per spec.</td></tr>
+      <tr><td>Strip block height</td><td class="r">~82px</td><td class="r">⚠[78–110]</td><td>Emergent, not set: dates + baseline + columns + bracket.</td></tr>
+      <tr><td>Seam Strip card</td><td class="r">~430px</td><td class="r">⚠[190–260]</td><td><b>Over range.</b> The three framing lines (gate, R-24, invisible-session) cost ~54px the estimate did not carry. Either the range or the copy budget must move.</td></tr>
+      <tr><td>Date micro-label</td><td class="r">10px</td><td class="r">⚠ device</td><td>The number most needing a real-device check. Fallback: 11px or <code>--foreground</code> — never a narrower column.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Geometry — the manifest</h3>
+  <table>
+    <thead><tr><th>Section</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Hero</td><td class="r">~70px</td><td class="r">⚠[60–72]</td><td>44px <code>Program →</code> pill sets the floor.</td></tr>
+      <tr><td>Anchor chip row</td><td class="r">44px</td><td class="r">⚠[32–40]</td><td><b>Deliberate overrun</b> — the ≥44px touch-target invariant beats the range. R-12's figure needs revising.</td></tr>
+      <tr><td>Section rule (G1)</td><td class="r">24px</td><td class="r">⚠[20–28]</td><td>Two rules only. Never three.</td></tr>
+      <tr><td>Program band strip</td><td class="r">~78px</td><td class="r">⚠[68–84]</td><td>Block-0 fill at day 1 is 1/14 of a 10%-wide segment ≈ 2.3px. <b>⚠ consider a 3px floor</b> so "started" ≠ "not started".</td></tr>
+      <tr><td>Goal strip ×3</td><td class="r">~88px</td><td class="r">⚠[68–92]</td><td>Two caption lines is the ceiling. A third breaks the tier.</td></tr>
+      <tr><td>Next readings</td><td class="r">~70px</td><td class="r">⚠[64–80]</td><td>—</td></tr>
+      <tr><td>Records strip</td><td class="r">~110px</td><td class="r">⚠[76–120]</td><td>3 rows; 5 would exceed.</td></tr>
+      <tr><td>Effort card</td><td class="r">~148px</td><td class="r">⚠[120–150]</td><td>Four rows plus the footnote — top of range.</td></tr>
+      <tr><td>Baselines card</td><td class="r">~300px</td><td class="r">⚠[220–280]</td><td><b>Over range</b> once the <code>notes</code> blockquote and the shared-metric lane render on row 1.</td></tr>
+      <tr><td>Body composition</td><td class="r">~320px</td><td class="r">⚠[300–340]</td><td>The page's only Recharts mount.</td></tr>
+      <tr><td>Tier-3 lid, closed</td><td class="r">56px</td><td class="r">⚠[56–60]</td><td><code>min-h-[44px]</code> summary + <code>p-4</code>.</td></tr>
+      <tr><td>Recap CTA</td><td class="r">44px</td><td class="r">⚠[56–64]</td><td>Rendered at the 44px touch minimum, not the estimate.</td></tr>
+      <tr><td>Zero-row page</td><td class="r">~200px</td><td class="r">⚠[180–220]</td><td>—</td></tr>
+      <tr><td>The fold</td><td class="r">737px</td><td class="r">⚠ arithmetic</td><td>844 − 49 header − 58 nav. Arithmetic, never measured (R-9 / <code>UXR-TIA-65</code>).</td></tr>
+      <tr><td><code>scroll-margin-top</code></td><td class="r">64px</td><td class="r">⚠[60–70]</td><td>Set on every anchor target.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Content tuning</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Records window</td><td class="r">21 days</td><td class="r">⚠[14–21]</td><td>≈ one training block. 7 would duplicate <code>/recap</code>; 30 aligns with nothing.</td></tr>
+      <tr><td>Records rows</td><td class="r">3</td><td class="r">⚠[3–5]</td><td>Overflow needs <code>OverflowList</code> — <code>UXR-TIA-59</code>, still unbuilt.</td></tr>
+      <tr><td>Baseline rows</td><td class="r">4</td><td class="r">⚠[3–5]</td><td>Same unbuilt overflow dependency.</td></tr>
+      <tr><td>Relative-improvement floor</td><td class="r">3%</td><td class="r">⚠[2–5]%</td><td>Epley is continuous: 100×10 → 100.5×10 would otherwise be a "PR".</td></tr>
+      <tr><td>Prior-session floor</td><td class="r">4</td><td class="r">⚠[3–5]</td><td>A near-new movement PRs every session for its first 5–8. That is learning, not records.</td></tr>
+      <tr><td>Baseline <code>notes</code> clamp</td><td class="r">2 lines</td><td class="r">⚠[1–2]</td><td>Rendered only on a negative delta.</td></tr>
+      <tr><td><code>RecapGlyph</code> size</td><td class="r">24px</td><td class="r">hard floor</td><td>Not a range. <code>ruler</code> is 4 hairlines at 1.4px plus a rotate — unusable below 24.</td></tr>
+      <tr><td>Milestone numeral</td><td class="r">30px</td><td class="r">⚠[28–32]</td><td>The one sanctioned <code>--font-display</code> use on this page.</td></tr>
+      <tr><td>Capped chart dot</td><td class="r">6×2px</td><td class="r">⚠</td><td>Flat-topped bar replaces <code>r=3</code>. Keep <code>activeDot r=5</code> for hover parity.</td></tr>
+      <tr><td>Readiness <code>maxPoints</code></td><td class="r">26</td><td class="r">⚠[20–52]</td><td>Unverified. 7 cursors drawn in the sparklines for legibility, not fidelity.</td></tr>
+      <tr><td>Metrics lid denominator</td><td class="r">14</td><td class="r">⚠ derived</td><td>15 targets across 3 goals, Pull-Up shared → 14 distinct metrics. Not stated in any source doc.</td></tr>
+      <tr><td>Baseline test count</td><td class="r">6</td><td class="r">⚠ derived</td><td>The S1–S3 battery. See deviation 1 below.</td></tr>
+      <tr><td><code>SeamLine</code> cap-rule dash</td><td class="r">3 3</td><td class="r">⚠</td><td><code>non-scaling-stroke</code> and dash arrays interact unpredictably under a non-uniform <code>preserveAspectRatio="none"</code>. Verify at 96px and 120px.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Open decision needing sign-off</h3>
+  <ul>
+    <li><b>Seam Strip fill token.</b> Neither SYNTHESIS §5 nor CHOSEN names it. The Phase-A ASCII key maps
+      <code>█ → var(--accent)</code>, which this file follows in Panels 1–4; but R-2 insists the strip is
+      <b>not a progress grammar</b>, and <code>--accent</code> is the fill of <code>CeilingRule</code>,
+      <code>ProgramBlockBand</code> and <code>ReadinessBreakdown</code> — every progress bar in the system.
+      <code>--foreground</code> is the alternative and is arguably more correct: the only <code>--foreground</code> fill
+      in the design system today is the <code>CeilingRule</code> <i>stile</i>, which is a fact marker, not a progress
+      fill. Both are drawn in Panel 5 §E. <b>Pick one before implementation.</b></li>
+  </ul>
+
+  <h3>Where the real data forced a deviation from the ASCII</h3>
+  <ol>
+    <li><b><code>2 of 9 read</code> / <code>Show all 9 →</code> on the Baselines card is wrong.</b> <code>9</code> is
+      Goal 1's <i>target</i> count, not its baseline-test count. The tenant has exactly <b>6</b> baseline tests — the
+      S1–S3 battery, matching Goal 1's six <code>baseline:</code> targets. Rendered as <code>2 of 6 measured</code>,
+      <code>6 of 6 measured</code>, <code>Show all 6 →</code>.</li>
+    <li><b>Wall HSPU is <code>0 reps · Aug 12</code>, not <code>2 reps</code>.</b> Reconciling the projected panel
+      against CHOSEN's rawScore of 22 forces it: the Seam Strip alone contributes 0.1925 (≥10s met at w.08 + ≥20s at
+      3/4 × w.15), leaving only 0.0225–0.0325 for all six baselines. The 12-sec handstand hold consumes 0.024 of that
+      exactly, so every other baseline must sit at its start and the w0.20 Wall HSPU must read <b>0</b>. The
+      arithmetic lands on 0.2165 → 22, exactly as specified.</li>
+    <li><b>The <code>Wall handstand push-up 1 → 2 reps</code> PR row was dropped</b> from the records feed as a
+      consequence of (2) — a 2-rep workout PR sitting eight rows above a 0-rep full-ROM baseline is a confusion the
+      panel does not need to carry. Replaced with <code>Pike push-up 8 → 10 reps</code>, which keeps the feed
+      single-kind and correctly ranked by relative improvement (26.7% / 25.0% / 22.2%).</li>
+    <li><b>Day-1 body composition is a Tier-2 strip, not the manifest's Tier-1 chart card.</b> With zero measurements a
+      Tier-1 chart card would render an empty chart frame, which is forbidden. This is what keeps "zero Recharts mounts
+      on day 1" literally true.</li>
+    <li><b>The <code>body-metrics</code> lid never renders for this tenant</b> and is absent from both dated panels —
+      the Phase 2A import creates no <code>BodyMetric</code> rows. Its Tier-3 grammar is covered by the
+      <code>metrics</code> lid.</li>
+    <li><b><code>Practice exam #1 is Oct 18</code> moved out of the ▲ strip</b> and into <code>NEXT READINGS</code>,
+      which is the section that owns <code>ScheduledCheckpoint</code>. Packing it into the strip alongside the
+      measured-score caption and the gate line would push a Tier-2 strip past its ⚠[68–92px] budget, and the gate
+      teaching is worth more than the date.</li>
+    <li><b>Anchor chips render at 44px, not ⚠[32–40px].</b> The ≥44px touch-target invariant is not negotiable against
+      a tuning range; R-12's figure needs amending.</li>
+    <li><b><code>recap-cta</code> is suppressed on the zero-row tenant</b> despite manifest #17 saying "always".</li>
+    <li><b>The <code>NEXT READINGS</code> numeral is the count of items listed in the strip.</b> R-11 requires a
+      numeral and no source doc defines this one; any other definition (days-until, total upcoming) would disagree with
+      the visible list.</li>
+    <li><b>Panel 6's frames are 326px, not 390px</b> — the <code>t=</code> sequence is drawn side by side per the
+      Direction-C ASCII, and 326px is the true Card interior at 390px.</li>
+    <li><b>The projected milestone card is drawn although it renders <code>null</code> today.</b> Zero
+      <code>FootageMarker</code> rows exist; one <code>log_footage</code> call with <code>highlight: true</code> is the
+      whole fix (R-27).</li>
+    <li><b>Panel 3's numbers are a synthetic legacy tenant</b>, invented to exercise the degradation path and the
+      <code>▲cap</code> channels. They are not Phase 2A.</li>
+  </ol>
+
+  <h3>Substitutions in this artifact</h3>
+  <ul>
+    <li><b>Fonts</b> — system sans for Geist, Georgia for DM Serif Display. Metrics, and therefore every wrap point
+      above, will shift once the real faces load. <code>--font-display</code> appears in exactly two places: the
+      gallery <code>h1</code> (annotation chrome) and the milestone ceremony numeral (product, sanctioned).</li>
+    <li><b>Recharts</b> — the two charts are hand-drawn SVG reproducing the house chassis (grid <code>--border</code>
+      <code>3 3</code>, axes <code>--muted</code> 11px with no tick or axis line, line <code>--accent</code> 2px, dot
+      <code>r=3</code>, the two-layer <code>role="img"</code> + <code>aria-hidden</code> idiom). They are stand-ins,
+      not renderings.</li>
+    <li><b><code>--danger</code></b> is defined in the token block for fidelity and used <b>nowhere</b>. Banners cap at
+      <code>--warning</code>.</li>
+    <li><b>Opacity</b> — <code>bg-[var(--border)]/60</code> and <code>bg-[var(--muted)]/70</code> are compiled to
+      <code>color-mix()</code>. Nothing in this file is differentiated by reduced opacity, which fails the 3:1
+      non-text threshold.</li>
+    <li><b>Not modelled</b> — the <code>BottomSheet</code> drill-in behind the Seam Strip (sessions newest-first, with
+      the <code>attemptCap: 5</code> qualifying span bracketed), the <code>title=</code> hover fallback, and the
+      overflow list behind <code>Show all 6 →</code>.</li>
+  </ul>
+</footer>
+
+<script>
+// Two toggles, no dependencies, no network, no storage requirement.
+// The theme cycle mirrors src/components/ThemeToggle.tsx exactly — data-theme
+// on the documentElement — except that this file starts on LIGHT rather than
+// system, so the default render is deterministic regardless of OS.
+(function () {
+  var ORDER = ["light", "dark", "system"];
+  var GLYPH = { system: "\u25D0", light: "\u2600", dark: "\u263E" };
+  var i = 0;
+  var btn = document.getElementById("themeBtn");
+  var glyph = document.getElementById("themeGlyph");
+  var label = document.getElementById("themeLabel");
+
+  document.documentElement.setAttribute("data-theme", "light");
+
+  btn.addEventListener("click", function () {
+    i = (i + 1) % ORDER.length;
+    var t = ORDER[i];
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    glyph.textContent = GLYPH[t];
+    label.textContent = t;
+    btn.setAttribute("aria-label", "Theme: " + t + " (click to switch)");
+  });
+
+  // UXR-PV-05 acceptance test: a grayscale screenshot must lose nothing.
+  var gs = document.getElementById("gsBtn");
+  gs.addEventListener("click", function () {
+    var on = document.body.classList.toggle("gs");
+    gs.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+})();
+</script>
+</body>
+</html>
