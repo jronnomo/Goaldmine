@@ -165,15 +165,38 @@ export async function computeReadiness(
   targets: GoalTarget[],
   asOf: Date = new Date(),
   goalId: string,
+  // UXR-PROG-18 (⚑ approved): ADDITIVE resolution-routing options — the second
+  // use of the doctrine already shipped on computeGoalFeasibility
+  // (rarity.ts:225-230, consumed :286-288). readiness.ts stays CONSUMED, NOT
+  // MODIFIED in the UXR-PV-83 sense: the scoring math below is untouched;
+  // these maps only replace the per-target resolveMetricValue /
+  // resolveMetricStart round-trips with values the caller already holds
+  // (the As-Of Snapshot Table, progress-asof.ts). Map semantics match the
+  // rarity precedent exactly: `has(metric) === false` → fall through to the
+  // DB resolver (byte-identical legacy path); `get(metric) === null` → the
+  // metric RESOLVED to null (honest untested), never a fall-through.
+  //
+  // ⚠ Hazard B (report §4.6): callers evaluating a series MUST rebuild
+  // currentOverrides for every cursor — a single now-valued rolling override
+  // applied at all cursors flattens the readiness arc into a plausible lie.
+  // startOverrides is cursor-independent (resolveMetricStart takes no asOf).
+  opts?: {
+    currentOverrides?: Map<string, number | null>;
+    startOverrides?: Map<string, number | null>;
+  },
 ): Promise<ReadinessSnapshot> {
   const breakdown: TargetProgress[] = [];
   const missing: GoalTarget[] = [];
 
   for (const t of targets) {
-    const current = await resolveMetricValue(t.metric, asOf, goalId, t.cumulative ?? false);
+    const current = opts?.currentOverrides?.has(t.metric)
+      ? (opts.currentOverrides.get(t.metric) ?? null)
+      : await resolveMetricValue(t.metric, asOf, goalId, t.cumulative ?? false);
     const start = t.start !== undefined && t.start !== null
       ? t.start
-      : await resolveMetricStart(t.metric, goalId, t.cumulative ?? false);
+      : opts?.startOverrides?.has(t.metric)
+        ? (opts.startOverrides.get(t.metric) ?? null)
+        : await resolveMetricStart(t.metric, goalId, t.cumulative ?? false);
     const progress = progressFor(t, current, start);
 
     if (progress === null) {

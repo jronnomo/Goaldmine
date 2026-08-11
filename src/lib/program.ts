@@ -6,6 +6,7 @@ import type { ProgramTemplate, DayTemplate, Phase } from "@/lib/program-template
 // it unsafe for goal-focus.ts / override-integrity.ts to call
 // getActiveProgram(). Same functions, same behavior; calendar.ts re-exports
 // these verbatim from calendar-core.
+import { cache } from "react";
 import { startOfDay, dateKey, parseDateKey } from "@/lib/calendar-core";
 import { daysDelta, isInPlan } from "@/lib/rotation-core";
 import { getDb } from "@/lib/db";
@@ -95,7 +96,14 @@ export type ActiveProgramMembership = {
  * M1/#269 (unchanged): the LegacyProgram-table fallback stays deleted — a
  * stale active legacy row can never shadow Plan resolution.
  */
-export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
+// UXR-PROG-95 / UXR-TIA-45: React cache() — /progress alone resolved the
+// program ~9 times per render (getRotationOwnerGoal twice, membership a third
+// program.findFirst). cache() dedupes zero-arg calls within one RSC render;
+// outside a React request scope it degrades to a plain call (the shipped
+// computeGameState precedent, engine.ts:1185).
+export const getActiveProgram = cache(_getActiveProgram);
+
+async function _getActiveProgram(): Promise<ActiveProgramSnapshot | null> {
   const db = await getDb();
 
   const program = await db.program.findFirst({ where: { status: "active" } });
@@ -152,7 +160,9 @@ export async function getActiveProgram(): Promise<ActiveProgramSnapshot | null> 
  * Program row + membership here. An active Program with no rotation
  * (getActiveProgram() → null) still HAS membership — the chewgether shape.
  */
-export async function getActiveProgramMembership(): Promise<ActiveProgramMembership | null> {
+export const getActiveProgramMembership = cache(_getActiveProgramMembership);
+
+async function _getActiveProgramMembership(): Promise<ActiveProgramMembership | null> {
   const db = await getDb();
 
   const program = await db.program.findFirst({ where: { status: "active" } });

@@ -66,6 +66,22 @@ export function rollingSessionAttempts(
   exercises: ReadonlyArray<RollingWorkoutExerciseLike>,
   exercise: string,
 ): number[] | null {
+  return rollingSessionMatch(exercises, exercise).attempts;
+}
+
+/**
+ * Like rollingSessionAttempts, but distinguishes the two null cases:
+ *  - `matched: false` — the workout contains no set of this exercise at all.
+ *  - `matched: true, attempts: null` — the exercise WAS trained but every
+ *    matching set is duration-less: NOT a session (rolling doctrine above),
+ *    but exactly the row the untimed-session footnote counts (UXR-PROG-11/12
+ *    — without it the user trained on Tuesday and Tuesday is invisible).
+ * rollingSessionAttempts delegates here; its behavior is byte-identical.
+ */
+export function rollingSessionMatch(
+  exercises: ReadonlyArray<RollingWorkoutExerciseLike>,
+  exercise: string,
+): { matched: boolean; attempts: number[] | null } {
   const canonical = canonicalExerciseName(exercise);
   const attempts: number[] = [];
   let matchedAnyExercise = false;
@@ -76,8 +92,10 @@ export function rollingSessionAttempts(
       if (s.durationSec !== null) attempts.push(s.durationSec);
     }
   }
-  if (!matchedAnyExercise || attempts.length === 0) return null;
-  return attempts;
+  if (!matchedAnyExercise || attempts.length === 0) {
+    return { matched: matchedAnyExercise, attempts: null };
+  }
+  return { matched: true, attempts };
 }
 
 /**
@@ -175,6 +193,140 @@ export function computeRollingValueFromWorkouts(
     }
   }
   return computeRollingHits(sessions, params);
+}
+
+// ── Seam Strip assembler exports (UXR-PROG-14, report §7 Stage 3) ───────────
+// Pure + client-safe, like everything above. The strip is a RECORD GLYPH —
+// ReachMeter's discrete-segment idiom rotated vertical (UXR-PROG-70) — and
+// these two functions are its entire data source.
+
+/** Workout row shape the slot assembler needs — the resolver's select plus
+ *  id + startedAt (UXR-PROG-15). */
+export type RollingWorkoutSlotSource = RollingWorkoutLike & { id: string; startedAt: Date };
+
+export type RollingSlot = {
+  /** Workout.id — React key + optional /workouts/[id] href (UXR-PV-14: if a
+   *  slot must ever be tappable, the whole <li> becomes the Link). */
+  id: string;
+  startedAt: Date;
+  /** Non-null durationSec attempts in (exercise.orderIndex, set.setIndex) order. */
+  attempts: number[];
+  /** Attempts ≥ params.minSeconds (the params passed to the assembler). */
+  qualifyingCount: number;
+  /** isRollingHitSession(attempts, params). */
+  hit: boolean;
+};
+
+/**
+ * The trailing window as SLOTS (newest-first, length ≤ window).
+ * `slots.length < window` is the UXR-TIA-49 partial-window signal — copy must
+ * read "N of {slots.length} so far", never "N of {window}".
+ * `value` is byte-identical to computeRollingValueFromWorkouts(workouts,
+ * params) — that equivalence is the whole safety argument (UXR-PROG-14) and
+ * is pinned by a regression test.
+ */
+export function rollingWindowSlots(
+  workoutsNewestFirst: ReadonlyArray<RollingWorkoutSlotSource>,
+  params: RollingParams,
+): { slots: RollingSlot[]; value: number | null; window: number } {
+  const window = params.window ?? ROLLING_DEFAULT_WINDOW;
+  const slots: RollingSlot[] = [];
+  for (const w of workoutsNewestFirst) {
+    const attempts = rollingSessionAttempts(w.exercises, params.exercise);
+    if (attempts === null) continue;
+    slots.push({
+      id: w.id,
+      startedAt: w.startedAt,
+      attempts,
+      qualifyingCount: attempts.filter((d) => d >= params.minSeconds).length,
+      hit: isRollingHitSession(attempts, params),
+    });
+    if (slots.length >= window) break;
+  }
+  const value = slots.length === 0 ? null : slots.filter((s) => s.hit).length;
+  return { slots, value, window };
+}
+
+/**
+ * The nested-tier skyline: ONE session universe read against N thresholds
+ * (report F-B — session membership is threshold-independent, so all tracks
+ * over the same canonical exercise + window share byte-identical slots).
+ *
+ * GUARD: tracks are merged ONLY when their canonicalized `exercise` AND
+ * effective `window` match the strip's — mismatched tracks are dropped here
+ * (defensive; the caller should group them into separate strips instead).
+ *
+ * `sessions` slot fields (qualifyingCount / hit) are evaluated against
+ * `tracks[0]`; renderers derive per-track column rungs from `attempts` via
+ * isRollingHitSession — pure, no re-query.
+ *
+ * `untimedSessionCount` (UXR-PROG-11, ⚑ resolved: assembler-specced): count
+ * of workouts that MATCHED the exercise but logged no timed set, ranged from
+ * the OLDEST slot's startedAt through asOf inclusive (the scan's own upper
+ * edge). With zero slots the range is the whole scan — an untimed-only
+ * logger's Tuesday must not stay invisible on day 1.
+ */
+export function rollingMatrix(
+  workouts: ReadonlyArray<RollingWorkoutSlotSource>,
+  exercise: string,
+  window: number,
+  tracks: RollingParams[],
+): {
+  sessions: RollingSlot[];
+  rows: { params: RollingParams; hits: number | null }[];
+  untimedSessionCount: number;
+} {
+  const canonical = canonicalExerciseName(exercise);
+  const merged = tracks.filter(
+    (t) =>
+      canonicalExerciseName(t.exercise) === canonical &&
+      (t.window ?? ROLLING_DEFAULT_WINDOW) === window,
+  );
+
+  // One pass: collect the trailing-window session slots (threshold-independent
+  // universe) and, in the same order, the matched-but-untimed workouts.
+  const sessions: RollingSlot[] = [];
+  const untimed: Date[] = [];
+  const anchor = merged[0];
+  for (const w of workouts) {
+    const m = rollingSessionMatch(w.exercises, exercise);
+    if (m.attempts !== null) {
+      if (sessions.length < window) {
+        sessions.push({
+          id: w.id,
+          startedAt: w.startedAt,
+          attempts: m.attempts,
+          qualifyingCount: anchor
+            ? m.attempts.filter((d) => d >= anchor.minSeconds).length
+            : m.attempts.length,
+          hit: anchor ? isRollingHitSession(m.attempts, anchor) : false,
+        });
+      }
+      // Past the window we only keep scanning for nothing — the untimed range
+      // never reaches older than the oldest slot, and slots are full.
+      if (sessions.length >= window) {
+        // Range floor is known; anything older cannot affect the footnote.
+        // (Untimed rows already collected may still be older — filtered below.)
+        break;
+      }
+      continue;
+    }
+    if (m.matched) untimed.push(w.startedAt);
+  }
+
+  const oldestSlotAt = sessions.at(-1)?.startedAt ?? null;
+  const untimedSessionCount =
+    oldestSlotAt === null
+      ? untimed.length
+      : untimed.filter((d) => d.getTime() >= oldestSlotAt.getTime()).length;
+
+  const attemptSeqs = sessions.map((s) => s.attempts);
+  const rows = merged.map((params) => ({
+    params,
+    hits: sessions.length === 0 ? null : computeRollingHits(attemptSeqs, params),
+  }));
+
+  return { sessions, rows, untimedSessionCount };
 }
 
 /**

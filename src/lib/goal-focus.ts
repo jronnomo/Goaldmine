@@ -18,6 +18,7 @@
 // findFirst(orderBy: { updatedAt: "desc" }) — deterministic winner, mirrors the
 // existing active-goal convention in calendar.ts and program.ts.
 
+import { cache } from "react";
 import { getDb } from "@/lib/db";
 import { getActiveProgram } from "@/lib/program";
 
@@ -159,7 +160,12 @@ export type RotationOwnerResolution = {
  * Query cost: 1 count + getActiveProgram()'s own lookups + 1 goal fetch
  * (branch 2), or 1 count + 1 goal fetch (branch 1).
  */
-export async function getRotationOwnerGoal(): Promise<RotationOwnerResolution> {
+// UXR-PROG-95 / UXR-TIA-45: cache()-wrapped — the /progress render called
+// this twice (page.tsx + records.getBaselineSchedule). Zero-arg dedupe within
+// one RSC render; plain call outside (computeGameState precedent).
+export const getRotationOwnerGoal = cache(_getRotationOwnerGoal);
+
+async function _getRotationOwnerGoal(): Promise<RotationOwnerResolution> {
   const db = await getDb();
 
   // Branch split on Program ADOPTION, not Program activity — getDb() is
