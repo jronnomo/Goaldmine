@@ -298,14 +298,19 @@ export function forUser(userId: string): ScopedClient {
 //    Source: Research Output §Problem 4(a).
 // ---------------------------------------------------------------------------
 
-/** ALS that carries the per-request ScopedClient through the MCP tool
- *  call tree. Set by `runWithUser`; read by `getDb`.
+/** ALS that carries the per-request ScopedClient AND its userId through the
+ *  MCP tool call tree. Set by `runWithUser`; read by `getDb` / `getScopedUserId`.
  *
- *  Not directly exported. Use `runWithUser` to set it and `getDb` to read.
- *  If you need the ALS for advanced use (e.g. E5 global-write traps),
- *  export it at that time — keep the surface minimal for now.
+ *  The userId travels alongside the client so libs that must hand-scope
+ *  non-scoped child models (WorkoutExercise/Set via `workout: { userId }`)
+ *  can resolve the tenant without a signature change — see getScopedUserId.
+ *
+ *  Not directly exported. Use `runWithUser` to set it and `getDb` /
+ *  `getScopedUserId` to read. If you need the ALS for advanced use (e.g. E5
+ *  global-write traps), export it at that time — keep the surface minimal.
  */
-const _userScope = new AsyncLocalStorage<ScopedClient>();
+type UserScope = { db: ScopedClient; userId: string };
+const _userScope = new AsyncLocalStorage<UserScope>();
 
 // ---------------------------------------------------------------------------
 // 7. runWithUser — opens the ALS scope for a request handler
@@ -331,7 +336,7 @@ const _userScope = new AsyncLocalStorage<ScopedClient>();
  *   return runWithUser(userId, () => transport.handleRequest(req));
  */
 export function runWithUser<T>(userId: string, fn: () => T): T {
-  return _userScope.run(forUser(userId), fn);
+  return _userScope.run({ db: forUser(userId), userId }, fn);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,5 +389,20 @@ export function runWithUser<T>(userId: string, fn: () => T): T {
  *     use raw `prisma` — these cross user boundaries by design.
  */
 export async function getDb(): Promise<ScopedClient> {
-  return _userScope.getStore() ?? forUser(await getCurrentUserId());
+  return _userScope.getStore()?.db ?? forUser(await getCurrentUserId());
+}
+
+/**
+ * Returns the active tenant's userId via the SAME resolution mechanism as
+ * `getDb()`: ALS scope first (MCP route inside `runWithUser`), Auth.js session
+ * fallback (`getCurrentUserId()`) on the RSC / server-action path — which
+ * throws a redirect on unauthenticated access, never silently defaulting.
+ *
+ * Use this to hand-scope queries on NON-scoped child models that hang off a
+ * scoped parent — e.g. WorkoutExercise/Set have no userId FK, so tenant
+ * isolation requires `where: { workout: { userId: await getScopedUserId() } }`.
+ * The `$extends` injection cannot do this (it only fires for scoped models).
+ */
+export async function getScopedUserId(): Promise<string> {
+  return _userScope.getStore()?.userId ?? getCurrentUserId();
 }
