@@ -118,6 +118,20 @@ input::placeholder, textarea::placeholder {
 }
 :root[data-theme="dark"] .dwe-raw-cue { color: var(--foreground); }
 
+/* UXR-PROG-66 (⚑ resolved: ship the SAFE branch from the start) — the Seam
+   Strip's date micro-labels at text-[11px]. Same rationale + mechanics as
+   .dwe-raw-cue above: --muted is verified AA in light, but small --muted on
+   --card in dark risks undershooting ("coal is unforgiving") — --foreground
+   in dark, honoring BOTH dark signals. 10px/--muted may return only after a
+   real device check (tuning follow-up). */
+.seam-date-label {
+  color: var(--muted);
+}
+@media (prefers-color-scheme: dark) {
+  .seam-date-label { color: var(--foreground); }
+}
+:root[data-theme="dark"] .seam-date-label { color: var(--foreground); }
+
 /* Bullseye-pop: one-shot scale + opacity animation triggered by adding
    the `bullseye-pop` class to a freshly-logged Bullseye. Reduced-motion
    users see no animation. React plumbing for `justLogged` is intentionally
