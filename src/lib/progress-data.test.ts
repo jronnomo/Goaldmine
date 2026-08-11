@@ -27,6 +27,12 @@ const H = vi.hoisted(() => {
     plan: [],
     bodyMetric: [],
     footageMarker: [],
+    // computeGameState's fan-out (the gated effort panel rides these):
+    nutritionLog: [],
+    note: [],
+    mobilityCheckin: [],
+    planDayOverride: [],
+    gameBonusXp: [],
   };
   const calls: Record<string, number> = {};
   const bump = (m: string) => {
@@ -461,6 +467,8 @@ describe("shape P — 3-member Program, day 1 (the owner's real first render)", 
       "goal-strip-g3-aws",
       "next-readings", // day 1: S1 initial checkpoints are live (the graft)
       "records",
+      "rule-effort", // mirrors key 10 — leaves WITH it on zero-Program tenants
+      "effort", // gated: ships only with the Stage-2 spine (this PR)
       "baselines",
       "body-composition", // owned by Goal 2 (G3 per-goal owner)
       "metrics",
@@ -507,21 +515,35 @@ describe("shape P — 3-member Program, day 1 (the owner's real first render)", 
     expect(new Set(series).size).toBeGreaterThan(1); // not a flattened arc
   });
 
-  it("MEASURED query count — the ~445 → ~14 acceptance target", async () => {
+  it("MEASURED query count — the ~445 → ~14 acceptance target (+10 gated effort)", async () => {
     seedProgram({ withWorkouts: true });
     resetCalls();
     await getProgressPageData(LATER);
     const total = totalCalls();
-    // Measured in THIS env: 18. Production is 16 — React cache() dedupes the
-    // second getActiveProgram (program.findFirst + plan.findFirst) inside an
-    // RSC render; outside a render (this node test) cache() is a passthrough.
-    // Breakdown: resolution 8 (count, program×2, plan×2, owner goal,
-    // membership program, member list) + activeGoals 1 + table 4 (baseline/
-    // measurement/log/workout) + allBaselines 1 + hikes21d 1 + bodyMetric 1 +
-    // weight true-start 1 + footage 1 = 18. Was ~445 issued (~180 serial).
-    expect(total).toBe(18);
+    // Measured in THIS env: 33. Production is ~26 — React cache() dedupes
+    // the repeated getActiveProgram/getRotationOwnerGoal inside one RSC
+    // render; outside a render (node test) cache() is a passthrough.
+    // Breakdown: page 18 (resolution 8 + activeGoals 1 + table 4 +
+    // allBaselines 1 + hikes21d 1 + bodyMetric 1 + true-start 1 + footage 1)
+    // + computeGameState 15 test-env (its own program/plan/goal resolution 6
+    // passthrough + the 9-scan all-time fan-out) — the +10 the sign-off
+    // gated to this PR (UXR-PROG-44), riding the −400+ removals.
+    expect(total).toBe(33);
     // And the shape of the win: ~78 cursor evaluations cost ZERO queries —
     // total is independent of goals × cursors.
+  });
+
+  it("the gated effort panel: Program-window attribute deltas, nothing else (R-SPLIT)", async () => {
+    seedProgram({ withWorkouts: true });
+    const data = await getProgressPageData(LATER);
+    expect(data.effort).not.toBeNull();
+    const effort = data.effort!;
+    expect(effort.rows.map((r) => r.id)).toEqual(["STR", "END", "MOB", "CON"]);
+    expect(effort.windowStartKey).toBe("2026-08-10");
+    // The model carries window deltas ONLY — no level, no streak, no total:
+    expect(Object.keys(effort)).toEqual(["rows", "windowStartKey", "windowEndKey"]);
+    // Training happened in the window → some attribute earned XP:
+    expect(effort.rows.some((r) => r.xp > 0)).toBe(true);
   });
 });
 

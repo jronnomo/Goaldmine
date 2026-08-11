@@ -58,6 +58,9 @@ import {
   type RollingSlot,
 } from "@/lib/rolling-metrics";
 import { BODY_METRICS, resolveBodyMetric, ROLLING_DEFAULT_WINDOW } from "@/lib/metrics-registry";
+import { computeGameState } from "@/lib/game/engine";
+import { attributeXpBetween } from "@/lib/game/effort";
+import { dateKey } from "@/lib/calendar-core";
 import type { GoalTarget, RollingParams } from "@/lib/goal-targets";
 import type { ProgramTemplate } from "@/lib/program-template";
 import type { GoalStripModel } from "@/components/progress/GoalStrip";
@@ -774,6 +777,29 @@ export async function getProgressPageData(now: Date = new Date()): Promise<Progr
     project = { goalId: primaryProjectGoal.id, mrr };
   }
 
+  // ── Effort (key 10) — UXR-PROG-44 ⚑: gamification ships ONLY with the
+  // Stage-2 perf spine (this PR). computeGameState's +10 all-time queries
+  // ride the −400+ removals; the panel is Program-window ATTRIBUTE DELTAS
+  // only (R-GAME/R-SPLIT — see game/effort.ts + EffortCard.tsx). Zero-Program
+  // tenants never get a substituted 30-day window: the key is simply absent.
+  let effort: EffortModel | null = null;
+  if (shape === "program" && membership) {
+    const game = await computeGameState();
+    if (game.goalKind !== null) {
+      const windowEnd =
+        membership.endsOn && membership.endsOn.getTime() < now.getTime()
+          ? membership.endsOn
+          : now;
+      const startKey = dateKey(membership.startedOn);
+      const endKey = dateKey(windowEnd);
+      effort = {
+        rows: attributeXpBetween(game.events, game.attributes, startKey, endKey),
+        windowStartKey: startKey,
+        windowEndKey: endKey,
+      };
+    }
+  }
+
   // ── Milestone (key 16) — FootageMarker highlight, never a notes regex ─────
   const marker = await db.footageMarker.findFirst({
     where: { highlight: true },
@@ -844,7 +870,7 @@ export async function getProgressPageData(now: Date = new Date()): Promise<Progr
     goalStrips,
     nextReadings,
     recordsFeed,
-    effort: null, // Stage 4 fills this (gated to the same PR as the spine)
+    effort,
     baselines: baselineRows.length > 0 ? { rows: baselineRows, totalScheduled: schedule?.scheduled.length ?? null } : null,
     bodyComposition,
     metrics,
