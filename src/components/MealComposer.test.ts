@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MealComposer, type MealDefaults } from "@/components/MealComposer";
 import {
@@ -404,6 +405,41 @@ const LIB_FOOD: LibraryFood[] = [
     perServing: { calories: 165, proteinG: 31, carbsG: 0, fatG: 3.6, fiberG: 0, sodiumMg: 74 },
   },
 ];
+
+describe("MealComposer — 'Save as meal' panel POSITION (regression: the dead-button bug)", () => {
+  // Shipped 2026-08-10, reported broken 2026-08-12: the panel rendered AFTER
+  // the entire items list (~200 lines of JSX: item rows, per-item macros, the
+  // macro editor). Tapping the toggle in the Items header opened a panel
+  // several hundred px below the fold, so on a phone the button read as dead —
+  // on every surface. The panel must render adjacent to the toggle that opens
+  // it. Source-level assertion because the panel's visibility is internal
+  // state (SSR always renders it closed), so no markup test can catch this.
+  const src = readFileSync(
+    new URL("./MealComposer.tsx", import.meta.url),
+    "utf8",
+  );
+
+  it("the panel renders BEFORE the first item row, not after the whole list", () => {
+    const toggle = src.indexOf('data-testid="save-as-meal-toggle"');
+    const panel = src.indexOf('data-testid="save-as-meal-panel"');
+    const firstItemRow = src.indexOf('data-testid="item-row"');
+    expect(toggle).toBeGreaterThan(-1);
+    expect(panel).toBeGreaterThan(-1);
+    expect(firstItemRow).toBeGreaterThan(-1);
+    expect(panel).toBeGreaterThan(toggle); // opens below its own button
+    expect(panel).toBeLessThan(firstItemRow); // ...but above the items list
+  });
+
+  it("opening the panel moves focus into the name field (the tap's feedback)", () => {
+    const panel = src.indexOf('data-testid="save-as-meal-panel"');
+    const name = src.indexOf('data-testid="save-as-meal-name"');
+    const autofocus = src.indexOf("autoFocus", name);
+    expect(name).toBeGreaterThan(panel);
+    // autoFocus belongs to the name input, before the panel's Save button
+    expect(autofocus).toBeGreaterThan(name);
+    expect(autofocus).toBeLessThan(src.indexOf('data-testid="save-as-meal-save"'));
+  });
+});
 
 describe("MealComposer — Browse library (libraryFoods gate)", () => {
   it("edit mode + libraryFoods supplied: renders the Browse library button", () => {

@@ -944,6 +944,73 @@ export function MealComposer(props: MealComposerProps) {
         </div>
       </div>
 
+      {/* ── Save-as-meal panel — the owner's bundle-creation path ────────────── */}
+      {saveMealOpen && !rawMode && items.length > 0 && (
+        <div
+          data-testid="save-as-meal-panel"
+          className="rounded-xl border border-[var(--border)] px-3 py-2.5 flex flex-col gap-2"
+        >
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Save as meal
+            </span>
+            <input
+              type="text"
+              data-testid="save-as-meal-name"
+              // Focused on open: the panel is opened by an explicit tap, and
+              // focus (plus the keyboard) is the confirmation that it opened.
+              // The previous placement rendered it below the whole items list,
+              // off-screen on a phone — the tap read as a dead button.
+              autoFocus
+              value={saveMealName}
+              onChange={(e) => setSaveMealName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault(); // must NOT submit the host form
+                  handleSaveAsMeal();
+                }
+              }}
+              placeholder='Name it — e.g. "Protein Brookie"'
+              className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base min-h-[44px]"
+            />
+          </label>
+          <p className="text-xs text-[var(--muted)]">
+            Bundles these items — food links and per-item macros included — for
+            one-tap re-logging. Re-saving a name replaces that meal.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              data-testid="save-as-meal-save"
+              onClick={handleSaveAsMeal}
+              disabled={saveMealPending || !saveMealName.trim()}
+              className="flex-1 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent-fg)] min-h-[44px] disabled:opacity-50"
+            >
+              {saveMealPending ? "Saving…" : "Save"}
+            </button>
+            <button
+              type="button"
+              data-testid="save-as-meal-cancel"
+              onClick={() => {
+                setSaveMealOpen(false);
+                setSaveMealNote(null);
+              }}
+              className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] min-h-[44px]"
+            >
+              Close
+            </button>
+          </div>
+          {saveMealNote && (
+            <p
+              aria-live="polite"
+              className={`text-xs ${saveMealNote.ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}
+            >
+              {saveMealNote.text}
+            </p>
+          )}
+        </div>
+      )}
+
       {rawMode ? (
         <textarea
           name="items"
@@ -1145,68 +1212,6 @@ export function MealComposer(props: MealComposerProps) {
             </ul>
           )}
         </>
-      )}
-
-      {/* ── Save-as-meal panel — the owner's bundle-creation path ────────────── */}
-      {saveMealOpen && !rawMode && items.length > 0 && (
-        <div
-          data-testid="save-as-meal-panel"
-          className="rounded-xl border border-[var(--border)] px-3 py-2.5 flex flex-col gap-2"
-        >
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-              Save as meal
-            </span>
-            <input
-              type="text"
-              data-testid="save-as-meal-name"
-              value={saveMealName}
-              onChange={(e) => setSaveMealName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault(); // must NOT submit the host form
-                  handleSaveAsMeal();
-                }
-              }}
-              placeholder='Name it — e.g. "Protein Brookie"'
-              className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-base min-h-[44px]"
-            />
-          </label>
-          <p className="text-xs text-[var(--muted)]">
-            Bundles these items — food links and per-item macros included — for
-            one-tap re-logging. Re-saving a name replaces that meal.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              data-testid="save-as-meal-save"
-              onClick={handleSaveAsMeal}
-              disabled={saveMealPending || !saveMealName.trim()}
-              className="flex-1 rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-medium text-[var(--accent-fg)] min-h-[44px] disabled:opacity-50"
-            >
-              {saveMealPending ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              data-testid="save-as-meal-cancel"
-              onClick={() => {
-                setSaveMealOpen(false);
-                setSaveMealNote(null);
-              }}
-              className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--foreground)] min-h-[44px]"
-            >
-              Close
-            </button>
-          </div>
-          {saveMealNote && (
-            <p
-              aria-live="polite"
-              className={`text-xs ${saveMealNote.ok ? "text-[var(--success)]" : "text-[var(--danger)]"}`}
-            >
-              {saveMealNote.text}
-            </p>
-          )}
-        </div>
       )}
 
       {/* ── Add item (chips / scan / estimate) — inside the form ─────────────── */}

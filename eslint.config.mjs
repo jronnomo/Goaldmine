@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Gitignored scratch dirs — throwaway run scripts and agent worktrees must
+    // never gate repo lint (a stale worktree's .next used to produce phantom
+    // errors here; .roadmap/.feature-dev hold one-off diagnostic scripts).
+    ".roadmap/**",
+    ".feature-dev/**",
+    ".claude/worktrees/**",
   ]),
 ]);
 
