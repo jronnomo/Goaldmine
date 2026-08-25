@@ -275,21 +275,37 @@ input::placeholder, textarea::placeholder {
    .bottom-sheet-panel slides up from the bottom. Scrim via ::backdrop.
    ────────────────────────────────────────────────────────────────────── */
 
+/* Visual-viewport anchoring, shared by every full-screen overlay dialog
+   (.bottom-sheet here; .viewport-dialog for ScanFoodSheet/LibraryPickerOverlay,
+   which build their scrim with Tailwind).
+
+   `inset: 0` is NOT enough on iOS. When a field inside the sheet focuses, iOS
+   moves the page to lift it above the keyboard; `position: fixed` elements ride
+   along and stay put on screen, but a TOP-LAYER element does not — the sheet
+   ends up shifted up by a keyboard's height, header off the top of the screen,
+   bottom edge mid-viewport (founder-reported twice). The --vv-* custom
+   properties track window.visualViewport while any overlay is open (see
+   body-scroll-lock.ts), so the dialog covers exactly what the user is looking
+   at. The fallbacks are the old full-viewport values: no visualViewport, or no
+   overlay open, and this is byte-for-byte the previous box. */
+.viewport-dialog,
+.bottom-sheet {
+  position: fixed;
+  top: var(--vv-top, 0px);
+  left: var(--vv-left, 0px);
+  width: var(--vv-width, 100%);
+  max-width: var(--vv-width, 100%);
+  height: var(--vv-height, 100%);
+  max-height: var(--vv-height, 100%);
+  overflow: hidden;
+}
+
 .bottom-sheet {
   /* Reset dialog defaults */
   margin: 0;
   padding: 0;
   border: none;
   background: transparent;
-  /* Full-viewport overlay so the panel can anchor to the bottom. A modal
-     <dialog> is promoted to the top layer, so no z-index is needed. */
-  position: fixed;
-  inset: 0;
-  width: 100%;
-  max-width: 100%;
-  height: 100%;
-  max-height: 100%;
-  overflow: hidden;
 }
 
 /* Closed dialogs are display:none — make sure nothing leaks through. */
@@ -323,9 +339,11 @@ input::placeholder, textarea::placeholder {
   background: var(--card);
   border-top-left-radius: 1rem;
   border-top-right-radius: 1rem;
-  /* dvh tracks the iOS Safari dynamic toolbars/keyboard; vh fallback for old browsers. */
-  max-height: 85vh;
-  max-height: 85dvh;
+  /* 85% OF THE DIALOG, which is itself sized to the visual viewport above — so
+     with the keyboard up the panel caps against what's actually visible instead
+     of against 85dvh of a viewport half of which is under the keyboard. Equal
+     to the previous 85dvh whenever no overlay-driven --vv-height is set. */
+  max-height: 85%;
   display: flex;
   flex-direction: column;
   transform: translateY(0);

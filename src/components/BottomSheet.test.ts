@@ -63,3 +63,52 @@ describe("portaled dialogs — close/cancel target guard", () => {
     });
   }
 });
+
+describe("overlay dialogs — visual-viewport anchoring", () => {
+  // The sheet is in the TOP LAYER: when iOS moves the page to lift a focused
+  // field above the keyboard, `position: fixed` siblings (the bottom nav) ride
+  // along but the dialog does not — it ends up shifted up by a keyboard's
+  // height with its header off the top of the screen. Both dialog boxes must
+  // size/position off the --vv-* properties body-scroll-lock publishes, never
+  // off a bare `inset-0 h-full`.
+  const css = readFileSync(
+    new URL("../app/globals.css", import.meta.url),
+    "utf8",
+  );
+
+  it("globals.css anchors .bottom-sheet and .viewport-dialog to --vv-*", () => {
+    const rule = css.slice(
+      css.indexOf(".viewport-dialog,"),
+      css.indexOf(".bottom-sheet:not([open])"),
+    );
+    for (const decl of [
+      "top: var(--vv-top, 0px)",
+      "left: var(--vv-left, 0px)",
+      "width: var(--vv-width, 100%)",
+      "height: var(--vv-height, 100%)",
+    ]) {
+      expect(rule).toContain(decl);
+    }
+    // Fallbacks are the pre-fix full-viewport box — no overlay open, or no
+    // visualViewport, must render exactly as before.
+    expect(rule).not.toContain("inset: 0");
+  });
+
+  it("the panel caps against the dialog (85%), not against 85dvh of a keyboard-covered viewport", () => {
+    const panel = css.slice(
+      css.indexOf(".bottom-sheet-panel {"),
+      css.indexOf("@starting-style", css.indexOf(".bottom-sheet-panel {")),
+    );
+    expect(panel).toContain("max-height: 85%");
+    expect(panel).not.toMatch(/max-height:\s*85dvh/); // the words in the comment are fine
+  });
+
+  it("the Tailwind-built scrims opt into .viewport-dialog", () => {
+    for (const rel of ["./ScanFoodSheet.tsx", "./LibraryPickerOverlay.tsx"]) {
+      const src = read(rel);
+      expect(src).toContain("viewport-dialog");
+      expect(src).not.toContain("fixed inset-0 h-full");
+      expect(src).not.toContain("max-h-[85dvh]");
+    }
+  });
+});

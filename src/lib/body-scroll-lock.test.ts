@@ -1,99 +1,100 @@
-// body-scroll-lock — refcount + restore semantics.
+// body-scroll-lock — refcount + capture semantics.
 //
 // The bug this exists for: the Log sheet hosts four other sheets (saved-meal,
-// scan, library picker, meal-edit). Each used to capture/restore the page
-// scroll itself, so closing an inner one unlocked the page while the outer
-// sheet was still open — and the outer's later restore fired against a scroll
-// position that had already moved. On iOS that leaves the layout viewport
-// panned, and the next open renders the fixed sheet slammed against the top of
-// the screen with its header cut off.
+// scan, library picker, meal-edit). Each used to freeze/restore the page
+// itself, so closing an inner one unlocked the page while the outer sheet was
+// still open — and the outer's later restore fired against a position that had
+// already moved. On iOS that leaves the page panned by a keyboard's height and
+// the top-layer sheet shifted up off the screen with it.
 
 import { describe, it, expect } from "vitest";
 import { createBodyScrollLock, type ScrollLockTarget } from "@/lib/body-scroll-lock";
 
-function fakeTarget(initialScrollY = 0, initialOverflow = "") {
-  const state = { scrollY: initialScrollY, overflow: initialOverflow };
-  const scrollCalls: number[] = [];
+function fakeTarget(initialScrollY = 0) {
+  const calls: string[] = [];
+  const state = { scrollY: initialScrollY, frozenAt: null as number | null };
   const target: ScrollLockTarget = {
     getScrollY: () => state.scrollY,
-    setScrollY: (y) => {
-      scrollCalls.push(y);
+    freeze: (y) => {
+      calls.push(`freeze:${y}`);
+      state.frozenAt = y;
+    },
+    thaw: (y) => {
+      calls.push(`thaw:${y}`);
+      state.frozenAt = null;
       state.scrollY = y;
     },
-    getOverflow: () => state.overflow,
-    setOverflow: (v) => {
-      state.overflow = v;
+    reassert: (y) => {
+      calls.push(`reassert:${y}`);
     },
   };
-  return { target, state, scrollCalls };
+  return { target, state, calls };
 }
 
 describe("createBodyScrollLock", () => {
-  it("locks and restores overflow + scroll position for a single sheet", () => {
-    const { target, state, scrollCalls } = fakeTarget(742, "auto");
+  it("freezes at the current position and thaws back to it", () => {
+    const { target, state, calls } = fakeTarget(742);
     const lock = createBodyScrollLock(target);
 
     const release = lock.lock();
-    expect(state.overflow).toBe("hidden");
-
-    // iOS pans the layout viewport while a field is focused.
-    state.scrollY = 1520;
+    expect(state.frozenAt).toBe(742);
 
     release();
-    expect(state.overflow).toBe("auto"); // prior value, not hardcoded ""
-    expect(scrollCalls).toEqual([742]); // un-panned back to where the sheet opened
+    expect(calls).toEqual(["freeze:742", "thaw:742"]);
+    expect(state.scrollY).toBe(742);
   });
 
-  it("nested sheets: the outermost lock owns the captured position", () => {
-    const { target, state, scrollCalls } = fakeTarget(500, "");
+  it("nested sheets: only the outermost freezes and thaws", () => {
+    const { target, state, calls } = fakeTarget(500);
     const lock = createBodyScrollLock(target);
 
     const releaseOuter = lock.lock(); // Log sheet
-    state.scrollY = 1200; // keyboard pan
-    const releaseInner = lock.lock(); // saved-meal sheet, opened mid-pan
+    state.scrollY = 1200; // a pan leaked through mid-session
+    const releaseInner = lock.lock(); // saved-meal sheet, opened after the pan
     expect(lock.depth()).toBe(2);
+    // The inner lock must NOT re-capture — 500 is the real page position.
+    expect(calls).toEqual(["freeze:500"]);
 
     releaseInner();
-    // Page position restored to the OUTER capture (pre-pan), and the page stays
-    // locked because the Log sheet is still open.
-    expect(scrollCalls).toEqual([500]);
-    expect(state.overflow).toBe("hidden");
+    // Page stays frozen (the Log sheet is still open) and the outermost
+    // capture is re-asserted rather than restored.
+    expect(state.frozenAt).toBe(500);
+    expect(calls).toEqual(["freeze:500", "reassert:500"]);
     expect(lock.depth()).toBe(1);
 
     releaseOuter();
-    expect(state.overflow).toBe("");
-    expect(scrollCalls).toEqual([500, 500]);
+    expect(calls).toEqual(["freeze:500", "reassert:500", "thaw:500"]);
+    expect(state.scrollY).toBe(500);
     expect(lock.depth()).toBe(0);
   });
 
-  it("release is idempotent — a double cleanup cannot unlock a still-open sheet", () => {
-    const { target, state } = fakeTarget(0, "");
+  it("release is idempotent — a double cleanup cannot thaw a still-open sheet", () => {
+    const { target, state, calls } = fakeTarget(0);
     const lock = createBodyScrollLock(target);
 
     const releaseOuter = lock.lock();
     const releaseInner = lock.lock();
 
     releaseInner();
-    releaseInner(); // StrictMode / double-cleanup
+    releaseInner(); // StrictMode / double cleanup
     releaseInner();
     expect(lock.depth()).toBe(1);
-    expect(state.overflow).toBe("hidden"); // outer sheet still open
+    expect(state.frozenAt).toBe(0); // outer sheet still open
+    expect(calls.filter((c) => c.startsWith("reassert")).length).toBe(1);
 
     releaseOuter();
     expect(lock.depth()).toBe(0);
-    expect(state.overflow).toBe("");
+    expect(state.frozenAt).toBe(null);
   });
 
   it("re-locking after a full release captures the new position", () => {
-    const { target, state, scrollCalls } = fakeTarget(100, "");
+    const { target, state, calls } = fakeTarget(100);
     const lock = createBodyScrollLock(target);
 
     lock.lock()();
-    state.overflow = "";
     state.scrollY = 900;
+    lock.lock()();
 
-    const release = lock.lock();
-    release();
-    expect(scrollCalls).toEqual([100, 900]);
+    expect(calls).toEqual(["freeze:100", "thaw:100", "freeze:900", "thaw:900"]);
   });
 });

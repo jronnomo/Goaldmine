@@ -170,7 +170,7 @@ export function LibraryPickerOverlay({
     <dialog
       ref={dialogRef}
       data-testid="library-picker-overlay"
-      className="m-0 p-0 border-0 fixed inset-0 h-full w-full max-h-full max-w-full overflow-hidden bg-black/45 backdrop:bg-transparent"
+      className="viewport-dialog m-0 p-0 border-0 overflow-hidden bg-black/45 backdrop:bg-transparent"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       // Target guard (same reason as BottomSheet's — see its onClose note):
       // React dispatches `cancel`/`close` up the REACT tree, and this dialog is
@@ -190,7 +190,7 @@ export function LibraryPickerOverlay({
           overflow-hidden clips the scroll area to the rounded top + prevents the
           list from bleeding up over the header/tabs. */}
       <div
-        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85dvh] overflow-hidden"
+        className="absolute bottom-0 left-0 right-0 mx-auto max-w-md flex flex-col max-h-[85%] overflow-hidden"
         style={{ background: "var(--card)", borderTopLeftRadius: "1rem", borderTopRightRadius: "1rem" }}
       >
         {/* Header */}

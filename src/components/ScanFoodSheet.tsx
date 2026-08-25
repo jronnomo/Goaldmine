@@ -350,7 +350,7 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
     <dialog
       ref={dialogRef}
       data-testid="scanfood-sheet"
-      className="m-0 p-0 border-0 fixed inset-0 h-full w-full max-h-full max-w-full overflow-hidden bg-black/45 backdrop:bg-transparent"
+      className="viewport-dialog m-0 p-0 border-0 overflow-hidden bg-black/45 backdrop:bg-transparent"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -372,7 +372,7 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
       {/* Panel — mirrors .bottom-sheet-panel CSS values exactly */}
       <div
         className="absolute bottom-0 left-0 right-0 mx-auto max-w-md
-                   flex flex-col max-h-[85dvh]"
+                   flex flex-col max-h-[85%]"
         style={{
           background: "var(--card)",
           borderTopLeftRadius: "1rem",
