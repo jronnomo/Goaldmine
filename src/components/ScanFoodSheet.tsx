@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { lockBodyScroll } from "@/lib/body-scroll-lock";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
 import { MACRO_KEYS } from "@/lib/food-types";
 import type {
@@ -179,18 +180,13 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
   });
 
   // ── Body scroll lock while open ───────────────────────────────────────────
-  // Mirrors BottomSheet/LibraryPickerOverlay: without it, iOS Safari can pan the
-  // layout viewport (e.g. when a field focuses), sliding this fixed overlay —
-  // and its ✕ — off-screen. Restore the scroll position on close.
+  // Shared refcounted lock (see body-scroll-lock.ts): without it, iOS Safari can
+  // pan the layout viewport (e.g. when a field focuses), sliding this fixed
+  // overlay — and its ✕ — off-screen. Release restores the page position; the
+  // refcount keeps this sheet from unlocking the Log sheet that hosts it.
   useEffect(() => {
     if (!open) return;
-    const scrollY = window.scrollY;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-      window.scrollTo(0, scrollY);
-    };
+    return lockBodyScroll();
   }, [open]);
 
   // ── Reset state on open/close ─────────────────────────────────────────────
@@ -358,8 +354,20 @@ export function ScanFoodSheet({ open, onClose, onAdd, initialFood }: ScanFoodShe
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      onCancel={(e) => { e.preventDefault(); onClose(); }}
-      onClose={onClose}
+      // Target guard (same reason as BottomSheet's — see its onClose note):
+      // React dispatches `cancel`/`close` up the REACT tree, and this dialog is
+      // a React descendant of the Log sheet's dialog even though the portal
+      // makes them DOM siblings. Without the guard an inner sheet's Esc closes
+      // the Log sheet underneath it too.
+      onCancel={(e) => {
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        onClose();
+      }}
+      onClose={(e) => {
+        if (e.target !== e.currentTarget) return;
+        onClose();
+      }}
     >
       {/* Panel — mirrors .bottom-sheet-panel CSS values exactly */}
       <div

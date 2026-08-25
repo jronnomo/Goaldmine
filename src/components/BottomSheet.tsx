@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { lockBodyScroll } from "@/lib/body-scroll-lock";
 
 // Module-level: React keys the effect that (re)subscribes to this store off
 // the identity of the `subscribe` function passed to useSyncExternalStore. An
@@ -41,7 +42,9 @@ export type BottomSheetProps = {
  * (e.g. ScanFoodSheet rendered inside LogNutritionForm's <form>, itself inside
  * the Log sheet's <dialog>) from causing iOS to close the outer dialog when the
  * inner one is dismissed. Both dialogs become body siblings in the DOM — the
- * native top-layer stacking is unchanged; only DOM ancestry is fixed.
+ * native top-layer stacking is unchanged; only DOM ancestry is fixed. Note the
+ * portal fixes DOM ancestry ONLY: React still dispatches events up the React
+ * tree, which is why onClose/onCancel below need an explicit target guard.
  *
  * Two-phase mount: createPortal requires document, which doesn't exist on the
  * server. We gate the portal on a `mounted` flag read via useSyncExternalStore,
@@ -92,14 +95,14 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
     };
   }, [open]);
 
-  // Lock body scroll while the sheet is open.
+  // Lock page scroll while the sheet is open — refcounted and scroll-restoring
+  // (see body-scroll-lock.ts). The restore is what keeps a keyboard-induced iOS
+  // layout-viewport pan from outliving the sheet: without it, the NEXT open
+  // renders this fixed dialog against the panned viewport, slamming the panel
+  // to the top of the screen with its header off-screen.
   useEffect(() => {
     if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
+    return lockBodyScroll();
   }, [open]);
 
   // Two-phase mount guard (see docstring above): `mounted` is false on the
@@ -117,12 +120,30 @@ export function BottomSheet({ open, onClose, title, children, "data-testid": tes
       data-testid={testId}
       // Esc key: the browser fires `cancel`; prevent the default instant close
       // and route through React state so `open` stays the source of truth.
+      // Target guard: see the onClose note below — an inner sheet's `cancel`
+      // arrives here too, and the un-guarded preventDefault() used to fire
+      // against the INNER dialog's close as well.
       onCancel={(e) => {
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onClose();
       }}
       // Fires when the dialog actually closes (incl. our own close() call).
-      onClose={onClose}
+      //
+      // TARGET GUARD — do not remove. `close` and `cancel` do not bubble in the
+      // DOM, but React dispatches them up the REACT tree, and a portal keeps
+      // its React-tree ancestry no matter where it lands in the DOM. Every
+      // nested sheet (saved-meal, scan, library picker, meal-edit) is portaled
+      // to document.body but is still a React descendant of the Log sheet's
+      // <dialog>, so React delivered the inner dialog's close straight to this
+      // handler: adding a saved meal closed its own sheet AND the Log sheet
+      // underneath it. (React only skips ancestor accumulation for `scroll` /
+      // `scrollend` — everything else walks the fiber tree; see
+      // react-dom-client's accumulateTargetOnly.)
+      onClose={(e) => {
+        if (e.target !== e.currentTarget) return;
+        onClose();
+      }}
       // Click on the backdrop (the dialog element itself, not the panel) closes.
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

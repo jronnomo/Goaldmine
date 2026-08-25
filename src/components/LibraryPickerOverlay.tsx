@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { lockBodyScroll } from "@/lib/body-scroll-lock";
 import { classifyFood, type MacroGroup } from "@/lib/food-resolve-local";
 import { setFoodFavorite } from "@/lib/food-actions";
 import type { LibraryFood } from "@/lib/food-types";
@@ -121,18 +122,16 @@ export function LibraryPickerOverlay({
   // Lock body scroll while open (mirrors BottomSheet). Without this, iOS Safari
   // pans the layout viewport when the search keyboard opens; the fixed overlay is
   // anchored to the layout viewport, so the header (and its ✕) slides off-screen
-  // with no way to scroll it back. Capture scroll position on open and restore it
-  // on close AND on search blur, in case the keyboard pan leaked through anyway.
+  // with no way to scroll it back. The shared refcounted lock
+  // (body-scroll-lock.ts) owns the capture/restore and the nesting — it restores
+  // the page position on release even while the host Log sheet stays open. The
+  // local ref only feeds the extra on-search-blur restore below, in case the
+  // keyboard pan leaked through mid-session.
   const openScrollYRef = useRef(0);
   useEffect(() => {
     if (!open) return;
     openScrollYRef.current = window.scrollY;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-      window.scrollTo(0, openScrollYRef.current);
-    };
+    return lockBodyScroll();
   }, [open]);
 
   // Client-side filter (no server round-trip — UXR-lib-01)
@@ -173,8 +172,19 @@ export function LibraryPickerOverlay({
       data-testid="library-picker-overlay"
       className="m-0 p-0 border-0 fixed inset-0 h-full w-full max-h-full max-w-full overflow-hidden bg-black/45 backdrop:bg-transparent"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      onCancel={(e) => { e.preventDefault(); onClose(); }}
-      onClose={onClose}
+      // Target guard (same reason as BottomSheet's — see its onClose note):
+      // React dispatches `cancel`/`close` up the REACT tree, and this dialog is
+      // a React descendant of the Log sheet's dialog even though the portal
+      // makes them DOM siblings.
+      onCancel={(e) => {
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        onClose();
+      }}
+      onClose={(e) => {
+        if (e.target !== e.currentTarget) return;
+        onClose();
+      }}
     >
       {/* Panel — mirrors ScanFoodSheet panel CSS exactly.
           overflow-hidden clips the scroll area to the rounded top + prevents the
