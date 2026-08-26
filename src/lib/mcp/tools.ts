@@ -14,6 +14,11 @@ import {
 } from "@/lib/workout-core";
 import { logHikeCore, updateHikeCore, deleteHikeCore } from "@/lib/hike-core";
 import { deleteMeasurementCore } from "@/lib/measurement-core";
+import {
+  deleteBodyMetricsCore,
+  findBodyMetricsOnDay,
+  updateBodyMetricCore,
+} from "@/lib/body-metric-core";
 import { deleteNutritionCore } from "@/lib/nutrition-core";
 import { deleteBaselineCore } from "@/lib/baseline-core";
 import {
@@ -2504,7 +2509,7 @@ function registerReadTools(server: McpServer) {
         const seenKeys = new Set<string>();
         const latestByKey = new Map<
           string,
-          { value: number; unit: string | null; date: Date; createdAt: Date }
+          { id: string; value: number; unit: string | null; date: Date; createdAt: Date }
         >();
         const countByKey = new Map<string, number>();
         const firstDateByKey = new Map<string, Date>();
@@ -2522,7 +2527,7 @@ function registerReadTools(server: McpServer) {
 
           if (!seenKeys.has(row.key)) {
             seenKeys.add(row.key);
-            latestByKey.set(row.key, { value: row.value, unit: row.unit, date: row.date, createdAt: row.createdAt });
+            latestByKey.set(row.key, { id: row.id, value: row.value, unit: row.unit, date: row.date, createdAt: row.createdAt });
           }
         }
 
@@ -2542,6 +2547,9 @@ function registerReadTools(server: McpServer) {
             units: resolved.units,
             direction: resolved.direction,
             latest: {
+              // id addresses this exact reading for update_body_metric /
+              // delete_body_metric — the fix for a mistyped latest value.
+              id: latest.id,
               value: latest.value,
               date: toDateKey(latest.date),
             },
@@ -2593,7 +2601,11 @@ function registerReadTools(server: McpServer) {
         });
 
         const resolved = resolveBodyMetric(key, rows[0]?.unit ?? null);
+        // id is load-bearing, not decoration: delete_body_metric /
+        // update_body_metric address a single reading by it, and this is the
+        // only read that surfaces individual rows.
         const points = rows.map((r) => ({
+          id: r.id,
           date: toDateKey(r.date),
           value: r.value,
           unit: r.unit,
@@ -2862,7 +2874,8 @@ function registerWriteTools(server: McpServer) {
         "Use this tool for wearable/Watch numbers beyond weight and body fat. " +
         "For weight or body fat use log_measurement; for program/goal metrics (MRR, milestones) use log_metric; for fitness benchmarks use log_baseline. " +
         "Key is a bare lowercase snake string — e.g. rhr | sleep_score | spo2 | vo2max | hrv — or any custom key. " +
-        "Multiple readings per day are allowed (Watch can emit several SpO₂ spot-checks).",
+        "Multiple readings per day are allowed (Watch can emit several SpO₂ spot-checks) — but that is for genuinely separate readings. " +
+        "To fix a wrong value use update_body_metric, and to remove one use delete_body_metric; never stack a corrected reading on top of a bad one.",
       inputSchema: {
         key: z
           .string()
@@ -4575,6 +4588,135 @@ function registerWriteTools(server: McpServer) {
       safe(async () => {
         await deleteMeasurementCore(id); // also cleans ActivityGoalLink rows (#272)
         return { id, message: "Measurement deleted" };
+      }),
+  );
+
+  // ── delete_body_metric ───────────────────────────────────────────────────────
+  // BodyMetric was append-only by accident: log_body_metric wrote rows and
+  // nothing in the app could remove one, so a mistyped RHR was permanent and
+  // the only available "correction" was to stack another reading on top.
+  server.registerTool(
+    "delete_body_metric",
+    {
+      title: "Delete / remove a wearable body-metric reading (RHR, sleep, SpO₂…)",
+      description:
+        "Remove one or more body-metric readings — resting HR, sleep score, SpO₂, VO₂ max, HRV, or any ad-hoc key. " +
+        "Use when a reading was logged in error, with the wrong value, or twice. To correct a reading rather than remove it, use update_body_metric. " +
+        "Address readings by id (from get_metric_history points, or get_body_metrics latest.id) — pass ids:[...] to clear several at once. " +
+        "Ids that no longer exist are reported in `missing` rather than failing the batch. " +
+        "If you don't have ids, pass key + date (and optionally value): when that resolves to exactly one reading it is deleted, and when it matches several the tool returns the candidates with their ids instead of guessing. " +
+        "This is for wearable/body metrics only — use delete_measurement for weight/body-fat and delete_metric for project-goal readings.",
+      inputSchema: {
+        id: z.string().optional().describe("Reading id. Use this or ids or key+date."),
+        ids: z
+          .array(z.string())
+          .optional()
+          .describe("Several reading ids to delete in one call."),
+        key: z
+          .string()
+          .optional()
+          .describe("Bare metric key — rhr | sleep_score | spo2 | vo2max | hrv | ad-hoc. Requires date."),
+        date: z
+          .string()
+          .optional()
+          .describe("yyyy-mm-dd (USER_TZ) or ISO datetime. Required with key."),
+        value: z
+          .number()
+          .optional()
+          .describe("Narrow a key+date match to readings with exactly this value."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        const explicit = [
+          ...(input.id ? [input.id] : []),
+          ...(input.ids ?? []),
+        ];
+
+        if (explicit.length > 0) {
+          const { deleted, missing } = await deleteBodyMetricsCore(explicit);
+          return {
+            deleted,
+            missing,
+            message:
+              `Deleted ${deleted.length} reading${deleted.length === 1 ? "" : "s"}` +
+              (missing.length > 0 ? ` — ${missing.length} id(s) not found` : ""),
+          };
+        }
+
+        if (!input.key || !input.date) {
+          throw new Error(
+            "Pass id / ids, or key + date. Get ids from get_metric_history (points[].id).",
+          );
+        }
+
+        const key = normalizeMetricKey(input.key);
+        const date = parseDateInput(input.date);
+        const candidates = await findBodyMetricsOnDay(key, date, input.value);
+
+        if (candidates.length === 0) {
+          throw new Error(
+            `No ${key} reading found on ${toDateKey(date)}` +
+              (input.value != null ? ` with value ${input.value}` : ""),
+          );
+        }
+        if (candidates.length > 1) {
+          // Deterministic over clever: several readings match, so hand back the
+          // ids and let the caller name the one it means. Multiple readings a
+          // day are legitimate (Watch SpO₂ spot-checks) — guessing would delete
+          // real data.
+          return {
+            ambiguous: true,
+            candidates,
+            message:
+              `${candidates.length} ${key} readings on ${toDateKey(date)} match — ` +
+              "call again with id (or ids) to say which.",
+          };
+        }
+
+        const { deleted } = await deleteBodyMetricsCore([candidates[0].id]);
+        return { deleted, missing: [], message: "Body metric reading deleted" };
+      }),
+  );
+
+  // ── update_body_metric ───────────────────────────────────────────────────────
+  server.registerTool(
+    "update_body_metric",
+    {
+      title: "Correct a wearable body-metric reading in place",
+      description:
+        "Edit an existing body-metric reading — resting HR, sleep score, SpO₂, VO₂ max, HRV, ad-hoc keys — by id. " +
+        "Use to fix a mistyped value, a wrong unit, the wrong date, or a reading filed under the wrong key, WITHOUT stacking a second reading on top of the bad one. " +
+        "Get the id from get_metric_history (points[].id) or get_body_metrics (latest.id). " +
+        "Only the fields you pass change; source and the original createdAt are preserved. To remove the reading entirely use delete_body_metric.",
+      inputSchema: {
+        id: z.string().describe("Reading id from get_metric_history / get_body_metrics."),
+        value: z.number().optional().describe("Corrected numeric reading."),
+        unit: z.string().optional().describe("Corrected unit, e.g. bpm | % | ml/kg/min."),
+        notes: z.string().optional().describe("Replacement notes. Pass \"\" to clear."),
+        date: z
+          .string()
+          .optional()
+          .describe("Move the reading to this day — yyyy-mm-dd (USER_TZ) or ISO datetime."),
+        key: z
+          .string()
+          .optional()
+          .describe("Re-file under a different bare metric key (e.g. logged as rhr, was hrv)."),
+      },
+    },
+    async (input) =>
+      safe(async () => {
+        if (input.value !== undefined && !Number.isFinite(input.value)) {
+          throw new Error("value must be a finite number");
+        }
+        const row = await updateBodyMetricCore(input.id, {
+          value: input.value,
+          unit: input.unit,
+          notes: input.notes === "" ? null : input.notes,
+          date: input.date ? parseDateInput(input.date) : undefined,
+          key: input.key ? normalizeMetricKey(input.key) : undefined,
+        });
+        return { ...row, message: "Body metric reading updated" };
       }),
   );
 
