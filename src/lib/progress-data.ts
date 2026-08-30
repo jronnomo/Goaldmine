@@ -735,11 +735,19 @@ export async function getProgressPageData(now: Date = new Date()): Promise<Progr
   // ── Body metrics lid (key 14) — bounded (UXR-PROG-97) ─────────────────────
   const bmWindowStart =
     programStart !== null ? startOfDay(programStart) : addDays(startOfDay(now), -365);
-  const bodyMetricRows = await db.bodyMetric.findMany({
-    where: { date: { gte: bmWindowStart } },
-    orderBy: [{ date: "asc" }, { createdAt: "asc" }],
-    take: 400, // ⚠[200–800]
-  });
+  // BOUNDED-DESC then reversed (audit A2, third site — see db.recency.test.ts).
+  // `asc` + `take` returns the OLDEST 400 rows in the window, so a user who
+  // logs more than 400 body-metric readings inside it loses the NEWEST ones
+  // and this lid freezes — the same failure that pinned /history's weight
+  // trend to its 90th-oldest weigh-in. Newest-first then reversed keeps the
+  // bound on the end of the series nobody is looking at.
+  const bodyMetricRows = (
+    await db.bodyMetric.findMany({
+      where: { date: { gte: bmWindowStart } },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      take: 400, // ⚠[200–800]
+    })
+  ).reverse();
   const bmGrouped = new Map<string, typeof bodyMetricRows>();
   for (const r of bodyMetricRows) {
     const arr = bmGrouped.get(r.key) ?? [];
