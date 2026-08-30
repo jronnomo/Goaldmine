@@ -659,6 +659,7 @@ export async function getProgressPageData(now: Date = new Date()): Promise<Progr
           return null;
         })();
   const bodyFatTarget = bodyOwner?.targets.find((t) => t.metric === "bodyFatPct") ?? null;
+  const weightTargetSpec = bodyOwner?.targets.find((t) => t.metric === "weightLb") ?? null;
   let bodyComposition: BodyCompositionModel | null = null;
   if (bodyOwner) {
     // A2 fixed by construction: bounded-DESC scan reversed + a TRUE start.
@@ -685,6 +686,16 @@ export async function getProgressPageData(now: Date = new Date()): Promise<Progr
         label: labelFmt.format(m.date),
       })),
       current: recent.length > 0 ? { value: recent.at(-1)!.weightLb!, date: recent.at(-1)!.date } : null,
+      // The target rides as an OFF-SCALE footer marker, never a to-scale
+      // reference line: a 143 lb target under 154–161 lb readings would double
+      // the y-domain and squash the movement the chart exists to show.
+      weightTarget:
+        weightTargetSpec && typeof weightTargetSpec.target === "number"
+          ? {
+              value: weightTargetSpec.target,
+              direction: weightTargetSpec.direction === "increase" ? "increase" : "decrease",
+            }
+          : null,
       start: trueStart ? { value: trueStart.weightLb!, date: trueStart.date } : null,
       bodyFat: bodyFatTarget
         ? {

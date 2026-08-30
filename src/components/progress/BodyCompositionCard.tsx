@@ -30,6 +30,8 @@ export type BodyCompositionModel = {
   current: { value: number; date: Date } | null;
   /** TRUE first-ever reading (its own findFirst asc). */
   start: { value: number; date: Date } | null;
+  /** Owning goal's weightLb target — rendered as an off-scale footer marker. */
+  weightTarget: { value: number; direction?: "decrease" | "increase" } | null;
   bodyFat: {
     latest: { value: number; date: Date } | null;
     /** True when a bodyFatPct target exists but scores null (start unset). */
@@ -45,7 +47,7 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
 });
 
 export function BodyCompositionCard({ model }: { model: BodyCompositionModel }) {
-  const { weights, current, start, bodyFat } = model;
+  const { weights, current, start, bodyFat, weightTarget } = model;
 
   if (weights.length === 0) {
     // Degrades to a Tier-2 strip at zero readings (manifest note) — no
@@ -82,7 +84,7 @@ export function BodyCompositionCard({ model }: { model: BodyCompositionModel }) 
           value={delta !== null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)} lb` : "—"}
         />
       </div>
-      <WeightChart data={weights} ariaLabel={ariaLabel} />
+      <WeightChart data={weights} ariaLabel={ariaLabel} target={weightTarget} />
       {bodyFat && bodyFat.latest && (
         <p className="mt-2 text-xs text-[var(--muted)]" data-testid="bodyfat-line">
           Body fat {fmt(bodyFat.latest.value)}% · {dateFmt.format(bodyFat.latest.date)}

@@ -2,6 +2,17 @@ import Link from "next/link";
 import { Card } from "@/components/Card";
 import { WeightChart } from "@/components/WeightChart";
 import { getDb } from "@/lib/db";
+import { USER_TZ } from "@/lib/calendar-core";
+
+// Labels are formatted SERVER-side in USER_TZ and handed to WeightChart, the
+// same escape hatch BodyCompositionCard uses — a client-side
+// toLocaleDateString(undefined, …) resolves locale/TZ differently at SSR
+// (UTC on Vercel) than at hydration.
+const labelFmt = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  timeZone: USER_TZ,
+});
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +50,11 @@ export default async function HistoryPage() {
           <WeightChart
             data={measurements
               .filter((m) => m.weightLb !== null)
-              .map((m) => ({ date: m.date.toISOString(), weight: m.weightLb! }))}
+              .map((m) => ({
+                date: m.date.toISOString(),
+                weight: m.weightLb!,
+                label: labelFmt.format(m.date),
+              }))}
           />
         )}
       </Card>
