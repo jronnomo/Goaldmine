@@ -25,11 +25,19 @@ export default async function HistoryPage() {
       take: 50,
       include: { exercises: { select: { id: true } } },
     }),
+    // BOUNDED-DESC then reversed — audit A2, the same shape BodyCompositionCard
+    // uses. `orderBy: date asc` with a take bound returns the 90 OLDEST rows,
+    // so once the table passed 90 measurements this chart froze at the
+    // 90th-oldest date and could never advance again. Filtering weightLb in
+    // the query (rather than after the take) also means the bound buys 90
+    // actual chart points instead of 90 rows that may be waist-tape-only.
     db.measurement.findMany({
-      orderBy: { date: "asc" },
+      where: { weightLb: { not: null } },
+      orderBy: [{ date: "desc" }, { id: "desc" }],
       take: 90,
     }),
   ]);
+  const weighIns = measurements.reverse();
 
   return (
     <div className="max-w-md mx-auto p-4 space-y-4">
@@ -44,12 +52,11 @@ export default async function HistoryPage() {
       </header>
 
       <Card title="Weight trend">
-        {measurements.length === 0 ? (
+        {weighIns.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No measurements yet. Log your first weight from the Log tab below.</p>
         ) : (
           <WeightChart
-            data={measurements
-              .filter((m) => m.weightLb !== null)
+            data={weighIns
               .map((m) => ({
                 date: m.date.toISOString(),
                 weight: m.weightLb!,
