@@ -18,8 +18,11 @@
 // mandatory; a grayscale screenshot must lose nothing.
 // R6 — a day with no logged calories renders NO MARK (null ⇒ no bar); the
 // rail carries the second absence channel.
-// Heights are ⚑1's h-48 / h-32 / h-10 — NOT the blueprint's h-52/h-44/h-40,
-// which overrun the 737px fold and push the rail below it.
+// Heights are h-48 / h-28 / h-10 — ⚑1 ruled h-32 for calories, taken down to
+// h-28 by the pre-authorized fold concession (see the D merge commit); NOT
+// the blueprint's h-52/h-44/h-40, which overrun the 737px fold and push the
+// rail below it. loading.tsx's skeleton arithmetic mirrors these numbers —
+// change one, change both.
 
 import { useMemo, useState } from "react";
 import {
@@ -442,9 +445,10 @@ export function TrendChartStack({
               ))}
             </div>,
           )}
-          {/* h-[70px] = the ⚑1 ribbon budget (h-10 / 40px of bands) PLUS the
-              30px shared axis this bottom chart alone carries — the axis is
-              its own manifest key (3d), not part of the ribbon's 40. */}
+          {/* h-[64px] = the ⚑1 ribbon budget (h-10 / 40px of bands) PLUS the
+              24px shared axis this bottom chart alone carries (XAxis
+              height={24} below) — the axis is its own manifest key (3d), not
+              part of the ribbon's 40. */}
           <div className="h-[64px] relative" style={TOUCH_ACTION} data-testid="trends-shared-axis">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={denseRows} margin={CHART_MARGIN} {...brushProps}>

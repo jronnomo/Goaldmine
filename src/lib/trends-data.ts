@@ -30,6 +30,17 @@ export type TrendsPageData = {
   rangeKey: "30d" | "90d" | "all"; // echo of the requested chip (initial client state)
   initialWindow: { fromT: number; toT: number } | null;   // from valid ?from=&to=, epoch-ms USER_TZ midnights
   shape: "zero" | "populated";     // zero ⇢ all three row sets empty ⇢ page renders EmptyState, no island
+  /**
+   * Server-computed start of each fixed range's REQUESTED window (t = epoch-ms
+   * USER_TZ midnight via parseDateKey — the same construction as the grid's
+   * t's, so when the day exists in the grid the values are identical). The
+   * island needs these because a range chip's honest window is "the last N
+   * calendar days ending today" even when history is shorter — the grid then
+   * has no point for the window's start, and the client is forbidden its own
+   * Date/TZ math. Feeds the WindowBounds the island passes to aggregateWindow
+   * (QA C-2 fix: page and tool denominators must agree by construction).
+   */
+  rangeStarts: Record<"30d" | "90d", { t: number; key: string; label: string }>;
 };
 
 /**
@@ -168,9 +179,26 @@ export async function getTrendsPageData(opts: {
   // Full-history grid up to today; the island slices client-side. Page points
   // are NEVER sampled — sampling would make the island's window aggregate
   // approximate (§10.D3); the 400-row cap applies only to the MCP `daily` output.
+  // NOTE the grid deliberately starts at the first day with data (no `from`),
+  // so points.length says how much HISTORY exists, not how long a requested
+  // window is — the island's aggregateWindow calls carry the requested
+  // WindowBounds (rangeStarts below) so denominators stay honest (QA C-2).
   const today = startOfDay(new Date());
   const points = await fetchDailyPoints(db, { to: today });
   const targets = await getAdherenceTargets();
+
+  // Requested-window starts for the fixed range chips — see TrendsPageData.
+  const rangeLabelFmt = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: USER_TZ,
+  });
+  const rangeStart = (days: number) => {
+    const d = addDays(today, -(days - 1));
+    const key = dateKey(d);
+    return { t: parseDateKey(key).getTime(), key, label: rangeLabelFmt.format(d) };
+  };
+  const rangeStarts = { "30d": rangeStart(30), "90d": rangeStart(90) };
 
   // initialWindow from valid ?from=&to=: clamp to the grid bounds and discard
   // (null) if empty after clamping.
@@ -192,5 +220,6 @@ export async function getTrendsPageData(opts: {
     rangeKey: opts.rangeKey,
     initialWindow,
     shape: points.length === 0 ? "zero" : "populated",
+    rangeStarts,
   };
 }

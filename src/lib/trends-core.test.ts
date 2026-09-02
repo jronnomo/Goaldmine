@@ -19,6 +19,7 @@ import {
   trailingMeanSeries,
   type DailyPoint,
   type MacroTargets,
+  type WindowBounds,
 } from "@/lib/trends-core";
 // Test-only import: the core itself is import-free; the DST cases build their
 // day grid with the REAL calendar helpers, exactly as trends-data does.
@@ -51,6 +52,21 @@ function pt(i: number, over: Partial<DailyPoint> = {}): DailyPoint {
 /** n-day grid with per-index overrides. */
 function series(n: number, overrides: Record<number, Partial<DailyPoint>> = {}): DailyPoint[] {
   return Array.from({ length: n }, (_, i) => pt(i, overrides[i] ?? {}));
+}
+
+/** WindowBounds spanning exactly the series' own extent (the common case). */
+function boundsOf(points: DailyPoint[]): WindowBounds {
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
+  return { fromT: first.t, toT: last.t, fromKey: first.dateKey, toKey: last.dateKey };
+}
+
+/** aggregateWindow over the series' own extent — bounds === the data grid. */
+function aggSelf(
+  points: DailyPoint[],
+  opts?: { targets?: MacroTargets | null },
+): ReturnType<typeof aggregateWindow> {
+  return aggregateWindow(points, boundsOf(points), opts);
 }
 
 // ── linearSlope ──────────────────────────────────────────────────────────────
@@ -224,7 +240,7 @@ describe("aggregateWindow — G1 §4.2 worked-sample fixture", () => {
     }),
   );
   const targets: MacroTargets = { calories: 2300, proteinG: 180, carbsG: 200, fatG: 76 };
-  const agg = aggregateWindow(points, { targets });
+  const agg = aggSelf(points, { targets });
 
   it("window + coverage", () => {
     expect(agg.window).toEqual({ from: "2026-08-03", to: "2026-08-12", days: 10 });
@@ -280,7 +296,7 @@ describe("aggregateWindow — TDEE sign convention", () => {
         ]),
       ),
     );
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdeeReason).toBeNull();
     expect(agg.energy.observedTdee).not.toBeNull();
     expect(agg.energy.observedTdee!).toBeGreaterThan(agg.nutrition.avgKcal!);
@@ -299,7 +315,7 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
         Array.from({ length: 5 }, (_, i) => [i, { kcal: 2400, mealCount: 1, weight: 158 - 0.1 * i }]),
       ),
     );
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdee).toBeNull();
     expect(agg.energy.observedTdeeReason).toBe("window_too_short");
   });
@@ -311,7 +327,7 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
       6: { kcal: 2500, mealCount: 1 },
       9: { kcal: 2400, mealCount: 1, weight: 157 },
     });
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdee).toBeNull();
     expect(agg.energy.observedTdeeReason).toBe("insufficient_nutrition_days");
   });
@@ -326,7 +342,7 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
       60: { kcal: 2400, mealCount: 1 },
       89: { kcal: 2450, mealCount: 1, weight: 156 },
     };
-    const agg = aggregateWindow(series(90, overrides));
+    const agg = aggSelf(series(90, overrides));
     expect(agg.nutrition.loggedDays).toBe(5);
     expect(agg.energy.observedTdee).toBeNull();
     expect(agg.energy.observedTdeeReason).toBe("insufficient_nutrition_coverage");
@@ -340,7 +356,7 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
       ),
     );
     points[4] = { ...points[4]!, weight: 158 };
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdeeReason).toBe("insufficient_weigh_ins");
     expect(agg.weight.deltaLb).toBeNull(); // Δ shows "—", not 0
     expect(agg.weight.ratePerWeekLb).toBeNull();
@@ -355,7 +371,7 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
     );
     points[0] = { ...points[0]!, weight: 158 };
     points[5] = { ...points[5]!, weight: 157.4 }; // span 5 grid days < 7
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdeeReason).toBe("insufficient_weigh_ins");
   });
 
@@ -371,11 +387,80 @@ describe("aggregateWindow — TDEE gates (five reasons, first failure wins)", ()
         ]),
       ),
     );
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.energy.observedTdee).toBeNull();
     expect(agg.energy.observedTdeeReason).toBe("implausible_result");
     expect(agg.energy.gap).toBeNull();
     expect(agg.energy.balancePerDay).toBeNull();
+  });
+});
+
+// ── aggregateWindow: the denominator is the REQUESTED window (QA C-2 fix) ────
+
+describe("aggregateWindow — denominator derives from the requested bounds, not the points present", () => {
+  // The flagship failure this pins: a user with 10 days of history asks about
+  // a 30-day window. The honest answer is "10 of 30 days logged" — never
+  // "10 of 10". Data rides on grid days 20..29; every data day is fully
+  // logged and the two weigh-ins span 9 grid days, so ONLY the coverage
+  // ratio (10/30 < MIN_NUTRITION_COVERAGE) withholds the TDEE — exactly the
+  // gate the page used to skip when it counted its own points as the
+  // denominator while get_trend_window counted the requested window.
+  const overrides: Record<number, Partial<DailyPoint>> = Object.fromEntries(
+    Array.from({ length: 10 }, (_, i) => [
+      20 + i,
+      {
+        kcal: 2400,
+        mealCount: 1,
+        ...(i === 0 ? { weight: 158 } : {}),
+        ...(i === 9 ? { weight: 157 } : {}),
+      },
+    ]),
+  );
+  const windowBounds: WindowBounds = {
+    fromT: T0,
+    toT: T0 + 29 * DAY_MS,
+    fromKey: key(0),
+    toKey: key(29),
+  };
+  // Tool-shaped points: the full 30-day grid, empty leading days included —
+  // what fetchDailyPoints builds when given an explicit `from`.
+  const toolPoints = series(30, overrides);
+  // Page-shaped points: the grid starts at the first day WITH data — what
+  // fetchDailyPoints builds with no `from` (the /trends full-history grid).
+  const pagePoints = toolPoints.slice(20);
+  const toolAgg = aggregateWindow(toolPoints, windowBounds);
+  const pageAgg = aggregateWindow(pagePoints, windowBounds);
+
+  it("10 days of data over a 30-day window reports totalDays 30 / nutritionDays 10 and gates on insufficient_nutrition_coverage", () => {
+    expect(toolAgg.coverage.totalDays).toBe(30);
+    expect(toolAgg.coverage.nutritionDays).toBe(10);
+    expect(toolAgg.window).toEqual({ from: key(0), to: key(29), days: 30 });
+    expect(toolAgg.energy.observedTdee).toBeNull();
+    expect(toolAgg.energy.observedTdeeReason).toBe("insufficient_nutrition_coverage");
+  });
+
+  it("page-shaped and tool-shaped points produce IDENTICAL aggregates for identical bounds", () => {
+    // The screen and the coach agree by construction, not by discipline.
+    expect(pageAgg).toEqual(toolAgg);
+  });
+
+  it("averages still divide by contributing days — the wider denominator never dilutes them", () => {
+    expect(toolAgg.nutrition.loggedDays).toBe(10);
+    expect(toolAgg.nutrition.avgKcal).toBe(2400); // NOT 800 (24000/30)
+  });
+
+  it("self-slices: points outside the bounds never join the window", () => {
+    // Narrow the request to exactly the data span: fully covered, so the
+    // TDEE computes — from the SAME full-grid array.
+    const narrow = aggregateWindow(toolPoints, {
+      fromT: T0 + 20 * DAY_MS,
+      toT: T0 + 29 * DAY_MS,
+      fromKey: key(20),
+      toKey: key(29),
+    });
+    expect(narrow.coverage).toMatchObject({ totalDays: 10, nutritionDays: 10 });
+    expect(narrow.energy.observedTdeeReason).toBeNull();
+    expect(narrow.energy.observedTdee).not.toBeNull();
   });
 });
 
@@ -387,13 +472,13 @@ describe("aggregateWindow — averages exclude unlogged days", () => {
       2: { kcal: 1000, mealCount: 1 },
       7: { kcal: 2000, mealCount: 1 },
     });
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.nutrition.avgKcal).toBe(1500); // NOT 300 (3000/10)
     expect(agg.nutrition.loggedDays).toBe(2);
   });
 
   it("returns all-null nutrition (not zeros) for a window with no logs", () => {
-    const agg = aggregateWindow(series(10));
+    const agg = aggSelf(series(10));
     expect(agg.nutrition.avgKcal).toBeNull();
     expect(agg.nutrition.avgProteinG).toBeNull();
     expect(agg.nutrition.macroSharePct).toBeNull();
@@ -401,19 +486,37 @@ describe("aggregateWindow — averages exclude unlogged days", () => {
 });
 
 describe("aggregateWindow — coverage on every path", () => {
-  it("empty input: all-zero coverage with a null window", () => {
-    const agg = aggregateWindow([]);
-    expect(agg.window).toEqual({ from: null, to: null, days: 0 });
+  it("a window holding no points still returns full coverage, with the bounds-derived denominator", () => {
+    const agg = aggregateWindow([], {
+      fromT: T0,
+      toT: T0 + 9 * DAY_MS,
+      fromKey: key(0),
+      toKey: key(9),
+    });
+    expect(agg.window).toEqual({ from: key(0), to: key(9), days: 10 });
     expect(agg.coverage).toEqual({
-      totalDays: 0,
+      totalDays: 10,
       nutritionDays: 0,
       weightDays: 0,
       healthDays: 0,
       mealsNoMacroDays: 0,
     });
     expect(agg.energy.observedTdee).toBeNull();
-    expect(agg.energy.observedTdeeReason).toBe("window_too_short");
+    // The 10-day window passes the length gate; zero logged days fails gate 2.
+    expect(agg.energy.observedTdeeReason).toBe("insufficient_nutrition_days");
     expect(agg.adherence).toBeNull();
+  });
+
+  it("an empty sub-7-day window gates window_too_short off the bounds alone", () => {
+    const agg = aggregateWindow([], {
+      fromT: T0,
+      toT: T0 + 2 * DAY_MS,
+      fromKey: key(0),
+      toKey: key(2),
+    });
+    expect(agg.window).toEqual({ from: key(0), to: key(2), days: 3 });
+    expect(agg.coverage.totalDays).toBe(3);
+    expect(agg.energy.observedTdeeReason).toBe("window_too_short");
   });
 
   it("mealsNoMacroDays counts meals-logged-but-macro-less days", () => {
@@ -422,7 +525,7 @@ describe("aggregateWindow — coverage on every path", () => {
       2: { mealCount: 1 },
       3: { kcal: 2400, mealCount: 1 },
     });
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.coverage.mealsNoMacroDays).toBe(2);
     expect(agg.coverage.nutritionDays).toBe(1);
   });
@@ -433,7 +536,7 @@ describe("aggregateWindow — coverage on every path", () => {
       1: { activeKcal: 600 },
       2: { activeKcal: 600, basalKcal: 2100 },
     });
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.coverage.healthDays).toBe(3);
     expect(agg.energy.measuredDays).toBe(1);
     expect(agg.energy.measuredTdee).toBe(2700);
@@ -445,9 +548,9 @@ describe("aggregateWindow — adherence gating and proteinPerLb", () => {
 
   it("adherence is null without targets AND null without any logged kcal", () => {
     const logged = series(8, { 0: { kcal: 2400, mealCount: 1 } });
-    expect(aggregateWindow(logged).adherence).toBeNull();
-    expect(aggregateWindow(logged, { targets: null }).adherence).toBeNull();
-    expect(aggregateWindow(series(8), { targets }).adherence).toBeNull();
+    expect(aggSelf(logged).adherence).toBeNull();
+    expect(aggSelf(logged, { targets: null }).adherence).toBeNull();
+    expect(aggSelf(series(8), { targets }).adherence).toBeNull();
   });
 
   it("proteinPerLb = avgProteinG / last weigh-in, 2dp; null when either side is missing", () => {
@@ -456,10 +559,10 @@ describe("aggregateWindow — adherence gating and proteinPerLb", () => {
       3: { kcal: 2400, proteinG: 168, mealCount: 1 },
       9: { weight: 156.6 },
     });
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.nutrition.proteinPerLb).toBe(1.07); // 168 / 156.6
-    expect(aggregateWindow(series(10, { 3: { proteinG: 168, mealCount: 1 } })).nutrition.proteinPerLb).toBeNull();
-    expect(aggregateWindow(series(10, { 0: { weight: 158.4 } })).nutrition.proteinPerLb).toBeNull();
+    expect(aggSelf(series(10, { 3: { proteinG: 168, mealCount: 1 } })).nutrition.proteinPerLb).toBeNull();
+    expect(aggSelf(series(10, { 0: { weight: 158.4 } })).nutrition.proteinPerLb).toBeNull();
   });
 });
 
@@ -569,7 +672,7 @@ describe("DST windows (grid built via real calendar-core, as trends-data does)",
       health: [],
     });
     expect(points).toHaveLength(8);
-    const agg = aggregateWindow(points);
+    const agg = aggSelf(points);
     expect(agg.window.days).toBe(8);
     expect(agg.energy.observedTdeeReason).toBeNull();
     expect(agg.energy.observedTdee).not.toBeNull();

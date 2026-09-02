@@ -89,6 +89,7 @@ export default async function TrendsPage({
           targets={data.targets}
           rangeKey={data.rangeKey}
           initialWindow={data.initialWindow}
+          rangeStarts={data.rangeStarts}
         />
       )}
     </div>

@@ -2677,8 +2677,23 @@ function registerReadTools(server: McpServer) {
         const points = await fetchDailyPoints(db, { from: fromDate, to: end });
         const targets = await getAdherenceTargets();
         // SAME aggregate path as the page (G1 criterion 20), computed over ALL
-        // rows BEFORE the daily series is sampled.
-        const agg = aggregateWindow(points, { targets });
+        // rows BEFORE the daily series is sampled. The bounds are the REQUESTED
+        // window (QA C-2): aggregateWindow derives totalDays from them, so this
+        // tool and the /trends island cannot disagree on the denominator for
+        // the same window — a 30-day ask over 10 days of history is 10/30 on
+        // both surfaces, gates included.
+        const fromKey = toDateKey(fromDate);
+        const toKey = toDateKey(end);
+        const agg = aggregateWindow(
+          points,
+          {
+            fromT: parseDateKey(fromKey).getTime(),
+            toT: parseDateKey(toKey).getTime(),
+            fromKey,
+            toKey,
+          },
+          { targets },
+        );
         const daily = includeDaily ? sampleEvenly(points, MAX_DAILY_ROWS) : [];
         return { ...agg, daily };
       }),
