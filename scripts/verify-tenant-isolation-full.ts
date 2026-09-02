@@ -5,12 +5,12 @@
 // deleteMany cleanup, which only proved "deleteMany found N rows," never that
 // the schema's onDelete: Cascade graph itself is complete).
 //
-// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 21 scoped models
+// Proves a 2nd user (usr_e9_b) is fully isolated across ALL 22 scoped models
 // AND the founder's data is byte-for-byte unchanged before/after.
 //
 // Steps (per PRD REQ-001):
 //   1. Founder snapshot: per-model counts (regression baseline).
-//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 21 models as practical),
+//   2. Seed usr_e9_b with a broad dataset (≥1 row in as many of the 22 models as practical),
 //      including a FoodLibrary (shared catalog) + FoodUsage (per-user) pair.
 //   3. Per-model read sweep: founder sees NO usr_e9_b rows; usr_e9_b sees ONLY its own rows.
 //   4. Lib-anchor isolation: getFocusGoal / getActiveProgram / resolveDay /
@@ -19,7 +19,7 @@
 //   6. Founder regression (mid-run): re-snapshot; assert IDENTICAL to step 1.
 //   7. Cleanup (finally): prisma.user.delete({ where: { id: B_USER_ID } }) — a single
 //      cascading DELETE that exercises the schema's real FK graph — then assert (a) all
-//      21 SCOPED_MODELS report ZERO rows for B, (b) founder counts unchanged (post-cleanup
+//      22 SCOPED_MODELS report ZERO rows for B, (b) founder counts unchanged (post-cleanup
 //      regression), (c) the shared FoodLibrary row SURVIVES (positive assertion — shared
 //      catalog must not cascade from a User delete).
 //   8. PASS/FAIL per assertion; process.exit(failures>0 ? 1 : 0).
@@ -129,9 +129,11 @@ type ModelCounts = {
   activityGoalLink: number;
   writeReceipt: number;
   savedMeal: number;
+  // G2 trends-dashboard run — imported Apple Health daily rows
+  healthDaily: number;
 };
 
-// The 21 scoped models, mapped to their Prisma client accessor name.
+// The 22 scoped models, mapped to their Prisma client accessor name.
 // Module-scope (not local to Step 3) so Step 7's cleanup/assertion sweep can
 // reuse the exact same list.
 const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
@@ -157,6 +159,8 @@ const MODEL_MAP: Array<{ label: string; accessor: keyof typeof prisma }> = [
   { label: "activityGoalLink", accessor: "activityGoalLink" },
   { label: "writeReceipt",     accessor: "writeReceipt" },
   { label: "savedMeal",        accessor: "savedMeal" },
+  // G2 trends-dashboard run — imported Apple Health daily rows
+  { label: "healthDaily",      accessor: "healthDaily" },
 ];
 
 async function founderSnapshot(): Promise<ModelCounts> {
@@ -167,6 +171,7 @@ async function founderSnapshot(): Promise<ModelCounts> {
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
     foodUsage,
     program, activityGoalLink, writeReceipt, savedMeal,
+    healthDaily,
   ] = await Promise.all([
     prisma.workout.count(w),
     prisma.measurement.count(w),
@@ -189,6 +194,7 @@ async function founderSnapshot(): Promise<ModelCounts> {
     prisma.activityGoalLink.count(w),
     prisma.writeReceipt.count(w),
     prisma.savedMeal.count(w),
+    prisma.healthDaily.count(w),
   ]);
   return {
     workout, measurement, footageMarker, baseline, note,
@@ -196,6 +202,7 @@ async function founderSnapshot(): Promise<ModelCounts> {
     gameBonusXp, bodyMetric, scheduledItem, logEntry, plan, dayRenderJob,
     foodUsage,
     program, activityGoalLink, writeReceipt, savedMeal,
+    healthDaily,
   };
 }
 
@@ -540,7 +547,20 @@ async function main() {
     });
     console.log(`  SavedMeal:           ${bMeal.id}`);
 
-    console.log(`\n  [seed complete — 21 models seeded for ${B_USER_ID}]`);
+    // HealthDaily (G2): one imported Apple Health day row so the read sweep
+    // and cascade proof exercise the model
+    const bHealthDaily = await dbB.healthDaily.create({
+      data: {
+        date: ISO_DATE,
+        activeKcal: 640,
+        basalKcal: 1710,
+        steps: 9200,
+        source: "apple_health",
+      },
+    });
+    console.log(`  HealthDaily:         ${bHealthDaily.id}`);
+
+    console.log(`\n  [seed complete — 22 models seeded for ${B_USER_ID}]`);
 
     // =======================================================================
     // STEP 3 — Per-model read sweep (THE CORE PROOF)
@@ -816,10 +836,10 @@ async function main() {
         `[7a] ${B_USER_ID} still exists after cleanup!`,
       );
 
-      // [7b] Per-model zero-row sweep across all 21 SCOPED_MODELS — the actual
+      // [7b] Per-model zero-row sweep across all 22 SCOPED_MODELS — the actual
       // point of the upgrade. Proves the cascade reached every owned model,
       // not just that a deleteMany() found rows to remove.
-      console.log("\n--- Step 7b: post-cascade zero-row sweep (21 models) ---");
+      console.log("\n--- Step 7b: post-cascade zero-row sweep (22 models) ---");
       for (const { label, accessor } of MODEL_MAP) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const delegate = (prisma as any)[accessor] as {
@@ -870,7 +890,7 @@ async function main() {
   console.log("\n=== Results ===");
   if (failures === 0) {
     console.log(
-      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 21 scoped models.\n" +
+      "ALL ASSERTIONS PASSED — cross-tenant isolation confirmed across all 22 scoped models.\n" +
       "Founder counts identical before/after. usr_e9_b fully cleaned up.\n" +
       "Phase-0 done-bar: GREEN. Exit 0.\n",
     );

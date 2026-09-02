@@ -1,4 +1,5 @@
 import { ImportForm } from "@/components/ImportForm";
+import { AppleHealthImportForm } from "@/components/AppleHealthImportForm";
 import { Card } from "@/components/Card";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,10 @@ Set 1: 1:00
 
 https://link.strong.app/...`}
         </pre>
+      </Card>
+
+      <Card title="Apple Health">
+        <AppleHealthImportForm />
       </Card>
     </div>
   );

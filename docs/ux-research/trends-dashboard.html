@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Goaldmine · /trends — pixel mockup (One Instrument, Honest Denominator)</title>
+
+<!--
+  ══════════════════════════════════════════════════════════════════════════
+  FONTS — STAND-INS ONLY.
+  The real app loads Geist / Geist Mono / DM Serif Display through next/font
+  and exposes them as --font-sans / --font-mono / --font-display (see
+  @theme inline in src/app/globals.css). This file must render offline from
+  file:// with no CDN, no framework and no external asset, so each face is
+  replaced by a system stack. Metrics — and therefore every wrap point and
+  every text width in the 40px axis gutter — will shift once the real faces
+  load. --font-display (DM Serif Display) is deliberately used NOWHERE in
+  this artifact: /trends is a routine analytical surface and the display
+  serif is reserved for numerals that mark a moment (R15, §5).
+
+  GENERATED FILE. Every path, dot, polyline, rect and rail cell below was
+  computed by scratchpad/gen_trends.py from the formulas in the brief's
+  GENERATOR RECIPE. Do not hand-edit geometry here — edit the generator.
+  ══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   1. TOKENS — copied byte-for-byte from src/app/globals.css.
+   This block and the dark block are the ONLY places a color literal
+   appears in this document. Everything downstream is var(--…).
+
+   NOTE: --target is #9A480F / #D97A3D (RUST). A stale UX profile lists the
+   barn-red #A82A1F here; that is wrong. #A82A1F is --danger, it is defined
+   below only for completeness, and it appears NOWHERE in this artifact —
+   R14: a deficit is not an error, negatives render --foreground with an
+   explicit "−".
+
+   NOTE: the app also carries a byte-identical @media (prefers-color-scheme:
+   dark) block. It is deliberately omitted here so this artifact defaults to
+   LIGHT regardless of OS. The toggle writes data-theme on :root exactly as
+   ThemeToggle.tsx does.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  color-scheme: light;
+  --background: #FAF3E3;
+  --foreground: #1F1408;
+  --muted: #7A5E3A;
+  --card: #FFFBF0;
+  --border: #D9C8A2;
+  --accent: #8A6212;
+  --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14);
+  --target: #9A480F;
+  --target-fg: #FFFBF0;
+  --success: #4E6B36;
+  --warning: #A8511A;
+  --danger: #A82A1F;
+
+  /* Stand-in faces. Real: var(--font-sans) / var(--font-mono) / var(--font-display). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* /trends geometry. Every one of these is arithmetic, never measured —
+     see the footer table. */
+  --plot-w: 272px;   /* PINNED: 390 − 32 page p-4 − 32 Card p-4 − 40 YAxis − 14 margin.right */
+  --gut-w: 40px;     /* YAxis width={40} */
+  --rail-band: 24px; /* ⚠[22–26] */
+  --rail-lane: 8px;  /* ⚠[6–10]  */
+  --rail-track: 5px; /* ⚠[4–6]   */
+  --rail-row: 44px;  /* touch invariant, not a range */
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #FAF3E3; --foreground: #1F1408; --muted: #7A5E3A; --card: #FFFBF0;
+  --border: #D9C8A2; --accent: #8A6212; --accent-fg: #FFFBF0;
+  --accent-soft: rgba(138, 98, 18, 0.14); --target: #9A480F; --target-fg: #FFFBF0;
+  --success: #4E6B36; --warning: #A8511A; --danger: #A82A1F;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0F0B07; --foreground: #F4E9D4; --muted: #9C8866; --card: #1A130C;
+  --border: #3A2E1F; --accent: #D4A437; --accent-fg: #0F0B07;
+  --accent-soft: rgba(212, 164, 55, 0.12); --target: #D97A3D; --target-fg: #FFFFFF;
+  --success: #7FA45C; --warning: #E0915C; --danger: #C0392B;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. GALLERY CHROME (annotation layer — never product UI)
+   ══════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+html { scroll-behavior: auto; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--background));
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.toolbar { position: fixed; top: 14px; right: 14px; z-index: 60; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.tbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; min-width: 44px; padding: 0 16px;
+  border-radius: 9999px; border: 1px solid var(--border);
+  background: var(--card); color: var(--foreground);
+  font: inherit; font-size: 13px; cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.tbtn:hover { border-color: var(--accent); }
+.tbtn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.page-head { max-width: 1020px; margin: 0 auto; padding: 30px 20px 8px; }
+.page-head h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 6px; }
+.page-head .meta { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+.page-head .guide { font-size: 13.5px; line-height: 1.62; max-width: 78ch; margin: 0 0 11px; }
+.page-head .guide b { font-weight: 600; }
+.page-head code, .note code, .provisional code { font-family: var(--font-mono); font-size: 11px; }
+
+.gallery { display: flex; flex-wrap: wrap; gap: 44px; padding: 24px 20px 10px; align-items: flex-start; justify-content: center; }
+.panel { display: flex; gap: 16px; align-items: flex-start; }
+.panel > .col-notes { width: 250px; padding-top: 34px; }
+@media (max-width: 800px) { .panel { flex-direction: column; } .panel > .col-notes { width: 390px; max-width: 100%; padding-top: 0; } }
+
+.panel-title { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px 4px; }
+.panel-title em { font-style: normal; color: var(--warning); }
+.note { font-size: 11.5px; line-height: 1.58; color: var(--muted); border-left: 2px dashed var(--muted); padding: 2px 0 2px 9px; margin: 0 0 11px; }
+.note b { color: var(--foreground); font-weight: 600; }
+.note .flag { color: var(--warning); font-weight: 700; }
+
+.phone {
+  width: 390px; flex: 0 0 390px;
+  background: var(--background); color: var(--foreground);
+  border: 1px solid var(--border); border-radius: 26px;
+  overflow: hidden; position: relative;
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 24%, transparent);
+}
+.apphdr {
+  height: 49px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 95%, transparent);
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+}
+.btmnav { height: 58px; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(5,1fr); background: color-mix(in srgb, var(--card) 95%, transparent); }
+.btmnav span { display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
+.btmnav span.on { color: var(--accent); font-weight: 600; }
+
+/* page shell — Tailwind: max-w-md mx-auto p-4 space-y-4 */
+.screen { position: relative; max-width: 28rem; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+/* THE FOLD — 844 − 49 AppHeader − 58 BottomNav = 737. Arithmetic, never measured. */
+.fold { position: absolute; left: 0; right: 0; top: 737px; border-top: 1px dashed var(--warning); pointer-events: none; z-index: 4; }
+.fold i { position: absolute; right: 6px; top: -15px; font-style: normal; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--warning); background: var(--background); padding: 0 5px; }
+
+.board { background: var(--background); border: 1px solid var(--border); border-radius: 20px; padding: 22px; box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.board h4 { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.tframe { width: 326px; } /* the true Card interior at 390px */
+.tseq { display: flex; gap: 30px; flex-wrap: wrap; align-items: flex-start; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. SHIPPED CLASS GRAMMAR, HAND-COMPILED
+   ══════════════════════════════════════════════════════════════════════ */
+/* Card.tsx — rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm */
+.card { border-radius: 16px; border: 1px solid var(--border); background: var(--card); padding: 16px; box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.card > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+
+.h1 { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.025em; margin: 0; }
+.h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+/* eyebrow — 11px semibold uppercase tracking-wider --muted. NOTHING muted goes below 11px. */
+.eyebrow { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; line-height: 13px; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* hero — 49px exactly (32px h1 line + 17px sub line) */
+.hero { height: 49px; }
+.hero .sub { font-size: 12px; line-height: 17px; color: var(--muted); margin: 0; }
+
+/* JumpChips geometry — flex h-11 rounded-full border px-3.5 text-sm. 44px, not the
+   shipped WeightChart chips (T3: they fail 44px and have no focus ring). */
+.chips { height: 44px; display: flex; gap: 8px; align-items: center; }
+.chips button {
+  height: 44px; display: inline-flex; align-items: center; padding: 0 14px;
+  border-radius: 9999px; border: 1px solid var(--border); background: var(--card);
+  color: var(--foreground); font: inherit; font-size: 14px; cursor: pointer;
+}
+.chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   4. THE INSTRUMENT — one Card, three panels, one axis
+   Heights are the ⚑1 signed-off budget: 192 / 128 / 40, NOT the PRD's
+   208 / 176 / 160. Every wrapper height below is arithmetic (see footer).
+   ══════════════════════════════════════════════════════════════════════ */
+.instrument { padding: 16px; }
+.tp { position: relative; }
+.tp + .tp, .tp-axis { border-top: 1px solid var(--border); }   /* the panel hairlines */
+.tp-weight { height: 205px; }   /* 13 header + 192 chart */
+.tp-cal    { height: 156px; }   /* 12 pad + 16 header + 128 chart */
+.tp-macro  { height:  95px; }   /* 11 pad + 44 header + 40 chart */
+.tp-axis   { height:  15px; }
+.tp-rail   { height:  44px; }
+/* min-height, not height: at rest this is exactly 45 (3 × 15px), but the GATED
+   caption's sentence wraps and the block grows. Clipping it would hide the single
+   most consequential finding on this page — see the footer. */
+.tp-cap    { min-height: 45px; }
+/* 1 + 16 + 205 + 1 + 156 + 1 + 95 + 15 + 44 + 45 + 16 + 1 = 596 */
+
+.phdr { display: flex; align-items: center; justify-content: space-between; height: 13px; }
+.tp-cal .phdr { height: 16px; margin-top: 12px; }
+.rrail { font-size: 11px; color: var(--muted); line-height: 13px; }
+.rrail.count { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.chart { display: block; overflow: visible; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.tick { font-size: 11px; fill: var(--muted); font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
+/* ★ raw weigh-in dots: alpha 0.70, NOT the shipped 0.55 (which measures 2.33:1 L /
+   2.48:1 D and fails 3:1). See footer. */
+.rawdot { fill: var(--muted); fill-opacity: 0.70; }
+.mean7 { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.calmark { fill: none; stroke: var(--accent); stroke-opacity: 0.45; stroke-linecap: butt; }
+.plan { stroke: var(--target); stroke-width: 1; stroke-dasharray: 3 3; }
+
+/* ★ R3/⚑2 — fixed band order P bottom / C middle / F top, never re-sorted.
+   Hues are the app's shipped P/C/F convention (FoodLibraryManager.tsx). They are
+   TERTIARY reinforcement: position + card-stroke separators + in-place labels
+   carry the encoding, which is why the grayscale button must lose nothing. */
+.mP { fill: var(--target); }
+.mC { fill: var(--success); }
+.mF { fill: var(--accent); }
+.msep { fill: none; stroke: var(--card); stroke-width: 1; }
+.mpart { opacity: 0.9; }
+.mlabel { font-size: 11px; font-weight: 600; fill: var(--foreground); font-family: var(--font-sans); }
+
+.mhdr { height: 44px; margin-top: 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mlegend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); margin: 0; }
+.mlegend .tnum { margin-right: 5px; }
+.sw { width: 7px; height: 7px; border-radius: 1px; display: inline-block; }
+.swP { background: var(--target); } .swC { background: var(--success); } .swF { background: var(--accent); }
+/* Visible ≠ target, the same idiom the rail uses: a 26px pill of ink inside a
+   44px transparent touch row (26 + 9 + 9 = 44). A 44px-tall visible pill would
+   be taller than the 40px ribbon it controls. */
+.segbox { position: relative; display: flex; height: 26px; border: 1px solid var(--border); border-radius: 9999px; overflow: hidden; background: var(--card); }
+.segbox::before { content: ""; position: absolute; inset: -9px 0; }
+.segbox button { min-width: 30px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 24px; cursor: pointer; padding: 0 8px; }
+.segbox button.on { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+
+/* ── ★ THE RAIL ─────────────────────────────────────────────────────────
+   24px band inside a 44px transparent pointer row, spanning exactly 272px.
+   ⚠ Lane labels abbreviate to WEIGH / MEALS: "WEIGH-INS" does not fit the
+   40px axis gutter at the 11px floor. The full words live in the caption
+   and in the group's aria-label. */
+.tp-rail { display: flex; align-items: center; padding-top: 0; }
+.rail-gut { width: 40px; flex: 0 0 40px; height: 24px; display: flex; flex-direction: column; justify-content: space-between; }
+/* ⚠ MEASURED, not guessed: at 11px in this stand-in face WEIGH is 40.3px with
+   0.04em tracking and 38.1px with none; MEALS is 40.7px; WEIGH-INS is 62.6px.
+   The gutter is 40px. So tracking and padding are both zero here and MEALS still
+   overhangs ~0.7px to the left, into the Card padding. See the footer. */
+.rail-gut span { font-size: 11px; line-height: 8px; color: var(--muted); letter-spacing: 0; text-align: right; padding-right: 0; white-space: nowrap; }
+.rail-gut span:last-child { margin-bottom: 6px; }
+.rail-band { width: 272px; flex: 0 0 272px; height: 24px; display: flex; flex-direction: column; gap: 0; }
+.lane { height: 8px; display: grid; position: relative; background: linear-gradient(to bottom, transparent 3px, color-mix(in srgb, var(--border) 40%, transparent) 3px, color-mix(in srgb, var(--border) 40%, transparent) 4px, transparent 4px); }
+.lane i { display: block; height: 8px; background: var(--accent); }
+/* partial = meals logged, macro columns null. Half-height + the -45deg hatch already
+   shipped at CeilingRule.tsx, where it already means "excluded from the number". */
+.lane i.part { height: 4px; margin-top: 2px; background: repeating-linear-gradient(-45deg, var(--muted) 0px, var(--muted) 1px, transparent 1px, transparent 4px); }
+.lgut { height: 2px; }
+.track { height: 5px; margin-top: 1px; position: relative; background: linear-gradient(to bottom, transparent 2px, color-mix(in srgb, var(--border) 40%, transparent) 2px, color-mix(in srgb, var(--border) 40%, transparent) 3px, transparent 3px); }
+/* committed window — an --accent segment with --foreground 2px END-CAPS: the shipped
+   CeilingRule "stile" idiom, required because an --accent-soft fill has no edge. */
+.cw { position: absolute; top: 0; height: 5px; background: var(--accent); }
+.cw::before, .cw::after { content: ""; position: absolute; top: -2px; width: 2px; height: 9px; background: var(--foreground); }
+.cw::before { left: 0; } .cw::after { right: 0; }
+
+/* ── rail caption — THREE lines, 15px each ─────────────────────────────── */
+.tp-cap { position: relative; padding-top: 0; }
+.tp-cap p { margin: 0; line-height: 15px; }
+.cap1 { font-size: 12px; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.cap2 { font-size: 12px; color: var(--foreground); font-variant-numeric: tabular-nums; }
+.cap3 { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* ⚠ The gate sentence is the longest caption line there is; without this reserve
+   the 44px Clear sits on top of it. */
+.tp-cap.hasclear p { padding-right: 64px; }
+.clearbtn { position: absolute; right: 0; top: 0; height: 44px; min-width: 56px; border-radius: 9999px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font: inherit; font-size: 13px; cursor: pointer; }
+
+/* ── Set dates lid — sits DIRECTLY under the caption, where a user who has just
+   failed to discover the drag is already looking. */
+.lid { border-radius: 16px; border: 1px solid var(--border); background: var(--card); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.lid > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px; min-height: 44px; cursor: pointer; list-style: none; }
+.lid > summary::-webkit-details-marker { display: none; }
+.lid-title { font-size: 14px; font-weight: 500; color: var(--muted); }
+.chev { color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: no-preference) { .lid[open] .chev { transform: rotate(180deg); } .chev { transition: transform 140ms ease-out; } }
+.sd-body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.sd-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.sd-row input { height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); font: inherit; font-size: 14px; padding: 0 10px; }
+.sd-presets { display: flex; gap: 8px; }
+.sd-presets button { height: 44px; padding: 0 12px; border-radius: 9999px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font: inherit; font-size: 13px; cursor: pointer; }
+
+/* ── window panel ───────────────────────────────────────────────────────── */
+.wpanel .wsub { font-size: 12px; color: var(--muted); }
+/* ★ coverage FIRST, above the averages it qualifies. Coverage after the average is
+   a footnote nobody reads; coverage before it is a frame. */
+.cover { font-size: 12px; color: var(--muted); margin: 0 0 12px; font-variant-numeric: tabular-nums; }
+.cover2 { margin-top: -8px; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.tile { border: 1px solid var(--border); border-radius: 12px; padding: 9px 10px; display: flex; flex-direction: column; gap: 2px; }
+.tile b { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.tile span { font-size: 11px; color: var(--muted); }
+.macline { font-size: 12px; color: var(--muted); margin: 0 0 14px; font-variant-numeric: tabular-nums; }
+.mt { margin-bottom: 6px; }
+.mlab { font-size: 12px; color: var(--muted); margin: 0; }
+/* the hero numeral — 30px, tabular, --foreground. NOT display serif: this is a
+   state, not a moment. */
+.mnum { font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+.mder { font-size: 12px; line-height: 16px; color: var(--muted); margin: 0; }
+.hair { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+/* R14 — negative renders --foreground with an explicit "−". NEVER --danger. */
+.mrow { display: flex; align-items: baseline; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+.mrow b { font-weight: 600; color: var(--foreground); }
+.himport { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+/* the withheld state: no numeral, no em-dash, no greying. A sentence replaces
+   the number and a second sentence closes it. */
+.gate1 { font-size: 14px; line-height: 19px; color: var(--foreground); margin: 0 0 4px; font-variant-numeric: tabular-nums; }
+.gate2 { font-size: 12px; line-height: 16px; color: var(--muted); margin: 0; }
+
+/* ── EmptyState (zero-row) ──────────────────────────────────────────────── */
+.empty { text-align: center; padding: 22px 8px; }
+.empty h3 { font-size: 16px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.02em; }
+.empty p { font-size: 13px; line-height: 19px; color: var(--muted); margin: 0 0 16px; }
+.empty a { display: inline-flex; align-items: center; height: 44px; padding: 0 18px; border-radius: 9999px; background: var(--accent); color: var(--accent-fg); font-size: 14px; font-weight: 600; text-decoration: none; }
+
+/* ── mid-drag selection band ────────────────────────────────────────────── */
+.dragwrap { position: relative; }
+/* ⚠ the fill composites to ≈1.1:1 in BOTH palettes — the EDGES carry 100% of the
+   meaning. Do not raise the fill hoping it will carry information. */
+.selband { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); pointer-events: none; z-index: 3; }
+/* ⚠ At top:2px these collided with the weight panel's right-rail pill — the exact
+   "verify it does not fight the edge labels" risk the report flagged. Dropped
+   below the 13px eyebrow row, into the chart body. */
+.selband span { position: absolute; top: 16px; font-size: 11px; color: var(--foreground); font-weight: 600; background: var(--card); padding: 0 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.selband span.l { right: calc(100% + 3px); } .selband span.r { left: calc(100% + 3px); }
+
+/* ── panel 7: PERMANENT grayscale — this frame is the F1 acceptance test ── */
+.gsproof { filter: grayscale(1); }
+
+/* ── GRAYSCALE CHECK — the shipped acceptance test.
+   The palette is iso-luminant: --accent↔--target 1.16:1, --accent↔--warning
+   1.01:1, --muted↔--success 1.00:1 (byte-identical in grayscale). Any
+   distinction that survives this button is carried by SHAPE or POSITION, and
+   any distinction that dies was never information. */
+body.gs .phone, body.gs .board { filter: grayscale(1); }
+
+/* ── footer ─────────────────────────────────────────────────────────────── */
+.provisional { max-width: 1020px; margin: 34px auto 70px; padding: 24px 20px; border-top: 1px solid var(--border); }
+.provisional h2 { font-size: 16px; margin: 0 0 4px; }
+.provisional h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin: 24px 0 8px; }
+.provisional table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.provisional th, .provisional td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.provisional th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.provisional td.r { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--warning); font-weight: 600; }
+.provisional td.k { white-space: nowrap; font-weight: 600; }
+.provisional ul, .provisional ol { font-size: 12.5px; line-height: 1.62; padding-left: 20px; margin: 0; }
+.provisional li { margin-bottom: 7px; }
+.provisional .lede { font-size: 13px; line-height: 1.62; color: var(--muted); margin: 0 0 14px; max-width: 78ch; }
+.provisional .lede b { color: var(--foreground); }
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="tbtn" id="themeBtn" type="button" aria-label="Theme: light (click to switch)">
+    <span aria-hidden="true" id="themeGlyph">☀</span><span id="themeLabel">light</span>
+  </button>
+  <button class="tbtn" id="gsBtn" type="button" aria-pressed="false">
+    <span aria-hidden="true">◑</span><span>grayscale check</span>
+  </button>
+</div>
+
+<header class="page-head">
+  <h1>Goaldmine · <code style="font-size:22px">/trends</code> — Trends Dashboard</h1>
+  <p class="meta">Pixel mockup · 2 Sep 2026 · chosen direction: <b>One Instrument, Honest Denominator</b> ·
+     every panel must be inspected in <b>both</b> themes <b>and</b> in grayscale</p>
+
+  <p class="guide">
+    <b>What this is.</b> Seven 390px frames rendering the chosen <code>/trends</code> IA with the real
+    <code>globals.css</code> token block. It is a <i>specification artifact</i>, not a prototype: nothing fetches,
+    nothing animates, and the only script is the two toggles. <b>Every series is generated</b> — the weight curve,
+    the weigh-in mask, the 7-day mean, the calorie marks, the three macro bands and every rail cell were computed by
+    <code>gen_trends.py</code> from the report's formulas, so the geometry is exact and reproducible rather than
+    eyeballed.
+  </p>
+  <p class="guide">
+    <b>The one idea.</b> One <code>&lt;Card&gt;</code>, three panels, <b>one x-axis rendered exactly once</b>, and
+    underneath it <b>the rail</b> — two 8px availability lanes that show <i>which days actually carried data</i>
+    behind every average on the page. Excluding unlogged days is the correct math; Song &amp; Szafir showed that
+    silent exclusion still scores worst on perceived data quality, so absence is shown twice: as a hole in the series
+    and as a mark on the rail. The honest denominator <i>is</i> the feature.
+  </p>
+  <p class="guide">
+    <b>★ The grayscale toggle is load-bearing, not decoration.</b> This palette is iso-luminant —
+    <code>--accent</code>↔<code>--target</code> is <b>1.16:1</b>, <code>--accent</code>↔<code>--warning</code> is
+    <b>1.01:1</b>, and <code>--muted</code>↔<code>--success</code> is <b>1.00:1, byte-identical in grayscale</b>.
+    The acceptance test for every identity decision here is that <i>a grayscale screenshot loses nothing</i>. Press
+    the button on every panel. Panel 7 is that test made permanent.
+  </p>
+  <p class="guide">
+    <b>Two hard failures are already known and are not hidden.</b> <code>--border</code> on <code>--card</code> is
+    <b>1.59:1 light / 1.39:1 dark</b> and <b>fails 3:1</b> — so the rail's <code>absent</code> state is a
+    <i>hole</i>, not an encoding, and the coverage sentence is load-bearing rather than redundant. And
+    <code>--danger</code> in dark is <b>3.38:1</b> and <b>fails AA text</b> — which is one of the reasons a deficit
+    never renders red. <code>--danger</code> (<code>#A82A1F</code> / <code>#C0392B</code>) appears
+    <b>nowhere</b> in this artifact. Note also that <code>--target</code> is the <b>rust</b> <code>#9A480F</code> /
+    <code>#D97A3D</code>, not the barn-red a stale profile file lists.
+  </p>
+  <p class="guide">
+    <b>Every height on this page is arithmetic, not measurement — with two exceptions, and they both moved a
+    number.</b> Nothing here has been rendered on a phone. But the generated file <i>was</i> put through a headless
+    layout engine at 390px, and that pass disagreed with the report twice: the Card measures <b>594px, not 596</b>
+    (<code>box-sizing: border-box</code> absorbs the three panel hairlines the §12 arithmetic added separately), so
+    the caption's last line bottoms at <b>718px, not 737 — 19px of clearance, not zero</b>; the rail's lane
+    labels <b>do not fit the 40px axis gutter at the 11px floor even abbreviated</b>; and the <b>gated</b> caption is
+    <b>60px, not 45</b>, because the gate sentence wraps once <code>Clear</code> reserves its 64px — a 15px overrun
+    on the tightest number in the design, in the one state the feature most wants to get right. All three are in the
+    footer with their measurements. Everything else here is still arithmetic and still needs a device.
+  </p>
+</header>
+
+<main class="gallery">
+
+<!-- ══════════════════════ PANEL 1 · POPULATED 90d, NO WINDOW ═══════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 1 · Populated · 90 days · no committed window</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <div class="fold" aria-hidden="true"><i>fold · 737px · zero clearance</i></div>
+        <section class="hero">
+          <h1 class="h1">Trends</h1>
+          <p class="sub tnum">Last 90 days · Jun 5 – Sep 2</p>
+        </section>
+        <nav class="chips" aria-label="Range">
+          <button type="button" aria-pressed="false">30d</button>
+          <button type="button" aria-pressed="true">90d</button>
+          <button type="button" aria-pressed="false">All</button>
+        </nav>
+        <section class="card instrument"><section class="tp tp-weight"><div class="phdr"><p class="eyebrow">WEIGHT</p><span class="rrail">lb</span></div><svg class="chart" width="326" height="192" viewBox="0 0 326 192" role="img" aria-label="Weight, 7-day trailing mean over raw weigh-ins"><line class="grid" x1="40" y1="30" x2="312" y2="30"/><text class="tick" x="34" y="33.6" text-anchor="end">208</text><line class="grid" x1="40" y1="74" x2="312" y2="74"/><text class="tick" x="34" y="77.6" text-anchor="end">204</text><line class="grid" x1="40" y1="118" x2="312" y2="118"/><text class="tick" x="34" y="121.6" text-anchor="end">200</text><line class="grid" x1="40" y1="162" x2="312" y2="162"/><text class="tick" x="34" y="165.6" text-anchor="end">196</text><g class="rawdot"><circle cx="40" cy="58.4" r="2"/><circle cx="46" cy="58.7" r="2"/><circle cx="52.1" cy="58" r="2"/><circle cx="55.1" cy="61.5" r="2"/><circle cx="61.2" cy="75" r="2"/><circle cx="64.2" cy="68.7" r="2"/><circle cx="70.2" cy="80" r="2"/><circle cx="73.2" cy="69.9" r="2"/><circle cx="79.3" cy="68.8" r="2"/><circle cx="85.3" cy="70.7" r="2"/><circle cx="88.4" cy="74.8" r="2"/><circle cx="94.4" cy="88.8" r="2"/><circle cx="97.4" cy="79.3" r="2"/><circle cx="145.8" cy="91.8" r="2"/><circle cx="151.8" cy="97.9" r="2"/><circle cx="154.8" cy="99.9" r="2"/><circle cx="160.9" cy="114.1" r="2"/><circle cx="163.9" cy="100.3" r="2"/><circle cx="170" cy="106.7" r="2"/><circle cx="173" cy="107.6" r="2"/><circle cx="179" cy="104.4" r="2"/><circle cx="185.1" cy="112.3" r="2"/><circle cx="188.1" cy="111.5" r="2"/><circle cx="194.1" cy="125.3" r="2"/><circle cx="197.2" cy="111.3" r="2"/><circle cx="203.2" cy="116" r="2"/><circle cx="206.2" cy="120.7" r="2"/><circle cx="212.3" cy="117.4" r="2"/><circle cx="218.3" cy="126.8" r="2"/><circle cx="221.3" cy="122.5" r="2"/><circle cx="227.4" cy="135.6" r="2"/><circle cx="230.4" cy="122.7" r="2"/><circle cx="236.4" cy="126.1" r="2"/><circle cx="239.5" cy="133.6" r="2"/><circle cx="245.5" cy="130.3" r="2"/><circle cx="251.6" cy="141" r="2"/><circle cx="254.6" cy="133" r="2"/><circle cx="260.6" cy="145.1" r="2"/><circle cx="263.6" cy="134.8" r="2"/><circle cx="269.7" cy="137" r="2"/><circle cx="272.7" cy="146.2" r="2"/><circle cx="278.8" cy="142.9" r="2"/><circle cx="284.8" cy="154.6" r="2"/><circle cx="287.8" cy="143.4" r="2"/><circle cx="293.9" cy="154.2" r="2"/><circle cx="296.9" cy="147.3" r="2"/><circle cx="302.9" cy="148.7" r="2"/><circle cx="306" cy="158.5" r="2"/></g><polyline class="mean7" points="52.1,58.4 55.1,59.2 58.1,59.2 61.2,63.3 64.2,64.4 67.2,65.8 70.2,68.6 73.2,71 76.3,73.4 79.3,72.5 82.3,71.9 85.3,72.4 88.4,72.8 91.4,71 94.4,75.8 97.4,76.5 100.4,78.4 103.5,78.4 106.5,81"/><polyline class="mean7" points="154.8,96.6 157.9,96.6 160.9,100.9 163.9,100.8 166.9,103.1 170,103.8 173,105.7 176,107.2 179,106.6 182,104.8 185.1,107.8 188.1,108.5 191.1,109 194.1,113.4 197.2,113 200.2,115.1 203.2,115.3 206.2,117 209.2,118.3 212.3,118.1 215.3,116.3 218.3,120.2 221.3,120.7 224.4,121.8 227.4,125.5 230.4,125 233.4,126.9 236.4,126.7 239.5,128.1 242.5,129.5 245.5,129.6 248.5,128.2 251.6,132.7 254.6,132.8 257.6,134.5 260.6,137.3 263.6,136.8 266.7,138.5 269.7,138.2 272.7,139.2 275.7,140.8 278.8,141.2 281.8,140.2 284.8,145.2 287.8,144.8 290.8,146.8 293.9,148.8 296.9,148.5 299.9,149.9 302.9,149.6 306,150.4 309,152.2"/></svg></section><section class="tp tp-cal"><div class="phdr"><p class="eyebrow">CALORIES</p><span class="rrail">kcal</span></div><svg class="chart" width="326" height="128" viewBox="0 0 326 128" role="img" aria-label="Calories per logged day against the plan target"><line class="grid" x1="40" y1="38.55" x2="312" y2="38.55"/><text class="tick" x="34" y="42.15" text-anchor="end">3000</text><line class="grid" x1="40" y1="89.45" x2="312" y2="89.45"/><text class="tick" x="34" y="93.05" text-anchor="end">2000</text><path class="calmark" stroke-width="2.2" d="M40 60.4V120M43 52.4V120M46 44.4V120M52.1 75V120M58.1 48.7V120M64.2 93.7V120M67.2 84.1V120M70.2 72.8V120M73.2 62.6V120M79.3 103.4V120M85.3 66.1V120M91.4 65.6V120M94.4 77.5V120M97.4 60.3V120M100.4 49V120M106.5 77.7V120M112.5 80.7V120M118.6 63V120M121.6 97.2V120M124.6 90V120M127.6 84.1V120M133.7 60.3V120M139.7 72.1V120M145.8 29.4V120M148.8 60.4V120M151.8 71.7V120M154.8 85.6V120M160.9 54.2V120M166.9 90.9V120M173 58.8V120M176 59.6V120M179 69.6V120M182 79.9V120M188.1 34.6V120M194.1 56.9V120M200.2 68.2V120M203.2 50.9V120M206.2 67.1V120M209.2 81.1V120M215.3 73.2V120M218.3 64.7V120M221.3 63.1V120M227.4 87.2V120M230.4 49.2V120M233.4 46.4V120M236.4 42.8V120M242.5 72.4V120M248.5 54.4V120M254.6 103.7V120M257.6 84.2V120M260.6 74.5V120M263.6 58.8V120M269.7 95.1V120M275.7 55.3V120M281.8 68.6V120M284.8 73.1V120M287.8 62.1V120M290.8 49.3V120M296.9 90.1V120M302.9 85.5V120M309 69.8V120"/><line class="plan" x1="40" y1="58.91" x2="312" y2="58.91"/></svg></section><section class="tp tp-macro"><div class="mhdr"><p class="eyebrow">MACROS</p><p class="mlegend"><span class="sw swP" aria-hidden="true"></span><span class="tnum">P 168g</span><span class="sw swC" aria-hidden="true"></span><span class="tnum">C 241g</span><span class="sw swF" aria-hidden="true"></span><span class="tnum">F 78g</span></p><div class="segbox" role="radiogroup" aria-label="Macro scale"><button type="button" role="radio" aria-checked="true" class="seg on">g</button><button type="button" role="radio" aria-checked="false" class="seg">%</button></div></div><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><path class="mF" d="M40 38V2.4H43V5.4H46V9.9H49.1V38ZM52.1 38V14.1H55.1V38ZM58.1 38V10.9H61.2V38ZM64.2 38V2.3H67.2V9.9H70.2V14.7H73.2V12.6H76.3V38ZM79.3 38V8.4H82.3V38ZM85.3 38V8.5H88.4V38ZM91.4 38V12.2H94.4V9.9H97.4V8.4H100.4V12.3H103.5V38ZM106.5 38V4.7H109.5V38ZM112.5 38V12.7H115.6V38ZM118.6 38V11H121.6V9.4H124.6V9.3H127.6V6.4H130.7V38ZM133.7 38V12.3H136.7V38ZM139.7 38V12.9H142.8V38ZM145.8 38V5.3H148.8V2.7H151.8V7.9H154.8V14.1H157.9V38ZM160.9 38V11.3H163.9V38ZM166.9 38V8.1H170V38ZM173 38V7.3H176V12.1H179V14H182V11.3H185.1V38ZM188.1 38V5.9H191.1V38ZM194.1 38V11.1H197.2V38ZM200.2 38V12H203.2V11.2H206.2V8.5H209.2V9.5H212.3V38ZM215.3 38V7.2H218.3V9.7H221.3V13.5H224.4V38ZM227.4 38V9.2H230.4V2H233.4V6.5H236.4V10H239.5V38ZM242.5 38V14.5H245.5V38ZM248.5 38V10.1H251.6V38ZM254.6 38V2.9H257.6V11.3H260.6V14.5H263.6V12.4H266.7V38ZM269.7 38V7.4H272.7V38ZM275.7 38V9.2H278.8V38ZM281.8 38V12.1H284.8V9.3H287.8V8.8H290.8V12.6H293.9V38ZM296.9 38V4.8H299.9V38ZM302.9 38V12.7H306V38ZM309 38V10.7H312V38Z"/><path class="mC" d="M40 38V8.3H43V9.9H46V13.2H49.1V38ZM52.1 38V19.2H55.1V38ZM58.1 38V14H61.2V38ZM64.2 38V7.8H67.2V15.8H70.2V19.2H73.2V15.9H76.3V38ZM79.3 38V13.4H82.3V38ZM85.3 38V11.6H88.4V38ZM91.4 38V17.7H94.4V15.9H97.4V12.8H100.4V15.6H103.5V38ZM106.5 38V9.8H109.5V38ZM112.5 38V15.9H115.6V38ZM118.6 38V16.6H121.6V15.4H124.6V13.7H127.6V9.7H130.7V38ZM133.7 38V17.4H136.7V38ZM139.7 38V16H142.8V38ZM145.8 38V10.9H148.8V8.6H151.8V12.2H154.8V17.4H157.9V38ZM160.9 38V16.4H163.9V38ZM166.9 38V11.3H170V38ZM173 38V12.9H176V18H179V18.2H182V14.6H185.1V38ZM188.1 38V11H191.1V38ZM194.1 38V14.2H197.2V38ZM200.2 38V17.6H203.2V17.1H206.2V12.8H209.2V12.8H212.3V38ZM215.3 38V12.3H218.3V13.9H221.3V16.7H224.4V38ZM227.4 38V14.9H230.4V7.9H233.4V10.7H236.4V13.3H239.5V38ZM242.5 38V19.6H245.5V38ZM248.5 38V13.2H251.6V38ZM254.6 38V8.7H257.6V17.2H260.6V18.7H263.6V15.7H266.7V38ZM269.7 38V12.5H272.7V38ZM275.7 38V12.3H278.8V38ZM281.8 38V17.9H284.8V15.1H287.8V12.9H290.8V16H293.9V38ZM296.9 38V9.9H299.9V38ZM302.9 38V15.8H306V38ZM309 38V16.5H312V38Z"/><path class="mP" d="M40 38V27.2H43V27.2H46V26.8H49.1V38ZM52.1 38V31.2H55.1V38ZM58.1 38V27.3H61.2V38ZM64.2 38V26.1H67.2V29.4H70.2V30.8H73.2V28.1H76.3V38ZM79.3 38V26.2H82.3V38ZM85.3 38V30.7H88.4V38ZM91.4 38V28.4H94.4V27.5H97.4V25.5H100.4V28.7H103.5V38ZM106.5 38V28.9H109.5V38ZM112.5 38V26.1H115.6V38ZM118.6 38V29.9H121.6V29.4H124.6V29.4H127.6V28.1H130.7V38ZM133.7 38V28H136.7V38ZM139.7 38V29.3H142.8V38ZM145.8 38V26.4H148.8V25.9H151.8V29H154.8V29H157.9V38ZM160.9 38V28.9H163.9V38ZM166.9 38V27.4H170V38ZM173 38V29.3H176V30.7H179V27H182V26H185.1V38ZM188.1 38V28.2H191.1V38ZM194.1 38V29.6H197.2V38ZM200.2 38V27.2H203.2V27.6H206.2V29H209.2V31.2H212.3V38ZM215.3 38V26.5H218.3V27.4H221.3V27.3H224.4V38ZM227.4 38V30.2H230.4V26.9H233.4V27.3H236.4V26.6H239.5V38ZM242.5 38V31.3H245.5V38ZM248.5 38V27.3H251.6V38ZM254.6 38V26.4H257.6V30.1H260.6V30.4H263.6V27.9H266.7V38ZM269.7 38V25.9H272.7V38ZM275.7 38V30.9H278.8V38ZM281.8 38V28.4H284.8V27.1H287.8V25.6H290.8V29.4H293.9V38ZM296.9 38V28.8H299.9V38ZM302.9 38V25.7H306V38ZM309 38V30.1H312V38Z"/><path class="msep" d="M40 27.2H43M40 8.3H43M43 27.2H46M43 9.9H46M46 26.8H49.1M46 13.2H49.1M52.1 31.2H55.1M52.1 19.2H55.1M58.1 27.3H61.2M58.1 14H61.2M64.2 26.1H67.2M64.2 7.8H67.2M67.2 29.4H70.2M67.2 15.8H70.2M70.2 30.8H73.2M70.2 19.2H73.2M73.2 28.1H76.3M73.2 15.9H76.3M79.3 26.2H82.3M79.3 13.4H82.3M85.3 30.7H88.4M85.3 11.6H88.4M91.4 28.4H94.4M91.4 17.7H94.4M94.4 27.5H97.4M94.4 15.9H97.4M97.4 25.5H100.4M97.4 12.8H100.4M100.4 28.7H103.5M100.4 15.6H103.5M106.5 28.9H109.5M106.5 9.8H109.5M112.5 26.1H115.6M112.5 15.9H115.6M118.6 29.9H121.6M118.6 16.6H121.6M121.6 29.4H124.6M121.6 15.4H124.6M124.6 29.4H127.6M124.6 13.7H127.6M127.6 28.1H130.7M127.6 9.7H130.7M133.7 28H136.7M133.7 17.4H136.7M139.7 29.3H142.8M139.7 16H142.8M145.8 26.4H148.8M145.8 10.9H148.8M148.8 25.9H151.8M148.8 8.6H151.8M151.8 29H154.8M151.8 12.2H154.8M154.8 29H157.9M154.8 17.4H157.9M160.9 28.9H163.9M160.9 16.4H163.9M166.9 27.4H170M166.9 11.3H170M173 29.3H176M173 12.9H176M176 30.7H179M176 18H179M179 27H182M179 18.2H182M182 26H185.1M182 14.6H185.1M188.1 28.2H191.1M188.1 11H191.1M194.1 29.6H197.2M194.1 14.2H197.2M200.2 27.2H203.2M200.2 17.6H203.2M203.2 27.6H206.2M203.2 17.1H206.2M206.2 29H209.2M206.2 12.8H209.2M209.2 31.2H212.3M209.2 12.8H212.3M215.3 26.5H218.3M215.3 12.3H218.3M218.3 27.4H221.3M218.3 13.9H221.3M221.3 27.3H224.4M221.3 16.7H224.4M227.4 30.2H230.4M227.4 14.9H230.4M230.4 26.9H233.4M230.4 7.9H233.4M233.4 27.3H236.4M233.4 10.7H236.4M236.4 26.6H239.5M236.4 13.3H239.5M242.5 31.3H245.5M242.5 19.6H245.5M248.5 27.3H251.6M248.5 13.2H251.6M254.6 26.4H257.6M254.6 8.7H257.6M257.6 30.1H260.6M257.6 17.2H260.6M260.6 30.4H263.6M260.6 18.7H263.6M263.6 27.9H266.7M263.6 15.7H266.7M269.7 25.9H272.7M269.7 12.5H272.7M275.7 30.9H278.8M275.7 12.3H278.8M281.8 28.4H284.8M281.8 17.9H284.8M284.8 27.1H287.8M284.8 15.1H287.8M287.8 25.6H290.8M287.8 12.9H290.8M290.8 29.4H293.9M290.8 16H293.9M296.9 28.8H299.9M296.9 9.9H299.9M302.9 25.7H306M302.9 15.8H306M309 30.1H312M309 16.5H312"/><text class="mlabel" x="315" y="37.67">P</text><text class="mlabel" x="315" y="26.94">C</text><text class="mlabel" x="315" y="17.23">F</text></svg></section><div class="tp-axis"><svg width="326" height="15" viewBox="0 0 326 15" aria-hidden="true"><text class="tick" x="40" y="11" text-anchor="start">Jun 5</text><text class="tick" x="132.15" y="11" text-anchor="middle">Jul 5</text><text class="tick" x="222.81" y="11" text-anchor="middle">Aug 4</text><text class="tick" x="312" y="11" text-anchor="end">Sep 2</text></svg></div><div class="tp-rail" role="group" aria-label="Data availability: 48 weigh-ins and 61 days with meals logged out of 90 days">  <div class="rail-gut"><span>WEIGH</span><span>MEALS</span></div>  <div class="rail-band" aria-hidden="true">    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1"></i><i style="grid-column:3"></i><i style="grid-column:5/7"></i><i style="grid-column:8/10"></i><i style="grid-column:11/13"></i><i style="grid-column:14"></i><i style="grid-column:16/18"></i><i style="grid-column:19/21"></i><i style="grid-column:36"></i><i style="grid-column:38/40"></i><i style="grid-column:41/43"></i><i style="grid-column:44/46"></i><i style="grid-column:47"></i><i style="grid-column:49/51"></i><i style="grid-column:52/54"></i><i style="grid-column:55/57"></i><i style="grid-column:58"></i><i style="grid-column:60/62"></i><i style="grid-column:63/65"></i><i style="grid-column:66/68"></i><i style="grid-column:69"></i><i style="grid-column:71/73"></i><i style="grid-column:74/76"></i><i style="grid-column:77/79"></i><i style="grid-column:80"></i><i style="grid-column:82/84"></i><i style="grid-column:85/87"></i><i style="grid-column:88/90"></i></div>    <div class="lgut"></div>    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:45/49"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i></div>    <div class="track"></div>  </div></div><div class="tp-cap"><p class="cap1">90 days · 61 of 90 days logged</p><p class="cap2">Observed maintenance 3,040 kcal/day</p><p class="cap3">drag either way to scope</p></div></section><details class="lid setdates"><summary><span class="lid-title">Set dates</span><span class="chev" aria-hidden="true">▾</span></summary><div class="sd-body"><div class="sd-row"><label for="sd-a">From</label><input id="sd-a" type="date" value="2026-06-05"></div><div class="sd-row"><label for="sd-b">To</label><input id="sd-b" type="date" value="2026-09-02"></div><div class="sd-presets"><button type="button">Last 7d</button><button type="button">Last 14d</button><button type="button">This month</button></div></div></details><section class="card wpanel"><header><h2 class="h2">Last 90 days</h2><span class="wsub tnum">Jun 5 – Sep 2</span></header><p class="cover">61 of 90 days logged · 48 weigh-ins</p><div class="tiles"><div class="tile"><b class="tnum">2,410</b><span>avg kcal</span></div><div class="tile"><b class="tnum">−1.26</b><span>lb/wk</span></div><div class="tile"><b class="tnum">−3.8</b><span>lb Δ</span></div></div><p class="macline">168g protein · 241g carbs · 78g fat</p><p class="eyebrow mt">MAINTENANCE</p><p class="mlab">Observed maintenance</p><p class="mnum tnum">3,040 kcal/day</p><p class="mder">From your 2,410 kcal/day average and −1.26 lb/week over this window.</p><hr class="hair"><div class="mrow"><span>Balance</span><b class="tnum">−630 kcal/day</b></div><p class="mder">You ate 630 kcal/day under maintenance.</p><p class="himport">Import Apple Health to see measured burn →</p></section>
+      </div>
+      <div class="btmnav"><span>Today</span><span>Calendar</span><span>Goals</span><span class="on">Trends</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>One Card, three panels, one axis.</b> Panels are separated by
+      <code>border-t border-[var(--border)]</code> hairlines and the x tick labels render on the
+      <b>bottom of the stack only</b>. Three separate Cards would cost ⚠[120–180px] of card walls and would visually
+      deny the axis-sharing that is the entire point.</p>
+    <p class="note"><b>Heights are the signed-off budget</b> — weight <code>h-48</code> 192 · calories
+      <code>h-32</code> 128 · macros <code>h-10</code> 40. <span class="flag">⚑</span> These differ from the PRD's
+      208 / 176 / 160, which overruns the fold by ⚠[93–193px] and pushes the rail below it — forfeiting the two
+      ideas (caption-echo, live gate) that make this direction better than the PRD's.</p>
+    <p class="note"><b>The unlogged day renders no mark at all.</b> 29 of the 90 calorie slots are empty by
+      construction. No ghost bar, no hatched bar, no zero — a mark where there is no datum is zero-filling in a
+      costume. Absence gets its mark on the rail instead, whose axis <i>is</i> availability.</p>
+    <p class="note"><b>The weight mean breaks, it does not bridge.</b> The 7-day trailing mean emits a point only
+      when ≥3 readings sit in the window, so the 14-day silence at Jun 25 – Jul 8 produces
+      <b>exactly two polylines</b>, not one line drawn straight through a hole. 48 raw dots sit under it at
+      <code>r=2</code>, alpha <b>0.70</b> — see the footer on why not 0.55.</p>
+    <p class="note"><b>★ The fold is drawn honestly — and this frame moved the number again.</b> The dashed rule sits
+      at 737px (844 − 49 AppHeader − 58 BottomNav). §12's arithmetic put the caption's last line exactly on it:
+      shell 16 + hero 49 + gap 16 + chips 44 + gap 16 = <b>141</b>, Card 1 + 16 + 205 + 1 + 156 + 1 + 95 + 15 + 44 +
+      45 + 16 + 1 = <b>596</b>, total <b>737</b>, <b>ZERO clearance</b>. <span class="flag">⚠ A headless layout pass
+      of this file measures 718.</span> The three hairlines are the panel wrappers' own <code>border-top</code> and
+      <code>box-sizing: border-box</code> absorbs them, so the Card is <b>594</b>, not 596, and its bottom edge lands
+      at <b>735</b>. <b>Real clearance to the last caption line: 19px. To the Card's edge: 2px.</b> The direction is
+      safer than §12 feared, but only in <i>this</i> composition — re-derive it against the real component tree, and
+      still confirm on hardware. Pre-authorised first concession if it misses: calories <code>h-32</code> →
+      <code>h-28</code>.</p>
+    <p class="note"><b>Coverage sits above the averages, not below them.</b> In the window panel the coverage line
+      <code>61 of 90 days logged · 48 weigh-ins</code> renders <i>first</i>. Coverage after an average is a footnote
+      nobody reads; coverage before it is a frame.</p>
+    <p class="note"><b>Balance is <code>--foreground</code> with an explicit <code>−</code>.</b> Never
+      <code>--danger</code>: a deficit is not an error, and <code>--danger</code> in dark measures 3.38:1 and fails
+      AA text anyway.</p>
+    <p class="note"><b><code>Set dates</code> is a peer, not a fallback</b> — it sits directly beneath the rail
+      caption, where a user who has just failed to discover the drag is already looking, rather than buried at the
+      bottom of the page. ⚠ It must never contain a chart: a <code>ResponsiveContainer</code> inside a closed
+      <code>&lt;details&gt;</code> measures 0×0.</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 2 · COMMITTED WINDOW · 10 DAYS ════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 2 · Committed window · Aug 3 → Aug 12 · 10 days · 27.2 px/day</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <section class="hero">
+          <h1 class="h1">Trends</h1>
+          <p class="sub tnum">Aug 3 – Aug 12 · 10 days</p>
+        </section>
+        <nav class="chips" aria-label="Range">
+          <button type="button" aria-pressed="false">30d</button>
+          <button type="button" aria-pressed="false">90d</button>
+          <button type="button" aria-pressed="false">All</button>
+        </nav>
+        <section class="card instrument"><section class="tp tp-weight"><div class="phdr"><p class="eyebrow">WEIGHT</p><span class="rrail">lb</span></div><svg class="chart" width="326" height="192" viewBox="0 0 326 192" role="img" aria-label="Weight, 7-day trailing mean over raw weigh-ins"><line class="grid" x1="40" y1="8" x2="312" y2="8"/><text class="tick" x="34" y="11.6" text-anchor="end">200.2</text><line class="grid" x1="40" y1="66.7" x2="312" y2="66.7"/><text class="tick" x="34" y="70.3" text-anchor="end">199.4</text><line class="grid" x1="40" y1="125.3" x2="312" y2="125.3"/><text class="tick" x="34" y="128.9" text-anchor="end">198.6</text><line class="grid" x1="40" y1="184" x2="312" y2="184"/><text class="tick" x="34" y="187.6" text-anchor="end">197.8</text><g class="rawdot"><circle cx="40" cy="81.3" r="2"/><circle cx="67.2" cy="52.8" r="2"/><circle cx="121.6" cy="140" r="2"/><circle cx="148.8" cy="54.6" r="2"/><circle cx="203.2" cy="76.8" r="2"/><circle cx="230.4" cy="126.8" r="2"/><circle cx="284.8" cy="104.9" r="2"/></g><polyline class="mean7" points="40,37.6 67.2,40.7 94.4,48.4 121.6,73.2 148.8,69.5 176,82.2 203.2,81.1 230.4,90.2 257.6,99.6 284.8,100.6"/></svg></section><section class="tp tp-cal"><div class="phdr"><p class="eyebrow">CALORIES</p><span class="rrail">kcal</span></div><svg class="chart" width="326" height="128" viewBox="0 0 326 128" role="img" aria-label="Calories per logged day against the plan target"><line class="grid" x1="40" y1="38.55" x2="312" y2="38.55"/><text class="tick" x="34" y="42.15" text-anchor="end">3000</text><line class="grid" x1="40" y1="89.45" x2="312" y2="89.45"/><text class="tick" x="34" y="93.05" text-anchor="end">2000</text><path class="calmark" stroke-width="16.86" d="M40 64.7V120M67.2 63.1V120M121.6 87.2V120M148.8 49.2V120M176 46.4V120M203.2 42.8V120M257.6 72.4V120"/><line class="plan" x1="40" y1="58.91" x2="312" y2="58.91"/></svg></section><section class="tp tp-macro"><div class="mhdr"><p class="eyebrow">MACROS</p><p class="mlegend"><span class="sw swP" aria-hidden="true"></span><span class="tnum">P 168g</span><span class="sw swC" aria-hidden="true"></span><span class="tnum">C 241g</span><span class="sw swF" aria-hidden="true"></span><span class="tnum">F 78g</span></p><div class="segbox" role="radiogroup" aria-label="Macro scale"><button type="button" role="radio" aria-checked="true" class="seg on">g</button><button type="button" role="radio" aria-checked="false" class="seg">%</button></div></div><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><path class="mF" d="M40 38V9.7H67.2V13.5H94.4V38ZM121.6 38V9.2H148.8V2H176V6.5H203.2V10H230.4V38ZM257.6 38V14.5H284.8V38Z"/><path class="mC" d="M40 38V13.9H67.2V16.7H94.4V38ZM121.6 38V14.9H148.8V7.9H176V10.7H203.2V13.3H230.4V38ZM257.6 38V19.6H284.8V38Z"/><path class="mP" d="M40 38V27.4H67.2V27.3H94.4V38ZM121.6 38V30.2H148.8V26.9H176V27.3H203.2V26.6H230.4V38ZM257.6 38V31.3H284.8V38Z"/><path class="msep" d="M40 27.4H67.2M40 13.9H67.2M67.2 27.3H94.4M67.2 16.7H94.4M121.6 30.2H148.8M121.6 14.9H148.8M148.8 26.9H176M148.8 7.9H176M176 27.3H203.2M176 10.7H203.2M203.2 26.6H230.4M203.2 13.3H230.4M257.6 31.3H284.8M257.6 19.6H284.8"/><text class="mlabel" x="315" y="38.23">P</text><text class="mlabel" x="315" y="29.02">C</text><text class="mlabel" x="315" y="20.66">F</text></svg></section><div class="tp-axis"><svg width="326" height="15" viewBox="0 0 326 15" aria-hidden="true"><text class="tick" x="53.6" y="11" text-anchor="middle">Aug 3</text><text class="tick" x="135.2" y="11" text-anchor="middle">Aug 6</text><text class="tick" x="216.8" y="11" text-anchor="middle">Aug 9</text><text class="tick" x="298.4" y="11" text-anchor="middle">Aug 12</text></svg></div><div class="tp-rail" role="group" aria-label="Data availability: 48 weigh-ins and 61 days with meals logged out of 90 days">  <div class="rail-gut"><span>WEIGH</span><span>MEALS</span></div>  <div class="rail-band" aria-hidden="true">    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1"></i><i style="grid-column:3"></i><i style="grid-column:5/7"></i><i style="grid-column:8/10"></i><i style="grid-column:11/13"></i><i style="grid-column:14"></i><i style="grid-column:16/18"></i><i style="grid-column:19/21"></i><i style="grid-column:36"></i><i style="grid-column:38/40"></i><i style="grid-column:41/43"></i><i style="grid-column:44/46"></i><i style="grid-column:47"></i><i style="grid-column:49/51"></i><i style="grid-column:52/54"></i><i style="grid-column:55/57"></i><i style="grid-column:58"></i><i style="grid-column:60/62"></i><i style="grid-column:63/65"></i><i style="grid-column:66/68"></i><i style="grid-column:69"></i><i style="grid-column:71/73"></i><i style="grid-column:74/76"></i><i style="grid-column:77/79"></i><i style="grid-column:80"></i><i style="grid-column:82/84"></i><i style="grid-column:85/87"></i><i style="grid-column:88/90"></i></div>    <div class="lgut"></div>    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:45/49"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i></div>    <div class="track"><span class="cw" style="left:65.556%;width:11.111%"></span></div>  </div></div><div class="tp-cap hasclear"><button class="clearbtn" type="button">Clear</button><p class="cap1">Aug 3 → Aug 12 · 10 days · 7 of 10 logged</p><p class="cap2">Observed maintenance 3,040 kcal/day</p><p class="cap3">2,560 kcal/day avg</p></div></section><details class="lid setdates"><summary><span class="lid-title">Set dates</span><span class="chev" aria-hidden="true">▾</span></summary><div class="sd-body"><div class="sd-row"><label for="sd-a">From</label><input id="sd-a" type="date" value="2026-06-05"></div><div class="sd-row"><label for="sd-b">To</label><input id="sd-b" type="date" value="2026-09-02"></div><div class="sd-presets"><button type="button">Last 7d</button><button type="button">Last 14d</button><button type="button">This month</button></div></div></details><section class="card wpanel"><header><h2 class="h2">Aug 3 → Aug 12</h2><span class="wsub tnum">10 days</span></header><p class="cover">7 of 10 days logged · 6 weigh-ins</p><div class="tiles"><div class="tile"><b class="tnum">2,560</b><span>avg kcal</span></div><div class="tile"><b class="tnum">−1.4</b><span>lb/wk</span></div><div class="tile"><b class="tnum">−2.0</b><span>lb Δ</span></div></div><p class="macline">171g protein · 249g carbs · 81g fat</p><p class="eyebrow mt">MAINTENANCE</p><p class="mlab">Observed maintenance</p><p class="mnum tnum">3,040 kcal/day</p><p class="mder">From your 2,410 kcal/day average and −1.26 lb/week over this window.</p><hr class="hair"><div class="mrow"><span>Balance</span><b class="tnum">−630 kcal/day</b></div><p class="mder">You ate 630 kcal/day under maintenance.</p><p class="himport">Import Apple Health to see measured burn →</p></section>
+      </div>
+      <div class="btmnav"><span>Today</span><span>Calendar</span><span>Goals</span><span class="on">Trends</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>The committed window is a DOMAIN CHANGE, not a highlight.</b> Excluded data is <i>gone</i>,
+      not dimmed — so <b>there is no selection band in this state at all</b>. Compare panel 3, where the band exists
+      because the domain has not changed yet.</p>
+    <p class="note"><b>At 27.2 px/day the ribbon becomes ten fat columns</b> and the <code>var(--card)</code>
+      separators finally do visible work. At 90d a band is 3.02px wide and a 1px separator eats a third of it; here
+      each column is nine times wider and the P/C boundary is unambiguous. <b>This is the panel that proves the
+      separator is a fix, not an ornament.</b></p>
+    <p class="note"><b>The rail still shows the full 90 days.</b> That is deliberate — the committed slice is marked
+      <i>inside</i> the whole record so the user can see how much they cut away. The track carries an
+      <code>--accent</code> segment with <code>--foreground</code> <b>2px end-caps</b>, the shipped
+      <code>CeilingRule</code> "stile" idiom, because an <code>--accent-soft</code> fill has no edge and the
+      window's <i>boundaries</i> are the fact being communicated.</p>
+    <p class="note"><b>The axis is the strongest commit signal and it is free</b> — four tick labels that now span
+      ten days instead of ninety. The caption carries the echo (the panel that answers the question is ~600px below
+      the thumb), plus a 44px <code>Clear</code>.</p>
+    <p class="note"><span class="flag">⚠ Generator artifact.</span> The weight y-axis is <b>rescaled</b> to the
+      window here; the pinned <code>y = 8 + (210−w)·11</code> mapping would draw these ten readings as a flat line
+      in the middle of a 192px box. And the drawn calorie marks average <b>2,563 kcal/day</b>, not the 2,410 the 90-day window
+      panel quotes — the ten days simply are not average. Both are mockup-generator facts, <b>not design claims</b>.</p>
+    <p class="note"><span class="flag">⚠</span> Mark width here is <code>0.62 × px/day</code> ≈ 16.9px, not the
+      pinned 2.2px — a 2.2px mark at 27.2 px/day reads as a hairline, not a bar. The 2.2px figure is the 90d value.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════ PANEL 3 · MID-DRAG ═════════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 3 · Mid-drag · finger still down · domain unchanged</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <section class="hero">
+          <h1 class="h1">Trends</h1>
+          <p class="sub tnum">Last 90 days · Jun 5 – Sep 2</p>
+        </section>
+        <nav class="chips" aria-label="Range">
+          <button type="button" aria-pressed="false">30d</button>
+          <button type="button" aria-pressed="true">90d</button>
+          <button type="button" aria-pressed="false">All</button>
+        </nav>
+        <section class="card instrument"><div class="dragwrap"><div class="selband" style="left:218.31px;width:30.22px"><span class="l">Aug 3</span><span class="r">Aug 12</span></div><section class="tp tp-weight"><div class="phdr"><p class="eyebrow">WEIGHT</p><span class="rrail count">⌈ 10 days ⌉</span></div><svg class="chart" width="326" height="192" viewBox="0 0 326 192" role="img" aria-label="Weight, 7-day trailing mean over raw weigh-ins"><line class="grid" x1="40" y1="30" x2="312" y2="30"/><text class="tick" x="34" y="33.6" text-anchor="end">208</text><line class="grid" x1="40" y1="74" x2="312" y2="74"/><text class="tick" x="34" y="77.6" text-anchor="end">204</text><line class="grid" x1="40" y1="118" x2="312" y2="118"/><text class="tick" x="34" y="121.6" text-anchor="end">200</text><line class="grid" x1="40" y1="162" x2="312" y2="162"/><text class="tick" x="34" y="165.6" text-anchor="end">196</text><g class="rawdot"><circle cx="40" cy="58.4" r="2"/><circle cx="46" cy="58.7" r="2"/><circle cx="52.1" cy="58" r="2"/><circle cx="55.1" cy="61.5" r="2"/><circle cx="61.2" cy="75" r="2"/><circle cx="64.2" cy="68.7" r="2"/><circle cx="70.2" cy="80" r="2"/><circle cx="73.2" cy="69.9" r="2"/><circle cx="79.3" cy="68.8" r="2"/><circle cx="85.3" cy="70.7" r="2"/><circle cx="88.4" cy="74.8" r="2"/><circle cx="94.4" cy="88.8" r="2"/><circle cx="97.4" cy="79.3" r="2"/><circle cx="145.8" cy="91.8" r="2"/><circle cx="151.8" cy="97.9" r="2"/><circle cx="154.8" cy="99.9" r="2"/><circle cx="160.9" cy="114.1" r="2"/><circle cx="163.9" cy="100.3" r="2"/><circle cx="170" cy="106.7" r="2"/><circle cx="173" cy="107.6" r="2"/><circle cx="179" cy="104.4" r="2"/><circle cx="185.1" cy="112.3" r="2"/><circle cx="188.1" cy="111.5" r="2"/><circle cx="194.1" cy="125.3" r="2"/><circle cx="197.2" cy="111.3" r="2"/><circle cx="203.2" cy="116" r="2"/><circle cx="206.2" cy="120.7" r="2"/><circle cx="212.3" cy="117.4" r="2"/><circle cx="218.3" cy="126.8" r="2"/><circle cx="221.3" cy="122.5" r="2"/><circle cx="227.4" cy="135.6" r="2"/><circle cx="230.4" cy="122.7" r="2"/><circle cx="236.4" cy="126.1" r="2"/><circle cx="239.5" cy="133.6" r="2"/><circle cx="245.5" cy="130.3" r="2"/><circle cx="251.6" cy="141" r="2"/><circle cx="254.6" cy="133" r="2"/><circle cx="260.6" cy="145.1" r="2"/><circle cx="263.6" cy="134.8" r="2"/><circle cx="269.7" cy="137" r="2"/><circle cx="272.7" cy="146.2" r="2"/><circle cx="278.8" cy="142.9" r="2"/><circle cx="284.8" cy="154.6" r="2"/><circle cx="287.8" cy="143.4" r="2"/><circle cx="293.9" cy="154.2" r="2"/><circle cx="296.9" cy="147.3" r="2"/><circle cx="302.9" cy="148.7" r="2"/><circle cx="306" cy="158.5" r="2"/></g><polyline class="mean7" points="52.1,58.4 55.1,59.2 58.1,59.2 61.2,63.3 64.2,64.4 67.2,65.8 70.2,68.6 73.2,71 76.3,73.4 79.3,72.5 82.3,71.9 85.3,72.4 88.4,72.8 91.4,71 94.4,75.8 97.4,76.5 100.4,78.4 103.5,78.4 106.5,81"/><polyline class="mean7" points="154.8,96.6 157.9,96.6 160.9,100.9 163.9,100.8 166.9,103.1 170,103.8 173,105.7 176,107.2 179,106.6 182,104.8 185.1,107.8 188.1,108.5 191.1,109 194.1,113.4 197.2,113 200.2,115.1 203.2,115.3 206.2,117 209.2,118.3 212.3,118.1 215.3,116.3 218.3,120.2 221.3,120.7 224.4,121.8 227.4,125.5 230.4,125 233.4,126.9 236.4,126.7 239.5,128.1 242.5,129.5 245.5,129.6 248.5,128.2 251.6,132.7 254.6,132.8 257.6,134.5 260.6,137.3 263.6,136.8 266.7,138.5 269.7,138.2 272.7,139.2 275.7,140.8 278.8,141.2 281.8,140.2 284.8,145.2 287.8,144.8 290.8,146.8 293.9,148.8 296.9,148.5 299.9,149.9 302.9,149.6 306,150.4 309,152.2"/></svg></section><section class="tp tp-cal"><div class="phdr"><p class="eyebrow">CALORIES</p><span class="rrail">kcal</span></div><svg class="chart" width="326" height="128" viewBox="0 0 326 128" role="img" aria-label="Calories per logged day against the plan target"><line class="grid" x1="40" y1="38.55" x2="312" y2="38.55"/><text class="tick" x="34" y="42.15" text-anchor="end">3000</text><line class="grid" x1="40" y1="89.45" x2="312" y2="89.45"/><text class="tick" x="34" y="93.05" text-anchor="end">2000</text><path class="calmark" stroke-width="2.2" d="M40 60.4V120M43 52.4V120M46 44.4V120M52.1 75V120M58.1 48.7V120M64.2 93.7V120M67.2 84.1V120M70.2 72.8V120M73.2 62.6V120M79.3 103.4V120M85.3 66.1V120M91.4 65.6V120M94.4 77.5V120M97.4 60.3V120M100.4 49V120M106.5 77.7V120M112.5 80.7V120M118.6 63V120M121.6 97.2V120M124.6 90V120M127.6 84.1V120M133.7 60.3V120M139.7 72.1V120M145.8 29.4V120M148.8 60.4V120M151.8 71.7V120M154.8 85.6V120M160.9 54.2V120M166.9 90.9V120M173 58.8V120M176 59.6V120M179 69.6V120M182 79.9V120M188.1 34.6V120M194.1 56.9V120M200.2 68.2V120M203.2 50.9V120M206.2 67.1V120M209.2 81.1V120M215.3 73.2V120M218.3 64.7V120M221.3 63.1V120M227.4 87.2V120M230.4 49.2V120M233.4 46.4V120M236.4 42.8V120M242.5 72.4V120M248.5 54.4V120M254.6 103.7V120M257.6 84.2V120M260.6 74.5V120M263.6 58.8V120M269.7 95.1V120M275.7 55.3V120M281.8 68.6V120M284.8 73.1V120M287.8 62.1V120M290.8 49.3V120M296.9 90.1V120M302.9 85.5V120M309 69.8V120"/><line class="plan" x1="40" y1="58.91" x2="312" y2="58.91"/></svg></section><section class="tp tp-macro"><div class="mhdr"><p class="eyebrow">MACROS</p><p class="mlegend"><span class="sw swP" aria-hidden="true"></span><span class="tnum">P 168g</span><span class="sw swC" aria-hidden="true"></span><span class="tnum">C 241g</span><span class="sw swF" aria-hidden="true"></span><span class="tnum">F 78g</span></p><div class="segbox" role="radiogroup" aria-label="Macro scale"><button type="button" role="radio" aria-checked="true" class="seg on">g</button><button type="button" role="radio" aria-checked="false" class="seg">%</button></div></div><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><path class="mF" d="M40 38V2.4H43V5.4H46V9.9H49.1V38ZM52.1 38V14.1H55.1V38ZM58.1 38V10.9H61.2V38ZM64.2 38V2.3H67.2V9.9H70.2V14.7H73.2V12.6H76.3V38ZM79.3 38V8.4H82.3V38ZM85.3 38V8.5H88.4V38ZM91.4 38V12.2H94.4V9.9H97.4V8.4H100.4V12.3H103.5V38ZM106.5 38V4.7H109.5V38ZM112.5 38V12.7H115.6V38ZM118.6 38V11H121.6V9.4H124.6V9.3H127.6V6.4H130.7V38ZM133.7 38V12.3H136.7V38ZM139.7 38V12.9H142.8V38ZM145.8 38V5.3H148.8V2.7H151.8V7.9H154.8V14.1H157.9V38ZM160.9 38V11.3H163.9V38ZM166.9 38V8.1H170V38ZM173 38V7.3H176V12.1H179V14H182V11.3H185.1V38ZM188.1 38V5.9H191.1V38ZM194.1 38V11.1H197.2V38ZM200.2 38V12H203.2V11.2H206.2V8.5H209.2V9.5H212.3V38ZM215.3 38V7.2H218.3V9.7H221.3V13.5H224.4V38ZM227.4 38V9.2H230.4V2H233.4V6.5H236.4V10H239.5V38ZM242.5 38V14.5H245.5V38ZM248.5 38V10.1H251.6V38ZM254.6 38V2.9H257.6V11.3H260.6V14.5H263.6V12.4H266.7V38ZM269.7 38V7.4H272.7V38ZM275.7 38V9.2H278.8V38ZM281.8 38V12.1H284.8V9.3H287.8V8.8H290.8V12.6H293.9V38ZM296.9 38V4.8H299.9V38ZM302.9 38V12.7H306V38ZM309 38V10.7H312V38Z"/><path class="mC" d="M40 38V8.3H43V9.9H46V13.2H49.1V38ZM52.1 38V19.2H55.1V38ZM58.1 38V14H61.2V38ZM64.2 38V7.8H67.2V15.8H70.2V19.2H73.2V15.9H76.3V38ZM79.3 38V13.4H82.3V38ZM85.3 38V11.6H88.4V38ZM91.4 38V17.7H94.4V15.9H97.4V12.8H100.4V15.6H103.5V38ZM106.5 38V9.8H109.5V38ZM112.5 38V15.9H115.6V38ZM118.6 38V16.6H121.6V15.4H124.6V13.7H127.6V9.7H130.7V38ZM133.7 38V17.4H136.7V38ZM139.7 38V16H142.8V38ZM145.8 38V10.9H148.8V8.6H151.8V12.2H154.8V17.4H157.9V38ZM160.9 38V16.4H163.9V38ZM166.9 38V11.3H170V38ZM173 38V12.9H176V18H179V18.2H182V14.6H185.1V38ZM188.1 38V11H191.1V38ZM194.1 38V14.2H197.2V38ZM200.2 38V17.6H203.2V17.1H206.2V12.8H209.2V12.8H212.3V38ZM215.3 38V12.3H218.3V13.9H221.3V16.7H224.4V38ZM227.4 38V14.9H230.4V7.9H233.4V10.7H236.4V13.3H239.5V38ZM242.5 38V19.6H245.5V38ZM248.5 38V13.2H251.6V38ZM254.6 38V8.7H257.6V17.2H260.6V18.7H263.6V15.7H266.7V38ZM269.7 38V12.5H272.7V38ZM275.7 38V12.3H278.8V38ZM281.8 38V17.9H284.8V15.1H287.8V12.9H290.8V16H293.9V38ZM296.9 38V9.9H299.9V38ZM302.9 38V15.8H306V38ZM309 38V16.5H312V38Z"/><path class="mP" d="M40 38V27.2H43V27.2H46V26.8H49.1V38ZM52.1 38V31.2H55.1V38ZM58.1 38V27.3H61.2V38ZM64.2 38V26.1H67.2V29.4H70.2V30.8H73.2V28.1H76.3V38ZM79.3 38V26.2H82.3V38ZM85.3 38V30.7H88.4V38ZM91.4 38V28.4H94.4V27.5H97.4V25.5H100.4V28.7H103.5V38ZM106.5 38V28.9H109.5V38ZM112.5 38V26.1H115.6V38ZM118.6 38V29.9H121.6V29.4H124.6V29.4H127.6V28.1H130.7V38ZM133.7 38V28H136.7V38ZM139.7 38V29.3H142.8V38ZM145.8 38V26.4H148.8V25.9H151.8V29H154.8V29H157.9V38ZM160.9 38V28.9H163.9V38ZM166.9 38V27.4H170V38ZM173 38V29.3H176V30.7H179V27H182V26H185.1V38ZM188.1 38V28.2H191.1V38ZM194.1 38V29.6H197.2V38ZM200.2 38V27.2H203.2V27.6H206.2V29H209.2V31.2H212.3V38ZM215.3 38V26.5H218.3V27.4H221.3V27.3H224.4V38ZM227.4 38V30.2H230.4V26.9H233.4V27.3H236.4V26.6H239.5V38ZM242.5 38V31.3H245.5V38ZM248.5 38V27.3H251.6V38ZM254.6 38V26.4H257.6V30.1H260.6V30.4H263.6V27.9H266.7V38ZM269.7 38V25.9H272.7V38ZM275.7 38V30.9H278.8V38ZM281.8 38V28.4H284.8V27.1H287.8V25.6H290.8V29.4H293.9V38ZM296.9 38V28.8H299.9V38ZM302.9 38V25.7H306V38ZM309 38V30.1H312V38Z"/><path class="msep" d="M40 27.2H43M40 8.3H43M43 27.2H46M43 9.9H46M46 26.8H49.1M46 13.2H49.1M52.1 31.2H55.1M52.1 19.2H55.1M58.1 27.3H61.2M58.1 14H61.2M64.2 26.1H67.2M64.2 7.8H67.2M67.2 29.4H70.2M67.2 15.8H70.2M70.2 30.8H73.2M70.2 19.2H73.2M73.2 28.1H76.3M73.2 15.9H76.3M79.3 26.2H82.3M79.3 13.4H82.3M85.3 30.7H88.4M85.3 11.6H88.4M91.4 28.4H94.4M91.4 17.7H94.4M94.4 27.5H97.4M94.4 15.9H97.4M97.4 25.5H100.4M97.4 12.8H100.4M100.4 28.7H103.5M100.4 15.6H103.5M106.5 28.9H109.5M106.5 9.8H109.5M112.5 26.1H115.6M112.5 15.9H115.6M118.6 29.9H121.6M118.6 16.6H121.6M121.6 29.4H124.6M121.6 15.4H124.6M124.6 29.4H127.6M124.6 13.7H127.6M127.6 28.1H130.7M127.6 9.7H130.7M133.7 28H136.7M133.7 17.4H136.7M139.7 29.3H142.8M139.7 16H142.8M145.8 26.4H148.8M145.8 10.9H148.8M148.8 25.9H151.8M148.8 8.6H151.8M151.8 29H154.8M151.8 12.2H154.8M154.8 29H157.9M154.8 17.4H157.9M160.9 28.9H163.9M160.9 16.4H163.9M166.9 27.4H170M166.9 11.3H170M173 29.3H176M173 12.9H176M176 30.7H179M176 18H179M179 27H182M179 18.2H182M182 26H185.1M182 14.6H185.1M188.1 28.2H191.1M188.1 11H191.1M194.1 29.6H197.2M194.1 14.2H197.2M200.2 27.2H203.2M200.2 17.6H203.2M203.2 27.6H206.2M203.2 17.1H206.2M206.2 29H209.2M206.2 12.8H209.2M209.2 31.2H212.3M209.2 12.8H212.3M215.3 26.5H218.3M215.3 12.3H218.3M218.3 27.4H221.3M218.3 13.9H221.3M221.3 27.3H224.4M221.3 16.7H224.4M227.4 30.2H230.4M227.4 14.9H230.4M230.4 26.9H233.4M230.4 7.9H233.4M233.4 27.3H236.4M233.4 10.7H236.4M236.4 26.6H239.5M236.4 13.3H239.5M242.5 31.3H245.5M242.5 19.6H245.5M248.5 27.3H251.6M248.5 13.2H251.6M254.6 26.4H257.6M254.6 8.7H257.6M257.6 30.1H260.6M257.6 17.2H260.6M260.6 30.4H263.6M260.6 18.7H263.6M263.6 27.9H266.7M263.6 15.7H266.7M269.7 25.9H272.7M269.7 12.5H272.7M275.7 30.9H278.8M275.7 12.3H278.8M281.8 28.4H284.8M281.8 17.9H284.8M284.8 27.1H287.8M284.8 15.1H287.8M287.8 25.6H290.8M287.8 12.9H290.8M290.8 29.4H293.9M290.8 16H293.9M296.9 28.8H299.9M296.9 9.9H299.9M302.9 25.7H306M302.9 15.8H306M309 30.1H312M309 16.5H312"/><text class="mlabel" x="315" y="37.67">P</text><text class="mlabel" x="315" y="26.94">C</text><text class="mlabel" x="315" y="17.23">F</text></svg></section></div><div class="tp-axis"><svg width="326" height="15" viewBox="0 0 326 15" aria-hidden="true"><text class="tick" x="40" y="11" text-anchor="start">Jun 5</text><text class="tick" x="132.15" y="11" text-anchor="middle">Jul 5</text><text class="tick" x="222.81" y="11" text-anchor="middle">Aug 4</text><text class="tick" x="312" y="11" text-anchor="end">Sep 2</text></svg></div><div class="tp-rail" role="group" aria-label="Data availability: 48 weigh-ins and 61 days with meals logged out of 90 days">  <div class="rail-gut"><span>WEIGH</span><span>MEALS</span></div>  <div class="rail-band" aria-hidden="true">    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1"></i><i style="grid-column:3"></i><i style="grid-column:5/7"></i><i style="grid-column:8/10"></i><i style="grid-column:11/13"></i><i style="grid-column:14"></i><i style="grid-column:16/18"></i><i style="grid-column:19/21"></i><i style="grid-column:36"></i><i style="grid-column:38/40"></i><i style="grid-column:41/43"></i><i style="grid-column:44/46"></i><i style="grid-column:47"></i><i style="grid-column:49/51"></i><i style="grid-column:52/54"></i><i style="grid-column:55/57"></i><i style="grid-column:58"></i><i style="grid-column:60/62"></i><i style="grid-column:63/65"></i><i style="grid-column:66/68"></i><i style="grid-column:69"></i><i style="grid-column:71/73"></i><i style="grid-column:74/76"></i><i style="grid-column:77/79"></i><i style="grid-column:80"></i><i style="grid-column:82/84"></i><i style="grid-column:85/87"></i><i style="grid-column:88/90"></i></div>    <div class="lgut"></div>    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:45/49"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i></div>    <div class="track"></div>  </div></div><div class="tp-cap"><p class="cap1">Aug 3 → Aug 12 · 10 days · 7 of 10 logged</p><p class="cap2">Observed maintenance 3,040 kcal/day</p><p class="cap3">release to commit · tap to clear</p></div></section>
+      </div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>One band, three panels, simultaneously.</b> The selection spans all three charts at once —
+      that simultaneity is the whole argument for the stacked form over a metric switcher.</p>
+    <p class="note"><span class="flag">⚠</span> The fill is <code>--accent</code> at <b>0.12</b> and composites to
+      <b>≈1.1:1 in both palettes</b>. It is decorative. <b>The ⚠[1.5–2px] <code>--accent</code> edges carry 100% of
+      the meaning</b> — do not raise the fill hoping it will carry information, and do not remove the edges hoping
+      the fill will.</p>
+    <p class="note"><b>The right-rail swaps <code>lb</code> → <code>⌈ 10 days ⌉</code>.</b> The user is landing on a
+      <i>duration</i>; the two dates are the input and the count is the goal. Edge date labels are 11px
+      <code>--foreground</code> and are <b>server-formatted</b> — nothing formats a date on the client, which is a
+      live hydration defect elsewhere in the app.</p>
+    <p class="note"><b>★ The gate re-evaluates while the finger is still down.</b> Because the recompute is pure and
+      client-side, dragging a 4-day window turns the caption's middle line into the gate sentence live, and widening
+      it brings the number back. That is the strongest available version of <i>teach the rule while it is still
+      free</i>, and it is a free side-effect of the zero-round-trip architecture. It is also the reason the caption
+      must carry the maintenance line rather than only the average.</p>
+    <p class="note"><b>No transition on the band's <code>left</code>/<code>width</code>.</b> Direct manipulation
+      must have zero latency; a tween on a dragged edge reads as the app being broken.</p>
+    <p class="note"><b>Announcement is on commit only</b>, never during the drag — an
+      <code>aria-live="polite" role="status"</code> region, following the shipped calendar-range precedent.</p>
+  </div>
+</section>
+
+<!-- ══════════════════ PANEL 4 · GATED MAINTENANCE (4-day window) ══════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 4 · Gated · <code>window_too_short</code> · 4 days</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <section class="card instrument"><div class="tp-axis"><svg width="326" height="15" viewBox="0 0 326 15" aria-hidden="true"><text class="tick" x="74" y="11" text-anchor="middle">Aug 6</text><text class="tick" x="142" y="11" text-anchor="middle">Aug 7</text><text class="tick" x="210" y="11" text-anchor="middle">Aug 8</text><text class="tick" x="278" y="11" text-anchor="middle">Aug 9</text></svg></div><div class="tp-rail" role="group" aria-label="Data availability: 48 weigh-ins and 61 days with meals logged out of 90 days">  <div class="rail-gut"><span>WEIGH</span><span>MEALS</span></div>  <div class="rail-band" aria-hidden="true">    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1"></i><i style="grid-column:3"></i><i style="grid-column:5/7"></i><i style="grid-column:8/10"></i><i style="grid-column:11/13"></i><i style="grid-column:14"></i><i style="grid-column:16/18"></i><i style="grid-column:19/21"></i><i style="grid-column:36"></i><i style="grid-column:38/40"></i><i style="grid-column:41/43"></i><i style="grid-column:44/46"></i><i style="grid-column:47"></i><i style="grid-column:49/51"></i><i style="grid-column:52/54"></i><i style="grid-column:55/57"></i><i style="grid-column:58"></i><i style="grid-column:60/62"></i><i style="grid-column:63/65"></i><i style="grid-column:66/68"></i><i style="grid-column:69"></i><i style="grid-column:71/73"></i><i style="grid-column:74/76"></i><i style="grid-column:77/79"></i><i style="grid-column:80"></i><i style="grid-column:82/84"></i><i style="grid-column:85/87"></i><i style="grid-column:88/90"></i></div>    <div class="lgut"></div>    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:45/49"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i></div>    <div class="track"><span class="cw" style="left:68.889%;width:4.444%"></span></div>  </div></div><div class="tp-cap hasclear"><button class="clearbtn" type="button">Clear</button><p class="cap1">Aug 6 → Aug 9 · 4 days · 3 of 4 logged</p><p class="cap2">Maintenance needs at least 7 days. This window is 4.</p><p class="cap3">drag wider, or clear to see everything</p></div></section><details class="lid setdates"><summary><span class="lid-title">Set dates</span><span class="chev" aria-hidden="true">▾</span></summary><div class="sd-body"><div class="sd-row"><label for="sd-a">From</label><input id="sd-a" type="date" value="2026-06-05"></div><div class="sd-row"><label for="sd-b">To</label><input id="sd-b" type="date" value="2026-09-02"></div><div class="sd-presets"><button type="button">Last 7d</button><button type="button">Last 14d</button><button type="button">This month</button></div></div></details><section class="card wpanel"><header><h2 class="h2">Aug 6 → Aug 9</h2><span class="wsub tnum">4 days</span></header><p class="cover">3 of 4 days logged · 2 weigh-ins</p><div class="tiles"><div class="tile"><b class="tnum">2,388</b><span>avg kcal</span></div><div class="tile"><b class="tnum">—</b><span>lb/wk</span></div><div class="tile"><b class="tnum">—</b><span>lb Δ</span></div></div><p class="macline">163g protein · 236g carbs · 76g fat</p><p class="eyebrow mt">MAINTENANCE</p><p class="gate1">Maintenance needs at least 7 days. This window is 4.</p><p class="gate2">Nothing is estimated until then.</p></section>
+      </div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>No numeral. No <code>—</code>. No greying.</b> The eyebrow stays, the numeral is replaced by
+      a <i>sentence</i>, and a second sentence closes it: <code>Nothing is estimated until then.</code> A greyed-out
+      number still asserts a number.</p>
+    <p class="note"><b>The counts interpolate.</b> <code>This window is 4</code> is a real value, not static copy.
+      All five gate reasons state <b>the threshold and the actual value</b>, so the reader knows how far off they are
+      and what to do — the difference between a gate that teaches and a gate that stonewalls.</p>
+    <p class="note"><b>This is Apple Health's move, not Whoop's or Oura's.</b> Apple declines to compute and says why,
+      under a section header literally reading <i>"Needs More Data"</i>; MacroFactor refuses to display a competing
+      expenditure figure at all and publishes its reasoning. Whoop and Oura compute first and caveat after. The
+      decline follows directly from the product thesis line — <b>the UI surfaces state but never invents prescription
+      detail</b>.</p>
+    <p class="note"><b>The caption's middle line is the gate.</b> That is R12's payoff: the sentence the user sees
+      here is the same sentence they watched appear under their own thumb in panel 3.</p>
+    <p class="note"><b>Δ and rate show <code>—</code>, never <code>0</code>.</b> Two weigh-ins four days apart cannot
+      produce a rate; zero would be a claim.</p>
+    <p class="note"><span class="flag">🔴 ★ Look at the caption.</span> With <code>Clear</code> reserving 64px, the
+      gate sentence <b>wraps</b> — so the caption here is <b>four lines, not three</b>, and it overruns the 45px
+      budget the fold arithmetic depends on. The gated state is not an edge case: it is where R12 says the user
+      lands the first time they drag a window that is too small. <b>This is the finding this panel exists to
+      produce</b>, and it is in the footer with the three options.</p>
+    <p class="note">The charts are omitted from this frame deliberately — the panel's subject is the withheld
+      block, and four days of charts would only restate the caption.</p>
+  </div>
+</section>
+
+<!-- ═════════════ PANEL 5 · MEALS LOGGED, NO MACROS (T5 — common) ══════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 5 · Partial coverage · days 44–46 have meals, no macros</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <section class="card instrument"><section class="tp tp-macro"><div class="mhdr"><p class="eyebrow">MACROS</p><p class="mlegend"><span class="sw swP" aria-hidden="true"></span><span class="tnum">P 168g</span><span class="sw swC" aria-hidden="true"></span><span class="tnum">C 241g</span><span class="sw swF" aria-hidden="true"></span><span class="tnum">F 78g</span></p><div class="segbox" role="radiogroup" aria-label="Macro scale"><button type="button" role="radio" aria-checked="true" class="seg on">g</button><button type="button" role="radio" aria-checked="false" class="seg">%</button></div></div><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><defs><pattern id="mh5" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(-45)"><rect width="4" height="4" fill="none"/><line x1="0" y1="0" x2="0" y2="4" stroke="var(--muted)" stroke-width="1"/></pattern></defs><path class="mF" d="M40 38V2.4H43V5.4H46V9.9H49.1V38ZM52.1 38V14.1H55.1V38ZM58.1 38V10.9H61.2V38ZM64.2 38V2.3H67.2V9.9H70.2V14.7H73.2V12.6H76.3V38ZM79.3 38V8.4H82.3V38ZM85.3 38V8.5H88.4V38ZM91.4 38V12.2H94.4V9.9H97.4V8.4H100.4V12.3H103.5V38ZM106.5 38V4.7H109.5V38ZM112.5 38V12.7H115.6V38ZM118.6 38V11H121.6V9.4H124.6V9.3H127.6V6.4H130.7V38ZM133.7 38V12.3H136.7V38ZM139.7 38V12.9H142.8V38ZM145.8 38V5.3H148.8V2.7H151.8V7.9H154.8V14.1H157.9V38ZM160.9 38V11.3H163.9V38ZM166.9 38V8.1H170V38ZM182 38V11.3H185.1V38ZM188.1 38V5.9H191.1V38ZM194.1 38V11.1H197.2V38ZM200.2 38V12H203.2V11.2H206.2V8.5H209.2V9.5H212.3V38ZM215.3 38V7.2H218.3V9.7H221.3V13.5H224.4V38ZM227.4 38V9.2H230.4V2H233.4V6.5H236.4V10H239.5V38ZM242.5 38V14.5H245.5V38ZM248.5 38V10.1H251.6V38ZM254.6 38V2.9H257.6V11.3H260.6V14.5H263.6V12.4H266.7V38ZM269.7 38V7.4H272.7V38ZM275.7 38V9.2H278.8V38ZM281.8 38V12.1H284.8V9.3H287.8V8.8H290.8V12.6H293.9V38ZM296.9 38V4.8H299.9V38ZM302.9 38V12.7H306V38ZM309 38V10.7H312V38Z"/><path class="mC" d="M40 38V8.3H43V9.9H46V13.2H49.1V38ZM52.1 38V19.2H55.1V38ZM58.1 38V14H61.2V38ZM64.2 38V7.8H67.2V15.8H70.2V19.2H73.2V15.9H76.3V38ZM79.3 38V13.4H82.3V38ZM85.3 38V11.6H88.4V38ZM91.4 38V17.7H94.4V15.9H97.4V12.8H100.4V15.6H103.5V38ZM106.5 38V9.8H109.5V38ZM112.5 38V15.9H115.6V38ZM118.6 38V16.6H121.6V15.4H124.6V13.7H127.6V9.7H130.7V38ZM133.7 38V17.4H136.7V38ZM139.7 38V16H142.8V38ZM145.8 38V10.9H148.8V8.6H151.8V12.2H154.8V17.4H157.9V38ZM160.9 38V16.4H163.9V38ZM166.9 38V11.3H170V38ZM182 38V14.6H185.1V38ZM188.1 38V11H191.1V38ZM194.1 38V14.2H197.2V38ZM200.2 38V17.6H203.2V17.1H206.2V12.8H209.2V12.8H212.3V38ZM215.3 38V12.3H218.3V13.9H221.3V16.7H224.4V38ZM227.4 38V14.9H230.4V7.9H233.4V10.7H236.4V13.3H239.5V38ZM242.5 38V19.6H245.5V38ZM248.5 38V13.2H251.6V38ZM254.6 38V8.7H257.6V17.2H260.6V18.7H263.6V15.7H266.7V38ZM269.7 38V12.5H272.7V38ZM275.7 38V12.3H278.8V38ZM281.8 38V17.9H284.8V15.1H287.8V12.9H290.8V16H293.9V38ZM296.9 38V9.9H299.9V38ZM302.9 38V15.8H306V38ZM309 38V16.5H312V38Z"/><path class="mP" d="M40 38V27.2H43V27.2H46V26.8H49.1V38ZM52.1 38V31.2H55.1V38ZM58.1 38V27.3H61.2V38ZM64.2 38V26.1H67.2V29.4H70.2V30.8H73.2V28.1H76.3V38ZM79.3 38V26.2H82.3V38ZM85.3 38V30.7H88.4V38ZM91.4 38V28.4H94.4V27.5H97.4V25.5H100.4V28.7H103.5V38ZM106.5 38V28.9H109.5V38ZM112.5 38V26.1H115.6V38ZM118.6 38V29.9H121.6V29.4H124.6V29.4H127.6V28.1H130.7V38ZM133.7 38V28H136.7V38ZM139.7 38V29.3H142.8V38ZM145.8 38V26.4H148.8V25.9H151.8V29H154.8V29H157.9V38ZM160.9 38V28.9H163.9V38ZM166.9 38V27.4H170V38ZM182 38V26H185.1V38ZM188.1 38V28.2H191.1V38ZM194.1 38V29.6H197.2V38ZM200.2 38V27.2H203.2V27.6H206.2V29H209.2V31.2H212.3V38ZM215.3 38V26.5H218.3V27.4H221.3V27.3H224.4V38ZM227.4 38V30.2H230.4V26.9H233.4V27.3H236.4V26.6H239.5V38ZM242.5 38V31.3H245.5V38ZM248.5 38V27.3H251.6V38ZM254.6 38V26.4H257.6V30.1H260.6V30.4H263.6V27.9H266.7V38ZM269.7 38V25.9H272.7V38ZM275.7 38V30.9H278.8V38ZM281.8 38V28.4H284.8V27.1H287.8V25.6H290.8V29.4H293.9V38ZM296.9 38V28.8H299.9V38ZM302.9 38V25.7H306V38ZM309 38V30.1H312V38Z"/><path class="msep" d="M40 27.2H43M40 8.3H43M43 27.2H46M43 9.9H46M46 26.8H49.1M46 13.2H49.1M52.1 31.2H55.1M52.1 19.2H55.1M58.1 27.3H61.2M58.1 14H61.2M64.2 26.1H67.2M64.2 7.8H67.2M67.2 29.4H70.2M67.2 15.8H70.2M70.2 30.8H73.2M70.2 19.2H73.2M73.2 28.1H76.3M73.2 15.9H76.3M79.3 26.2H82.3M79.3 13.4H82.3M85.3 30.7H88.4M85.3 11.6H88.4M91.4 28.4H94.4M91.4 17.7H94.4M94.4 27.5H97.4M94.4 15.9H97.4M97.4 25.5H100.4M97.4 12.8H100.4M100.4 28.7H103.5M100.4 15.6H103.5M106.5 28.9H109.5M106.5 9.8H109.5M112.5 26.1H115.6M112.5 15.9H115.6M118.6 29.9H121.6M118.6 16.6H121.6M121.6 29.4H124.6M121.6 15.4H124.6M124.6 29.4H127.6M124.6 13.7H127.6M127.6 28.1H130.7M127.6 9.7H130.7M133.7 28H136.7M133.7 17.4H136.7M139.7 29.3H142.8M139.7 16H142.8M145.8 26.4H148.8M145.8 10.9H148.8M148.8 25.9H151.8M148.8 8.6H151.8M151.8 29H154.8M151.8 12.2H154.8M154.8 29H157.9M154.8 17.4H157.9M160.9 28.9H163.9M160.9 16.4H163.9M166.9 27.4H170M166.9 11.3H170M182 26H185.1M182 14.6H185.1M188.1 28.2H191.1M188.1 11H191.1M194.1 29.6H197.2M194.1 14.2H197.2M200.2 27.2H203.2M200.2 17.6H203.2M203.2 27.6H206.2M203.2 17.1H206.2M206.2 29H209.2M206.2 12.8H209.2M209.2 31.2H212.3M209.2 12.8H212.3M215.3 26.5H218.3M215.3 12.3H218.3M218.3 27.4H221.3M218.3 13.9H221.3M221.3 27.3H224.4M221.3 16.7H224.4M227.4 30.2H230.4M227.4 14.9H230.4M230.4 26.9H233.4M230.4 7.9H233.4M233.4 27.3H236.4M233.4 10.7H236.4M236.4 26.6H239.5M236.4 13.3H239.5M242.5 31.3H245.5M242.5 19.6H245.5M248.5 27.3H251.6M248.5 13.2H251.6M254.6 26.4H257.6M254.6 8.7H257.6M257.6 30.1H260.6M257.6 17.2H260.6M260.6 30.4H263.6M260.6 18.7H263.6M263.6 27.9H266.7M263.6 15.7H266.7M269.7 25.9H272.7M269.7 12.5H272.7M275.7 30.9H278.8M275.7 12.3H278.8M281.8 28.4H284.8M281.8 17.9H284.8M284.8 27.1H287.8M284.8 15.1H287.8M287.8 25.6H290.8M287.8 12.9H290.8M290.8 29.4H293.9M290.8 16H293.9M296.9 28.8H299.9M296.9 9.9H299.9M302.9 25.7H306M302.9 15.8H306M309 30.1H312M309 16.5H312"/><rect class="mpart" x="172.98" y="9.59" width="3.02" height="28.41" fill="url(#mh5)"/><rect class="mpart" x="176" y="9.59" width="3.02" height="28.41" fill="url(#mh5)"/><rect class="mpart" x="179.02" y="9.59" width="3.02" height="28.41" fill="url(#mh5)"/><text class="mlabel" x="315" y="37.67">P</text><text class="mlabel" x="315" y="26.94">C</text><text class="mlabel" x="315" y="17.23">F</text></svg></section><div class="tp-axis"><svg width="326" height="15" viewBox="0 0 326 15" aria-hidden="true"><text class="tick" x="40" y="11" text-anchor="start">Jun 5</text><text class="tick" x="132.15" y="11" text-anchor="middle">Jul 5</text><text class="tick" x="222.81" y="11" text-anchor="middle">Aug 4</text><text class="tick" x="312" y="11" text-anchor="end">Sep 2</text></svg></div><div class="tp-rail" role="group" aria-label="Data availability: 48 weigh-ins and 61 days with meals logged out of 90 days">  <div class="rail-gut"><span>WEIGH</span><span>MEALS</span></div>  <div class="rail-band" aria-hidden="true">    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1"></i><i style="grid-column:3"></i><i style="grid-column:5/7"></i><i style="grid-column:8/10"></i><i style="grid-column:11/13"></i><i style="grid-column:14"></i><i style="grid-column:16/18"></i><i style="grid-column:19/21"></i><i style="grid-column:36"></i><i style="grid-column:38/40"></i><i style="grid-column:41/43"></i><i style="grid-column:44/46"></i><i style="grid-column:47"></i><i style="grid-column:49/51"></i><i style="grid-column:52/54"></i><i style="grid-column:55/57"></i><i style="grid-column:58"></i><i style="grid-column:60/62"></i><i style="grid-column:63/65"></i><i style="grid-column:66/68"></i><i style="grid-column:69"></i><i style="grid-column:71/73"></i><i style="grid-column:74/76"></i><i style="grid-column:77/79"></i><i style="grid-column:80"></i><i style="grid-column:82/84"></i><i style="grid-column:85/87"></i><i style="grid-column:88/90"></i></div>    <div class="lgut"></div>    <div class="lane" style="grid-template-columns:repeat(90,1fr)"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:48"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i><i class="part" style="grid-column:45/48"></i></div>    <div class="track"></div>  </div></div><div class="tp-cap"><p class="cap1">90 days · 58 of 90 days logged</p><p class="cap2">Observed maintenance 3,040 kcal/day</p><p class="cap3">3 days have meals with no macros</p></div></section><section class="card wpanel"><header><h2 class="h2">Last 90 days</h2><span class="wsub tnum">Jun 5 – Sep 2</span></header><p class="cover">58 of 90 days logged · 48 weigh-ins</p><p class="cover cover2">3 more days have meals with no macros — not counted in these averages.</p><div class="tiles"><div class="tile"><b class="tnum">2,410</b><span>avg kcal</span></div><div class="tile"><b class="tnum">−1.26</b><span>lb/wk</span></div><div class="tile"><b class="tnum">−3.8</b><span>lb Δ</span></div></div><p class="macline">168g protein · 241g carbs · 78g fat</p><p class="eyebrow mt">MAINTENANCE</p><p class="mlab">Observed maintenance</p><p class="mnum tnum">3,040 kcal/day</p><p class="mder">From your 2,410 kcal/day average and −1.26 lb/week over this window.</p><hr class="hair"><div class="mrow"><span>Balance</span><b class="tnum">−630 kcal/day</b></div><p class="mder">You ate 630 kcal/day under maintenance.</p><p class="himport">Import Apple Health to see measured burn →</p></section>
+      </div>
+    </div>
+    <div class="board" style="margin-top:18px;width:390px">
+      <h4>The hatch, drawn honestly at both densities</h4>
+      <p class="note" style="border:0;padding:0;margin:0 0 10px">MEALS lane at <b>90d — 3.02 px/day</b> against a
+        ~5px gradient period. Days 44–46 are the partial ones. Find them.</p>
+      <div class="lane" style="grid-template-columns:repeat(90,1fr);width:272px"><i style="grid-column:1/4"></i><i style="grid-column:5"></i><i style="grid-column:7"></i><i style="grid-column:9/13"></i><i style="grid-column:14"></i><i style="grid-column:16"></i><i style="grid-column:18/22"></i><i style="grid-column:23"></i><i style="grid-column:25"></i><i style="grid-column:27/31"></i><i style="grid-column:32"></i><i style="grid-column:34"></i><i style="grid-column:36/40"></i><i style="grid-column:41"></i><i style="grid-column:43"></i><i style="grid-column:48"></i><i style="grid-column:50"></i><i style="grid-column:52"></i><i style="grid-column:54/58"></i><i style="grid-column:59/62"></i><i style="grid-column:63/67"></i><i style="grid-column:68"></i><i style="grid-column:70"></i><i style="grid-column:72/76"></i><i style="grid-column:77"></i><i style="grid-column:79"></i><i style="grid-column:81/85"></i><i style="grid-column:86"></i><i style="grid-column:88"></i><i style="grid-column:90"></i><i class="part" style="grid-column:45/48"></i></div>
+      <p class="note" style="border:0;padding:0;margin:14px 0 10px">The same three days at
+        <b>27.2 px/day</b>, where the hatch actually resolves:</p>
+      <div class="lane" style="grid-template-columns:repeat(3,1fr);width:81.6px"><i class="part" style="grid-column:1"></i><i class="part" style="grid-column:2"></i><i class="part" style="grid-column:3"></i></div>
+      <p class="note" style="border:0;padding:0;margin:14px 0 10px">And in the ribbon itself at
+        <b>38.9 px/day</b> — three hatched columns bracketed by two real ones:</p>
+      <div class="tframe"><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><defs><pattern id="mh5r" patternUnits="userSpaceOnUse" width="4" height="4" patternTransform="rotate(-45)"><rect width="4" height="4" fill="none"/><line x1="0" y1="0" x2="0" y2="4" stroke="var(--muted)" stroke-width="1"/></pattern></defs><path class="mF" d="M40 38V8.1H78.9V38ZM234.3 38V11.3H273.1V38Z"/><path class="mC" d="M40 38V11.3H78.9V38ZM234.3 38V14.6H273.1V38Z"/><path class="mP" d="M40 38V27.4H78.9V38ZM234.3 38V26H273.1V38Z"/><path class="msep" d="M40 27.4H78.9M40 11.3H78.9M234.3 26H273.1M234.3 14.6H273.1"/><rect class="mpart" x="117.71" y="9.59" width="38.86" height="28.41" fill="url(#mh5r)"/><rect class="mpart" x="156.57" y="9.59" width="38.86" height="28.41" fill="url(#mh5r)"/><rect class="mpart" x="195.43" y="9.59" width="38.86" height="28.41" fill="url(#mh5r)"/></svg></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>Calories may still render; macros cannot.</b> kcal and the macro columns are separate
+      nullable fields on the same row, so a quick-logged day is a real logged day with a hole in it. Those days are
+      <b>excluded</b> from the macro averages, not zeroed.</p>
+    <p class="note"><b>The conditional second line is the whole fix.</b>
+      <code>3 more days have meals with no macros — not counted in these averages.</code> renders only when the count
+      is non-zero. It is the difference between a number that is wrong and a number that is qualified.</p>
+    <p class="note"><b>The hatch is vocabulary reuse, not invention</b> — it is the exact
+      <code>repeating-linear-gradient(-45deg, …)</code> shipped at <code>CeilingRule.tsx</code>, where it already
+      means <i>"this zone is excluded from the number."</i></p>
+    <p class="note"><span class="flag">⚠ And it provably does not resolve at 90 days.</span> A 3.02px column against
+      a ~5px gradient period shows <b>at most one stripe</b> and degrades to a solid <code>--muted</code> fleck. The
+      swatch under the phone is that degradation, side by side with the same three days at 27.2 px/day where it
+      reads correctly. <b>This is why the text line is load-bearing rather than redundant.</b> If a device check
+      shows it reading as noise, drop to a half-height solid and rely on the sentence.</p>
+    <p class="note"><b>The rail carries TWO states, not three.</b> <code>absent</code> is a <i>hole</i>, because
+      <code>--border</code> at 1.59:1 / 1.39:1 fails 3:1 and cannot be an encoding. That is a stated limitation of
+      the rail, not an oversight — and it is exactly why the coverage sentence exists.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════════ PANEL 6 · ZERO ROW ═════════════════════════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 6 · Zero row · ≈253px · zero Recharts mounts</p>
+    <div class="phone">
+      <div class="apphdr"><span>goaldmine</span><span aria-hidden="true">☀</span></div>
+      <div class="screen">
+        <section class="hero">
+          <h1 class="h1">Trends</h1>
+          <p class="sub">Weight, calories and macros on one axis</p>
+        </section>
+        <section class="card">
+          <div class="empty">
+            <h3>Nothing to trend yet</h3>
+            <p>Log a weigh-in and a few days of meals — this page fills in from your own numbers.
+               Nothing here is estimated.</p>
+            <a href="#p6">Open coach setup →</a>
+          </div>
+        </section>
+      </div>
+      <div class="btmnav"><span>Today</span><span>Calendar</span><span>Goals</span><span class="on">Trends</span><span>More</span></div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>No chip row. No rail. No <code>ResponsiveContainer</code>. Zero Recharts mounts.</b> Range
+      chips over zero rows are decoration, and <code>Set dates</code> on an empty range is a trap.</p>
+    <p class="note"><b>The zero-mount claim is satisfied <i>structurally</i></b> — this branch returns <b>before the
+      client island exists in the tree</b>, not by a branch inside a mounted island. That distinction is the
+      difference between a promise and a comment.</p>
+    <p class="note"><b>The body's last sentence earns its place.</b> <i>"Nothing here is estimated"</i> is the
+      promise the whole page is built on, the first render is when a new user decides whether the tool is for them,
+      and this is the one place the page says out loud what the five gates enforce silently.</p>
+    <p class="note"><span class="flag">⚠ Over range.</span> §12 estimated ≈253px, range ⚠[230–275]. This frame
+      <b>measures 318px</b> — the EmptyState alone is 187. The body copy wraps to three lines at 390px and the
+      <code>Open coach setup →</code> action is a full 44px. <b>Either the range moves or a line of copy does</b>, and
+      the copy is load-bearing. Neutral coach voice throughout: no puns, no alarm, and no <code>0 kcal · 0 lb</code>
+      presented as if it were data.</p>
+  </div>
+</section>
+
+<!-- ═══════════ PANEL 7 · GRAYSCALE PROOF · permanent filter, no toggle ════════ -->
+<section class="panel">
+  <div>
+    <p class="panel-title">Panel 7 · Grayscale proof · <code>filter: grayscale(1)</code> is permanent here</p>
+    <div class="board" style="width:748px">
+      <h4>The acceptance test, made visible</h4>
+      <div class="tseq gsproof">
+        <div class="tframe"><div class="mhdr"><p class="eyebrow">MACROS</p><p class="mlegend"><span class="sw swP" aria-hidden="true"></span><span class="tnum">P 168g</span><span class="sw swC" aria-hidden="true"></span><span class="tnum">C 241g</span><span class="sw swF" aria-hidden="true"></span><span class="tnum">F 78g</span></p><div class="segbox" role="radiogroup" aria-label="Macro scale"><button type="button" role="radio" aria-checked="true" class="seg on">g</button><button type="button" role="radio" aria-checked="false" class="seg">%</button></div></div><svg class="chart" width="326" height="40" viewBox="0 0 326 40" role="img" aria-label="Macro composition ribbon: protein bottom, carbs middle, fat top"><path class="mF" d="M40 38V2.4H43V5.4H46V9.9H49.1V38ZM52.1 38V14.1H55.1V38ZM58.1 38V10.9H61.2V38ZM64.2 38V2.3H67.2V9.9H70.2V14.7H73.2V12.6H76.3V38ZM79.3 38V8.4H82.3V38ZM85.3 38V8.5H88.4V38ZM91.4 38V12.2H94.4V9.9H97.4V8.4H100.4V12.3H103.5V38ZM106.5 38V4.7H109.5V38ZM112.5 38V12.7H115.6V38ZM118.6 38V11H121.6V9.4H124.6V9.3H127.6V6.4H130.7V38ZM133.7 38V12.3H136.7V38ZM139.7 38V12.9H142.8V38ZM145.8 38V5.3H148.8V2.7H151.8V7.9H154.8V14.1H157.9V38ZM160.9 38V11.3H163.9V38ZM166.9 38V8.1H170V38ZM173 38V7.3H176V12.1H179V14H182V11.3H185.1V38ZM188.1 38V5.9H191.1V38ZM194.1 38V11.1H197.2V38ZM200.2 38V12H203.2V11.2H206.2V8.5H209.2V9.5H212.3V38ZM215.3 38V7.2H218.3V9.7H221.3V13.5H224.4V38ZM227.4 38V9.2H230.4V2H233.4V6.5H236.4V10H239.5V38ZM242.5 38V14.5H245.5V38ZM248.5 38V10.1H251.6V38ZM254.6 38V2.9H257.6V11.3H260.6V14.5H263.6V12.4H266.7V38ZM269.7 38V7.4H272.7V38ZM275.7 38V9.2H278.8V38ZM281.8 38V12.1H284.8V9.3H287.8V8.8H290.8V12.6H293.9V38ZM296.9 38V4.8H299.9V38ZM302.9 38V12.7H306V38ZM309 38V10.7H312V38Z"/><path class="mC" d="M40 38V8.3H43V9.9H46V13.2H49.1V38ZM52.1 38V19.2H55.1V38ZM58.1 38V14H61.2V38ZM64.2 38V7.8H67.2V15.8H70.2V19.2H73.2V15.9H76.3V38ZM79.3 38V13.4H82.3V38ZM85.3 38V11.6H88.4V38ZM91.4 38V17.7H94.4V15.9H97.4V12.8H100.4V15.6H103.5V38ZM106.5 38V9.8H109.5V38ZM112.5 38V15.9H115.6V38ZM118.6 38V16.6H121.6V15.4H124.6V13.7H127.6V9.7H130.7V38ZM133.7 38V17.4H136.7V38ZM139.7 38V16H142.8V38ZM145.8 38V10.9H148.8V8.6H151.8V12.2H154.8V17.4H157.9V38ZM160.9 38V16.4H163.9V38ZM166.9 38V11.3H170V38ZM173 38V12.9H176V18H179V18.2H182V14.6H185.1V38ZM188.1 38V11H191.1V38ZM194.1 38V14.2H197.2V38ZM200.2 38V17.6H203.2V17.1H206.2V12.8H209.2V12.8H212.3V38ZM215.3 38V12.3H218.3V13.9H221.3V16.7H224.4V38ZM227.4 38V14.9H230.4V7.9H233.4V10.7H236.4V13.3H239.5V38ZM242.5 38V19.6H245.5V38ZM248.5 38V13.2H251.6V38ZM254.6 38V8.7H257.6V17.2H260.6V18.7H263.6V15.7H266.7V38ZM269.7 38V12.5H272.7V38ZM275.7 38V12.3H278.8V38ZM281.8 38V17.9H284.8V15.1H287.8V12.9H290.8V16H293.9V38ZM296.9 38V9.9H299.9V38ZM302.9 38V15.8H306V38ZM309 38V16.5H312V38Z"/><path class="mP" d="M40 38V27.2H43V27.2H46V26.8H49.1V38ZM52.1 38V31.2H55.1V38ZM58.1 38V27.3H61.2V38ZM64.2 38V26.1H67.2V29.4H70.2V30.8H73.2V28.1H76.3V38ZM79.3 38V26.2H82.3V38ZM85.3 38V30.7H88.4V38ZM91.4 38V28.4H94.4V27.5H97.4V25.5H100.4V28.7H103.5V38ZM106.5 38V28.9H109.5V38ZM112.5 38V26.1H115.6V38ZM118.6 38V29.9H121.6V29.4H124.6V29.4H127.6V28.1H130.7V38ZM133.7 38V28H136.7V38ZM139.7 38V29.3H142.8V38ZM145.8 38V26.4H148.8V25.9H151.8V29H154.8V29H157.9V38ZM160.9 38V28.9H163.9V38ZM166.9 38V27.4H170V38ZM173 38V29.3H176V30.7H179V27H182V26H185.1V38ZM188.1 38V28.2H191.1V38ZM194.1 38V29.6H197.2V38ZM200.2 38V27.2H203.2V27.6H206.2V29H209.2V31.2H212.3V38ZM215.3 38V26.5H218.3V27.4H221.3V27.3H224.4V38ZM227.4 38V30.2H230.4V26.9H233.4V27.3H236.4V26.6H239.5V38ZM242.5 38V31.3H245.5V38ZM248.5 38V27.3H251.6V38ZM254.6 38V26.4H257.6V30.1H260.6V30.4H263.6V27.9H266.7V38ZM269.7 38V25.9H272.7V38ZM275.7 38V30.9H278.8V38ZM281.8 38V28.4H284.8V27.1H287.8V25.6H290.8V29.4H293.9V38ZM296.9 38V28.8H299.9V38ZM302.9 38V25.7H306V38ZM309 38V30.1H312V38Z"/><path class="msep" d="M40 27.2H43M40 8.3H43M43 27.2H46M43 9.9H46M46 26.8H49.1M46 13.2H49.1M52.1 31.2H55.1M52.1 19.2H55.1M58.1 27.3H61.2M58.1 14H61.2M64.2 26.1H67.2M64.2 7.8H67.2M67.2 29.4H70.2M67.2 15.8H70.2M70.2 30.8H73.2M70.2 19.2H73.2M73.2 28.1H76.3M73.2 15.9H76.3M79.3 26.2H82.3M79.3 13.4H82.3M85.3 30.7H88.4M85.3 11.6H88.4M91.4 28.4H94.4M91.4 17.7H94.4M94.4 27.5H97.4M94.4 15.9H97.4M97.4 25.5H100.4M97.4 12.8H100.4M100.4 28.7H103.5M100.4 15.6H103.5M106.5 28.9H109.5M106.5 9.8H109.5M112.5 26.1H115.6M112.5 15.9H115.6M118.6 29.9H121.6M118.6 16.6H121.6M121.6 29.4H124.6M121.6 15.4H124.6M124.6 29.4H127.6M124.6 13.7H127.6M127.6 28.1H130.7M127.6 9.7H130.7M133.7 28H136.7M133.7 17.4H136.7M139.7 29.3H142.8M139.7 16H142.8M145.8 26.4H148.8M145.8 10.9H148.8M148.8 25.9H151.8M148.8 8.6H151.8M151.8 29H154.8M151.8 12.2H154.8M154.8 29H157.9M154.8 17.4H157.9M160.9 28.9H163.9M160.9 16.4H163.9M166.9 27.4H170M166.9 11.3H170M173 29.3H176M173 12.9H176M176 30.7H179M176 18H179M179 27H182M179 18.2H182M182 26H185.1M182 14.6H185.1M188.1 28.2H191.1M188.1 11H191.1M194.1 29.6H197.2M194.1 14.2H197.2M200.2 27.2H203.2M200.2 17.6H203.2M203.2 27.6H206.2M203.2 17.1H206.2M206.2 29H209.2M206.2 12.8H209.2M209.2 31.2H212.3M209.2 12.8H212.3M215.3 26.5H218.3M215.3 12.3H218.3M218.3 27.4H221.3M218.3 13.9H221.3M221.3 27.3H224.4M221.3 16.7H224.4M227.4 30.2H230.4M227.4 14.9H230.4M230.4 26.9H233.4M230.4 7.9H233.4M233.4 27.3H236.4M233.4 10.7H236.4M236.4 26.6H239.5M236.4 13.3H239.5M242.5 31.3H245.5M242.5 19.6H245.5M248.5 27.3H251.6M248.5 13.2H251.6M254.6 26.4H257.6M254.6 8.7H257.6M257.6 30.1H260.6M257.6 17.2H260.6M260.6 30.4H263.6M260.6 18.7H263.6M263.6 27.9H266.7M263.6 15.7H266.7M269.7 25.9H272.7M269.7 12.5H272.7M275.7 30.9H278.8M275.7 12.3H278.8M281.8 28.4H284.8M281.8 17.9H284.8M284.8 27.1H287.8M284.8 15.1H287.8M287.8 25.6H290.8M287.8 12.9H290.8M290.8 29.4H293.9M290.8 16H293.9M296.9 28.8H299.9M296.9 9.9H299.9M302.9 25.7H306M302.9 15.8H306M309 30.1H312M309 16.5H312"/><text class="mlabel" x="315" y="37.67">P</text><text class="mlabel" x="315" y="26.94">C</text><text class="mlabel" x="315" y="17.23">F</text></svg></div><div class="tframe"><div class="phdr" style="height:16px;margin-bottom:6px"><p class="eyebrow">CALORIES</p><span class="rrail">kcal</span></div><svg class="chart" width="326" height="128" viewBox="0 0 326 128" role="img" aria-label="Calories per logged day against the plan target"><line class="grid" x1="40" y1="38.55" x2="312" y2="38.55"/><text class="tick" x="34" y="42.15" text-anchor="end">3000</text><line class="grid" x1="40" y1="89.45" x2="312" y2="89.45"/><text class="tick" x="34" y="93.05" text-anchor="end">2000</text><path class="calmark" stroke-width="2.2" d="M40 60.4V120M43 52.4V120M46 44.4V120M52.1 75V120M58.1 48.7V120M64.2 93.7V120M67.2 84.1V120M70.2 72.8V120M73.2 62.6V120M79.3 103.4V120M85.3 66.1V120M91.4 65.6V120M94.4 77.5V120M97.4 60.3V120M100.4 49V120M106.5 77.7V120M112.5 80.7V120M118.6 63V120M121.6 97.2V120M124.6 90V120M127.6 84.1V120M133.7 60.3V120M139.7 72.1V120M145.8 29.4V120M148.8 60.4V120M151.8 71.7V120M154.8 85.6V120M160.9 54.2V120M166.9 90.9V120M173 58.8V120M176 59.6V120M179 69.6V120M182 79.9V120M188.1 34.6V120M194.1 56.9V120M200.2 68.2V120M203.2 50.9V120M206.2 67.1V120M209.2 81.1V120M215.3 73.2V120M218.3 64.7V120M221.3 63.1V120M227.4 87.2V120M230.4 49.2V120M233.4 46.4V120M236.4 42.8V120M242.5 72.4V120M248.5 54.4V120M254.6 103.7V120M257.6 84.2V120M260.6 74.5V120M263.6 58.8V120M269.7 95.1V120M275.7 55.3V120M281.8 68.6V120M284.8 73.1V120M287.8 62.1V120M290.8 49.3V120M296.9 90.1V120M302.9 85.5V120M309 69.8V120"/><line class="plan" x1="40" y1="58.91" x2="312" y2="58.91"/></svg></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-notes">
+    <p class="note"><b>What survives.</b> The <b>fixed band order</b> (P bottom, C middle, F top, never re-sorted by
+      magnitude) · the <b><code>var(--card)</code> separators</b>, which are a hard boundary rather than a hue
+      difference · the <b>in-place <code>P</code>/<code>C</code>/<code>F</code> labels</b> at the right edge · the
+      <b>dashed</b> plan-target line, whose discriminators are the dash and the horizontality, not its hue · and the
+      <b>silhouette</b> of the calorie marks with its 29 holes.</p>
+    <p class="note"><b>What does not.</b> <b>All three macro hues collapse.</b> <code>--target</code>↔
+      <code>--success</code> is 1.05:1 and <code>--accent</code>↔<code>--target</code> is 1.16:1; in grayscale the
+      three bands are three barely-different greys. <b>That is the correct outcome</b>, because hue was only ever
+      tertiary reinforcement here. If you can still read the ribbon — and you can — the encoding was never carried
+      by colour.</p>
+    <p class="note"><span class="flag">⚑2</span> This is why the macro hues moved off the blueprint's placeholder.
+      That set put <code>--accent</code> and <code>--warning</code> — <b>1.01:1, the palette's single worst pair</b> —
+      on the two <b>non-adjacent</b> bands, where a separator cannot help. The shipped P/C/F convention was adopted
+      instead; its worst adjacent pair is target↔success at 1.05:1 <i>with a hard card-stroke boundary between
+      them</i>.</p>
+    <p class="note"><b>The grams ⇄ % toggle changes the SCALE, never the ENCODING.</b> Same fixed order, same
+      separators, same labels in both modes. A toggle that re-encodes teaches the reader that the picture is
+      arbitrary.</p>
+    <p class="note"><span class="flag">⚠</span> Note how tight the in-place labels are: at <code>h-10</code> the
+      three band centres are only ~9–12px apart and an 11px glyph has a ~7.8px cap height. This is the first thing
+      to check on a device — it is the failure mode that would force <code>h-10</code> → <code>h-12</code>.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="provisional">
+  <h2>⚠ Provisional / verify-visually</h2>
+  <p class="lede"><b>Every height on this page is arithmetic, not measurement.</b> Nothing in this artifact has been
+    rendered on a device. Every value below was committed by this file from a range the research gave, or derived
+    from the pinned 272px plot width. <b>All of it must be confirmed on a real 390px device, in both themes, with
+    grayscale on.</b> <b>Two exceptions, both flagged MEASURED below:</b> the generated file was put through a
+    headless layout engine at 390px, which moved the fold total (718, not 737), the Card height (594, not 596), the
+    zero-row height (318, not ≈253) and established that the rail's lane labels do not fit the 40px gutter at the
+    11px floor. A layout engine is not a phone — but where it disagrees with arithmetic, it wins. Where this file disagrees with the PRD or with an earlier section of the report, the
+    disagreement is stated rather than smoothed over.</p>
+
+  <h3>Chart stack — heights</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Weight chart</td><td class="r">192 <code>h-48</code></td><td class="r">⚠[176–208]</td><td><b>⚑ Differs from the PRD's <code>h-52</code> (208).</b> 192 is the shipped <code>HistoryChart</code>/<code>ReadinessChart</code> height, so it is a house value rather than an invention. Do not shrink below it.</td></tr>
+      <tr><td class="k">Calories chart</td><td class="r">128 <code>h-32</code></td><td class="r">⚠[112–176]</td><td><b>⚑ Differs from the PRD's <code>h-44</code> (176).</b> It does not need four y-ticks; it needs a shape and a target line. <b>Pre-authorised first concession if the fold misses: <code>h-32</code> → <code>h-28</code></b>, buying ⚠[16–20px].</td></tr>
+      <tr><td class="k">Macros ribbon</td><td class="r">40 <code>h-10</code></td><td class="r">⚠[32–48]</td><td><b>⚑ Differs from the PRD's <code>h-40</code> (160).</b> A normalized ribbon has no y-axis at all. 3 bands + 2 separators is the floor. <b>The PRD's 208/176/160 = 544px overruns the fold by ⚠[93–193px] and pushes the rail below it</b>, which forfeits the caption echo and the live gate.</td></tr>
+      <tr><td class="k">Weight panel wrapper</td><td class="r">205</td><td class="r">⚠</td><td>13px eyebrow row + 192 chart. <b>13px is very tight for an 11px eyebrow</b> — the first thing to inspect after the fold.</td></tr>
+      <tr><td class="k">Calories wrapper</td><td class="r">156</td><td class="r">⚠</td><td>12 pad + 16 eyebrow + 128.</td></tr>
+      <tr><td class="k">Macros wrapper</td><td class="r">95</td><td class="r">⚠</td><td>11 pad + 44 header (the toggle sets the floor) + 40.</td></tr>
+      <tr><td class="k">Shared x-axis</td><td class="r">15</td><td class="r">⚠[14–18]</td><td>Rendered <b>exactly once</b>, at the bottom. The upper two panels use a hidden axis, which still applies its domain.</td></tr>
+      <tr><td class="k">Chart Card total</td><td class="r">596</td><td class="r">⚠[580–620]</td><td>1 + 16 + 205 + 1 + 156 + 1 + 95 + 15 + 44 + 45 + 16 + 1.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>The plot width, and everything downstream of it</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Plot width</td><td class="r">272px</td><td class="r">★ PINNED</td><td><b>390 − 32 (page <code>p-4</code>) − 32 (Card <code>p-4</code>) − 40 (<code>YAxis width</code>) − 14 (<code>margin.right</code>) = 272.</b> The report's earlier 278 assumed <code>margin.right: 8</code>; the <b>mandatory</b> in-place <code>P</code>/<code>C</code>/<code>F</code> labels need ≈8px of clear right margin <i>plus</i> the glyph, which forces 14 and therefore 272. Every px/day, separator, rail and slop figure below is downstream of this one number.</td></tr>
+      <tr><td class="k">SVG width</td><td class="r">326px</td><td class="r">fixed</td><td>The true Card interior at 390px: 390 − 32 − 32. Plot runs x 40 → 312.</td></tr>
+      <tr><td class="k">px/day @ 90d</td><td class="r">3.022</td><td class="r">⚠[3.0–3.1]</td><td>272 ÷ 90. This is the density at which the hatch fails and the separator gets expensive.</td></tr>
+      <tr><td class="k">px/day @ 30d</td><td class="r">9.067</td><td class="r">⚠[8.9–9.3]</td><td>272 ÷ 30.</td></tr>
+      <tr><td class="k">px/day @ 10d</td><td class="r">27.2</td><td class="r">⚠[27–28]</td><td>272 ÷ 10 — a committed window. Panel 2's density.</td></tr>
+      <tr><td class="k">px/day @ 365d</td><td class="r">0.745</td><td class="r">⚠[0.7–0.8]</td><td>Per-day marks are meaningless here; the rail aggregates to weeks and the caption says so.</td></tr>
+      <tr><td class="k">Drag slop</td><td class="r">10px</td><td class="r">⚠[8–14]</td><td><b>State the tap rule px-first, not day-first.</b> "Under ~2 days is a tap" is 6.0px at 90d — below any sane threshold — but 18px at 30d. The pixel test dominates at every range; the day test almost never fires alone.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>★ The rail</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Rail band</td><td class="r">24px</td><td class="r">⚠[22–26]</td><td>Must read as a <i>band</i>, not a rule. ⚠ Also verify it does not read as a second x-axis.</td></tr>
+      <tr><td class="k">Lane height</td><td class="r">8px ×2</td><td class="r">⚠[6–10]</td><td>8 + 2 gutter + 8 + 1 + 5 = 24.</td></tr>
+      <tr><td class="k">Committed track</td><td class="r">5px</td><td class="r">⚠[4–6]</td><td>Must be distinguishable from the lanes above it.</td></tr>
+      <tr><td class="k">Track end-caps</td><td class="r">2×9px</td><td class="r">⚠</td><td><code>--foreground</code>, the shipped <code>CeilingRule</code> "stile" idiom. An <code>--accent-soft</code> fill has no edge, and the window's <i>boundaries</i> are the fact.</td></tr>
+      <tr><td class="k">Pointer row</td><td class="r">44px</td><td class="r">fixed by invariant</td><td>Visible height ≠ target height, deliberately: 24px of ink inside a 44px transparent target.</td></tr>
+      <tr><td class="k">Per-day threshold</td><td class="r">3 px/day</td><td class="r">⚠[2.5–3]</td><td>Below this the rail aggregates to weeks and the caption says which. 90d sits at 3.02 — <b>right on the line</b>.</td></tr>
+      <tr><td class="k">Lane labels</td><td class="r"><code>WEIGH</code> / <code>MEALS</code></td><td class="r">⚠ copy</td><td><b>MEASURED at 11px in the stand-in face: <code>WEIGH-INS</code> is 62.6px against a 40px gutter — 22.6px over.</b> The abbreviation is a forced choice, not a preference; the full words live in the caption and in the group's <code>aria-label</code>. <span class="flag">⚠ And the abbreviations do not comfortably fit either:</span> <code>WEIGH</code> is <b>40.3px</b> at 0.04em tracking and <b>38.1px</b> at none; <code>MEALS</code> is <b>40.7px</b>. This file therefore renders them with <b>zero tracking and zero padding</b>, and <code>MEALS</code> still overhangs ~0.7px leftward into the Card padding. Real options, none free: (a) accept the overhang, (b) widen <code>YAxis width</code> 40 → 48, which drops the plot to <b>264px</b> and moves <i>every</i> px/day, separator and slop figure in this table, or (c) drop the labels and let the caption carry the lane identities alone. <b>This is a decision, not a detail.</b> ⚠ Also: two 11px labels sit in two 8px lanes and overflow them vertically by ~3px each — verify they do not collide.</td></tr>
+      <tr><td class="k">Partial hatch</td><td class="r">-45deg, 1/4px</td><td class="r">⚠</td><td><b>Provably does not resolve at 90d</b> — a 3.02px column against a ~5px period shows at most one stripe and degrades to a solid <code>--muted</code> fleck. Panel 5 draws that degradation next to the resolved 27.2px/day version rather than pretending. Fallback: half-height solid + the sentence.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Marks, and one corrected shipped value</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Range</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Raw weigh-in dot</td><td class="r">r = 2</td><td class="r">⚠[1.5–2]</td><td>48 dots at 90d.</td></tr>
+      <tr><td class="k">★ Raw dot alpha</td><td class="r">0.70</td><td class="r">⚠[0.68–0.75]</td><td><b>The shipped app uses 0.55, which composites to 2.33:1 light / 2.48:1 dark and FAILS 3:1. This artifact uses the corrected value.</b> The floor is ≈0.68 light / ≈0.66 dark. Fixing it is a change to an existing surface, so it needs sign-off — but shipping <code>/trends</code> on 0.55 would copy a known a11y failure forward.</td></tr>
+      <tr><td class="k">Macro separator</td><td class="r">1px</td><td class="r">⚠[1–1.5]</td><td><code>stroke="var(--card)"</code>, horizontals only, no verticals. At 90d a band is 3.02px wide, so <b>a 1.5px separator eats half of it</b>. Panel 2 is where it earns its keep.</td></tr>
+      <tr><td class="k">Calorie mark width</td><td class="r">2.2px</td><td class="r">⚠[2–2.6]</td><td>At 90d, <code>--accent</code> @ 0.45. Panel 2 widens to 0.62 × px/day; a 2.2px mark at 27.2 px/day is a hairline, not a bar.</td></tr>
+      <tr><td class="k">Plan target line</td><td class="r">1px, dash 3 3</td><td class="r">⚠</td><td><code>--target</code> at 2,600 kcal → y = 58.91. ⚠ <b>Verify the dash array is visible at 1px in dark.</b> The dash and the horizontality are the discriminator; hue does zero work here (accent↔target is 1.16:1).</td></tr>
+      <tr><td class="k">Selection edge</td><td class="r">2px</td><td class="r">⚠[1.5–2]</td><td><code>--accent</code>. Carries 100% of the band's meaning.</td></tr>
+      <tr><td class="k">Selection fill</td><td class="r">0.12</td><td class="r">⚠[0.10–0.16]</td><td>Composites to ≈1.1:1 in <b>both</b> palettes. Decorative only — do not raise it hoping it will carry meaning.</td></tr>
+      <tr><td class="k">Drag edge date labels</td><td class="r">top + 16px</td><td class="r">⚠</td><td>Rendered at the top of the band they collided with the weight panel's <code>⌈ 10 days ⌉</code> right-rail pill — <b>the exact conflict §12's decoration table flagged as "verify it does not fight the edge labels."</b> It does. Dropped 16px, below the 13px eyebrow row and into the chart body, on a <code>var(--card)</code> chip so they stay legible over the gridlines.</td></tr>
+      <tr><td class="k">Caption reserve for <code>Clear</code></td><td class="r">64px</td><td class="r">⚠[56–72]</td><td><b>The gate sentence is the longest caption line the feature can produce</b> (<code>Maintenance needs at least 7 days. This window is 4.</code>) and without a reserve the 44px <code>Clear</code> lands on top of it.</td></tr>
+      <tr><td class="k">🔴 ★ Caption height, <b>gated + Clear</b></td><td class="r">60px</td><td class="r">MEASURED · budget is 45</td><td><b>This is the most consequential thing the pixel build found, and neither §3.1 nor §12 anticipated it.</b> With 64px reserved for <code>Clear</code>, the gate sentence has ~208px of 12px text to live in and <b>wraps to two lines</b>. The caption is then <b>four lines, not three</b> — 60px against a 45px budget, an overrun of 15px on the tightest measurement in the whole design. And the gated state is <i>exactly</i> the state R12 says is the feature's best teaching moment, so it is not an edge case; it is the state a user lands in the first time they drag too small a window. <b>Options:</b> (a) shorten the gate copy — but all five gate strings state a threshold <i>and</i> a value on purpose, and that is what makes them teach; (b) put <code>Clear</code> on its own row below the caption, buying back the 64px of width at the cost of 44px of height, which is worse; (c) let the caption grow and absorb it out of the pre-authorised calories <code>h-32</code> → <code>h-28</code> concession, which buys ⚠[16–20px] and roughly covers it. <b>(c) is the only one that costs nothing that matters — but it spends the concession before the device check does.</b></td></tr>
+      <tr><td class="k">Hero maintenance numeral</td><td class="r">30px</td><td class="r">⚠[28–32]</td><td><code>tabular-nums</code>, <code>--foreground</code>. <b>Must not be display serif</b> — this is a state, not a moment.</td></tr>
+      <tr><td class="k">Macro in-place labels</td><td class="r">11px</td><td class="r">⚠ tight</td><td>Band centres on the last column are only ~8–11 px apart (9.7–10.7 on the 90d last column, 8.4–9.2 inside the 10-day window) at <code>h-10</code>; an 11px glyph has a ~7.8px cap height. <b>Verify first.</b> If they collide, <code>h-10</code> → <code>h-12</code> is the fix, not dropping the labels — they are mandatory under the ≤4-series direct-labelling rule.</td></tr>
+      <tr><td class="k"><code>g ⇄ %</code> toggle</td><td class="r">26px ink / 44px target</td><td class="r">⚠[24–30]</td><td>The touch invariant is 44px, but a 44px <i>visible</i> pill is taller than the 40px ribbon it controls and pulls more attention than the data. Rendered as 26px of ink inside a 44px transparent row — the same visible-≠-target idiom as the rail. ⚠ Verify the 44px hit area really is reachable and that the pill still reads as a control.</td></tr>
+      <tr><td class="k">Zero-row page</td><td class="r">318px MEASURED</td><td class="r">⚠[230–275] <b>OVER</b></td><td>Hero + sub + Card-wrapped EmptyState (the EmptyState alone measures 187). <b>43px over the top of the range</b>, because the body copy wraps to three lines at 390px and the action is a full 44px. Zero Recharts mounts, structurally. Either the range moves or a line of copy does — and the copy is load-bearing.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>★ The fold — the single most urgent device check in the report</h3>
+  <table>
+    <thead><tr><th>Value</th><th>Baked in</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">The fold</td><td class="r">737px</td><td class="r">arithmetic, not measured</td><td>844 viewport − 49 <code>AppHeader</code> − 58 <code>BottomNav</code>. A house constant, never measured on hardware.</td></tr>
+      <tr><td class="k">★ Page total to the caption's last line — <b>as §12 computed it</b></td><td class="r">exactly 737px</td><td class="r">ZERO clearance</td><td><b>Building the artifact at real pixel sizes disproved the ⚠[0–15px] clearance §3.1 claimed.</b> The arithmetic, explicitly: shell <code>p-4</code> 16 + hero 49 + gap 16 + chips 44 + gap 16 = <b>141</b>; Card 1 + 16 + 205 + 1 + 156 + 1 + 95 + 15 + 44 + 45 + 16 + 1 = <b>596</b>; <b>141 + 596 = 737</b>. There is no slack at all. The third caption line the storyboard forced is what consumed it. <b>If a real 390px device measures the AppHeader or BottomNav even 4px taller than the house constants, the caption clips.</b> Do <i>not</i> buy slack by dropping the caption's maintenance line — that line is the live-gate teaching moment and the reason this direction beats the PRD's.</td></tr>
+      <tr><td class="k">★ Page total — <b>as this file actually lays out</b></td><td class="r">718px</td><td class="r">MEASURED</td><td><b>A headless layout engine at 390px measures the caption's last line bottoming at 718 and the Card's bottom edge at 735 — 19px and 2px of clearance, not zero.</b> The difference is entirely <code>box-sizing: border-box</code>: the three hairlines are the panel wrappers' own <code>border-top</code>, so they are <i>absorbed</i> into the 205 / 156 / 95 / 15 heights rather than added on top of them, and the Card is <b>594</b>, not 596. Panel-by-panel, measured: hero 16→65, chips 81→125, Card 141→735, weight 158→363, calories 363→519, macros 519→614, axis 614→629, rail 629→673, caption 673→718. <b>Which number is right depends on where the hairline lives in the real component tree</b> — if it is a separate 1px element between panels rather than a border on the panel, §12's 596/737 is correct and clearance really is zero. Settle that in the component, then confirm on hardware. Either way the swing is only 2–3px and the direction survives.</td></tr>
+      <tr><td class="k"><code>Set dates</code> lid</td><td class="r">below 737</td><td class="r">accepted</td><td>The lid sits directly beneath the caption, which puts it just under the fold. That is accepted: it is a peer control, not the primary path, and its discoverability comes from adjacency to the caption rather than from being above the fold.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Known contrast failures — stated, not hidden</h3>
+  <table>
+    <thead><tr><th>Pair</th><th>Light</th><th>Dark</th><th>Consequence</th></tr></thead>
+    <tbody>
+      <tr><td class="k">accent on card</td><td class="r">5.29</td><td class="r">8.02</td><td>Passes.</td></tr>
+      <tr><td class="k">muted on card</td><td class="r">5.82</td><td class="r">5.36</td><td>Passes. Nothing muted renders below 11px anywhere in this artifact.</td></tr>
+      <tr><td class="k">foreground on card</td><td class="r">17.48</td><td class="r">15.28</td><td>Passes.</td></tr>
+      <tr><td class="k">target on card</td><td class="r">6.14</td><td class="r">5.95</td><td>Passes.</td></tr>
+      <tr><td class="k">success on card</td><td class="r">5.84</td><td class="r">6.45</td><td>Passes.</td></tr>
+      <tr><td class="k"><b>border on card</b></td><td class="r">1.59 ✗</td><td class="r">1.39 ✗</td><td><b>FAILS 3:1 in both themes.</b> Consequence: the rail's <code>absent</code> state is a <b>hole, not an encoding</b> — the rail carries two states, not three. This is precisely why the coverage sentence is load-bearing rather than redundant. Gridlines and panel hairlines are the only sanctioned sub-3:1 uses, because they are furniture and carry no information.</td></tr>
+      <tr><td class="k"><b>danger on card</b></td><td class="r">4.72</td><td class="r">3.38 ✗</td><td><b>FAILS AA text in dark.</b> One of several reasons a negative balance renders <code>--foreground</code> with an explicit <code>−</code>. <code>--danger</code> appears <b>nowhere</b> in this artifact.</td></tr>
+      <tr><td class="k">accent ↔ target</td><td class="r">1.16</td><td class="r">1.16</td><td>Iso-luminant by design. Hue is never the discriminator.</td></tr>
+      <tr><td class="k">accent ↔ warning</td><td class="r">1.01</td><td class="r">1.01</td><td>The palette's worst pair — the reason ⚑2 moved the macro hues.</td></tr>
+      <tr><td class="k">muted ↔ success</td><td class="r">1.00</td><td class="r">1.00</td><td><b>Byte-identical in grayscale.</b> If two things are only distinguished by this pair, they are not distinguished.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Generator artifacts — mockup facts, not design claims</h3>
+  <table>
+    <thead><tr><th>Item</th><th>What the mockup draws</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Panel 2's calorie average</td><td class="r">2,563 kcal/day</td><td><b>The drawn bars in panel 2 average <b>2,563 kcal/day</b>, not the 2,410 the 90-day window panel quotes.</b> The ten days of the committed window simply are not average — the sinusoids that generate the series do not care about the window. <b>This is a mockup-generator artifact, not a design claim.</b> The caption's <code>2,560 kcal/day avg</code> is the report's figure and the drawn data happens to land near it; do not read either number as product data.</td></tr>
+      <tr><td class="k">Panel 2's weight y-axis</td><td class="r">rescaled</td><td>The pinned <code>y = 8 + (210−w)·11</code> mapping would render ten in-window readings as a flat line in the middle of a 192px box. Recharts would rescale on a domain change, so the mockup rescales too. Same reason: an artifact of showing a 10-day slice of a 90-day generator.</td></tr>
+      <tr><td class="k">Series shift constants</td><td class="r">-19 kcal · P -0.9 / C +0.1 / F -2.6</td><td>Each series is shifted by a constant so its mean <b>over logged days</b> lands exactly on the quoted figure (2,410 kcal · 168/241/78 g). The shift is applied to logged days specifically because that is the honest denominator the whole page is arguing for.</td></tr>
+      <tr><td class="k">Weigh-in / logged masks</td><td class="r">48 · 61</td><td>Deterministic modular masks, not random: readings are <code>(7d mod 11) &lt; 7</code> outside a deliberate 14-day silence at d20–33; logged days are <code>(5d mod 9) &lt; 6</code> plus a forced d59 so the committed window contains exactly 7 of 10.</td></tr>
+      <tr><td class="k">x tick positions @ 90d</td><td class="r">40 / 132.15 / 222.81 / 312</td><td>⚠ Pinned by the brief. Note they are <b>not</b> exactly <code>40 + d·3.022</code> (which gives 130.67 / 221.33 for Jul 5 / Aug 4) — a ~1.5px discrepancy carried forward deliberately so the artifact matches the spec it was given. Resolve against the real Recharts tick placement before implementation.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What this artifact does NOT settle</h3>
+  <ul>
+    <li><b>Any height.</b> All of it is arithmetic. The fold at exactly 737px with zero clearance is the check that
+      gates the whole direction, and it can only be answered on hardware.</li>
+    <li><b>Whether the rail reads as a rail</b> rather than as a second x-axis. Two 8px lanes sitting 15px under a real
+      x-axis is a genuine risk and no amount of arithmetic answers it.</li>
+    <li><b>Whether the 11px lane labels and the 11px in-place P/C/F labels survive the real Geist metrics.</b> Every
+      text width in the 40px gutter and the 14px right margin was computed against a system stand-in face.</li>
+    <li><b>The <code>gap</code> sign convention</b> for the Apple Health row (not drawn here — <code>hasHealthData</code>
+      is false for every user today). Pin it in <code>trends-core</code> with a unit test: if implementation flips it,
+      every sentence of the ledger copy inverts silently and reads as confidently wrong.</li>
+    <li><b>Whether the shipped <code>WeightChart</code> chip and dot defects get fixed in the same PR.</b> Both are
+      shipped a11y failures that <code>/trends</code> would otherwise copy forward; fixing them changes an existing
+      surface, so it is a scope decision.</li>
+  </ul>
+</footer>
+
+<script>
+// Two toggles, no dependencies, no network, no storage. ~30 lines, as specified.
+(function () {
+  var ORDER = ["light", "dark", "system"];
+  var GLYPH = { system: "\u25D0", light: "\u2600", dark: "\u263E" };
+  var i = 0;
+  var btn = document.getElementById("themeBtn");
+  var glyph = document.getElementById("themeGlyph");
+  var label = document.getElementById("themeLabel");
+
+  // Mirrors src/components/ThemeToggle.tsx — data-theme on the documentElement —
+  // except that this file starts on LIGHT so the default render is deterministic.
+  document.documentElement.setAttribute("data-theme", "light");
+
+  btn.addEventListener("click", function () {
+    i = (i + 1) % ORDER.length;
+    var t = ORDER[i];
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", t);
+    glyph.textContent = GLYPH[t];
+    label.textContent = t;
+    btn.setAttribute("aria-label", "Theme: " + t + " (click to switch)");
+  });
+
+  // The acceptance test: a grayscale screenshot must lose nothing.
+  var gs = document.getElementById("gsBtn");
+  gs.addEventListener("click", function () {
+    var on = document.body.classList.toggle("gs");
+    gs.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+})();
+</script>
+</body>
+</html>

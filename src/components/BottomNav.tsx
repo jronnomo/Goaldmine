@@ -51,14 +51,16 @@ const TABS: Tab[] = [
     type: "link",
     href: "/progress",
     label: "Progress",
-    // Progress active for /progress, /baselines, /recap, and /compare — the
-    // latter two are kinship routes (progress-comparison views) that live
-    // under MoreSheet but light Progress, not More (PRD-249 §1.3).
+    // Progress active for /progress, /baselines, /recap, /compare, and
+    // /trends — the latter three are kinship routes (progress-comparison
+    // views) that live under MoreSheet but light Progress, not More
+    // (PRD-249 §1.3; /trends per PRD-g1 §5.2).
     match: (p) =>
       p.startsWith("/progress") ||
       p.startsWith("/baselines") ||
       p.startsWith("/recap") ||
-      p.startsWith("/compare"),
+      p.startsWith("/compare") ||
+      p.startsWith("/trends"),
   },
   {
     type: "sheet",
@@ -71,10 +73,10 @@ const TABS: Tab[] = [
 // routes are More's own home-menu destinations, so the tab should look "lit"
 // even though the sheet itself is closed. This is deliberately NOT a shared
 // constant with MoreSheet.tsx's navRows (src/components/MoreSheet.tsx:98-147)
-// — navRows also includes /recap and /compare, which light Progress instead
-// (kinship mapping above), so "subset of navRows" isn't a clean relationship.
-// Mirrors navRows MINUS /recap and /compare. If MoreSheet's destinations
-// change, update this list to match.
+// — navRows also includes /recap, /compare and /trends, which light Progress
+// instead (kinship mapping above), so "subset of navRows" isn't a clean
+// relationship. Mirrors navRows MINUS /recap, /compare and /trends. If
+// MoreSheet's destinations change, update this list to match.
 // Deliberately excluded (not More destinations): /settings, /stats, /import,
 // /workouts/[id].
 // /program (#290) lights More while it lives in the More sheet; the Plan-tab

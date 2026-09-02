@@ -70,6 +70,22 @@ const RecapIcon = () => (
   </svg>
 );
 
+// Trends icon — rising polyline with end dots, 20px / stroke 1.5, house
+// style. Reads as "chart over time" (PRD-g1 REQ-011; blueprint §5 nav spec).
+const TrendsIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+    <path
+      d="M3 14L8 9l3.5 3L17 5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="3" cy="14" r="1.25" fill="currentColor" />
+    <circle cx="17" cy="5" r="1.25" fill="currentColor" />
+  </svg>
+);
+
 // Compare icon — two opposing curved arrows, 20px / stroke 1.5, house style.
 // Evokes "then vs now" — the glance-back-forge-ahead two-date comparison.
 const CompareIcon = () => (
@@ -145,6 +161,14 @@ const navRows: NavRow[] = [
     label: "Compare",
     sub: "Glance back, forge ahead",
     icon: <CompareIcon />,
+  },
+  {
+    // /trends lights the Progress tab (kinship route), not More — see
+    // BottomNav's MORE_ROUTES comment before adding it there.
+    href: "/trends",
+    label: "Trends",
+    sub: "Weight against what you ate",
+    icon: <TrendsIcon />,
   },
   {
     href: "/nutrition",
