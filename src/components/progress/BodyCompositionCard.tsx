@@ -19,6 +19,7 @@
 //
 // Server component (WeightChart is the client leaf).
 
+import Link from "next/link";
 import { Card } from "@/components/Card";
 import { StatTile } from "@/components/StatTile";
 import { WeightChart } from "@/components/WeightChart";
@@ -75,7 +76,22 @@ export function BodyCompositionCard({ model }: { model: BodyCompositionModel }) 
       : "Weight trend";
 
   return (
-    <Card id="body" data-testid="body-composition" title="Body composition" className="scroll-mt-16">
+    <Card
+      id="body"
+      data-testid="body-composition"
+      title="Body composition"
+      className="scroll-mt-16"
+      // PRD-g1 REQ-012: the populated card only — the zero-readings
+      // early-return above stays untouched (no link into an empty /trends).
+      action={
+        <Link
+          href="/trends"
+          className="text-xs text-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
+        >
+          See trends →
+        </Link>
+      }
+    >
       <div className="grid grid-cols-3 gap-2 mb-3 text-center">
         <StatTile label="Current" value={current ? `${fmt(current.value)} lb` : "—"} />
         <StatTile label="Start" value={start ? `${fmt(start.value)} lb` : "—"} />

@@ -151,7 +151,10 @@ export function WeightChart({
                 type="button"
                 onClick={() => setRangeKey(r.key)}
                 aria-pressed={r.key === activeKey}
-                className={`rounded-full px-2 py-1 text-[11px] leading-none border transition-colors ${
+                /* T3 fix (trends run, ⚑ UXR-TRENDS-55): the old px-2 py-1
+                   computed to ≈21px — under the 44px touch minimum — and had
+                   no focus ring. h-11 + focus-visible ring, same visual idiom. */
+                className={`flex h-11 items-center rounded-full px-3 text-[11px] leading-none border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
                   r.key === activeKey
                     ? "border-[var(--accent)] text-[var(--accent)]"
                     : "border-[var(--border)] text-[var(--muted)]"
@@ -211,11 +214,14 @@ export function WeightChart({
               />
               {/* Raw readings sit UNDER the trend as recessive dots. They are not
                   connected: with a 40-day gap in the series, a connecting line
-                  across it would draw data that does not exist. */}
+                  across it would draw data that does not exist.
+                  T4 fix (trends run, ⚑ UXR-TRENDS-56): 0.55 composited to
+                  2.33:1 light / 2.48:1 dark — under the 3:1 non-text
+                  graphical minimum. 0.70 is the honest floor (≈0.68 L / 0.66 D). */}
               <Line
                 dataKey="weight"
                 stroke="none"
-                dot={{ r: 2, fill: "var(--muted)", fillOpacity: 0.55, stroke: "none" }}
+                dot={{ r: 2, fill: "var(--muted)", fillOpacity: 0.7, stroke: "none" }}
                 activeDot={false}
                 isAnimationActive={false}
                 legendType="none"
