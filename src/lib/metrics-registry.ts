@@ -383,6 +383,12 @@ export const BODY_METRIC_ALIASES: Record<string, string> = {
   // sleep_score — canonical + bare "sleep"
   sleep_score:   "sleep_score",
   sleep:         "sleep_score",
+  // sleep_hours — Apple Health sleep DURATION (h), distinct from sleep_score
+  // (a points score). Reusing sleep_score would corrupt the metric.
+  sleep_hours:    "sleep_hours",
+  sleep_duration: "sleep_hours",
+  time_asleep:    "sleep_hours",
+  hours_asleep:   "sleep_hours",
   // rhr — canonical + full phrasings
   rhr:                  "rhr",
   resting_hr:           "rhr",
@@ -450,6 +456,13 @@ export const BODY_METRICS: BodyMetricSpec[] = [
     units:       "ms",
     direction:   "increase",
     description: "Heart-rate variability — recovery indicator from a wearable.",
+  },
+  {
+    key:         "sleep_hours",
+    label:       "Sleep duration",
+    units:       "h",
+    direction:   "increase",
+    description: "Hours asleep per night (Apple Health import).",
   },
 ];
 

@@ -56,6 +56,9 @@ model User {
 
   // E-1 FoodUsage — per-user food state (usage count, favorites, last portion)
   foodUsages       FoodUsage[]
+
+  // G2 (trends-dashboard run) — imported Apple Health daily rows
+  healthDaily      HealthDaily[]
 }
 
 model Workout {
@@ -677,6 +680,32 @@ model BodyMetric {
   @@index([key, date])
   @@index([date])
   @@index([userId, key, date])
+}
+
+// G2 (trends-dashboard run) — one row per day of imported Apple Health data.
+// Owned model: registered in SCOPED_MODELS (db.ts), verify-no-null-userid.ts,
+// and verify-tenant-isolation-full.ts in the same commit (amendment A2 —
+// silent isolation hole otherwise). Deliberately NO @@unique([userId, date,
+// source]): userId is nullable and Postgres treats NULLs as distinct, so the
+// constraint would fail to dedupe the rows it exists to protect; idempotency
+// lives in importHealthDaysBatch's transactional replace-by-date write path.
+model HealthDaily {
+  id          String   @id @default(cuid())
+  date        DateTime // USER_TZ midnight (parseDateKey)
+  activeKcal  Float?
+  basalKcal   Float?
+  steps       Int?
+  exerciseMin Int?
+  standHours  Int?
+  source      String   @default("apple_health") // apple_health | manual
+  userId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@index([date])
 }
 
 model DayRenderJob {

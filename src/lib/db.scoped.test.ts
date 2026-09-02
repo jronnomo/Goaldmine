@@ -209,6 +209,49 @@ describe("injectUserId — FoodUsage (scoped model, E-1)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// injectUserId — HealthDaily (scoped model — G2)
+// ---------------------------------------------------------------------------
+
+describe("injectUserId — HealthDaily (scoped model, G2)", () => {
+  it("findMany: injects userId into where (scoped model)", () => {
+    const args = { where: { source: "apple_health" } };
+    const result = injectUserId("HealthDaily", "findMany", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.where as Record<string, unknown>).source).toBe("apple_health");
+  });
+
+  it("create: injects userId into data", () => {
+    const args = { data: { date: new Date(0), activeKcal: 640, source: "apple_health" } };
+    const result = injectUserId("HealthDaily", "create", args, USER);
+    expect((result.data as Record<string, unknown>).userId).toBe(USER);
+    expect((result.data as Record<string, unknown>).activeKcal).toBe(640);
+  });
+
+  it("createMany: injects userId into every data row (array form)", () => {
+    const args = {
+      data: [
+        { date: new Date(0), steps: 9200, source: "apple_health" },
+        { date: new Date(86_400_000), steps: 10400, source: "apple_health" },
+      ],
+    };
+    const result = injectUserId("HealthDaily", "createMany", args, USER);
+    const rows = result.data as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.userId).toBe(USER);
+    expect(rows[0]!.steps).toBe(9200);
+    expect(rows[1]!.steps).toBe(10400);
+  });
+
+  it("deleteMany: injects userId into where (per-user replace-by-date delete)", () => {
+    const args = { where: { source: "apple_health", date: { in: [new Date(0)] } } };
+    const result = injectUserId("HealthDaily", "deleteMany", args, USER);
+    expect((result.where as Record<string, unknown>).userId).toBe(USER);
+    expect((result.where as Record<string, unknown>).source).toBe("apple_health");
+    expect((result.where as Record<string, unknown>).date).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // injectUserId — NON-scoped models must pass through untouched
 // ---------------------------------------------------------------------------
 

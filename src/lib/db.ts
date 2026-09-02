@@ -28,7 +28,7 @@ export const prisma = globalForPrisma.prisma ?? createClient();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 // ---------------------------------------------------------------------------
-// 2. Scoped-model set — 21 models that have a `userId` FK.
+// 2. Scoped-model set — 22 models that have a `userId` FK.
 //    Non-scoped models (User, FoodLibrary, WorkoutExercise, Set,
 //    PlanDayOverride, PlanRevision) are passed through untouched.
 //    FoodLibrary stays non-scoped (shared catalog); FoodUsage is scoped.
@@ -61,6 +61,9 @@ const SCOPED_MODELS = new Set<string>([
   "ActivityGoalLink",
   "WriteReceipt",
   "SavedMeal",
+  // G2 trends-dashboard run — imported Apple Health daily rows. Registered in
+  // the same commit as the schema migration (silent isolation hole otherwise).
+  "HealthDaily",
 ]);
 // Auth.js models (Account, Session, VerificationToken) are intentionally excluded —
 // auth infrastructure is cross-user by design; the adapter uses raw `prisma` directly.
@@ -270,7 +273,7 @@ const _scopeCache = new Map<string, ScopedClient>();
 
 /**
  * Returns a Prisma client that auto-injects `userId` into every query's
- * `where` (reads) or `data` (writes) for the 21 user-scoped models.
+ * `where` (reads) or `data` (writes) for the 22 user-scoped models.
  * Non-scoped models (User, FoodLibrary, WorkoutExercise, Set,
  * PlanDayOverride, PlanRevision) are passed through untouched.
  * FoodLibrary is non-scoped (shared catalog); use FoodUsage for per-user state.
