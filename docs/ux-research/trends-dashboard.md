@@ -172,6 +172,14 @@ All five state **the threshold and the actual value**, so the reader knows how f
 
 ⚠ **The counts in those strings are real values, not static copy** — `This window is 4` must interpolate. A static string would be worse than no string.
 
+**✅ Verified against the landed core** (`src/lib/trends-core.ts`, merged as `3e897f4`). The five reason codes match this table exactly, and three shipped details confirm the presentation above is directly implementable:
+
+- **`observedTdeeReason` is single-valued — "first failure wins"** (`trends-core.ts:326-361`). So exactly one string renders, never a stacked list of failures. That is what makes the two-sentence form viable; a list would have needed a different layout.
+- **`coverage.mealsNoMacroDays`** already exists (`:85, :276` — `p.mealCount > 0 && p.kcal === null`), so the conditional second coverage line in §3.4 needs **no new plumbing**.
+- **`coverage` is populated on every return path including the empty one** (`:411-418`), which is what lets the coverage line be unconditional rather than defensive.
+
+⚠ One gate to interpolate carefully: `insufficient_nutrition_coverage` fires on `loggedDays / totalDays < 0.5` (`MIN_NUTRITION_COVERAGE`), so its string must quote **both** numbers (`4 of 12`), not a percentage — the ratio is the rule, but the counts are what the reader can act on. And `implausible_result` fires when the computed value falls under `MIN_PLAUSIBLE_TDEE = 800`, which is why its second sentence names a bad weigh-in or an unlogged day rather than telling the user to wait.
+
 ### 3.4 · Coverage encoding
 
 **Decision: both. A rail on the chart AND a sentence in the panel, and they are not redundant.**
