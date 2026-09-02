@@ -48,6 +48,7 @@ const {
   mockFoodUsageUpdate,
   mockFoodUsageCreate,
   mockFoodLibraryFindMany,
+  mockHealthDailyFindMany,
 } = vi.hoisted(() => {
   const mockFindMany = vi.fn().mockResolvedValue([]);
   const mockFindFirst = vi.fn().mockResolvedValue(null);
@@ -115,6 +116,12 @@ const {
   const mockFoodUsageCreate = vi.fn().mockResolvedValue({});
   const mockFoodLibraryFindMany = vi.fn().mockResolvedValue([]);
 
+  // G1 get_trend_window — dedicated spy (the file's newer-case convention) so
+  // the omit assertion inspects exactly the healthDaily read. Without this
+  // entry every case that runs the trend handler crashes on
+  // db.healthDaily.findMany (amendment A5).
+  const mockHealthDailyFindMany = vi.fn().mockResolvedValue([]);
+
   const mockDb = {
     workout: { findMany: mockFindMany },
     measurement: { findMany: mockFindMany },
@@ -162,6 +169,7 @@ const {
       update: mockFoodUsageUpdate,
       create: mockFoodUsageCreate,
     },
+    healthDaily: { findMany: mockHealthDailyFindMany },
   };
 
   // complete_goal's before/after game-state diff + goal-completion cores —
@@ -202,6 +210,7 @@ const {
     mockFoodUsageUpdate,
     mockFoodUsageCreate,
     mockFoodLibraryFindMany,
+    mockHealthDailyFindMany,
   };
 });
 
@@ -250,6 +259,10 @@ vi.mock("@/lib/calendar-core", () => ({
   endOfDay: (d: Date) => d,
   dateKey: (d: Date) => d.toISOString().slice(0, 10),
   parseDateKey: (s: string) => new Date(s),
+  // G1: trends-data imports USER_TZ for its server-side tick-label formatter.
+  // Vitest throws on a missing factory export, so the toy UTC frame names its
+  // zone explicitly — labels are cosmetic here, query args are what's asserted.
+  USER_TZ: "UTC",
 }));
 vi.mock("@/lib/workout-core", () => ({
   createWorkoutCore: vi.fn(),
@@ -2094,5 +2107,47 @@ describe("program-shaped day — #283/#284 coverage", () => {
     const result = (await handler({})) as { content: Array<{ type: string; text: string }> };
     const payload = JSON.parse(result.content[0].text) as { program: unknown };
     expect(payload.program).toBeNull();
+  });
+
+  // ── G1: get_trend_window ────────────────────────────────────────────────────
+  // trends-data and trends-core are deliberately NOT mocked (blueprint §0.S2):
+  // fetchDailyPoints runs real under this file's @/lib/db + calendar mocks, so
+  // the omit assertions inspect genuine query args, not a stand-in's.
+
+  describe("get_trend_window", () => {
+    it("measurement + nutritionLog + healthDaily all scoped with omit; no other finder runs; handler succeeds", async () => {
+      mockFindMany.mockClear();
+      mockHealthDailyFindMany.mockClear();
+      const handler = fakeServer.getHandler("get_trend_window");
+      const res = await handler({ from: "2026-08-03", to: "2026-08-12" });
+      // DC5: safe() swallows post-query throws — without this line the omit
+      // assertions could pass against a handler that errors on every real call.
+      expect((res as { isError?: boolean }).isError).not.toBe(true);
+      // The shared spy backs workout/measurement/note/hike/nutritionLog/bodyMetric.
+      // Exactly TWO calls = measurement + nutritionLog; a note (or any other)
+      // shared-spy query would make this 3+. The count is the no-note guarantee
+      // because note.findMany routes through this same spy — if you legitimately
+      // add a third shared-spy query to fetchDailyPoints, update the count AND
+      // re-verify none of the calls is note-shaped.
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
+      const calls = vi.mocked(mockFindMany).mock.calls.map(
+        (c) => c[0] as { where: Record<string, unknown>; omit?: Record<string, unknown> },
+      );
+      for (const c of calls) expect(c.omit).toEqual({ userId: true });
+      // Shape-pin the two calls: exactly one filters weightLb (measurement),
+      // and both are date-range reads — neither resembles a note query.
+      expect(calls.filter((c) => c.where.weightLb != null)).toHaveLength(1);
+      for (const c of calls) expect(c.where.date).toBeDefined();
+      expect(mockHealthDailyFindMany).toHaveBeenCalledTimes(1);
+      expect(
+        (vi.mocked(mockHealthDailyFindMany).mock.calls[0]![0] as Record<string, unknown>).omit,
+      ).toEqual({ userId: true });
+    });
+
+    it("windows over 365 days return an error result naming the cap", async () => {
+      const handler = fakeServer.getHandler("get_trend_window");
+      const res = await handler({ from: "2025-01-01", to: "2026-08-12" });
+      expect((res as { isError?: boolean }).isError).toBe(true);
+    });
   });
 });
