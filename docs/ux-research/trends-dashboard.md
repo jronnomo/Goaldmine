@@ -603,8 +603,10 @@ Everything below is **unverified**. Confirm on a real 390px device, in **both th
 | Weight chart height | `h-48` (192) | ⚠[176–208] | ⚑ conflicts with blueprint `h-52`; the fold check is the arbiter |
 | Calories chart height | `h-32` (128) | ⚠[112–176] | ⚑ conflicts with blueprint `h-44` |
 | Macros chart height | `h-10` (40) | ⚠[32–48] | ⚑ conflicts with blueprint `h-40`; 3 bands + 2 separators is the floor |
-| **Chart card total** | 596px | **⚠[580–620]** | ★ **REVISED BY THE PIXEL BUILD — see below.** |
-| **★ Page total to the caption's last line** | **exactly 737px** | **⚠[720–760]** | ★ **THE most urgent check in the report. Zero clearance, not ⚠[0–15px].** |
+| **Chart card total** | **594px measured** | ⚠[580–620] | arithmetic said 596; `box-sizing: border-box` absorbs the three panel hairlines the arithmetic added separately |
+| **★ Page total to the caption's last line** | **718px measured** | ⚠[700–740] | ★ **19px of clearance under the 737px fold — see the revision block below.** Still the most urgent device check in the report. |
+| **★ GATED caption block** | **60px measured** | ⚠[56–64] | 🔴 **15px overrun — the one number in the design that fails. See below.** |
+| Zero-row empty state (measured) | **318px** | ⚠[300–330] | ⚠ over the ⚠[230–275] first estimated — the `EmptyState` `py-6` plus the hero and sub cost more than assumed |
 | The fold | 737px | 737 / 742 | arithmetic (844 − 49 − 58), not measured; house constant |
 | Rail band height | 24px | ⚠[22–26] | must read as a band, not a rule |
 | Rail lane height | 8px | ⚠[6–10] | two lanes + gutter must stay under the band |
@@ -626,24 +628,35 @@ Everything below is **unverified**. Confirm on a real 390px device, in **both th
 | **Plot width** | **272px** | ⚠[272–278] | ★ **PINNED at 272 by the pixel build** — 390 − 32 (page `p-4`) − 32 (Card `p-4`) − 40 (`YAxis width`) − 14 (`margin.right`). The mandatory in-place `P`/`C`/`F` labels need ≈8px of right margin, which forces `margin.right: 14` and therefore 272, not 278. |
 | px/day @ 30d / 90d / 10d / 365d | 9.07 / 3.02 / 27.2 / 0.75 | ⚠[8.9–9.3] / ⚠[3.0–3.1] / ⚠[27–28] / ⚠[0.7–0.8] | derived from 272px; every rail, separator and slop figure is downstream |
 
-### ★ Measurement revised by the pixel build — say the real number
+### ★ Measurement revised TWICE — say the real number, including when the real number is better
 
-Building the artifact at real pixel sizes disproved the fold claim this report made in §3.1. The honest arithmetic, with explicit heights:
+This row has now been wrong in both directions, and both corrections belong on the record.
 
-```
-shell p-4 16 + hero 49 + gap 16 + chips 44 + gap 16                    = 141
-Card: border 1 + p-4 16
-      + weight 205 + hairline 1 + calories 156 + hairline 1
-      + macros 95 + shared axis 15 + rail 44 + caption 45
-      + p-4 16 + border 1                                              = 596
-                                                              TOTAL    = 737
-```
+**First pass (arithmetic):** ⚠[735–775px] total, ending ⚠[0–15px] under the fold.
+**Second pass (arithmetic, corrected):** exactly 737px, zero clearance.
+**Third pass (a headless layout render at 390px, which is what the artifact now carries):** **718px, with 19px of clearance.**
 
-**The caption's last line bottoms at exactly 737px. Clearance is ZERO, not the ⚠[0–15px] §3.1 claimed.** The direction still works — everything that must clear the fold does clear it — but there is no slack at all, and the third caption line the storyboard forced (§11) is what consumed it. **Consequences:**
+The second pass was **too pessimistic**, and the cause is worth naming because it will recur: the arithmetic added the three inter-panel hairlines as separate terms, but `box-sizing: border-box` already absorbs them, so the Card is **594px, not 596**, and the stack sits 19px higher than feared. ⚠ A headless layout pass is still not a device — it does not carry the real Geist metrics, and every wrap point will move once the fonts load — but it beats arithmetic, and the honest claim is now **"~19px of clearance, measured in a synthetic layout, unconfirmed on hardware."**
 
-- This is now the **single most urgent device check in the report**. If a real 390px device measures the `AppHeader` or `BottomNav` even 4px taller than the house constants, the caption clips.
-- The concession list in §3.1 is no longer optional-if-it-misses; treat **calories `h-32` → `h-28`** as the pre-authorised first move, buying ⚠[16–20px] and restoring real slack.
-- Do **not** buy slack by dropping the caption's maintenance line — that is R12, and it is the reason the direction beats the PRD's.
+### 🔴 The one number that fails: the GATED caption
+
+Rendering found a problem no amount of arithmetic would have: **in the gated state the caption is 60px, not 45.** The gate sentence (`Maintenance needs at least 7 days. This window is 4.`) has to share its line with a `Clear` control reserving 64px, so it **wraps to a fourth caption line** — a 15px overrun that consumes the 19px of clearance almost exactly.
+
+This lands in the worst possible state. R12 calls the live-updating gate *the feature's best teaching moment*; it is also the only state where the caption cannot fit. Three options, in the order I'd take them:
+
+1. **Suppress `Clear` while the window is gated.** A sub-7-day window is one the user is actively still adjusting; `Clear` is not the control they want, and the drag/tap-to-clear path still works. Costs nothing, buys the full 64px. **Recommended.**
+2. **Shorten the gate string in the caption only** — `Needs 7+ days · this window is 4` — keeping the full two-sentence form in the panel. Buys one line; slightly weakens the teaching.
+3. **Take the pre-authorised `h-32` → `h-28` calorie concession** (⚠[16–20px]). Works, but spends the height budget on a problem that option 1 solves for free.
+
+**Do not** solve it by dropping the caption's maintenance line — that is R12 itself.
+
+### 🔴 The rail lane labels do not fit, even abbreviated
+
+Measured at the 11px muted floor against the 40px y-gutter: `WEIGH-INS` **62.6px**, `WEIGH` **40.3px** (38.1 untracked), `MEALS` **40.7px**. So UXR-TRENDS-64's abbreviation is **not sufficient** — even the short forms overhang by ~0.7px with zero tracking and zero padding. This is a decision, not a detail:
+
+- **accept the ~0.7px overhang** (it is sub-pixel at 1× and invisible at 2×/3×) — cheapest, and my recommendation;
+- **widen `YAxis width` 40 → 48**, which is clean but **moves plot width 272 → 264 and therefore every px/day, rail, hatch and slop figure in this report** (UXR-TRENDS-63);
+- **drop the lane labels entirely** and let the caption plus the `aria-label` carry them — defensible, since the rail is `aria-hidden` and the lanes are self-evident once read, but it costs the first-visit legend.
 
 ### `decoration⚠` — each justified against a cheaper option
 
