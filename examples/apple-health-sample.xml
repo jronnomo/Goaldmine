@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HealthData [
+]>
+<!-- Hand-written Apple Health export fixture for src/lib/parsers/apple-health.test.ts.
+     Contains NO real personal data — every value, source and timestamp is invented.
+     Exercises: every supported identifier, multi-source dedupe (largest single source,
+     never the sum), fractional SpO2, an unknown type, a malformed timestamp, a negative
+     value, an out-of-range winner (25000 kcal that WINS its dedupe and must be bounds-
+     dropped), a MetadataEntry child, a DST-straddling sleep segment, a segment ending
+     exactly at midnight, and the mandatory realistic multi-segment night (7 asleep
+     segments straddling midnight, onset 22:40, one ending 23:5x, InBed/Awake decoys). -->
+<HealthData locale="en_US">
+ <ExportDate value="2026-09-01 08:00:00 -0600"/>
+ <Me HKCharacteristicTypeIdentifierBiologicalSex="HKBiologicalSexNotSet"/>
+
+ <!-- ══ 2026-04-01: steps, multi-source conflict — Watch 9100 beats iPhone 7200; never 16300 ══ -->
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Watch" unit="count" startDate="2026-04-01 08:10:00 -0600" endDate="2026-04-01 09:10:00 -0600" value="4500"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Watch" unit="count" startDate="2026-04-01 12:00:00 -0600" endDate="2026-04-01 13:00:00 -0600" value="4600"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Phone" unit="count" startDate="2026-04-01 08:00:00 -0600" endDate="2026-04-01 09:00:00 -0600" value="6200"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Phone" unit="count" startDate="2026-04-01 15:00:00 -0600" endDate="2026-04-01 15:30:00 -0600" value="1000"/>
+
+ <!-- energy: sum/day, 1dp (320.25 + 214.5 = 534.75 → 534.8); one record carries a MetadataEntry child -->
+ <Record type="HKQuantityTypeIdentifierActiveEnergyBurned" sourceName="Fixture Watch" unit="kcal" startDate="2026-04-01 07:00:00 -0600" endDate="2026-04-01 12:00:00 -0600" value="320.25">
+  <MetadataEntry key="HKMetadataKeySyncVersion" value="1"/>
+ </Record>
+ <Record type="HKQuantityTypeIdentifierActiveEnergyBurned" sourceName="Fixture Watch" unit="kcal" startDate="2026-04-01 12:00:00 -0600" endDate="2026-04-01 21:00:00 -0600" value="214.5"/>
+ <Record type="HKQuantityTypeIdentifierBasalEnergyBurned" sourceName="Fixture Watch" unit="kcal" startDate="2026-04-01 00:00:00 -0600" endDate="2026-04-01 23:59:00 -0600" value="1650.4"/>
+
+ <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Fixture Watch" unit="min" startDate="2026-04-01 09:00:00 -0600" endDate="2026-04-01 09:22:00 -0600" value="22"/>
+ <Record type="HKQuantityTypeIdentifierAppleExerciseTime" sourceName="Fixture Watch" unit="min" startDate="2026-04-01 17:00:00 -0600" endDate="2026-04-01 17:13:00 -0600" value="13"/>
+
+ <!-- stand hours: 3 Stood + 1 Idle → 3 -->
+ <Record type="HKCategoryTypeIdentifierAppleStandHour" sourceName="Fixture Watch" startDate="2026-04-01 08:00:00 -0600" endDate="2026-04-01 09:00:00 -0600" value="HKCategoryValueAppleStandHourStood"/>
+ <Record type="HKCategoryTypeIdentifierAppleStandHour" sourceName="Fixture Watch" startDate="2026-04-01 09:00:00 -0600" endDate="2026-04-01 10:00:00 -0600" value="HKCategoryValueAppleStandHourStood"/>
+ <Record type="HKCategoryTypeIdentifierAppleStandHour" sourceName="Fixture Watch" startDate="2026-04-01 10:00:00 -0600" endDate="2026-04-01 11:00:00 -0600" value="HKCategoryValueAppleStandHourStood"/>
+ <Record type="HKCategoryTypeIdentifierAppleStandHour" sourceName="Fixture Watch" startDate="2026-04-01 11:00:00 -0600" endDate="2026-04-01 12:00:00 -0600" value="HKCategoryValueAppleStandHourIdle"/>
+
+ <!-- resting HR: mean/day, int (55, 57 → 56) -->
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Fixture Watch" unit="count/min" startDate="2026-04-01 06:00:00 -0600" endDate="2026-04-01 06:00:00 -0600" value="55"/>
+ <Record type="HKQuantityTypeIdentifierRestingHeartRate" sourceName="Fixture Watch" unit="count/min" startDate="2026-04-01 20:00:00 -0600" endDate="2026-04-01 20:00:00 -0600" value="57"/>
+
+ <!-- SpO2: fractional 0.97 despite unit="%" → 97; mean(97, 95) = 96 -->
+ <Record type="HKQuantityTypeIdentifierOxygenSaturation" sourceName="Fixture Watch" unit="%" startDate="2026-04-01 03:00:00 -0600" endDate="2026-04-01 03:00:00 -0600" value="0.97"/>
+ <Record type="HKQuantityTypeIdentifierOxygenSaturation" sourceName="Fixture Watch" unit="%" startDate="2026-04-01 04:00:00 -0600" endDate="2026-04-01 04:00:00 -0600" value="95"/>
+
+ <!-- VO2Max: latest startDate across ALL sources wins → Watch 41.2 at 10:00 beats Phone 40.1 at 08:00 -->
+ <Record type="HKQuantityTypeIdentifierVO2Max" sourceName="Fixture Phone" unit="mL/min·kg" startDate="2026-04-01 08:00:00 -0600" endDate="2026-04-01 08:00:00 -0600" value="40.1"/>
+ <Record type="HKQuantityTypeIdentifierVO2Max" sourceName="Fixture Watch" unit="mL/min·kg" startDate="2026-04-01 10:00:00 -0600" endDate="2026-04-01 10:00:00 -0600" value="41.2"/>
+
+ <!-- HRV (secondary REQ): mean/day (45.5, 50.5 → 48) -->
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Fixture Watch" unit="ms" startDate="2026-04-01 06:30:00 -0600" endDate="2026-04-01 06:30:00 -0600" value="45.5"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Fixture Watch" unit="ms" startDate="2026-04-01 21:30:00 -0600" endDate="2026-04-01 21:30:00 -0600" value="50.5"/>
+
+ <!-- unknown type → recordsSkipped, never thrown on -->
+ <Record type="HKQuantityTypeIdentifierDistanceWalkingRunning" sourceName="Fixture Watch" unit="mi" startDate="2026-04-01 08:00:00 -0600" endDate="2026-04-01 09:00:00 -0600" value="2.4"/>
+ <!-- malformed timestamp (ISO form, fails the wall-clock regex) → skipped, NaN never enters an accumulator -->
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Phone" unit="count" startDate="2026-04-01T08:00:00Z" endDate="2026-04-01T09:00:00Z" value="500"/>
+ <!-- negative value → skipped -->
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="Fixture Phone" unit="count" startDate="2026-04-01 10:00:00 -0600" endDate="2026-04-01 10:30:00 -0600" value="-50"/>
+
+ <!-- ══ THE MANDATORY REALISTIC NIGHT (patched G2 §3.1.7): onset 22:40, wake 06:35 next day.
+      7 asleep segments straddling midnight + InBed and Awake decoys. Every asleep segment
+      must land on the wake date 2026-04-02: ends 23:35/23:58 are ≥18:00 → next civil date;
+      ends 00:45–06:35 are <18:00 → their own end date. Watch total = 468 min = 7.8 h.
+      A second source (Phone, 7.0 h) loses the largest-total dedupe. ══ -->
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-01 22:30:00 -0600" endDate="2026-04-02 06:40:00 -0600" value="HKCategoryValueSleepAnalysisInBed"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-01 22:40:00 -0600" endDate="2026-04-01 23:35:00 -0600" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-01 23:35:00 -0600" endDate="2026-04-01 23:58:00 -0600" value="HKCategoryValueSleepAnalysisAsleepDeep"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-01 23:58:00 -0600" endDate="2026-04-02 00:45:00 -0600" value="HKCategoryValueSleepAnalysisAsleepREM"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-02 00:45:00 -0600" endDate="2026-04-02 00:52:00 -0600" value="HKCategoryValueSleepAnalysisAwake"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-02 00:52:00 -0600" endDate="2026-04-02 02:30:00 -0600" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-02 02:30:00 -0600" endDate="2026-04-02 04:10:00 -0600" value="HKCategoryValueSleepAnalysisAsleepUnspecified"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-02 04:10:00 -0600" endDate="2026-04-02 05:20:00 -0600" value="HKCategoryValueSleepAnalysisAsleepDeep"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-04-02 05:20:00 -0600" endDate="2026-04-02 06:35:00 -0600" value="HKCategoryValueSleepAnalysisAsleepREM"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Phone" startDate="2026-04-01 23:00:00 -0600" endDate="2026-04-02 06:00:00 -0600" value="HKCategoryValueSleepAnalysisAsleepUnspecified"/>
+
+ <!-- ══ 2026-04-03: an out-of-range winner. Buggy App's 25000 kcal WINS the largest-total
+      dedupe over Watch's 500.5, then the bounds layer drops it (activeKcal stays null) and
+      counts it skipped — the day itself survives via basal. ══ -->
+ <Record type="HKQuantityTypeIdentifierActiveEnergyBurned" sourceName="Buggy App" unit="kcal" startDate="2026-04-03 09:00:00 -0600" endDate="2026-04-03 10:00:00 -0600" value="25000"/>
+ <Record type="HKQuantityTypeIdentifierActiveEnergyBurned" sourceName="Fixture Watch" unit="kcal" startDate="2026-04-03 07:00:00 -0600" endDate="2026-04-03 21:00:00 -0600" value="500.5"/>
+ <Record type="HKQuantityTypeIdentifierBasalEnergyBurned" sourceName="Fixture Watch" unit="kcal" startDate="2026-04-03 00:00:00 -0600" endDate="2026-04-03 23:59:00 -0600" value="1700"/>
+
+ <!-- ══ DST spring-forward night: offsets differ across the segment; real duration is 1.0 h,
+      not the 2.0 h a naive wall-clock subtraction would produce. ══ -->
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-03-08 01:30:00 -0800" endDate="2026-03-08 03:30:00 -0700" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+
+ <!-- ══ a segment ending exactly at midnight: hour 0 is < 18 → belongs to its own end date. ══ -->
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Fixture Watch" startDate="2026-05-02 23:20:00 -0600" endDate="2026-05-03 00:00:00 -0600" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+</HealthData>
