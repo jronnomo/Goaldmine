@@ -44,8 +44,27 @@ export type TdeeGateReason =
 
 export type MacroShares = { protein: number; carbs: number; fat: number }; // integer %, kcal-weighted
 
+/**
+ * The REQUESTED window's bounds — the honest denominator (QA C-2 fix).
+ * `fromT`/`toT` are epoch ms at USER_TZ midnight of the window's first and
+ * last day (inclusive), computed by the CALLER via parseDateKey (this module
+ * stays import-free and does no Date/TZ work). `fromKey`/`toKey` are those
+ * same days' dateKeys. aggregateWindow derives `window.days` and
+ * `coverage.totalDays` from these bounds — never from how many grid points
+ * happen to exist inside them — so a 30-day window over 10 days of history
+ * reads "10 of 30", not "10 of 10". Both the /trends island and
+ * get_trend_window pass their requested bounds through this one type, which
+ * is what makes the page and the tool agree by construction.
+ */
+export type WindowBounds = {
+  fromT: number;
+  toT: number;
+  fromKey: string;
+  toKey: string;
+};
+
 export type WindowAggregate = {
-  window: { from: string | null; to: string | null; days: number };  // dateKeys; null only for empty input
+  window: { from: string; to: string; days: number };  // the REQUESTED bounds' dateKeys + inclusive day count
   nutrition: {
     loggedDays: number;                       // days with kcal !== null
     avgKcal: number | null;                   // Math.round; null when loggedDays === 0
@@ -78,7 +97,9 @@ export type WindowAggregate = {
     deltaProteinG: number; deltaCarbsG: number; deltaFatG: number;
   } | null;                                   // null when opts.targets is null/absent OR avgKcal is null
   coverage: {
-    totalDays: number;        // === window.days === points.length (full day grid)
+    totalDays: number;        // === window.days — inclusive calendar days between the REQUESTED
+                              // bounds (never points.length: grid points that happen to exist
+                              // inside the window are the numerator's business, not the denominator's)
     nutritionDays: number;    // === nutrition.loggedDays
     weightDays: number;       // === weight.readingDays
     healthDays: number;       // days with ANY of activeKcal/basalKcal/steps non-null
@@ -237,9 +258,27 @@ export function linearSlope(points: Array<{ t: number; value: number }>): number
 
 export function aggregateWindow(
   points: DailyPoint[],
+  bounds: WindowBounds,
   opts?: { targets?: MacroTargets | null },
 ): WindowAggregate {
-  const totalDays = points.length;
+  // Defensive normalization — never throw from pure math.
+  const { fromT, toT, fromKey, toKey } =
+    bounds.fromT <= bounds.toT
+      ? bounds
+      : { fromT: bounds.toT, toT: bounds.fromT, fromKey: bounds.toKey, toKey: bounds.fromKey };
+
+  // Self-slice to the bounds so callers cannot desync "the points" from "the
+  // window" — the aggregate is over exactly the requested window, whether the
+  // caller hands the full series or a pre-sliced one.
+  points = sliceWindow(points, fromT, toT);
+
+  // THE denominator (QA C-2): the inclusive count of calendar days between
+  // the requested bounds — pure integer arithmetic over the epoch-ms bounds.
+  // Math.round absorbs the ±1h a DST transition puts between two USER_TZ
+  // midnights; it must NOT be points.length, which counts only the grid days
+  // that exist and would overstate coverage whenever the window extends past
+  // the user's data (the "10 of 10" dishonesty this feature exists to kill).
+  const totalDays = Math.round((toT - fromT) / DAY_MS) + 1;
 
   // Nutrition — averages divide by the count of CONTRIBUTING days, never
   // totalDays. Zero-filling is structurally impossible: null never enters a sum.
@@ -384,11 +423,10 @@ export function aggregateWindow(
       : null;
 
   return {
-    window: {
-      from: totalDays > 0 ? points[0]!.dateKey : null,
-      to: totalDays > 0 ? points[totalDays - 1]!.dateKey : null,
-      days: totalDays,
-    },
+    // The REQUESTED bounds, verbatim — not the first/last grid point, which
+    // would differ between a sparse series (page grid starting at first data)
+    // and a full window grid (the tool's) for the same window.
+    window: { from: fromKey, to: toKey, days: totalDays },
     nutrition: {
       loggedDays,
       avgKcal,
@@ -408,8 +446,8 @@ export function aggregateWindow(
       balancePerDay,
     },
     adherence,
-    // coverage is present on EVERY return path, including empty input
-    // (all-zero coverage with window { from: null, to: null, days: 0 }).
+    // coverage is present on EVERY return path, including a window holding no
+    // points at all (all counts zero; totalDays still the bounds-derived span).
     coverage: {
       totalDays,
       nutritionDays: loggedDays,

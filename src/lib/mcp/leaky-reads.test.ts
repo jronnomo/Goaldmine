@@ -2113,9 +2113,22 @@ describe("program-shaped day — #283/#284 coverage", () => {
   // trends-data and trends-core are deliberately NOT mocked (blueprint §0.S2):
   // fetchDailyPoints runs real under this file's @/lib/db + calendar mocks, so
   // the omit assertions inspect genuine query args, not a stand-in's.
+  //
+  // NOTE on notes: this handler DOES sit on a note query in production. Its
+  // getAdherenceTargets() call runs the real resolveDay, whose parallel fetch
+  // includes db.note.findMany (src/lib/calendar.ts) — PRD G1 §7's original
+  // "issues no note query at all" claim was wrong. That query is safe here
+  // because only the four macro numbers of resolveDay's nutritionPlan survive
+  // into the tool's output; nothing note-shaped can reach the payload as
+  // written. Because @/lib/calendar is mocked in this file, no call-count on
+  // the shared spy can see that seam — so the guarantee asserted below is on
+  // the OUTPUT, the property that actually matters: resolveDay is stubbed to
+  // return a day laced with private note content, and the serialized payload
+  // must carry none of it. A future change that threads resolveDay data into
+  // the response fails this test; a query-count proxy would stay green.
 
   describe("get_trend_window", () => {
-    it("measurement + nutritionLog + healthDaily all scoped with omit; no other finder runs; handler succeeds", async () => {
+    it("measurement + nutritionLog + healthDaily all scoped with omit; handler succeeds", async () => {
       mockFindMany.mockClear();
       mockHealthDailyFindMany.mockClear();
       const handler = fakeServer.getHandler("get_trend_window");
@@ -2123,25 +2136,84 @@ describe("program-shaped day — #283/#284 coverage", () => {
       // DC5: safe() swallows post-query throws — without this line the omit
       // assertions could pass against a handler that errors on every real call.
       expect((res as { isError?: boolean }).isError).not.toBe(true);
-      // The shared spy backs workout/measurement/note/hike/nutritionLog/bodyMetric.
-      // Exactly TWO calls = measurement + nutritionLog; a note (or any other)
-      // shared-spy query would make this 3+. The count is the no-note guarantee
-      // because note.findMany routes through this same spy — if you legitimately
-      // add a third shared-spy query to fetchDailyPoints, update the count AND
-      // re-verify none of the calls is note-shaped.
-      expect(mockFindMany).toHaveBeenCalledTimes(2);
+      // The shared spy backs workout/measurement/note/hike/nutritionLog/bodyMetric;
+      // shape-pin every call it saw: all scoped with omit, all date-range reads,
+      // exactly one filtering weightLb (measurement) — none note-shaped (a note
+      // query would filter targetDate/type, not weightLb/date-range-only).
       const calls = vi.mocked(mockFindMany).mock.calls.map(
         (c) => c[0] as { where: Record<string, unknown>; omit?: Record<string, unknown> },
       );
+      expect(calls.length).toBeGreaterThanOrEqual(2); // measurement + nutritionLog at minimum
       for (const c of calls) expect(c.omit).toEqual({ userId: true });
-      // Shape-pin the two calls: exactly one filters weightLb (measurement),
-      // and both are date-range reads — neither resembles a note query.
       expect(calls.filter((c) => c.where.weightLb != null)).toHaveLength(1);
       for (const c of calls) expect(c.where.date).toBeDefined();
       expect(mockHealthDailyFindMany).toHaveBeenCalledTimes(1);
       expect(
         (vi.mocked(mockHealthDailyFindMany).mock.calls[0]![0] as Record<string, unknown>).omit,
       ).toEqual({ userId: true });
+    });
+
+    it("no note content or private note types reach the output, even when resolveDay hands them over", async () => {
+      // Feed the seam the worst realistic payload: the real resolveDay carries
+      // notesAboutDate rows (it queries db.note) alongside nutritionPlan. The
+      // handler must consume ONLY the plan's macro numbers.
+      vi.mocked(resolveDay).mockResolvedValueOnce({
+        todayTask: "rest",
+        program: null,
+        scheduledItemsToday: [],
+        goalMarks: [],
+        notesAboutDate: [
+          { id: "n1", body: "SENTINEL-STANDING-RULE-BODY", type: "standing_rule", date: new Date(), targetDate: null },
+          { id: "n2", body: "SENTINEL-REVIEW-BODY", type: "review", date: new Date(), targetDate: null },
+          { id: "n3", body: "SENTINEL-OPEN-ITEM-BODY", type: "open_item", date: new Date(), targetDate: null },
+        ],
+        nutritionPlan: {
+          breakfast: { macros: { calories: 600, proteinG: 40, carbsG: 60, fatG: 20 } },
+        },
+      } as never);
+      // One in-window row on the shared spy (it backs measurement AND
+      // nutritionLog; the row carries both shapes) so avgKcal is non-null and
+      // the adherence block materializes — proving the resolveDay seam was
+      // CONSUMED (its plan macros surface) while its notes do not.
+      vi.mocked(mockFindMany).mockResolvedValue([
+        {
+          date: new Date("2026-08-05"),
+          weightLb: 158,
+          calories: 2400,
+          proteinG: 150,
+          carbsG: 200,
+          fatG: 70,
+        },
+      ] as never);
+      const handler = fakeServer.getHandler("get_trend_window");
+      const res = (await handler({ from: "2026-08-03", to: "2026-08-12" })) as {
+        isError?: boolean;
+        content: Array<{ type: string; text: string }>;
+      };
+      expect(res.isError).not.toBe(true);
+      const text = res.content[0]!.text;
+
+      // The payload surface is exactly the WindowAggregate + daily — no
+      // note-shaped fields anywhere in it.
+      const payload = JSON.parse(text) as Record<string, unknown>;
+      expect(Object.keys(payload).sort()).toEqual(
+        ["adherence", "coverage", "daily", "energy", "nutrition", "weight", "window"].sort(),
+      );
+
+      // The property that matters: nothing private escapes. Neither the
+      // planted note bodies nor the private note type names appear anywhere
+      // in the serialized content.
+      expect(text).not.toContain("SENTINEL");
+      expect(text).not.toContain("standing_rule");
+      expect(text).not.toContain("review");
+      expect(text).not.toContain("open_item");
+      expect(text).not.toContain("notesAboutDate");
+      expect(text).not.toContain("userId");
+
+      // …while the adherence targets DID flow through the same resolveDay
+      // call — proof the seam was actually consumed (only its macro numbers
+      // survive), not skipped.
+      expect((payload.adherence as { targetKcal: number }).targetKcal).toBe(600);
     });
 
     it("windows over 365 days return an error result naming the cap", async () => {

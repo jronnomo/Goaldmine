@@ -35,6 +35,7 @@ import {
   trailingMeanSeries,
   type DailyPoint,
   type MacroTargets,
+  type WindowBounds,
 } from "@/lib/trends-core";
 import { buildWeightSeries, pickTicks, type ResolvedPoint } from "@/lib/weight-chart-core";
 
@@ -58,6 +59,11 @@ export type TrendsBoardProps = {
   targets: MacroTargets | null;
   rangeKey: RangeKey;
   initialWindow: { fromT: number; toT: number } | null;
+  /** Server-computed requested-window starts for the fixed chips (see
+   *  TrendsPageData.rangeStarts) — a chip's honest window is the last N
+   *  calendar days ending today even when history is shorter, and the client
+   *  does no Date/TZ math of its own. */
+  rangeStarts: Record<"30d" | "90d", { t: number; key: string; label: string }>;
 };
 
 export function TrendsBoard({
@@ -65,6 +71,7 @@ export function TrendsBoard({
   targets,
   rangeKey: initialRangeKey,
   initialWindow,
+  rangeStarts,
 }: TrendsBoardProps) {
   const reduce = usePrefersReducedMotion();
 
@@ -89,7 +96,13 @@ export function TrendsBoard({
   const labelByTime = useMemo(() => new Map(points.map((p) => [p.t, p.label])), [points]);
   const keyByTime = useMemo(() => new Map(points.map((p) => [p.t, p.dateKey])), [points]);
   const timeByKey = useMemo(() => new Map(points.map((p) => [p.dateKey, p.t])), [points]);
-  const labelByKey = useMemo(() => new Map(points.map((p) => [p.dateKey, p.label])), [points]);
+  // Grid labels PLUS the range starts' — a chip window can start before the
+  // first data day, where no grid point (hence no grid label) exists.
+  const labelByKey = useMemo(() => {
+    const m = new Map(points.map((p) => [p.dateKey, p.label]));
+    for (const rs of Object.values(rangeStarts)) if (!m.has(rs.key)) m.set(rs.key, rs.label);
+    return m;
+  }, [points, rangeStarts]);
   const labelOfKey = (k: string | null): string => (k ? (labelByKey.get(k) ?? k) : "");
 
   /** Snap an arbitrary t (e.g. a gap-break midpoint row on the weight chart)
@@ -197,16 +210,52 @@ export function TrendsBoard({
   );
 
   // ── aggregates: ONE arithmetic path (aggregateWindow) for panel + caption ──
-  const aggregate = useMemo(() => aggregateWindow(visible, { targets }), [visible, targets]);
+  // The bounds are the REQUESTED window, not the slice of points that happens
+  // to exist inside it (QA C-2): a committed window is its own request; a
+  // fixed chip requests the last N calendar days ending today — even when
+  // history is shorter, so a 10-day history on the 30d chip reads "10 of 30"
+  // and gates exactly as get_trend_window's identical call would. "All" is the
+  // one range whose request IS the data extent. aggregateWindow self-slices,
+  // so it takes the full series plus these bounds.
+  const windowBounds = useMemo<WindowBounds>(() => {
+    const last = points[points.length - 1]!;
+    if (winFromT !== null && winToT !== null) {
+      // Committed windows are grid-snapped by construction — both keys exist.
+      return {
+        fromT: winFromT,
+        toT: winToT,
+        fromKey: keyByTime.get(winFromT)!,
+        toKey: keyByTime.get(winToT)!,
+      };
+    }
+    const days = RANGES.find((r) => r.key === rangeKey)!.days;
+    if (days === null) {
+      return { fromT: points[0]!.t, toT: last.t, fromKey: points[0]!.dateKey, toKey: last.dateKey };
+    }
+    // rangeStarts' t is parseDateKey-built exactly like the grid's, so when
+    // the start day exists in the grid the two are identical values.
+    const rs = rangeStarts[rangeKey as "30d" | "90d"];
+    return { fromT: rs.t, toT: last.t, fromKey: rs.key, toKey: last.dateKey };
+  }, [points, rangeKey, winFromT, winToT, keyByTime, rangeStarts]);
+
+  const aggregate = useMemo(
+    () => aggregateWindow(points, windowBounds, { targets }),
+    [points, windowBounds, targets],
+  );
 
   const dragging = dragAnchorT !== null && dragCurrentT !== null;
   // R12: the caption's live aggregate — re-evaluated during the drag. Pure and
-  // client-side; zero queries, zero fetches.
+  // client-side; zero queries, zero fetches. Drag bounds are grid-snapped, so
+  // their dateKeys always exist.
   const liveAggregate = useMemo(() => {
     if (dragAnchorT === null || dragCurrentT === null) return aggregate;
-    const a = Math.min(dragAnchorT, dragCurrentT);
-    const b = Math.max(dragAnchorT, dragCurrentT);
-    return aggregateWindow(sliceWindow(points, snapToGrid(a), snapToGrid(b)), { targets });
+    const a = snapToGrid(Math.min(dragAnchorT, dragCurrentT));
+    const b = snapToGrid(Math.max(dragAnchorT, dragCurrentT));
+    return aggregateWindow(
+      points,
+      { fromT: a, toT: b, fromKey: keyByTime.get(a)!, toKey: keyByTime.get(b)! },
+      { targets },
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aggregate, dragAnchorT, dragCurrentT, points, targets]);
 
