@@ -1,7 +1,7 @@
 // verify-no-null-userid.ts
 //
 // REQ-002 (E7-1): 0-null ownership guard.
-// Counts rows WHERE userId IS NULL across all 20 scoped models.
+// Counts rows WHERE userId IS NULL across all 21 scoped models.
 // Prints per-table counts + a summary; exits non-zero if any table has nulls.
 //
 // Safe to run on any DB — read-only, no writes.
@@ -23,11 +23,11 @@ async function main() {
     : "(no DATABASE_URL)";
   const dbEnv = process.env.DB_ENV ?? "(not set)";
   console.log(`DB_ENV: ${dbEnv}  host: ${host}`);
-  console.log("Checking for unowned rows (userId IS NULL) across 20 scoped models...\n");
+  console.log("Checking for unowned rows (userId IS NULL) across 21 scoped models...\n");
 
-  // All 20 models that carry a userId column (scoped models per E2 migration
+  // All 21 models that carry a userId column (scoped models per E2 migration
   // + the M2 program-redesign additions: Program, ActivityGoalLink,
-  // WriteReceipt, SavedMeal).
+  // WriteReceipt, SavedMeal + the G2 trends-dashboard addition: HealthDaily).
   const checks: { label: string; count: () => Promise<number> }[] = [
     {
       label: "workout",
@@ -130,6 +130,11 @@ async function main() {
       count: () =>
         prisma.savedMeal.count({ where: { userId: null } }),
     },
+    {
+      label: "healthDaily",
+      count: () =>
+        prisma.healthDaily.count({ where: { userId: null } }),
+    },
   ];
 
   let total = 0;
@@ -149,7 +154,7 @@ async function main() {
 
   console.log();
   if (total === 0) {
-    console.log(`✓ All 20 tables clean — 0 unowned rows. Exit 0.`);
+    console.log(`✓ All 21 tables clean — 0 unowned rows. Exit 0.`);
   } else {
     console.error(`✗ ${total} unowned row(s) found across ${results.filter((r) => r.n > 0).length} table(s). Exit 1.`);
   }

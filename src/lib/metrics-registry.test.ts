@@ -10,6 +10,8 @@ import {
   GOAL_TEMPLATES,
   targetsForTemplate,
   resolveTemplateTargets,
+  normalizeMetricKey,
+  BODY_METRIC_BY_KEY,
 } from "@/lib/metrics-registry";
 import type { GoalTarget } from "@/lib/metrics-registry";
 
@@ -116,5 +118,26 @@ describe("resolveTemplateTargets", () => {
       copyFromGoalId: "goal_123",
     });
     expect(result).toBe(explicitTargets);
+  });
+});
+
+// ─── sleep_hours body-metric seed (REQ-002, G2 Apple Health import) ─────────
+
+describe("sleep_hours body-metric seed (REQ-002)", () => {
+  it('normalizeMetricKey("time asleep") resolves to sleep_hours', () => {
+    expect(normalizeMetricKey("time asleep")).toBe("sleep_hours");
+  });
+
+  it('normalizeMetricKey("sleep_duration") resolves to sleep_hours', () => {
+    expect(normalizeMetricKey("sleep_duration")).toBe("sleep_hours");
+  });
+
+  it('regression guard: normalizeMetricKey("sleep") still resolves to sleep_score', () => {
+    expect(normalizeMetricKey("sleep")).toBe("sleep_score");
+  });
+
+  it("sleep_hours seed exists with units h and direction increase", () => {
+    expect(BODY_METRIC_BY_KEY.get("sleep_hours")?.units).toBe("h");
+    expect(BODY_METRIC_BY_KEY.get("sleep_hours")?.direction).toBe("increase");
   });
 });
