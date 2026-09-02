@@ -50,6 +50,11 @@ import { getGoalEventsResult } from "@/lib/goal-events";
 import { crossGoalConflicts as computeCrossGoalConflicts } from "@/lib/goal-conflicts";
 import { prisma, getDb } from "@/lib/db";
 import type { ScopedClient } from "@/lib/db";
+// get_trend_window — the SAME query + aggregate path as /trends (blueprint
+// §0.S2 / G1 criterion 20): fetchDailyPoints/getAdherenceTargets are shared
+// with the page, aggregateWindow is the shared pure core.
+import { fetchDailyPoints, getAdherenceTargets } from "@/lib/trends-data";
+import { aggregateWindow, sampleEvenly, MAX_DAILY_ROWS, DAY_MS } from "@/lib/trends-core";
 import { autoLinkNutrition, swallowAutoLinkError } from "@/lib/attribution-hooks";
 import { formatWorkout, toFormattableWorkout, type ExportFormat } from "@/lib/formatters";
 import { createGoalCore, ensurePlanForGoalCore } from "@/lib/goal-core";
@@ -2618,6 +2623,64 @@ function registerReadTools(server: McpServer) {
           direction: resolved.direction,
           points,
         };
+      }),
+  );
+
+  // ── get_trend_window ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "get_trend_window",
+    {
+      title: "Weight, calories and macros over a date window, with TDEE and coverage",
+      description:
+        "Daily weight, calorie and macro series over a date window, plus the window aggregate: " +
+        "average calories and macros, weight delta and rate, observed TDEE (derived from intake and " +
+        "the weight slope), measured TDEE (imported Apple active+basal energy when available), plan " +
+        "adherence, and data coverage. Use this for ANY question that compares eating to weight over " +
+        "a period — \"how did my vacation eating affect my weight\", \"what's my maintenance\", " +
+        "\"was I in a deficit last month\". Averages EXCLUDE days with no log and every response " +
+        "carries a coverage block — quote it when you quote an average. TDEE is null with a `reason` " +
+        "when there isn't enough data to compute it honestly; do not estimate it yourself in that " +
+        "case. Defaults to the last 30 days; max window 365 days.",
+      inputSchema: {
+        from: z
+          .string()
+          .optional()
+          .describe("Window start, yyyy-mm-dd (USER_TZ). Default: 30 days before `to`."),
+        to: z
+          .string()
+          .optional()
+          .describe("Window end, yyyy-mm-dd (USER_TZ), inclusive. Default: today."),
+        includeDaily: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Include the per-day series. Default false — the aggregate alone answers most " +
+            "questions and stays compact.",
+          ),
+      },
+    },
+    async ({ from, to, includeDaily }) =>
+      safe(async () => {
+        const toDate = startOfDay(to ? parseDateInput(to) : new Date());
+        let fromDate = from ? startOfDay(parseDateInput(from)) : addDays(toDate, -29);
+        let end = toDate;
+        if (fromDate.getTime() > end.getTime()) [fromDate, end] = [end, fromDate]; // swap, never throw
+        const windowDays = Math.round((end.getTime() - fromDate.getTime()) / DAY_MS) + 1;
+        if (windowDays > 365) {
+          throw new Error(
+            `Window is ${windowDays} days — the cap is 365. Narrow from/to and retry.`,
+          );
+        }
+        const db = await getDb();
+        // SAME query + grid path as /trends (fetchDailyPoints — blueprint §0.S2);
+        // every finder inside it passes omit: { userId: true }.
+        const points = await fetchDailyPoints(db, { from: fromDate, to: end });
+        const targets = await getAdherenceTargets();
+        // SAME aggregate path as the page (G1 criterion 20), computed over ALL
+        // rows BEFORE the daily series is sampled.
+        const agg = aggregateWindow(points, { targets });
+        const daily = includeDaily ? sampleEvenly(points, MAX_DAILY_ROWS) : [];
+        return { ...agg, daily };
       }),
   );
 
