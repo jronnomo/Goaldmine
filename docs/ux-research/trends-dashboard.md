@@ -4,6 +4,7 @@
 **Slug:** `trends-dashboard` · **Date:** 2026-09-02 · **Profile:** `goaldmine` · **Scope:** research-first, no issue number.
 **Binding inputs:** `docs/prds/PRD-g1-trends-dashboard.md` (scope) · `docs/prds/PRD-g2-apple-health-import.md` (companion) · `docs/ux-research/progress-overhaul.md` (the one-Recharts constraint and the honesty-prose conventions) · `src/app/globals.css` (tokens) · `src/components/WeightChart.tsx` + `src/lib/weight-chart-core.ts` (the chart this stack sits alongside and reuses).
 **Mechanism authority:** `.feature-dev/2026-09-02-trends-dashboard/agents/architecture-blueprint-v2.md` §5.
+**Pixel mockup:** [`trends-dashboard.html`](./trends-dashboard.html) — self-contained, real tokens, light/dark **and grayscale** toggles, 7 panels.
 **Ledger:** [`trends-dashboard-ledger.md`](./trends-dashboard-ledger.md) — `UXR-TRENDS-NN`, stable, the implementing PR ticks it.
 
 > **Division of authority, as instructed.** Where this report and the architecture blueprint differ, **research wins on presentation, blueprint wins on mechanism.** The blueprint's §5 drag handlers, `history.replaceState` semantics, `ComposedChart` construction, dense-range switch and five gate reasons are taken as settled and are **not** relitigated here. Everything below is about what the user sees and reads. Two places where a presentation call has a mechanical consequence are marked **⚑ SIGN-OFF** and are the only things in this document that ask the blueprint to move.
@@ -594,7 +595,8 @@ Everything below is **unverified**. Confirm on a real 390px device, in **both th
 | Weight chart height | `h-48` (192) | ⚠[176–208] | ⚑ conflicts with blueprint `h-52`; the fold check is the arbiter |
 | Calories chart height | `h-32` (128) | ⚠[112–176] | ⚑ conflicts with blueprint `h-44` |
 | Macros chart height | `h-10` (40) | ⚠[32–48] | ⚑ conflicts with blueprint `h-40`; 3 bands + 2 separators is the floor |
-| **Chart card total** | ~755px | **⚠[735–775]** | **the most urgent check in the report** — the whole direction rests on the rail clearing 737px |
+| **Chart card total** | 596px | **⚠[580–620]** | ★ **REVISED BY THE PIXEL BUILD — see below.** |
+| **★ Page total to the caption's last line** | **exactly 737px** | **⚠[720–760]** | ★ **THE most urgent check in the report. Zero clearance, not ⚠[0–15px].** |
 | The fold | 737px | 737 / 742 | arithmetic (844 − 49 − 58), not measured; house constant |
 | Rail band height | 24px | ⚠[22–26] | must read as a band, not a rule |
 | Rail lane height | 8px | ⚠[6–10] | two lanes + gutter must stay under the band |
@@ -613,7 +615,27 @@ Everything below is **unverified**. Confirm on a real 390px device, in **both th
 | Panel fade | 150ms `ease-out` | ⚠[120–180] | must overlap the dip so it reads as one beat |
 | Recharts mount duration | 380ms | ⚠[300–450] | library default 1500ms overhangs the 920ms house budget by 580ms **and** uses a third, unsanctioned easing |
 | Zero-row empty state | ~253px | ⚠[230–275] | |
-| px/day @ 30d / 90d / 365d | 9.2 / 3.1 / 0.76 | ⚠[8.9–9.5] / ⚠[3.0–3.2] / ⚠[0.7–0.8] | derived from 278px plot width = 390 − 32 − 32 − 40 − 14 |
+| **Plot width** | **272px** | ⚠[272–278] | ★ **PINNED at 272 by the pixel build** — 390 − 32 (page `p-4`) − 32 (Card `p-4`) − 40 (`YAxis width`) − 14 (`margin.right`). The mandatory in-place `P`/`C`/`F` labels need ≈8px of right margin, which forces `margin.right: 14` and therefore 272, not 278. |
+| px/day @ 30d / 90d / 10d / 365d | 9.07 / 3.02 / 27.2 / 0.75 | ⚠[8.9–9.3] / ⚠[3.0–3.1] / ⚠[27–28] / ⚠[0.7–0.8] | derived from 272px; every rail, separator and slop figure is downstream |
+
+### ★ Measurement revised by the pixel build — say the real number
+
+Building the artifact at real pixel sizes disproved the fold claim this report made in §3.1. The honest arithmetic, with explicit heights:
+
+```
+shell p-4 16 + hero 49 + gap 16 + chips 44 + gap 16                    = 141
+Card: border 1 + p-4 16
+      + weight 205 + hairline 1 + calories 156 + hairline 1
+      + macros 95 + shared axis 15 + rail 44 + caption 45
+      + p-4 16 + border 1                                              = 596
+                                                              TOTAL    = 737
+```
+
+**The caption's last line bottoms at exactly 737px. Clearance is ZERO, not the ⚠[0–15px] §3.1 claimed.** The direction still works — everything that must clear the fold does clear it — but there is no slack at all, and the third caption line the storyboard forced (§11) is what consumed it. **Consequences:**
+
+- This is now the **single most urgent device check in the report**. If a real 390px device measures the `AppHeader` or `BottomNav` even 4px taller than the house constants, the caption clips.
+- The concession list in §3.1 is no longer optional-if-it-misses; treat **calories `h-32` → `h-28`** as the pre-authorised first move, buying ⚠[16–20px] and restoring real slack.
+- Do **not** buy slack by dropping the caption's maintenance line — that is R12, and it is the reason the direction beats the PRD's.
 
 ### `decoration⚠` — each justified against a cheaper option
 
